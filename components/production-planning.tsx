@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { getSupabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -19,6 +19,65 @@ const MONTHS = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ]
 const DAY_NAMES = ["D", "L", "M", "M", "J", "V", "S"]
+
+// Feriados nacionales de Argentina (formato: "MM-DD" o funcion para feriados moviles)
+const FERIADOS_FIJOS: Record<string, string> = {
+  "01-01": "Año Nuevo",
+  "02-24": "Carnaval", // 2025
+  "02-25": "Carnaval", // 2025
+  "03-24": "Día de la Memoria",
+  "04-02": "Día del Veterano",
+  "04-18": "Viernes Santo", // 2025
+  "05-01": "Día del Trabajador",
+  "05-25": "Revolución de Mayo",
+  "06-16": "Paso a la Inmortalidad del Gral. Güemes", // Puente 2025
+  "06-17": "Paso a la Inmortalidad del Gral. Güemes",
+  "06-20": "Paso a la Inmortalidad del Gral. Belgrano",
+  "07-09": "Día de la Independencia",
+  "08-17": "Paso a la Inmortalidad del Gral. San Martín", // 2025
+  "10-12": "Día del Respeto a la Diversidad Cultural", // 2025 se pasa
+  "11-20": "Día de la Soberanía Nacional", // 2025
+  "11-21": "Día de la Soberanía Nacional", // Puente 2025
+  "12-08": "Día de la Inmaculada Concepción",
+  "12-25": "Navidad",
+}
+
+// Feriados por año (para feriados móviles como Semana Santa, etc.)
+const FERIADOS_POR_ANO: Record<number, Record<string, string>> = {
+  2025: {
+    "02-24": "Carnaval",
+    "02-25": "Carnaval",
+    "04-18": "Viernes Santo",
+    "06-16": "Puente Turístico",
+    "08-18": "Paso a la Inmortalidad San Martín (trasladado)",
+    "10-13": "Día Diversidad Cultural (trasladado)",
+    "11-21": "Puente Turístico",
+  },
+  2026: {
+    "02-16": "Carnaval",
+    "02-17": "Carnaval",
+    "04-03": "Viernes Santo",
+    "08-17": "Paso a la Inmortalidad San Martín",
+    "10-12": "Día Diversidad Cultural",
+    "11-23": "Día Soberanía Nacional (trasladado)",
+  },
+}
+
+function getFeriado(year: number, month: number, day: number): string | null {
+  const mmdd = `${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  
+  // Primero verificar feriados específicos del año
+  if (FERIADOS_POR_ANO[year]?.[mmdd]) {
+    return FERIADOS_POR_ANO[year][mmdd]
+  }
+  
+  // Luego verificar feriados fijos
+  if (FERIADOS_FIJOS[mmdd]) {
+    return FERIADOS_FIJOS[mmdd]
+  }
+  
+  return null
+}
 
 interface PlanningData {
   [pipeSize: string]: {
@@ -38,7 +97,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
-  const supabase = getSupabase()
+  const supabase = createClient()
 
   // Get days in month
   const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
@@ -52,6 +111,21 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
   const isWeekend = (day: number) => {
     const dow = getDayOfWeek(day)
     return dow === 0 || dow === 6
+  }
+
+  // Check if day is holiday
+  const isHoliday = (day: number) => {
+    return getFeriado(selectedYear, selectedMonth, day) !== null
+  }
+
+  // Check if day is non-working (weekend or holiday)
+  const isNonWorkingDay = (day: number) => {
+    return isWeekend(day) || isHoliday(day)
+  }
+
+  // Get holiday name if exists
+  const getHolidayName = (day: number) => {
+    return getFeriado(selectedYear, selectedMonth, day)
   }
 
   // Load planning data when month/year changes
@@ -118,11 +192,11 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
     }))
   }
 
-  // Copy value to all non-weekend days for a pipe size
+  // Copy value to all working days for a pipe size (excluding weekends and holidays)
   function fillRow(pipeSize: string, value: number) {
     const newRow: { [day: number]: number } = {}
     for (let day = 1; day <= daysInMonth; day++) {
-      if (!isWeekend(day)) {
+      if (!isNonWorkingDay(day)) {
         newRow[day] = value
       }
     }
@@ -221,7 +295,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
           Planificación Mensual
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="w-[98vw] max-w-none max-h-[95vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Planificación de Producción - Caños</DialogTitle>
         </DialogHeader>
@@ -273,15 +347,21 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                 <thead className="sticky top-0 bg-background z-10">
                   <tr>
                     <th className="border px-2 py-1 bg-muted text-left font-medium w-[80px] sticky left-0 z-20">Tipo</th>
-                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
-                      <th 
-                        key={day} 
-                        className={`border px-1 py-1 text-center font-normal min-w-[36px] ${isWeekend(day) ? 'bg-red-100 text-red-700' : 'bg-muted'}`}
-                      >
-                        <div className="text-[10px] text-muted-foreground">{DAY_NAMES[getDayOfWeek(day)]}</div>
-                        <div>{day}</div>
-                      </th>
-                    ))}
+                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                      const holiday = getHolidayName(day)
+                      const isNonWorking = isNonWorkingDay(day)
+                      return (
+                        <th 
+                          key={day} 
+                          className={`border px-1 py-1 text-center font-normal min-w-[32px] ${isNonWorking ? 'bg-red-200 text-red-700' : 'bg-muted'}`}
+                          title={holiday || (isWeekend(day) ? 'Fin de semana' : '')}
+                        >
+                          <div className="text-[10px] text-muted-foreground">{DAY_NAMES[getDayOfWeek(day)]}</div>
+                          <div className={holiday ? 'font-bold' : ''}>{day}</div>
+                          {holiday && <div className="text-[7px] leading-tight truncate max-w-[30px]" title={holiday}>F</div>}
+                        </th>
+                      )
+                    })}
                     <th className="border px-2 py-1 bg-blue-600 text-white font-medium w-[60px]">Total</th>
                     <th className="border px-1 py-1 bg-muted font-normal w-[80px]">Acciones</th>
                   </tr>
@@ -292,26 +372,31 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                       <td className="border px-2 py-1 font-medium bg-blue-50 text-blue-800 sticky left-0 z-10">
                         CC{size}
                       </td>
-                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
-                        <td 
-                          key={day} 
-                          className={`border p-0 ${isWeekend(day) ? 'bg-red-100' : ''}`}
-                        >
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            className={`h-7 w-full text-center text-xs border-0 rounded-none outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset ${isWeekend(day) ? 'bg-red-100 text-red-400' : 'bg-transparent'}`}
-                            value={planningData[size]?.[day] || ""}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/[^0-9]/g, '')
-                              handleCellChange(size, day, val)
-                            }}
-                            placeholder=""
-                            disabled={isWeekend(day)}
-                          />
-                        </td>
-                      ))}
+                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                        const isNonWorking = isNonWorkingDay(day)
+                        const holiday = getHolidayName(day)
+                        return (
+                          <td 
+                            key={day} 
+                            className={`border p-0 ${isNonWorking ? 'bg-red-200' : ''}`}
+                            title={holiday || ''}
+                          >
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              className={`h-7 w-full text-center text-xs border-0 rounded-none outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset ${isNonWorking ? 'bg-red-200 text-red-400 cursor-not-allowed' : 'bg-transparent'}`}
+                              value={planningData[size]?.[day] || ""}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '')
+                                handleCellChange(size, day, val)
+                              }}
+                              placeholder=""
+                              disabled={isNonWorking}
+                            />
+                          </td>
+                        )
+                      })}
                       <td className="border px-2 py-1 text-center font-bold bg-blue-100">
                         {getRowTotal(size)}
                       </td>
@@ -345,7 +430,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                     {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
                       <td 
                         key={day} 
-                        className={`border px-1 py-1 text-center ${isWeekend(day) ? 'bg-red-200 text-red-400' : ''}`}
+                        className={`border px-1 py-1 text-center ${isNonWorkingDay(day) ? 'bg-red-300 text-red-500' : ''}`}
                       >
                         {getPlantColumnTotal(day, SILKE_PIPE_SIZES) || ""}
                       </td>
@@ -366,15 +451,21 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                 <thead className="sticky top-0 bg-background z-10">
                   <tr>
                     <th className="border px-2 py-1 bg-muted text-left font-medium w-[80px] sticky left-0 z-20">Tipo</th>
-                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
-                      <th 
-                        key={day} 
-                        className={`border px-1 py-1 text-center font-normal min-w-[36px] ${isWeekend(day) ? 'bg-red-100 text-red-700' : 'bg-muted'}`}
-                      >
-                        <div className="text-[10px] text-muted-foreground">{DAY_NAMES[getDayOfWeek(day)]}</div>
-                        <div>{day}</div>
-                      </th>
-                    ))}
+                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                      const holiday = getHolidayName(day)
+                      const isNonWorking = isNonWorkingDay(day)
+                      return (
+                        <th 
+                          key={day} 
+                          className={`border px-1 py-1 text-center font-normal min-w-[32px] ${isNonWorking ? 'bg-red-200 text-red-700' : 'bg-muted'}`}
+                          title={holiday || (isWeekend(day) ? 'Fin de semana' : '')}
+                        >
+                          <div className="text-[10px] text-muted-foreground">{DAY_NAMES[getDayOfWeek(day)]}</div>
+                          <div className={holiday ? 'font-bold' : ''}>{day}</div>
+                          {holiday && <div className="text-[7px] leading-tight truncate max-w-[30px]" title={holiday}>F</div>}
+                        </th>
+                      )
+                    })}
                     <th className="border px-2 py-1 bg-emerald-600 text-white font-medium w-[60px]">Total</th>
                     <th className="border px-1 py-1 bg-muted font-normal w-[80px]">Acciones</th>
                   </tr>
@@ -385,26 +476,31 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                       <td className="border px-2 py-1 font-medium bg-emerald-50 text-emerald-800 sticky left-0 z-10">
                         CC{size}
                       </td>
-                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
-                        <td 
-                          key={day} 
-                          className={`border p-0 ${isWeekend(day) ? 'bg-red-100' : ''}`}
-                        >
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            className={`h-7 w-full text-center text-xs border-0 rounded-none outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-inset ${isWeekend(day) ? 'bg-red-100 text-red-400' : 'bg-transparent'}`}
-                            value={planningData[size]?.[day] || ""}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/[^0-9]/g, '')
-                              handleCellChange(size, day, val)
-                            }}
-                            placeholder=""
-                            disabled={isWeekend(day)}
-                          />
-                        </td>
-                      ))}
+                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                        const isNonWorking = isNonWorkingDay(day)
+                        const holiday = getHolidayName(day)
+                        return (
+                          <td 
+                            key={day} 
+                            className={`border p-0 ${isNonWorking ? 'bg-red-200' : ''}`}
+                            title={holiday || ''}
+                          >
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              className={`h-7 w-full text-center text-xs border-0 rounded-none outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-inset ${isNonWorking ? 'bg-red-200 text-red-400 cursor-not-allowed' : 'bg-transparent'}`}
+                              value={planningData[size]?.[day] || ""}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9]/g, '')
+                                handleCellChange(size, day, val)
+                              }}
+                              placeholder=""
+                              disabled={isNonWorking}
+                            />
+                          </td>
+                        )
+                      })}
                       <td className="border px-2 py-1 text-center font-bold bg-emerald-100">
                         {getRowTotal(size)}
                       </td>
@@ -438,7 +534,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
                     {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
                       <td 
                         key={day} 
-                        className={`border px-1 py-1 text-center ${isWeekend(day) ? 'bg-red-200 text-red-400' : ''}`}
+                        className={`border px-1 py-1 text-center ${isNonWorkingDay(day) ? 'bg-red-300 text-red-500' : ''}`}
                       >
                         {getPlantColumnTotal(day, VILLA_ROSA_PIPE_SIZES) || ""}
                       </td>
@@ -457,8 +553,8 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
         <div className="border-t pt-2 flex items-center justify-between text-xs text-muted-foreground">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1">
-              <div className="w-4 h-4 bg-red-100 border rounded"></div>
-              <span>Fin de semana</span>
+              <div className="w-4 h-4 bg-red-200 border rounded"></div>
+              <span>Fin de semana / Feriado (F)</span>
             </div>
             <div className="flex items-center gap-1">
               <div className="w-4 h-4 bg-blue-50 border rounded"></div>

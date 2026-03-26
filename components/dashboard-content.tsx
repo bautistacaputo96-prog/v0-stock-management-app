@@ -8,7 +8,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart,
 } from "recharts"
-import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle } from "lucide-react"
+import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays } from "lucide-react"
+import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
@@ -556,6 +557,11 @@ export function DashboardContent() {
                   <Cylinder className="w-3.5 h-3.5" />
                   Canos
                 </div>
+              )}
+
+              {/* Boton de Planificacion - Solo para canos */}
+              {effectiveLine === "canos" && (
+                <ProductionPlanning lineType="caños" />
               )}
             </div>
           </div>
