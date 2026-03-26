@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { getSupabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -97,7 +97,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
-  const supabase = getSupabase()
+  const supabase = createClient()
 
   // Get days in month
   const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
