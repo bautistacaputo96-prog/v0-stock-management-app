@@ -58,6 +58,7 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
   const [weeklyConsumption, setWeeklyConsumption] = useState<WeeklyRawMaterialConsumption[]>([])
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
+  const [pipeDataLoaded, setPipeDataLoaded] = useState(false)
   const reportRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
@@ -75,6 +76,7 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
 
     setLoading(true)
     setSearched(true)
+    setPipeDataLoaded(false)
     try {
       if (lineType === "bloques") {
         const { data, error } = await supabase
@@ -211,7 +213,7 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
               <Search className="h-4 w-4" />
               Buscar
             </Button>
-            <Button onClick={exportToPDF} disabled={lineType === "bloques" ? !averageMetrics : !searched} variant="outline" className="gap-2 bg-transparent">
+            <Button onClick={exportToPDF} disabled={lineType === "bloques" ? !averageMetrics : !pipeDataLoaded} variant="outline" className="gap-2 bg-transparent">
               <FileDown className="h-4 w-4" />
               Exportar PDF
             </Button>
@@ -246,7 +248,11 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
           </div>
           
           {/* Dashboard de Calidad */}
-          <PipeQualityDashboard startDate={startDate} endDate={endDate} />
+          <PipeQualityDashboard
+            startDate={startDate}
+            endDate={endDate}
+            onDataLoaded={(d) => setPipeDataLoaded(!!d && d.totals.total > 0)}
+          />
         </div>
         </>
       ) : (
