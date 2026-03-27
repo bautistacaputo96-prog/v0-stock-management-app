@@ -3,6 +3,7 @@
 import React from "react"
 
 import { useState, useEffect } from "react"
+import { usePlant } from "@/lib/plant-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -43,7 +44,8 @@ const PIPE_WEIGHTS_KG = {
 
 export function ProductionHistory() {
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<"bloques" | "caños">("bloques")
+  const { selectedPlant } = usePlant()
+  const [activeTab, setActiveTab] = useState<"bloques" | "caños">("caños")
   const [blockHistory, setBlockHistory] = useState<any[]>([])
   const [pipeHistory, setPipeHistory] = useState<any[]>([])
   const [cycleTimes, setCycleTimes] = useState<CycleTime[]>([])
@@ -374,27 +376,29 @@ export function ProductionHistory() {
         </CardContent>
       </Card>
 
-      {/* Selector de línea de producción */}
+      {/* Selector de línea de producción — bloques solo si la planta lo tiene */}
       <div className="flex gap-3 mb-4">
-        <button
-          type="button"
-          onClick={() => setActiveTab("bloques")}
-          className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-lg border-2 transition-all ${
-            activeTab === "bloques"
-              ? "border-blue-500 bg-blue-50 text-blue-700"
-              : "border-muted bg-background hover:border-blue-200 hover:bg-blue-50/50 text-muted-foreground"
-          }`}
-        >
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-            activeTab === "bloques" ? "bg-blue-500 text-white" : "bg-muted text-muted-foreground"
-          }`}>
-            <Factory className="h-5 w-5" />
-          </div>
-          <div className="text-left">
-            <div className={`font-bold text-lg ${activeTab === "bloques" ? "text-blue-700" : ""}`}>BLOQUES</div>
-            <div className="text-xs text-muted-foreground">{blockHistory.length} registros</div>
-          </div>
-        </button>
+        {selectedPlant !== "silke" && selectedPlant !== "villa-rosa" && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("bloques")}
+            className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-lg border-2 transition-all ${
+              activeTab === "bloques"
+                ? "border-blue-500 bg-blue-50 text-blue-700"
+                : "border-muted bg-background hover:border-blue-200 hover:bg-blue-50/50 text-muted-foreground"
+            }`}
+          >
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              activeTab === "bloques" ? "bg-blue-500 text-white" : "bg-muted text-muted-foreground"
+            }`}>
+              <Factory className="h-5 w-5" />
+            </div>
+            <div className="text-left">
+              <div className={`font-bold text-lg ${activeTab === "bloques" ? "text-blue-700" : ""}`}>BLOQUES</div>
+              <div className="text-xs text-muted-foreground">{blockHistory.length} registros</div>
+            </div>
+          </button>
+        )}
 
         <button
           type="button"

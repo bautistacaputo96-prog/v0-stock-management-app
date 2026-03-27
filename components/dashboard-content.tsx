@@ -92,22 +92,20 @@ export function DashboardContent() {
   const [showCumplimientoDetail, setShowCumplimientoDetail] = useState(false)
   
   // Determinar lineas disponibles segun planta:
-  // Villa Rosa: solo canos | Olivera/Silke: bloques y canos | Ranchos: usa otro dashboard
-  const availableLines = useMemo(() => 
-    selectedPlant === "villa-rosa" ? ["canos"] as const : ["bloques", "canos"] as const
+  // Villa Rosa y Silke: solo canos | Ranchos: usa otro dashboard
+  const availableLines = useMemo(() =>
+    ["canos"] as const
   , [selectedPlant])
-  
-  // Para Villa Rosa, siempre mostrar canos (no hay bloques)
+
+  // Siempre mostrar canos (bloques discontinuado en Silke)
   const [activeLine, setActiveLine] = useState<ActiveLine>("canos")
-  
-  // La linea efectiva: Villa Rosa siempre es canos, otras plantas usan el estado
-  const effectiveLine = selectedPlant === "villa-rosa" ? "canos" : activeLine
-  
-  // Actualizar linea activa cuando cambia la planta
+
+  // La linea efectiva siempre es canos
+  const effectiveLine: ActiveLine = "canos"
+
+  // Mantener activeLine en canos cuando cambia la planta
   useEffect(() => {
-    if (selectedPlant === "villa-rosa") {
-      setActiveLine("canos")
-    }
+    setActiveLine("canos")
   }, [selectedPlant])
   const [blockChartMetric, setBlockChartMetric] = useState<BlockChartMetric>("bandejas")
   const [pipeChartMetric, setPipeChartMetric] = useState<PipeChartMetric>("tnHora")

@@ -22,8 +22,7 @@ export function ProductionForm() {
   if (!selectedLine) {
     const lines = selectedPlant === "silke"
       ? [
-          { id: "bloques" as const, label: "BLOQUES", desc: "Linea de produccion de bloques", icon: Factory, color: "primary" },
-          { id: "caños" as const, label: "CANOS", desc: "Linea de produccion de canos", icon: Cylinder, color: "accent" },
+          { id: "caños" as const, label: "CANOS", desc: "Linea de produccion de canos", icon: Cylinder, color: "primary" },
         ]
       : selectedPlant === "villa-rosa"
       ? [
