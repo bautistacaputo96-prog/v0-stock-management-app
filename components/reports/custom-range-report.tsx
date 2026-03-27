@@ -37,6 +37,7 @@ import {
   ComposedChart,
 } from "recharts"
 import { PipeQualityDashboard } from "./pipe-quality-dashboard"
+import { usePlant } from "@/lib/plant-context"
 
 
 interface CustomRangeReportProps {
@@ -44,6 +45,7 @@ interface CustomRangeReportProps {
 }
 
 export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
+  const { selectedPlant } = usePlant()
   const [startDate, setStartDate] = useState(() => {
     const date = new Date()
     date.setDate(date.getDate() - 7)
@@ -251,6 +253,7 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
           <PipeQualityDashboard
             startDate={startDate}
             endDate={endDate}
+            plant={selectedPlant || undefined}
             onDataLoaded={(d) => setPipeDataLoaded(!!d && d.totals.total > 0)}
           />
         </div>

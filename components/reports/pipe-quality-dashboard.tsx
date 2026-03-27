@@ -61,11 +61,12 @@ interface QualityData {
 interface PipeQualityDashboardProps {
   startDate: string
   endDate: string
+  plant?: string
   onDataLoaded?: (data: QualityData | null) => void
 }
 
 export const PipeQualityDashboard = forwardRef<HTMLDivElement, PipeQualityDashboardProps>(
-  function PipeQualityDashboard({ startDate, endDate, onDataLoaded }, ref) {
+  function PipeQualityDashboard({ startDate, endDate, plant, onDataLoaded }, ref) {
     const [loading, setLoading] = useState(true)
     const [data, setData] = useState<QualityData | null>(null)
     const [prevPeriodData, setPrevPeriodData] = useState<QualityData | null>(null)
@@ -95,12 +96,13 @@ export const PipeQualityDashboard = forwardRef<HTMLDivElement, PipeQualityDashbo
 
     // Load unique responsibles for the period (unfiltered, for the dropdown)
     useEffect(() => {
-      supabase
+      let q = supabase
         .from("pipe_quality_control")
         .select("production_responsible_id")
         .gte("control_date", startDate)
         .lte("control_date", endDate)
-        .then(({ data: rows }) => {
+      if (plant) q = q.eq("plant", plant)
+      q.then(({ data: rows }) => {
           if (rows) {
             const ids = Array.from(
               new Set(rows.map((r) => String(r.production_responsible_id)).filter(Boolean))
@@ -110,10 +112,10 @@ export const PipeQualityDashboard = forwardRef<HTMLDivElement, PipeQualityDashbo
         })
     }, [startDate, endDate])
 
-    // Load data when dates or responsible filter changes
+    // Load data when dates, plant or responsible filter changes
     useEffect(() => {
       loadData()
-    }, [startDate, endDate, selectedResponsible])
+    }, [startDate, endDate, plant, selectedResponsible])
 
     async function loadData() {
       setLoading(true)
@@ -170,6 +172,7 @@ export const PipeQualityDashboard = forwardRef<HTMLDivElement, PipeQualityDashbo
         .lte("control_date", to)
         .order("control_date", { ascending: true })
 
+      if (plant) query = query.eq("plant", plant)
       if (responsibleId !== undefined) {
         query = query.eq("production_responsible_id", responsibleId)
       }
@@ -200,11 +203,13 @@ export const PipeQualityDashboard = forwardRef<HTMLDivElement, PipeQualityDashbo
       const planningByDateByDiameter: Record<string, Record<number, number>> = {}
 
       for (const { year, month } of months) {
-        const { data: planning } = await supabase
+        let planQuery = supabase
           .from("production_planning")
           .select("*")
           .eq("year", year)
           .eq("month", month)
+        if (plant) planQuery = planQuery.eq("plant", plant)
+        const { data: planning } = await planQuery
 
         if (planning) {
           const daysInMonth = new Date(year, month, 0).getDate()
