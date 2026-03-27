@@ -55,7 +55,7 @@ export function VillaRosaProductionHistory() {
         .eq("plant", "villa-rosa")
         .order("production_date", { ascending: false })
         .order("shift", { ascending: false })
-        .limit(50)
+        .limit(500)
 
       if (pipeData) {
         setPipeHistory(pipeData)

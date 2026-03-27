@@ -94,7 +94,7 @@ export function ProductionHistory() {
         .select("*, block_downtime(*, downtime_reasons(*))")
         .order("production_date", { ascending: false })
         .order("shift", { ascending: false })
-        .limit(50)
+        .limit(500)
 
       if (blockData) {
         setBlockHistory(blockData)
@@ -107,7 +107,7 @@ export function ProductionHistory() {
         .or("plant.is.null,plant.eq.silke")
         .order("production_date", { ascending: false })
         .order("shift", { ascending: false })
-        .limit(50)
+        .limit(500)
 
       if (pipeData) {
         setPipeHistory(pipeData)
