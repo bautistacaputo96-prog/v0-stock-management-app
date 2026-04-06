@@ -16,7 +16,7 @@ export const PLANTS: Record<PlantId, PlantInfo> = {
     id: "silke",
     name: "SILKE",
     location: "Mercedes",
-    lines: ["Bloques", "Canos"],
+    lines: ["Canos"],
   },
   ranchos: {
     id: "ranchos",
