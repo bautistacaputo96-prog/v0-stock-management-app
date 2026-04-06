@@ -92,17 +92,18 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // 1. Obtener el último día con partes cargados para esta planta
+      // 1. Obtener el último día con producción real (al menos un caño producido)
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
         .eq("plant", plant)
+        .or("cc300_units.gt.0,cc400_units.gt.0,cc500_units.gt.0,cc600_units.gt.0,cc800_units.gt.0,cc1000_units.gt.0,cc1200_units.gt.0")
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
 
       if (lastErr || !lastRecord) {
-        setError("No hay partes diarios registrados aún.")
+        setError("No hay partes diarios con producción registrada aún.")
         setOpen(true)
         setLoading(false)
         return
