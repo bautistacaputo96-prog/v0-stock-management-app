@@ -15,8 +15,12 @@ const PLANT_SIZES: Record<string, string[]> = {
   "villa-rosa": ["800", "1000", "1200"],
 }
 
-const PRODUCTION_FILTER =
-  "cc300_units.gt.0,cc400_units.gt.0,cc500_units.gt.0,cc600_units.gt.0,cc800_units.gt.0,cc1000_units.gt.0,cc1200_units.gt.0"
+const UNIT_COLS = ["cc300_units", "cc400_units", "cc500_units", "cc600_units", "cc800_units", "cc1000_units", "cc1200_units"] as const
+const UNIT_SELECT = `production_date, ${UNIT_COLS.join(", ")}`
+
+function hasProduction(r: any): boolean {
+  return UNIT_COLS.some(col => (r[col] ?? 0) > 0)
+}
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -86,8 +90,8 @@ export function DailyProductionModal() {
   const [navLoading, setNavLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const [dayData, setDayData] = useState<DayData | null>(null)
-  const [hasPrev, setHasPrev] = useState(false)
-  const [hasNext, setHasNext] = useState(false)
+  const [prevDate, setPrevDate] = useState<string | null>(null)
+  const [nextDate, setNextDate] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const modalRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
@@ -125,29 +129,28 @@ export function DailyProductionModal() {
       if (val > 0) planning[row.pipe_size] = val
     }
 
-    // Verificar si hay día anterior o siguiente con producción
-    const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
+    // Buscar fechas anterior y siguiente con producción real (filtro en JS)
+    const [{ data: prevRecords }, { data: nextRecords }] = await Promise.all([
       supabase
         .from("pipe_production")
-        .select("production_date")
+        .select(UNIT_SELECT)
         .eq("plant", plant)
-        .or(PRODUCTION_FILTER)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
-        .limit(1)
-        .single(),
+        .limit(50),
       supabase
         .from("pipe_production")
-        .select("production_date")
+        .select(UNIT_SELECT)
         .eq("plant", plant)
-        .or(PRODUCTION_FILTER)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
-        .limit(1)
-        .single(),
+        .limit(50),
     ])
 
-    return { shift1, shift2, planning, hasPrev: !!prevRecord, hasNext: !!nextRecord }
+    const prevDate = prevRecords?.find(hasProduction)?.production_date ?? null
+    const nextDate = nextRecords?.find(hasProduction)?.production_date ?? null
+
+    return { shift1, shift2, planning, prevDate, nextDate }
   }, [supabase])
 
   const loadLastDay = useCallback(async () => {
@@ -156,28 +159,28 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      const { data: lastRecord, error: lastErr } = await supabase
+      // Buscar último día con producción real (filtro en JS sobre últimos 100 registros)
+      const { data: recent } = await supabase
         .from("pipe_production")
-        .select("production_date")
+        .select(UNIT_SELECT)
         .eq("plant", plant)
-        .or(PRODUCTION_FILTER)
         .order("production_date", { ascending: false })
-        .limit(1)
-        .single()
+        .limit(100)
 
-      if (lastErr || !lastRecord) {
+      const date = recent?.find(hasProduction)?.production_date ?? null
+
+      if (!date) {
         setError("No hay partes diarios con producción registrada aún.")
         setOpen(true)
         setLoading(false)
         return
       }
 
-      const date = lastRecord.production_date as string
-      const { shift1, shift2, planning, hasPrev: hp, hasNext: hn } = await fetchDayData(plant, date)
+      const { shift1, shift2, planning, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
 
       setDayData({ date, plant, shift1, shift2, planning })
-      setHasPrev(hp)
-      setHasNext(hn)
+      setPrevDate(pd)
+      setNextDate(nd)
       setError(null)
       setOpen(true)
     } catch {
@@ -190,35 +193,21 @@ export function DailyProductionModal() {
 
   const navigateDay = useCallback(async (direction: "prev" | "next") => {
     if (!dayData || navLoading) return
+    const date = direction === "prev" ? prevDate : nextDate
+    if (!date) return
     setNavLoading(true)
     try {
       const plant = dayData.plant
-      const currentDate = dayData.date
-
-      const { data: record } = await supabase
-        .from("pipe_production")
-        .select("production_date")
-        .eq("plant", plant)
-        .or(PRODUCTION_FILTER)
-        [direction === "prev" ? "lt" : "gt"]("production_date", currentDate)
-        .order("production_date", { ascending: direction === "next" })
-        .limit(1)
-        .single()
-
-      if (!record) return
-
-      const date = record.production_date as string
-      const { shift1, shift2, planning, hasPrev: hp, hasNext: hn } = await fetchDayData(plant, date)
-
+      const { shift1, shift2, planning, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
       setDayData({ date, plant, shift1, shift2, planning })
-      setHasPrev(hp)
-      setHasNext(hn)
+      setPrevDate(pd)
+      setNextDate(nd)
     } catch {
       // silently ignore nav errors
     } finally {
       setNavLoading(false)
     }
-  }, [dayData, navLoading, supabase, fetchDayData])
+  }, [dayData, navLoading, prevDate, nextDate, fetchDayData])
 
   const handleFullscreen = () => {
     if (modalRef.current) {
@@ -289,8 +278,8 @@ export function DailyProductionModal() {
             ) : (
               <ModalContent
                 dayData={dayData}
-                hasPrev={hasPrev}
-                hasNext={hasNext}
+                hasPrev={!!prevDate}
+                hasNext={!!nextDate}
                 navLoading={navLoading}
                 onPrev={() => navigateDay("prev")}
                 onNext={() => navigateDay("next")}
