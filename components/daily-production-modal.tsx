@@ -129,26 +129,28 @@ export function DailyProductionModal() {
       if (val > 0) planning[row.pipe_size] = val
     }
 
-    // Buscar fechas anterior y siguiente con producción real (filtro en JS)
-    const [{ data: prevRecords }, { data: nextRecords }] = await Promise.all([
+    // Buscar fecha anterior y siguiente
+    const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
       supabase
         .from("pipe_production")
-        .select(UNIT_SELECT)
+        .select("production_date")
         .eq("plant", plant)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
-        .limit(50),
+        .limit(1)
+        .single(),
       supabase
         .from("pipe_production")
-        .select(UNIT_SELECT)
+        .select("production_date")
         .eq("plant", plant)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
-        .limit(50),
+        .limit(1)
+        .single(),
     ])
 
-    const prevDate = prevRecords?.find(hasProduction)?.production_date ?? null
-    const nextDate = nextRecords?.find(hasProduction)?.production_date ?? null
+    const prevDate = (prevRecord as any)?.production_date ?? null
+    const nextDate = (nextRecord as any)?.production_date ?? null
 
     return { shift1, shift2, planning, prevDate, nextDate }
   }, [supabase])
@@ -159,22 +161,23 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // Buscar último día con producción real (filtro en JS sobre últimos 100 registros)
-      const { data: recent } = await supabase
+      // Obtener el último parte registrado para esta planta
+      const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
-        .select(UNIT_SELECT)
+        .select("production_date")
         .eq("plant", plant)
         .order("production_date", { ascending: false })
-        .limit(100)
+        .limit(1)
+        .single()
 
-      const date = recent?.find(hasProduction)?.production_date ?? null
-
-      if (!date) {
-        setError("No hay partes diarios con producción registrada aún.")
+      if (lastErr || !lastRecord) {
+        setError("No hay partes diarios registrados aún.")
         setOpen(true)
         setLoading(false)
         return
       }
+
+      const date = lastRecord.production_date as string
 
       const { shift1, shift2, planning, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
 
