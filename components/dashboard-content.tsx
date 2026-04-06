@@ -559,7 +559,6 @@ export function DashboardContent() {
                   Prod. Diaria
                 </button>
               </div>
-            )}
 
               {/* Boton de Planificacion - Solo para canos */}
               {effectiveLine === "canos" && (
