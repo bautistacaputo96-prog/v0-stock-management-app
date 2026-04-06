@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { usePlant } from "@/lib/plant-context"
 import { Button } from "@/components/ui/button"
-import { Tv2, X, Maximize2, Loader2 } from "lucide-react"
+import { Tv2, X, Maximize2, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -15,10 +15,13 @@ const PLANT_SIZES: Record<string, string[]> = {
   "villa-rosa": ["800", "1000", "1200"],
 }
 
+const PRODUCTION_FILTER =
+  "cc300_units.gt.0,cc400_units.gt.0,cc500_units.gt.0,cc600_units.gt.0,cc800_units.gt.0,cc1000_units.gt.0,cc1200_units.gt.0"
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface ShiftData {
-  [size: string]: number // unidades producidas por tamaño
+  [size: string]: number
 }
 
 interface DayData {
@@ -26,7 +29,7 @@ interface DayData {
   plant: string
   shift1: ShiftData
   shift2: ShiftData
-  planning: Record<string, number> // tamaño -> cantidad planificada ese día
+  planning: Record<string, number>
 }
 
 interface ShiftObjectives {
@@ -45,7 +48,7 @@ function calcObjectives(planning: Record<string, number>): ShiftObjectives {
   for (const [size, planned] of Object.entries(planning)) {
     const daily = Math.round(planned * 1.2)
     const t1 = Math.round(daily * (SHIFT_MINUTES[1] / SHIFT_MINUTES.total))
-    const t2 = daily - t1 // absorbe diferencia de redondeo
+    const t2 = daily - t1
     result[size] = { t1, t2, daily }
   }
   return result
@@ -80,11 +83,72 @@ function desvio(produced: number, objective: number) {
 export function DailyProductionModal() {
   const { selectedPlant } = usePlant()
   const [loading, setLoading] = useState(false)
+  const [navLoading, setNavLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const [dayData, setDayData] = useState<DayData | null>(null)
+  const [hasPrev, setHasPrev] = useState(false)
+  const [hasNext, setHasNext] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const modalRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
+
+  const fetchDayData = useCallback(async (plant: string, date: string) => {
+    // Producción del día
+    const { data: records } = await supabase
+      .from("pipe_production")
+      .select("shift, cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, cc1200_units")
+      .eq("plant", plant)
+      .eq("production_date", date)
+
+    const shift1: ShiftData = {}
+    const shift2: ShiftData = {}
+    for (const r of records || []) {
+      const target = r.shift === 1 ? shift1 : shift2
+      for (const size of ["300", "400", "500", "600", "800", "1000", "1200"]) {
+        const val = (r as any)[`cc${size}_units`] || 0
+        target[size] = (target[size] || 0) + val
+      }
+    }
+
+    // Planificación del día
+    const [y, m, d] = date.split("-").map(Number)
+    const { data: planRows } = await supabase
+      .from("production_planning")
+      .select(`pipe_size, day_${d}`)
+      .eq("year", y)
+      .eq("month", m)
+      .eq("plant", plant)
+
+    const planning: Record<string, number> = {}
+    for (const row of planRows || []) {
+      const val = (row as any)[`day_${d}`] || 0
+      if (val > 0) planning[row.pipe_size] = val
+    }
+
+    // Verificar si hay día anterior o siguiente con producción
+    const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
+      supabase
+        .from("pipe_production")
+        .select("production_date")
+        .eq("plant", plant)
+        .or(PRODUCTION_FILTER)
+        .lt("production_date", date)
+        .order("production_date", { ascending: false })
+        .limit(1)
+        .single(),
+      supabase
+        .from("pipe_production")
+        .select("production_date")
+        .eq("plant", plant)
+        .or(PRODUCTION_FILTER)
+        .gt("production_date", date)
+        .order("production_date", { ascending: true })
+        .limit(1)
+        .single(),
+    ])
+
+    return { shift1, shift2, planning, hasPrev: !!prevRecord, hasNext: !!nextRecord }
+  }, [supabase])
 
   const loadLastDay = useCallback(async () => {
     setLoading(true)
@@ -92,12 +156,11 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // 1. Obtener el último día con producción real (al menos un caño producido)
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
         .eq("plant", plant)
-        .or("cc300_units.gt.0,cc400_units.gt.0,cc500_units.gt.0,cc600_units.gt.0,cc800_units.gt.0,cc1000_units.gt.0,cc1200_units.gt.0")
+        .or(PRODUCTION_FILTER)
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
@@ -110,43 +173,11 @@ export function DailyProductionModal() {
       }
 
       const date = lastRecord.production_date as string
-
-      // 2. Traer todos los registros de ese día (turnos 1 y 2)
-      const { data: records } = await supabase
-        .from("pipe_production")
-        .select(
-          "shift, cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, cc1200_units"
-        )
-        .eq("plant", plant)
-        .eq("production_date", date)
-
-      const shift1: ShiftData = {}
-      const shift2: ShiftData = {}
-
-      for (const r of records || []) {
-        const target = r.shift === 1 ? shift1 : shift2
-        for (const size of ["300", "400", "500", "600", "800", "1000", "1200"]) {
-          const val = (r as any)[`cc${size}_units`] || 0
-          target[size] = (target[size] || 0) + val
-        }
-      }
-
-      // 3. Traer planificación del mes para ese día
-      const [y, m, d] = date.split("-").map(Number)
-      const { data: planRows } = await supabase
-        .from("production_planning")
-        .select(`pipe_size, day_${d}`)
-        .eq("year", y)
-        .eq("month", m)
-        .eq("plant", plant)
-
-      const planning: Record<string, number> = {}
-      for (const row of planRows || []) {
-        const val = (row as any)[`day_${d}`] || 0
-        if (val > 0) planning[row.pipe_size] = val
-      }
+      const { shift1, shift2, planning, hasPrev: hp, hasNext: hn } = await fetchDayData(plant, date)
 
       setDayData({ date, plant, shift1, shift2, planning })
+      setHasPrev(hp)
+      setHasNext(hn)
       setError(null)
       setOpen(true)
     } catch {
@@ -155,9 +186,39 @@ export function DailyProductionModal() {
     } finally {
       setLoading(false)
     }
-  }, [selectedPlant, supabase])
+  }, [selectedPlant, supabase, fetchDayData])
 
-  const handleOpen = () => loadLastDay()
+  const navigateDay = useCallback(async (direction: "prev" | "next") => {
+    if (!dayData || navLoading) return
+    setNavLoading(true)
+    try {
+      const plant = dayData.plant
+      const currentDate = dayData.date
+
+      const { data: record } = await supabase
+        .from("pipe_production")
+        .select("production_date")
+        .eq("plant", plant)
+        .or(PRODUCTION_FILTER)
+        [direction === "prev" ? "lt" : "gt"]("production_date", currentDate)
+        .order("production_date", { ascending: direction === "next" })
+        .limit(1)
+        .single()
+
+      if (!record) return
+
+      const date = record.production_date as string
+      const { shift1, shift2, planning, hasPrev: hp, hasNext: hn } = await fetchDayData(plant, date)
+
+      setDayData({ date, plant, shift1, shift2, planning })
+      setHasPrev(hp)
+      setHasNext(hn)
+    } catch {
+      // silently ignore nav errors
+    } finally {
+      setNavLoading(false)
+    }
+  }, [dayData, navLoading, supabase, fetchDayData])
 
   const handleFullscreen = () => {
     if (modalRef.current) {
@@ -174,8 +235,6 @@ export function DailyProductionModal() {
     setOpen(false)
   }
 
-  // ── Render del botón trigger ─────────────────────────────────────────────
-
   return (
     <>
       <div className="flex flex-col items-center justify-center py-16 gap-6">
@@ -187,15 +246,11 @@ export function DailyProductionModal() {
         </div>
         <Button
           size="lg"
-          onClick={handleOpen}
+          onClick={loadLastDay}
           disabled={loading}
           className="gap-2 text-base px-8 py-6 h-auto"
         >
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <Tv2 className="w-5 h-5" />
-          )}
+          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Tv2 className="w-5 h-5" />}
           {loading ? "Cargando..." : "Ver Producción del Día"}
         </Button>
       </div>
@@ -232,7 +287,14 @@ export function DailyProductionModal() {
                 <p className="text-xl text-gray-400">{error || "No hay partes diarios registrados aún."}</p>
               </div>
             ) : (
-              <ModalContent dayData={dayData} />
+              <ModalContent
+                dayData={dayData}
+                hasPrev={hasPrev}
+                hasNext={hasNext}
+                navLoading={navLoading}
+                onPrev={() => navigateDay("prev")}
+                onNext={() => navigateDay("next")}
+              />
             )}
           </div>
         </div>
@@ -243,11 +305,24 @@ export function DailyProductionModal() {
 
 // ── Contenido del modal ───────────────────────────────────────────────────────
 
-function ModalContent({ dayData }: { dayData: DayData }) {
+function ModalContent({
+  dayData,
+  hasPrev,
+  hasNext,
+  navLoading,
+  onPrev,
+  onNext,
+}: {
+  dayData: DayData
+  hasPrev: boolean
+  hasNext: boolean
+  navLoading: boolean
+  onPrev: () => void
+  onNext: () => void
+}) {
   const sizes = PLANT_SIZES[dayData.plant] || PLANT_SIZES["silke"]
   const objectives = calcObjectives(dayData.planning)
 
-  // Totales por turno
   const totalProducedT1 = sizes.reduce((s, sz) => s + (dayData.shift1[sz] || 0), 0)
   const totalProducedT2 = sizes.reduce((s, sz) => s + (dayData.shift2[sz] || 0), 0)
   const totalObjT1 = sizes.reduce((s, sz) => s + (objectives[sz]?.t1 || 0), 0)
@@ -269,12 +344,32 @@ function ModalContent({ dayData }: { dayData: DayData }) {
         <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white mb-2">
           PRODUCCIÓN vs. OBJETIVO
         </h1>
-        <div className="text-2xl text-gray-300 font-semibold">{formatDate(dayData.date)}</div>
+        {/* Navegación de fechas */}
+        <div className="flex items-center justify-center gap-4 mt-2">
+          <button
+            onClick={onPrev}
+            disabled={!hasPrev || navLoading}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 hover:text-white transition-colors"
+            title="Día anterior"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <div className="text-2xl text-gray-300 font-semibold min-w-[160px] text-center">
+            {navLoading ? <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-500" /> : formatDate(dayData.date)}
+          </div>
+          <button
+            onClick={onNext}
+            disabled={!hasNext || navLoading}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 hover:text-white transition-colors"
+            title="Día siguiente"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </button>
+        </div>
       </header>
 
       {/* Columnas por turno */}
       <div className="grid grid-cols-2 gap-6 flex-1">
-        {/* TURNO 1 */}
         <ShiftColumn
           label="TURNO 1"
           minutes={SHIFT_MINUTES[1]}
@@ -286,8 +381,6 @@ function ModalContent({ dayData }: { dayData: DayData }) {
           totalObj={totalObjT1}
           totalPct={totalPctT1}
         />
-
-        {/* TURNO 2 */}
         <ShiftColumn
           label="TURNO 2"
           minutes={SHIFT_MINUTES[2]}
@@ -353,13 +446,11 @@ function ShiftColumn({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      {/* Encabezado columna */}
       <div className="text-center pb-3 border-b border-gray-700">
         <div className="text-2xl md:text-3xl font-black text-white">{label}</div>
         <div className="text-gray-400 text-base">{minutes} min</div>
       </div>
 
-      {/* Filas por tamaño */}
       <div className="flex flex-col gap-2">
         {sizes.map((size) => {
           const prod = produced[size] || 0
@@ -394,7 +485,6 @@ function ShiftColumn({
         })}
       </div>
 
-      {/* Total del turno */}
       <div className="mt-auto pt-3 border-t border-gray-600 rounded-xl bg-gray-800/60 p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-base font-bold text-gray-300 uppercase tracking-wide">TOTAL TURNO</div>
