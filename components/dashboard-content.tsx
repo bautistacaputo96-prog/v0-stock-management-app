@@ -8,10 +8,11 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart,
 } from "recharts"
-import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays } from "lucide-react"
+import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2 } from "lucide-react"
 import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DailyProductionModal } from "@/components/daily-production-modal"
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ interface MonthData {
   pipeDailyTargets: Record<number, number> // day -> total planificado ese dia
   }
 
-type ActiveLine = "bloques" | "canos"
+type ActiveLine = "bloques" | "canos" | "produccion-diaria"
 type BlockChartMetric = "bandejas" | "descartados" | "paradas" | "horasProducidas"
 type PipeChartMetric = "tnHora" | "canos" | "tnTotal" | "paradas" | "canosVsPlan"
 type PipeFilter = "todos" | "3" | "4"
@@ -101,8 +102,8 @@ export function DashboardContent() {
   // Siempre mostrar canos (bloques discontinuado en Silke)
   const [activeLine, setActiveLine] = useState<ActiveLine>("canos")
 
-  // La linea efectiva siempre es canos
-  const effectiveLine: ActiveLine = "canos"
+  // La linea efectiva: si está en produccion-diaria, consideramos canos para los datos
+  const effectiveLine: ActiveLine = activeLine === "produccion-diaria" ? "canos" : activeLine
 
   // Mantener activeLine en canos cuando cambia la planta
   useEffect(() => {
@@ -520,42 +521,45 @@ export function DashboardContent() {
                 </button>
               </div>
 
-              {/* Line Tabs - Solo mostrar si hay mas de una linea disponible */}
-              {availableLines.length > 1 ? (
-                <div className="flex items-center gap-1.5 bg-muted rounded-lg p-1">
-                  {availableLines.includes("bloques") && (
-                    <button
-                      onClick={() => setActiveLine("bloques")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                        effectiveLine === "bloques"
-                          ? "bg-card text-foreground shadow-sm border border-border"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Factory className="w-3.5 h-3.5" />
-                      Bloques
-                    </button>
-                  )}
-                  {availableLines.includes("canos") && (
-                    <button
-                      onClick={() => setActiveLine("canos")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                        effectiveLine === "canos"
-                          ? "bg-card text-foreground shadow-sm border border-border"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Cylinder className="w-3.5 h-3.5" />
-                      Canos
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted rounded-lg text-xs font-medium text-foreground">
+              {/* Line Tabs */}
+              <div className="flex items-center gap-1.5 bg-muted rounded-lg p-1">
+                {availableLines.includes("bloques") && (
+                  <button
+                    onClick={() => setActiveLine("bloques")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      effectiveLine === "bloques"
+                        ? "bg-card text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Factory className="w-3.5 h-3.5" />
+                    Bloques
+                  </button>
+                )}
+                <button
+                  onClick={() => setActiveLine("canos")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    effectiveLine === "canos"
+                      ? "bg-card text-foreground shadow-sm border border-border"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
                   <Cylinder className="w-3.5 h-3.5" />
                   Canos
-                </div>
-              )}
+                </button>
+                <button
+                  onClick={() => setActiveLine("produccion-diaria")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    activeLine === "produccion-diaria"
+                      ? "bg-card text-foreground shadow-sm border border-border"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Tv2 className="w-3.5 h-3.5" />
+                  Prod. Diaria
+                </button>
+              </div>
+            )}
 
               {/* Boton de Planificacion - Solo para canos */}
               {effectiveLine === "canos" && (
@@ -1177,6 +1181,9 @@ export function DashboardContent() {
             </div>
           </>
         )}
+
+        {/* ═══ PRODUCCIÓN DIARIA ══════════════════════════════════════════ */}
+        {activeLine === "produccion-diaria" && <DailyProductionModal />}
 
       </div>
 
