@@ -15,11 +15,10 @@ const PLANT_SIZES: Record<string, string[]> = {
   "villa-rosa": ["800", "1000", "1200"],
 }
 
-const UNIT_COLS = ["cc300_units", "cc400_units", "cc500_units", "cc600_units", "cc800_units", "cc1000_units", "cc1200_units"] as const
-const UNIT_SELECT = `production_date, ${UNIT_COLS.join(", ")}`
+const SIZES = ["300", "400", "500", "600", "800", "1000", "1200"] as const
 
-function hasProduction(r: any): boolean {
-  return UNIT_COLS.some(col => (r[col] ?? 0) > 0)
+function sizeUnits(r: any, size: string): number {
+  return (r[`cc${size}_simples`] || 0) + (r[`cc${size}_armado`] || 0)
 }
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -97,10 +96,13 @@ export function DailyProductionModal() {
   const supabase = createClient()
 
   const fetchDayData = useCallback(async (plant: string, date: string) => {
-    // Producción del día
+    // Producción del día — columnas reales: cc{size}_simples, cc{size}_armado, etc.
+    const sizeCols = SIZES.flatMap(s => [
+      `cc${s}_simples`, `cc${s}_armado`, `cc${s}_rotura`, `cc${s}_rotura_armado`
+    ]).join(", ")
     const { data: records } = await supabase
       .from("pipe_production")
-      .select("shift, cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, cc1200_units")
+      .select(`shift, ${sizeCols}`)
       .eq("plant", plant)
       .eq("production_date", date)
 
@@ -108,8 +110,8 @@ export function DailyProductionModal() {
     const shift2: ShiftData = {}
     for (const r of records || []) {
       const target = r.shift === 1 ? shift1 : shift2
-      for (const size of ["300", "400", "500", "600", "800", "1000", "1200"]) {
-        const val = (r as any)[`cc${size}_units`] || 0
+      for (const size of SIZES) {
+        const val = sizeUnits(r, size)
         target[size] = (target[size] || 0) + val
       }
     }
