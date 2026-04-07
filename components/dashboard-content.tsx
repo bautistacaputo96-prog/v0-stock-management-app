@@ -150,6 +150,12 @@ export function DashboardContent() {
   const [pipeWeights, setPipeWeights] = useState<Record<string, number>>(PIPE_WEIGHTS_DEFAULT)
   const [showCumplimientoDetail, setShowCumplimientoDetail] = useState(false)
   const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
+  const [qualityData, setQualityData] = useState<{
+    totals: { first: number; second: number; broken: number; total: number }
+    byDiameter: Record<number, { first: number; second: number; broken: number; total: number }>
+    topDefects: { reason: string; category: string; total: number }[]
+    controlsCount: number
+  } | null>(null)
   
   // Determinar lineas disponibles segun planta:
   // Villa Rosa y Silke: solo canos | Ranchos: usa otro dashboard
@@ -214,6 +220,7 @@ export function DashboardContent() {
 
   async function loadData(monthIdx: number, year: number) {
     setLoading(true)
+    setQualityData(null)
     let supabase: ReturnType<typeof getSupabase>
     try {
       supabase = getSupabase()
@@ -311,6 +318,61 @@ export function DashboardContent() {
       }
     } catch {
       setMpData(materialNames.map(name => ({ name, stockTn: 0 })))
+    }
+
+    // Independent quality fetch — graceful fallback
+    try {
+      const { data: controls } = await supabase
+        .from("pipe_quality_control")
+        .select(`control_date, pipe_quality_items(diameter, first_quality, second_quality, broken, pipe_quality_defects(defect_reason_id, quantity))`)
+        .gte("control_date", cmStart)
+        .lte("control_date", cmEnd)
+
+      if (controls && controls.length > 0) {
+        // Fetch defect reasons
+        const { data: reasons } = await supabase
+          .from("pipe_defect_reasons")
+          .select("id, reason, category")
+          .eq("is_active", true)
+        const reasonsMap = new Map((reasons || []).map((r: any) => [r.id, r]))
+
+        const totals = { first: 0, second: 0, broken: 0, total: 0 }
+        const byDiameter: Record<number, { first: number; second: number; broken: number; total: number }> = {}
+        const defectMap = new Map<number, { reason: string; category: string; total: number }>()
+
+        for (const ctrl of controls as any[]) {
+          for (const item of ctrl.pipe_quality_items || []) {
+            const d = item.diameter
+            if (!byDiameter[d]) byDiameter[d] = { first: 0, second: 0, broken: 0, total: 0 }
+            byDiameter[d].first += item.first_quality || 0
+            byDiameter[d].second += item.second_quality || 0
+            byDiameter[d].broken += item.broken || 0
+            byDiameter[d].total += (item.first_quality || 0) + (item.second_quality || 0) + (item.broken || 0)
+            totals.first += item.first_quality || 0
+            totals.second += item.second_quality || 0
+            totals.broken += item.broken || 0
+            totals.total += (item.first_quality || 0) + (item.second_quality || 0) + (item.broken || 0)
+            for (const defect of item.pipe_quality_defects || []) {
+              const info = reasonsMap.get(defect.defect_reason_id) as any
+              if (!info) continue
+              if (!defectMap.has(defect.defect_reason_id)) {
+                defectMap.set(defect.defect_reason_id, { reason: info.reason, category: info.category, total: 0 })
+              }
+              defectMap.get(defect.defect_reason_id)!.total += defect.quantity || 0
+            }
+          }
+        }
+
+        const topDefects = Array.from(defectMap.values())
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 6)
+
+        setQualityData({ totals, byDiameter, topDefects, controlsCount: controls.length })
+      } else {
+        setQualityData(null)
+      }
+    } catch {
+      setQualityData(null)
     }
 
     setLoading(false)
@@ -1390,7 +1452,154 @@ export function DashboardContent() {
               </div>
             </div>
 
-            {/* ── Seccion 5: Materia prima ── */}
+            {/* ── Seccion 5: Calidad ── */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground" />
+                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Calidad del mes</h2>
+              </div>
+              {qualityData ? (
+                <div className="space-y-4">
+                  {/* KPI cards */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* Primera calidad */}
+                    <div className="bg-card rounded-lg border border-border p-4">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Primera calidad</div>
+                      <div className="text-2xl font-bold text-emerald-500">
+                        {qualityData.totals.total > 0 ? ((qualityData.totals.first / qualityData.totals.total) * 100).toFixed(1) : "—"}
+                        <span className="text-sm font-normal text-muted-foreground ml-0.5">%</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">{qualityData.totals.first.toLocaleString()} un.</div>
+                      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${qualityData.totals.total > 0 ? Math.min((qualityData.totals.first / qualityData.totals.total) * 100, 100) : 0}%` }} />
+                      </div>
+                    </div>
+                    {/* Segunda calidad */}
+                    <div className="bg-card rounded-lg border border-border p-4">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Segunda calidad</div>
+                      <div className={`text-2xl font-bold ${qualityData.totals.total > 0 && (qualityData.totals.second / qualityData.totals.total) * 100 <= 3 ? "text-amber-500" : "text-red-500"}`}>
+                        {qualityData.totals.total > 0 ? ((qualityData.totals.second / qualityData.totals.total) * 100).toFixed(1) : "—"}
+                        <span className="text-sm font-normal text-muted-foreground ml-0.5">%</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">{qualityData.totals.second.toLocaleString()} un.</div>
+                      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className={`h-full ${(qualityData.totals.second / qualityData.totals.total) * 100 <= 3 ? "bg-amber-500" : "bg-red-500"} rounded-full`} style={{ width: `${qualityData.totals.total > 0 ? Math.min((qualityData.totals.second / qualityData.totals.total) * 100 * 10, 100) : 0}%` }} />
+                      </div>
+                    </div>
+                    {/* Roturas */}
+                    <div className="bg-card rounded-lg border border-border p-4">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Roturas / desperdicio</div>
+                      <div className={`text-2xl font-bold ${qualityData.totals.total > 0 && (qualityData.totals.broken / qualityData.totals.total) * 100 <= 2 ? "text-amber-500" : "text-red-500"}`}>
+                        {qualityData.totals.total > 0 ? ((qualityData.totals.broken / qualityData.totals.total) * 100).toFixed(1) : "—"}
+                        <span className="text-sm font-normal text-muted-foreground ml-0.5">%</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">{qualityData.totals.broken.toLocaleString()} un.</div>
+                      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className={`h-full ${(qualityData.totals.broken / qualityData.totals.total) * 100 <= 2 ? "bg-amber-500" : "bg-red-500"} rounded-full`} style={{ width: `${qualityData.totals.total > 0 ? Math.min((qualityData.totals.broken / qualityData.totals.total) * 100 * 15, 100) : 0}%` }} />
+                      </div>
+                    </div>
+                    {/* Total controlado */}
+                    <div className="bg-card rounded-lg border border-border p-4">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Total controlado</div>
+                      <div className="text-2xl font-bold text-foreground">{qualityData.totals.total.toLocaleString()}<span className="text-sm font-normal text-muted-foreground ml-1">un.</span></div>
+                      <div className="text-[10px] text-muted-foreground mt-1">{qualityData.controlsCount} controles del mes</div>
+                    </div>
+                  </div>
+
+                  {/* Defectos + Desglose por diámetro */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Top defectos */}
+                    {qualityData.topDefects.length > 0 && (
+                      <div className="bg-card rounded-lg border border-border p-5">
+                        <h3 className="text-sm font-semibold text-foreground mb-3">Defectos más frecuentes</h3>
+                        <div className="space-y-2">
+                          {(() => {
+                            const totalDefects = qualityData.topDefects.reduce((s, d) => s + d.total, 0)
+                            return qualityData.topDefects.map((d, i) => {
+                              const pct = totalDefects > 0 ? (d.total / totalDefects) * 100 : 0
+                              return (
+                                <div key={i}>
+                                  <div className="flex items-center justify-between mb-0.5">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                      <span className="w-5 h-5 rounded-md bg-destructive/10 text-destructive text-[10px] flex items-center justify-center font-semibold flex-shrink-0">{i + 1}</span>
+                                      <div className="flex-1 min-w-0">
+                                        <span className="text-[11px] text-foreground truncate block">{d.reason}</span>
+                                        <span className="text-[9px] text-muted-foreground">{d.category}</span>
+                                      </div>
+                                    </div>
+                                    <div className="text-right ml-2 flex-shrink-0">
+                                      <span className="text-[11px] font-semibold text-foreground font-mono">{d.total}</span>
+                                      <span className="text-[9px] text-muted-foreground ml-1">({pct.toFixed(0)}%)</span>
+                                    </div>
+                                  </div>
+                                  <div className="h-1 bg-muted rounded-full overflow-hidden">
+                                    <div className="h-full bg-destructive/60 rounded-full" style={{ width: `${pct}%` }} />
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Desglose por diámetro */}
+                    {Object.keys(qualityData.byDiameter).length > 0 && (
+                      <div className="bg-card rounded-lg border border-border p-5">
+                        <h3 className="text-sm font-semibold text-foreground mb-3">Calidad por diámetro</h3>
+                        <div className="h-48">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={Object.entries(qualityData.byDiameter)
+                                .filter(([, v]) => v.total > 0)
+                                .sort(([a], [b]) => Number(a) - Number(b))
+                                .map(([diam, v]) => ({
+                                  name: `DN${diam}`,
+                                  primera: v.first,
+                                  segunda: v.second,
+                                  rotura: v.broken,
+                                }))}
+                              barSize={20}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                              <XAxis dataKey="name" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                              <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                              <Tooltip
+                                content={({ active, payload, label }) => {
+                                  if (!active || !payload) return null
+                                  const total = (payload[0]?.value as number || 0) + (payload[1]?.value as number || 0) + (payload[2]?.value as number || 0)
+                                  return (
+                                    <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
+                                      <div className="font-semibold mb-1">{label}</div>
+                                      {payload.map((p, i) => (
+                                        <div key={i} className="flex justify-between gap-4">
+                                          <span style={{ color: p.color }}>{p.name}:</span>
+                                          <span className="font-mono">{p.value} ({total > 0 ? ((p.value as number / total) * 100).toFixed(1) : 0}%)</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )
+                                }}
+                              />
+                              <Legend wrapperStyle={{ fontSize: 10 }} />
+                              <Bar dataKey="primera" name="1ra calidad" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
+                              <Bar dataKey="segunda" name="2da calidad" stackId="a" fill="#f59e0b" />
+                              <Bar dataKey="rotura" name="Rotura" stackId="a" fill="#ef4444" radius={[3, 3, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-card rounded-lg border border-border p-6 text-center text-muted-foreground text-xs">
+                  Sin datos de controles de calidad para {MONTH_NAMES[selectedMonthIdx]}
+                </div>
+              )}
+            </div>
+
+            {/* ── Seccion 6: Materia prima ── */}
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-3">
                 <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground" />
