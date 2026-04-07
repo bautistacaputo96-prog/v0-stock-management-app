@@ -36,8 +36,8 @@ import {
   Line,
   ComposedChart,
 } from "recharts"
-import { PipeQualityDashboard } from "./pipe-quality-dashboard"
-import { usePlant } from "@/lib/plant-context"
+import { PipeQualityDashboard, type QualityData } from "./pipe-quality-dashboard"
+import { PipeQualityExecutiveReport } from "./pipe-quality-executive-report"
 
 
 interface CustomRangeReportProps {
@@ -45,7 +45,6 @@ interface CustomRangeReportProps {
 }
 
 export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
-  const { selectedPlant } = usePlant()
   const [startDate, setStartDate] = useState(() => {
     const date = new Date()
     date.setDate(date.getDate() - 7)
@@ -60,8 +59,9 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
   const [weeklyConsumption, setWeeklyConsumption] = useState<WeeklyRawMaterialConsumption[]>([])
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
-  const [pipeDataLoaded, setPipeDataLoaded] = useState(false)
+  const [pipeQualityData, setPipeQualityData] = useState<QualityData | null>(null)
   const reportRef = useRef<HTMLDivElement>(null)
+  const pipeReportRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
   const supabase = getSupabase()
@@ -78,7 +78,6 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
 
     setLoading(true)
     setSearched(true)
-    setPipeDataLoaded(false)
     try {
       if (lineType === "bloques") {
         const { data, error } = await supabase
@@ -144,11 +143,12 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
   }
 
   async function exportToPDF() {
-    if (!reportRef.current) return
+    const targetRef = lineType === "caños" ? pipeReportRef : reportRef
+    if (!targetRef.current) return
 
     try {
       const { exportElementToPDF } = await import("@/lib/pdf-export")
-      await exportElementToPDF(reportRef.current, `informe-${startDate}-a-${endDate}.pdf`)
+      await exportElementToPDF(targetRef.current, `informe-calidad-canos-${startDate}-a-${endDate}.pdf`)
 
       toast({
         title: "PDF Generado",
@@ -215,7 +215,7 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
               <Search className="h-4 w-4" />
               Buscar
             </Button>
-            <Button onClick={exportToPDF} disabled={lineType === "bloques" ? !averageMetrics : !pipeDataLoaded} variant="outline" className="gap-2 bg-transparent">
+            <Button onClick={exportToPDF} disabled={lineType === "bloques" ? !averageMetrics : !pipeQualityData} variant="outline" className="gap-2 bg-transparent">
               <FileDown className="h-4 w-4" />
               Exportar PDF
             </Button>
@@ -241,22 +241,33 @@ export function CustomRangeReport({ lineType }: CustomRangeReportProps) {
         </Card>
       ) : lineType === "caños" ? (
         <>
-        <div ref={reportRef} className="space-y-4 bg-background">
-          <div className="text-center border-b pb-4">
-            <h2 className="text-xl font-bold">SILKE - Dashboard de Calidad de Canos</h2>
-            <p className="text-muted-foreground">
-              Periodo: {formatDateForDisplay(startDate)} - {formatDateForDisplay(endDate)}
-            </p>
+          <div className="space-y-4 bg-background">
+            <div className="text-center border-b pb-4">
+              <h2 className="text-xl font-bold">SILKE - Dashboard de Calidad de Caños</h2>
+              <p className="text-muted-foreground">
+                Periodo: {formatDateForDisplay(startDate)} - {formatDateForDisplay(endDate)}
+              </p>
+            </div>
+
+            <PipeQualityDashboard
+              startDate={startDate}
+              endDate={endDate}
+              onDataLoaded={(data) => setPipeQualityData(data)}
+            />
           </div>
-          
-          {/* Dashboard de Calidad */}
-          <PipeQualityDashboard
-            startDate={startDate}
-            endDate={endDate}
-            plant={selectedPlant || undefined}
-            onDataLoaded={(d) => setPipeDataLoaded(!!d && d.totals.total > 0)}
-          />
-        </div>
+
+          {/* Elemento oculto para exportar PDF ejecutivo */}
+          {pipeQualityData && (
+            <div style={{ position: "absolute", left: "-9999px", top: 0 }}>
+              <PipeQualityExecutiveReport
+                ref={pipeReportRef}
+                fromDate={startDate}
+                toDate={endDate}
+                reportData={pipeQualityData}
+                controlsCount={pipeQualityData.controlsCount}
+              />
+            </div>
+          )}
         </>
       ) : (
         <div ref={reportRef} className="space-y-4 bg-background p-4">
