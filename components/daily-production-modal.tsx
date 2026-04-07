@@ -100,10 +100,11 @@ export function DailyProductionModal() {
     const sizeCols = SIZES.flatMap(s => [
       `cc${s}_simples`, `cc${s}_armado`, `cc${s}_rotura`, `cc${s}_rotura_armado`
     ]).join(", ")
+    const plantFilter = plant === "villa-rosa" ? "plant.eq.villa-rosa" : "plant.eq.silke,plant.is.null"
     const { data: records } = await supabase
       .from("pipe_production")
       .select(`shift, ${sizeCols}`)
-      .eq("plant", plant)
+      .or(plantFilter)
       .eq("production_date", date)
 
     const shift1: ShiftData = {}
@@ -136,7 +137,7 @@ export function DailyProductionModal() {
       supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
+        .or(plantFilter)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
         .limit(1)
@@ -144,7 +145,7 @@ export function DailyProductionModal() {
       supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
+        .or(plantFilter)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
         .limit(1)
@@ -164,10 +165,11 @@ export function DailyProductionModal() {
       const plant = selectedPlant || "silke"
 
       // Obtener el último parte registrado para esta planta
+      const plantFilter = plant === "villa-rosa" ? "plant.eq.villa-rosa" : "plant.eq.silke,plant.is.null"
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
+        .or(plantFilter)
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
