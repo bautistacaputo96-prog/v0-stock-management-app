@@ -133,11 +133,13 @@ export function DailyProductionModal() {
       if (val > 0) planning[row.pipe_size] = val
     }
 
-    // Buscar fecha anterior y siguiente — sin filtro de plant
+    // Buscar fecha anterior y siguiente filtrando por planta
+    const plantFilter = plant === "villa-rosa" ? "villa-rosa" : "silke"
     const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
       supabase
         .from("pipe_production")
         .select("production_date")
+        .eq("plant", plantFilter)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
         .limit(1)
@@ -145,6 +147,7 @@ export function DailyProductionModal() {
       supabase
         .from("pipe_production")
         .select("production_date")
+        .eq("plant", plantFilter)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
         .limit(1)
@@ -163,10 +166,12 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // Obtener el último parte registrado — sin filtro de plant (como daily-report)
+      // Obtener el último parte de la planta seleccionada
+      const plantFilter = plant === "villa-rosa" ? "villa-rosa" : "silke"
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
+        .eq("plant", plantFilter)
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
