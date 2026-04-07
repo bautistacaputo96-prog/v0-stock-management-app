@@ -64,16 +64,16 @@ function compliance(produced: number, objective: number) {
 
 function complianceColor(pct: number | null) {
   if (pct === null) return "text-gray-400"
-  if (pct >= 100) return "text-green-400"
-  if (pct >= 80) return "text-yellow-400"
-  return "text-red-400"
+  if (pct >= 100) return "text-green-600"
+  if (pct >= 80) return "text-yellow-600"
+  return "text-red-600"
 }
 
 function complianceBg(pct: number | null) {
-  if (pct === null) return "bg-gray-800"
-  if (pct >= 100) return "bg-green-900/40 border border-green-600/30"
-  if (pct >= 80) return "bg-yellow-900/40 border border-yellow-600/30"
-  return "bg-red-900/40 border border-red-600/30"
+  if (pct === null) return "bg-gray-50 border border-gray-200"
+  if (pct >= 100) return "bg-green-50 border border-green-300"
+  if (pct >= 80) return "bg-yellow-50 border border-yellow-300"
+  return "bg-red-50 border border-red-300"
 }
 
 function desvio(produced: number, objective: number) {
@@ -257,21 +257,21 @@ export function DailyProductionModal() {
       {open && (
         <div
           ref={modalRef}
-          className="fixed inset-0 z-50 bg-gray-950 text-white overflow-auto"
+          className="fixed inset-0 z-50 bg-white text-gray-900 overflow-hidden flex flex-col"
           style={{ fontFamily: "system-ui, sans-serif" }}
         >
           {/* Controles flotantes */}
-          <div className="absolute top-4 right-4 flex gap-2 z-10">
+          <div className="absolute top-3 right-3 flex gap-2 z-10">
             <button
               onClick={handleFullscreen}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
               title="Pantalla completa"
             >
               <Maximize2 className="w-5 h-5" />
             </button>
             <button
               onClick={handleClose}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
               title="Cerrar"
             >
               <X className="w-5 h-5" />
@@ -279,7 +279,7 @@ export function DailyProductionModal() {
           </div>
 
           {/* Contenido */}
-          <div className="min-h-screen p-6 md:p-10 flex flex-col">
+          <div className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
             {error || !dayData ? (
               <div className="flex-1 flex items-center justify-center">
                 <p className="text-xl text-gray-400">{error || "No hay partes diarios registrados aún."}</p>
@@ -335,39 +335,39 @@ function ModalContent({
   const plantLabel = dayData.plant === "villa-rosa" ? "VILLA ROSA" : "SILKE"
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto">
+    <div className="flex flex-col h-full w-full max-w-7xl mx-auto">
       {/* Encabezado */}
-      <header className="text-center border-b border-gray-700 pb-6">
-        <div className="text-gray-400 text-lg font-medium uppercase tracking-widest mb-1">{plantLabel}</div>
-        <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white mb-2">
+      <header className="flex-shrink-0 text-center border-b border-gray-200 pb-3 mb-3">
+        <div className="text-gray-500 text-sm font-medium uppercase tracking-widest mb-0.5">{plantLabel}</div>
+        <h1 className="text-3xl md:text-4xl font-black tracking-tight text-gray-900 mb-2">
           PRODUCCIÓN vs. OBJETIVO
         </h1>
         {/* Navegación de fechas */}
-        <div className="flex items-center justify-center gap-4 mt-2">
+        <div className="flex items-center justify-center gap-4">
           <button
             onClick={onPrev}
             disabled={!hasPrev || navLoading}
-            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 hover:text-white transition-colors"
+            className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 hover:text-gray-900 transition-colors"
             title="Día anterior"
           >
-            <ChevronLeft className="w-6 h-6" />
+            <ChevronLeft className="w-5 h-5" />
           </button>
-          <div className="text-2xl text-gray-300 font-semibold min-w-[160px] text-center">
-            {navLoading ? <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-500" /> : formatDate(dayData.date)}
+          <div className="text-xl text-gray-700 font-semibold min-w-[140px] text-center">
+            {navLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto text-gray-400" /> : formatDate(dayData.date)}
           </div>
           <button
             onClick={onNext}
             disabled={!hasNext || navLoading}
-            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 hover:text-white transition-colors"
+            className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 hover:text-gray-900 transition-colors"
             title="Día siguiente"
           >
-            <ChevronRight className="w-6 h-6" />
+            <ChevronRight className="w-5 h-5" />
           </button>
         </div>
       </header>
 
       {/* Columnas por turno */}
-      <div className="grid grid-cols-2 gap-6 flex-1">
+      <div className="grid grid-cols-2 gap-4 flex-1 min-h-0">
         <ShiftColumn
           label="TURNO 1"
           minutes={SHIFT_MINUTES[1]}
@@ -393,23 +393,23 @@ function ModalContent({
       </div>
 
       {/* Pie: cumplimiento total del día */}
-      <footer className="mt-auto border-t border-gray-700 pt-6">
+      <footer className="flex-shrink-0 border-t border-gray-200 pt-3 mt-3">
         <div className="flex items-center justify-center gap-8">
           <div className="text-center">
-            <div className="text-gray-400 text-sm uppercase tracking-widest mb-1">Total producido</div>
-            <div className="text-5xl font-black text-white">{totalProducedDay}</div>
-            <div className="text-gray-500 text-sm">unidades</div>
+            <div className="text-gray-500 text-xs uppercase tracking-widest mb-1">Total producido</div>
+            <div className="text-4xl font-black text-gray-900">{totalProducedDay}</div>
+            <div className="text-gray-400 text-xs">unidades</div>
           </div>
-          <div className="w-px h-20 bg-gray-700" />
+          <div className="w-px h-14 bg-gray-200" />
           <div className="text-center">
-            <div className="text-gray-400 text-sm uppercase tracking-widest mb-1">Objetivo del día</div>
-            <div className="text-5xl font-black text-white">{totalObjDay}</div>
-            <div className="text-gray-500 text-sm">unidades</div>
+            <div className="text-gray-500 text-xs uppercase tracking-widest mb-1">Objetivo del día</div>
+            <div className="text-4xl font-black text-gray-900">{totalObjDay}</div>
+            <div className="text-gray-400 text-xs">unidades</div>
           </div>
-          <div className="w-px h-20 bg-gray-700" />
+          <div className="w-px h-14 bg-gray-200" />
           <div className="text-center">
-            <div className="text-gray-400 text-sm uppercase tracking-widest mb-1">Cumplimiento del día</div>
-            <div className={`text-6xl font-black ${complianceColor(totalPctDay)}`}>
+            <div className="text-gray-500 text-xs uppercase tracking-widest mb-1">Cumplimiento del día</div>
+            <div className={`text-5xl font-black ${complianceColor(totalPctDay)}`}>
               {totalPctDay !== null ? `${totalPctDay}%` : "—"}
             </div>
           </div>
@@ -443,37 +443,37 @@ function ShiftColumn({
   totalPct: number | null
 }) {
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-center pb-3 border-b border-gray-700">
-        <div className="text-2xl md:text-3xl font-black text-white">{label}</div>
-        <div className="text-gray-400 text-base">{minutes} min</div>
+    <div className="flex flex-col h-full">
+      <div className="text-center pb-2 border-b border-gray-200 flex-shrink-0">
+        <div className="text-xl md:text-2xl font-black text-gray-900">{label}</div>
+        <div className="text-gray-500 text-sm">{minutes} min</div>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 flex-1 min-h-0 justify-evenly py-2">
         {sizes.map((size) => {
           const prod = produced[size] || 0
           const obj = objectives[size]?.[shiftKey] || 0
           const pct = compliance(prod, obj)
           return (
-            <div key={size} className={`rounded-xl p-4 ${complianceBg(pct)}`}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-xl font-bold text-white">DN {size}</div>
+            <div key={size} className={`rounded-xl p-3 ${complianceBg(pct)}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-lg font-bold text-gray-900">DN {size}</div>
                 <div className={`text-2xl font-black ${complianceColor(pct)}`}>
                   {pct !== null ? `${pct}%` : "—"}
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <div className="text-gray-400 text-xs uppercase tracking-wide mb-1">Objetivo</div>
-                  <div className="text-xl font-bold text-gray-200">{obj}</div>
+                  <div className="text-gray-500 text-xs uppercase tracking-wide mb-0.5">Objetivo</div>
+                  <div className="text-lg font-bold text-gray-700">{obj}</div>
                 </div>
                 <div>
-                  <div className="text-gray-400 text-xs uppercase tracking-wide mb-1">Producido</div>
-                  <div className="text-xl font-bold text-white">{prod}</div>
+                  <div className="text-gray-500 text-xs uppercase tracking-wide mb-0.5">Producido</div>
+                  <div className="text-lg font-bold text-gray-900">{prod}</div>
                 </div>
                 <div>
-                  <div className="text-gray-400 text-xs uppercase tracking-wide mb-1">Desvío</div>
-                  <div className={`text-xl font-bold ${prod - obj >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  <div className="text-gray-500 text-xs uppercase tracking-wide mb-0.5">Desvío</div>
+                  <div className={`text-lg font-bold ${prod - obj >= 0 ? "text-green-600" : "text-red-600"}`}>
                     {desvio(prod, obj)}
                   </div>
                 </div>
@@ -483,25 +483,25 @@ function ShiftColumn({
         })}
       </div>
 
-      <div className="mt-auto pt-3 border-t border-gray-600 rounded-xl bg-gray-800/60 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-base font-bold text-gray-300 uppercase tracking-wide">TOTAL TURNO</div>
-          <div className={`text-3xl font-black ${complianceColor(totalPct)}`}>
+      <div className="flex-shrink-0 pt-2 border-t border-gray-200 rounded-xl bg-gray-50 p-3 mt-1">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-sm font-bold text-gray-700 uppercase tracking-wide">TOTAL TURNO</div>
+          <div className={`text-2xl font-black ${complianceColor(totalPct)}`}>
             {totalPct !== null ? `${totalPct}%` : "—"}
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
-            <div className="text-gray-500 text-xs mb-1">Objetivo</div>
-            <div className="text-2xl font-bold text-gray-200">{totalObj}</div>
+            <div className="text-gray-500 text-xs mb-0.5">Objetivo</div>
+            <div className="text-xl font-bold text-gray-700">{totalObj}</div>
           </div>
           <div>
-            <div className="text-gray-500 text-xs mb-1">Producido</div>
-            <div className="text-2xl font-bold text-white">{totalProduced}</div>
+            <div className="text-gray-500 text-xs mb-0.5">Producido</div>
+            <div className="text-xl font-bold text-gray-900">{totalProduced}</div>
           </div>
           <div>
-            <div className="text-gray-500 text-xs mb-1">Desvío</div>
-            <div className={`text-2xl font-bold ${totalProduced - totalObj >= 0 ? "text-green-400" : "text-red-400"}`}>
+            <div className="text-gray-500 text-xs mb-0.5">Desvío</div>
+            <div className={`text-xl font-bold ${totalProduced - totalObj >= 0 ? "text-green-600" : "text-red-600"}`}>
               {desvio(totalProduced, totalObj)}
             </div>
           </div>
