@@ -15,11 +15,10 @@ const PLANT_SIZES: Record<string, string[]> = {
   "villa-rosa": ["800", "1000", "1200"],
 }
 
-const UNIT_COLS = ["cc300_units", "cc400_units", "cc500_units", "cc600_units", "cc800_units", "cc1000_units", "cc1200_units"] as const
-const UNIT_SELECT = `production_date, ${UNIT_COLS.join(", ")}`
+const SIZES = ["300", "400", "500", "600", "800", "1000", "1200"] as const
 
-function hasProduction(r: any): boolean {
-  return UNIT_COLS.some(col => (r[col] ?? 0) > 0)
+function sizeUnits(r: any, size: string): number {
+  return (r[`cc${size}_simples`] || 0) + (r[`cc${size}_armado`] || 0)
 }
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -97,31 +96,36 @@ export function DailyProductionModal() {
   const supabase = createClient()
 
   const fetchDayData = useCallback(async (plant: string, date: string) => {
-    // Producción del día
+    // Producción del día — sin filtro de plant (igual que daily-report)
+    const sizeCols = SIZES.flatMap(s => [
+      `cc${s}_simples`, `cc${s}_armado`, `cc${s}_rotura`, `cc${s}_rotura_armado`
+    ]).join(", ")
     const { data: records } = await supabase
       .from("pipe_production")
-      .select("shift, cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, cc1200_units")
-      .eq("plant", plant)
+      .select(`shift, plant, ${sizeCols}`)
       .eq("production_date", date)
+
+    // Filtrar por planta en JS: silke incluye plant=null y plant="silke"
+    const isMatch = (r: any) =>
+      plant === "villa-rosa" ? r.plant === "villa-rosa" : r.plant !== "villa-rosa"
 
     const shift1: ShiftData = {}
     const shift2: ShiftData = {}
-    for (const r of records || []) {
+    for (const r of (records || []).filter(isMatch)) {
       const target = r.shift === 1 ? shift1 : shift2
-      for (const size of ["300", "400", "500", "600", "800", "1000", "1200"]) {
-        const val = (r as any)[`cc${size}_units`] || 0
+      for (const size of SIZES) {
+        const val = sizeUnits(r, size)
         target[size] = (target[size] || 0) + val
       }
     }
 
-    // Planificación del día
+    // Planificación del día (no tiene columna plant, es global)
     const [y, m, d] = date.split("-").map(Number)
     const { data: planRows } = await supabase
       .from("production_planning")
       .select(`pipe_size, day_${d}`)
       .eq("year", y)
       .eq("month", m)
-      .eq("plant", plant)
 
     const planning: Record<string, number> = {}
     for (const row of planRows || []) {
@@ -129,12 +133,11 @@ export function DailyProductionModal() {
       if (val > 0) planning[row.pipe_size] = val
     }
 
-    // Buscar fecha anterior y siguiente
+    // Buscar fecha anterior y siguiente — sin filtro de plant
     const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
       supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
         .limit(1)
@@ -142,7 +145,6 @@ export function DailyProductionModal() {
       supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
         .limit(1)
@@ -161,11 +163,10 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // Obtener el último parte registrado para esta planta
+      // Obtener el último parte registrado — sin filtro de plant (como daily-report)
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
-        .eq("plant", plant)
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
