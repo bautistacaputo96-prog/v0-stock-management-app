@@ -96,20 +96,22 @@ export function DailyProductionModal() {
   const supabase = createClient()
 
   const fetchDayData = useCallback(async (plant: string, date: string) => {
-    // Producción del día — columnas reales: cc{size}_simples, cc{size}_armado, etc.
+    // Producción del día — sin filtro de plant (igual que daily-report)
     const sizeCols = SIZES.flatMap(s => [
       `cc${s}_simples`, `cc${s}_armado`, `cc${s}_rotura`, `cc${s}_rotura_armado`
     ]).join(", ")
-    const plantFilter = plant === "villa-rosa" ? "plant.eq.villa-rosa" : "plant.eq.silke,plant.is.null"
     const { data: records } = await supabase
       .from("pipe_production")
-      .select(`shift, ${sizeCols}`)
-      .or(plantFilter)
+      .select(`shift, plant, ${sizeCols}`)
       .eq("production_date", date)
+
+    // Filtrar por planta en JS: silke incluye plant=null y plant="silke"
+    const isMatch = (r: any) =>
+      plant === "villa-rosa" ? r.plant === "villa-rosa" : r.plant !== "villa-rosa"
 
     const shift1: ShiftData = {}
     const shift2: ShiftData = {}
-    for (const r of records || []) {
+    for (const r of (records || []).filter(isMatch)) {
       const target = r.shift === 1 ? shift1 : shift2
       for (const size of SIZES) {
         const val = sizeUnits(r, size)
@@ -117,7 +119,7 @@ export function DailyProductionModal() {
       }
     }
 
-    // Planificación del día (no tiene columna plant, es global por planta)
+    // Planificación del día (no tiene columna plant, es global)
     const [y, m, d] = date.split("-").map(Number)
     const { data: planRows } = await supabase
       .from("production_planning")
@@ -131,12 +133,11 @@ export function DailyProductionModal() {
       if (val > 0) planning[row.pipe_size] = val
     }
 
-    // Buscar fecha anterior y siguiente
+    // Buscar fecha anterior y siguiente — sin filtro de plant
     const [{ data: prevRecord }, { data: nextRecord }] = await Promise.all([
       supabase
         .from("pipe_production")
         .select("production_date")
-        .or(plantFilter)
         .lt("production_date", date)
         .order("production_date", { ascending: false })
         .limit(1)
@@ -144,7 +145,6 @@ export function DailyProductionModal() {
       supabase
         .from("pipe_production")
         .select("production_date")
-        .or(plantFilter)
         .gt("production_date", date)
         .order("production_date", { ascending: true })
         .limit(1)
@@ -163,12 +163,10 @@ export function DailyProductionModal() {
     try {
       const plant = selectedPlant || "silke"
 
-      // Obtener el último parte registrado para esta planta
-      const plantFilter = plant === "villa-rosa" ? "plant.eq.villa-rosa" : "plant.eq.silke,plant.is.null"
+      // Obtener el último parte registrado — sin filtro de plant (como daily-report)
       const { data: lastRecord, error: lastErr } = await supabase
         .from("pipe_production")
         .select("production_date")
-        .or(plantFilter)
         .order("production_date", { ascending: false })
         .limit(1)
         .single()
