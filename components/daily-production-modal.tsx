@@ -117,14 +117,13 @@ export function DailyProductionModal() {
       }
     }
 
-    // Planificación del día
+    // Planificación del día (no tiene columna plant, es global por planta)
     const [y, m, d] = date.split("-").map(Number)
     const { data: planRows } = await supabase
       .from("production_planning")
       .select(`pipe_size, day_${d}`)
       .eq("year", y)
       .eq("month", m)
-      .eq("plant", plant)
 
     const planning: Record<string, number> = {}
     for (const row of planRows || []) {
