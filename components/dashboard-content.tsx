@@ -8,7 +8,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart,
 } from "recharts"
-import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2 } from "lucide-react"
+import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2, AlertTriangle, LayoutGrid } from "lucide-react"
 import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -80,6 +80,63 @@ function ComparisonCard({ label, current, previous, unit, decimals = 1, invert =
   )
 }
 
+// ── OEE Gauge ──────────────────────────────────────────────────────────────
+
+function OeeGauge({ label, value, target = 85 }: { label: string; value: number; target?: number }) {
+  const isOk = value >= target
+  return (
+    <div className="bg-card rounded-lg border border-border p-4">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">{label}</div>
+      <div className={`text-3xl font-bold ${isOk ? "text-emerald-500" : "text-amber-500"}`}>
+        {value}<span className="text-sm font-normal text-muted-foreground ml-0.5">%</span>
+      </div>
+      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+        <div
+          className={`h-full ${isOk ? "bg-emerald-500" : "bg-amber-500"} rounded-full`}
+          style={{ width: `${Math.min(value, 100)}%` }}
+        />
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-1">Obj: {target}%</div>
+    </div>
+  )
+}
+
+// ── MP Card ────────────────────────────────────────────────────────────────
+
+function MpCard({ name, stockTn }: { name: string; stockTn: number }) {
+  return (
+    <div className="bg-card rounded-lg border border-border p-4">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">{name}</div>
+      {stockTn > 0 ? (
+        <div className="text-xl font-bold text-foreground">
+          {stockTn.toFixed(1)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span>
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground mt-2">Sin datos de stock</div>
+      )}
+    </div>
+  )
+}
+
+// ── Week Trend ─────────────────────────────────────────────────────────────
+
+function WeekTrend({ label, current, previous }: { label: string; current: number; previous: number }) {
+  const pct = previous > 0 ? ((current - previous) / previous * 100) : 0
+  const up = pct > 0
+  return (
+    <div className="text-center">
+      <div className="text-xs font-medium text-foreground">{label}</div>
+      <div className="text-lg font-bold">{current}</div>
+      {previous > 0 && (
+        <div className={`text-[10px] font-semibold flex items-center justify-center gap-0.5 ${up ? "text-emerald-500" : "text-red-500"}`}>
+          {up ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+          {Math.abs(pct).toFixed(0)}%
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export function DashboardContent() {
@@ -92,6 +149,7 @@ export function DashboardContent() {
   const [prevMonth, setPrevMonth] = useState<MonthData | null>(null)
   const [pipeWeights, setPipeWeights] = useState<Record<string, number>>(PIPE_WEIGHTS_DEFAULT)
   const [showCumplimientoDetail, setShowCumplimientoDetail] = useState(false)
+  const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
   
   // Determinar lineas disponibles segun planta:
   // Villa Rosa y Silke: solo canos | Ranchos: usa otro dashboard
@@ -229,6 +287,32 @@ export function DashboardContent() {
 
     setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes))
     setPrevMonth(processMonthData(pmBlocks.data || [], pmPipes.data || [], weights, {}, {}, []))
+
+    // Independent mp_receipts fetch — graceful fallback
+    const SILKE_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
+    const VR_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
+    const materialNames = selectedPlant === "villa-rosa" ? VR_MATERIALS : SILKE_MATERIALS
+    try {
+      const { data: mpResult } = await supabase
+        .from("mp_receipts")
+        .select("material_name, quantity_tn, receipt_date")
+        .eq("plant", plantValue)
+        .gte("receipt_date", cmStart)
+        .lte("receipt_date", cmEnd)
+
+      if (mpResult && mpResult.length > 0) {
+        const stockMap: Record<string, number> = {}
+        mpResult.forEach((r: any) => {
+          stockMap[r.material_name] = (stockMap[r.material_name] || 0) + (r.quantity_tn || 0)
+        })
+        setMpData(materialNames.map(name => ({ name, stockTn: stockMap[name] || 0 })))
+      } else {
+        setMpData(materialNames.map(name => ({ name, stockTn: 0 })))
+      }
+    } catch {
+      setMpData(materialNames.map(name => ({ name, stockTn: 0 })))
+    }
+
     setLoading(false)
   }
 
@@ -421,6 +505,62 @@ export function DashboardContent() {
     const avgParadas = pipeChartData.reduce((s, d) => s + d.paradas, 0) / n
     return { avgTnHora, avgCanos, avgTnTotal, avgParadas }
   }, [pipeChartData])
+
+  // ── Weekly pipe data ──────────────────────────────────────────────────
+  const weeklyPipeData = useMemo(() => {
+    if (!currentMonth) return []
+    const weeks = [
+      { label: "Sem 1", range: [1, 7] },
+      { label: "Sem 2", range: [8, 14] },
+      { label: "Sem 3", range: [15, 21] },
+      { label: "Sem 4", range: [22, 31] },
+    ]
+    const getTotForRange = (range: number[]) =>
+      currentMonth.pipeDailyData
+        .filter(d => { const day = parseInt(d.date.split("-")[2]); return day >= range[0] && day <= range[1] })
+        .reduce((s, d) => s + d.totalUnits, 0)
+
+    return weeks.map((w, i) => ({
+      label: w.label,
+      current: getTotForRange(w.range),
+      previous: i > 0 ? getTotForRange(weeks[i - 1].range) : 0,
+    }))
+  }, [currentMonth])
+
+  // ── OEE for pipes ────────────────────────────────────────────────────
+  const oeeData = useMemo(() => {
+    if (!currentMonth || currentMonth.pipeDailyData.length === 0) return null
+    const d = currentMonth.pipeDailyData
+    const totalAvail = d.reduce((s, x) => s + x.availableMinutes, 0)
+    const totalEffective = d.reduce((s, x) => s + x.effectiveMinutes, 0)
+    const id = totalAvail > 0 ? (totalEffective / totalAvail) * 100 : 0
+    // IR: caños/hora vs referencia 8 caños/hora
+    const totalUnits = d.reduce((s, x) => s + x.totalUnits, 0)
+    const totalAvailH = totalAvail / 60
+    const ir = totalAvailH > 0 ? Math.min((totalUnits / (totalAvailH * 8)) * 100, 100) : 0
+    const oee = (id * ir) / 100
+    return { id: Math.round(id), ir: Math.round(ir), oee: Math.round(oee) }
+  }, [currentMonth])
+
+  // ── Pipe alerts ──────────────────────────────────────────────────────
+  const pipeAlerts = useMemo(() => {
+    const result: string[] = []
+    if (!currentMonth || currentMonth.pipeDailyData.length < 2) return result
+    // Consecutive days without production
+    const sortedDates = currentMonth.pipeDailyData
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+    let maxConsec = 0
+    let curr = 0
+    sortedDates.forEach(d => {
+      if (d.totalUnits === 0) { curr++; maxConsec = Math.max(maxConsec, curr) }
+      else curr = 0
+    })
+    if (maxConsec >= 2) result.push(`${maxConsec} dias consecutivos sin produccion`)
+    // KPI below target 3+ consecutive days (tnPerHour < 0.5 as threshold)
+    if (cmPipeStats && cmPipeStats.tnPerHour < 0.5) result.push("Tn/hora debajo del objetivo")
+    return result
+  }, [currentMonth, cmPipeStats])
 
   // ── Pipe vs Plan aggregated by size ────────────────────────────────────
   const pipeVsPlanData = useMemo(() => {
@@ -772,16 +912,29 @@ export function DashboardContent() {
         {/* ═══ CANOS ═════════════════════════════════════════════════════ */}
         {effectiveLine === "canos" && (
           <>
-            {/* Month comparison cards */}
+            {/* ── Seccion 1: Alertas ── */}
+            {pipeAlerts.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-5 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Alertas activas:</span>
+                {pipeAlerts.map((a, i) => (
+                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-600 text-white">
+                    {a}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* ── Seccion 2: KPIs del mes ── */}
             {cmPipeStats && (
               <section className="mb-6">
                 <div className="flex items-center gap-2 mb-3">
                   <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
                   <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-                    Comparacion con {MONTH_NAMES[prevMonthIdx]}
+                    KPIs del mes — comparacion con {MONTH_NAMES[prevMonthIdx]}
                   </h2>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
                   <ComparisonCard
                     label="Tn/Hora disponible"
                     current={cmPipeStats.tnPerHour}
@@ -894,6 +1047,50 @@ export function DashboardContent() {
                     </>
                   )
                 })()}
+              </div>
+            )}
+
+            {/* ── Seccion 3: Tendencia semanal ── */}
+            {weeklyPipeData.some(w => w.current > 0) && (
+              <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
+                <h3 className="text-sm font-semibold text-foreground mb-4">Tendencia semanal — canos producidos</h3>
+                <div className="h-48 mb-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={weeklyPipeData} barGap={4}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                      <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null
+                          return (
+                            <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
+                              <div className="font-semibold mb-1">{payload[0]?.payload?.label}</div>
+                              <div className="text-muted-foreground">Esta semana: <span className="font-bold text-foreground">{payload[0]?.value}</span></div>
+                              {payload[1] && <div className="text-muted-foreground">Semana ant.: <span className="font-bold text-foreground">{payload[1]?.value}</span></div>}
+                            </div>
+                          )
+                        }}
+                      />
+                      <Bar dataKey="current" name="Esta semana" fill="#1e3a5f" radius={[3, 3, 0, 0]} barSize={22} />
+                      <Bar dataKey="previous" name="Semana ant." fill="#94a3b8" radius={[3, 3, 0, 0]} barSize={22} fillOpacity={0.6} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="grid grid-cols-4 gap-2 pt-3 border-t border-border">
+                  {weeklyPipeData.map(w => (
+                    <WeekTrend key={w.label} label={w.label} current={w.current} previous={w.previous} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Seccion 4: OEE gauges ── */}
+            {oeeData && (
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <OeeGauge label="ID — Disponibilidad" value={oeeData.id} target={85} />
+                <OeeGauge label="IR — Rendimiento" value={oeeData.ir} target={80} />
+                <OeeGauge label="OEE" value={oeeData.oee} target={68} />
               </div>
             )}
 
@@ -1161,20 +1358,53 @@ export function DashboardContent() {
                   <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                 </div>
                 <p className="text-[10px] text-muted-foreground mb-3 uppercase tracking-wide">{MONTH_NAMES[selectedMonthIdx]}</p>
-                {currentMonth && currentMonth.pipeDowntimes.length > 0 ? (
-                  <div className="space-y-2">
-                    {currentMonth.pipeDowntimes.map((dt, idx) => (
-                      <div key={idx} className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <span className="w-5 h-5 rounded-md bg-destructive/10 text-destructive text-[10px] flex items-center justify-center font-semibold flex-shrink-0">{idx + 1}</span>
-                          <span className="text-[11px] text-foreground truncate">{dt.reason}</span>
-                        </div>
-                        <span className="text-[11px] font-semibold text-foreground ml-2 font-mono">{dt.minutes}m</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
+                {currentMonth && currentMonth.pipeDowntimes.length > 0 ? (() => {
+                  const totalMin = currentMonth.pipeDowntimes.reduce((s, d) => s + d.minutes, 0)
+                  return (
+                    <div className="space-y-2">
+                      {currentMonth.pipeDowntimes.map((dt, idx) => {
+                        const pct = totalMin > 0 ? Math.round((dt.minutes / totalMin) * 100) : 0
+                        return (
+                          <div key={idx}>
+                            <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className="w-5 h-5 rounded-md bg-destructive/10 text-destructive text-[10px] flex items-center justify-center font-semibold flex-shrink-0">{idx + 1}</span>
+                                <span className="text-[11px] text-foreground truncate">{dt.reason}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                                <span className="text-[11px] font-semibold text-foreground font-mono">{dt.minutes}m</span>
+                                <span className="text-[10px] text-muted-foreground">({pct}%)</span>
+                              </div>
+                            </div>
+                            <div className="ml-7 h-1 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full bg-destructive/50 rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })() : (
                   <div className="text-center py-6 text-muted-foreground text-xs">Sin paradas registradas</div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Seccion 5: Materia prima ── */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground" />
+                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Materia prima — ingresos del mes</h2>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {mpData.length > 0 ? (
+                  mpData.map(mp => <MpCard key={mp.name} name={mp.name} stockTn={mp.stockTn} />)
+                ) : (
+                  <>
+                    {["Arena", "Piedra 0/10", "Cemento", "Aditivos"].map(name => (
+                      <MpCard key={name} name={name} stockTn={0} />
+                    ))}
+                  </>
                 )}
               </div>
             </div>
