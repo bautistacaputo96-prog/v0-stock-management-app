@@ -5,7 +5,7 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck } from "lucide-react"
+import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
 
 const navItems = [
@@ -47,6 +47,11 @@ const navItems = [
     title: "RRHH",
     href: "/rrhh",
     icon: Users,
+  },
+  {
+    title: "Mantenimiento",
+    href: "/mantenimiento",
+    icon: Wrench,
   },
   {
     title: "Configuracion",
