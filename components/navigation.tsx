@@ -38,7 +38,11 @@ const navItems = [
     href: "/calidad",
     icon: ShieldCheck,
     children: [
+      { title: "Panel General", href: "/calidad" },
       { title: "Control Canos", href: "/calidad/canos" },
+      { title: "Dosificaciones", href: "/calidad/dosificaciones" },
+      { title: "Granulometria", href: "/calidad/granulometria" },
+      { title: "Humedad", href: "/calidad/humedad" },
       { title: "Ensayos", href: "/calidad/ensayos" },
       { title: "Parametros IRAM", href: "/calidad/parametros" },
     ],
