@@ -11,7 +11,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Plus, Fuel, Truck, Settings, TrendingUp } from "lucide-react"
+import { Plus, Fuel, Truck, Settings, TrendingUp, Edit2, Trash2, AlertTriangle, DollarSign } from "lucide-react"
+import { format } from "date-fns"
+import { es } from "date-fns/locale"
 
 interface Equipment {
   id: string
@@ -31,33 +33,50 @@ interface FuelRecord {
   total_cost: number | null
   odometer_reading: number | null
   hours_reading: number | null
+  horometer_reading: number | null
+  responsible_name: string | null
+  fuel_type: string | null
   notes: string | null
   equipment?: Equipment
+}
+
+interface FuelPrice {
+  id: string
+  plant: string
+  fuel_type: string
+  price_per_liter: number
+  updated_at: string
 }
 
 interface CombustibleModuleProps {
   plant: string
 }
 
-const FUEL_TYPES = ["Gasoil", "Nafta", "GNC"]
-const EQUIPMENT_TYPES = ["Pala Cargadora", "Autoelevador", "Camión", "Camioneta", "Otro"]
+const FUEL_TYPES = ["Gasoil", "Nafta Super", "Nafta Premium", "GNC"]
+const EQUIPMENT_TYPES = ["Pala Cargadora", "Autoelevador", "Camión", "Camioneta", "Grupo Electrógeno", "Compresor", "Otro"]
 
 export function CombustibleModule({ plant }: CombustibleModuleProps) {
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [fuelRecords, setFuelRecords] = useState<FuelRecord[]>([])
+  const [fuelPrices, setFuelPrices] = useState<FuelPrice[]>([])
   const [loading, setLoading] = useState(true)
   const [activeSubTab, setActiveSubTab] = useState("registros")
   
   // Dialogs
   const [showAddRecord, setShowAddRecord] = useState(false)
   const [showAddEquipment, setShowAddEquipment] = useState(false)
+  const [showEditEquipment, setShowEditEquipment] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showPricesDialog, setShowPricesDialog] = useState(false)
+  const [equipmentToDelete, setEquipmentToDelete] = useState<Equipment | null>(null)
   
   // Form states
   const [newRecord, setNewRecord] = useState({
     equipment_id: "",
     record_date: new Date().toISOString().split("T")[0],
     liters: 0,
-    cost_per_liter: 0,
+    responsible_name: "",
+    fuel_type: "Gasoil",
     odometer_reading: "",
     hours_reading: "",
     notes: ""
@@ -69,6 +88,16 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
     plate_number: "",
     fuel_type: "Gasoil"
   })
+
+  const [editEquipmentData, setEditEquipmentData] = useState({
+    id: "",
+    name: "",
+    equipment_type: "",
+    plate_number: "",
+    fuel_type: "Gasoil"
+  })
+
+  const [editingPrices, setEditingPrices] = useState<Record<string, string>>({})
 
   const supabase = createClient()
 
@@ -100,6 +129,21 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
         .order("created_at", { ascending: false })
         .limit(100)
       setFuelRecords(recordsData || [])
+
+      // Load fuel prices
+      const { data: pricesData } = await supabase
+        .from("maintenance_fuel_prices")
+        .select("*")
+        .eq("plant", plant)
+      
+      if (pricesData) {
+        setFuelPrices(pricesData)
+        const prices: Record<string, string> = {}
+        pricesData.forEach(p => {
+          prices[p.fuel_type] = p.price_per_liter.toString()
+        })
+        setEditingPrices(prices)
+      }
     } catch (error) {
       console.error("Error loading data:", error)
     } finally {
@@ -109,8 +153,17 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
 
   async function handleAddRecord(e: React.FormEvent) {
     e.preventDefault()
+    
+    if (!newRecord.responsible_name.trim()) {
+      alert("Ingrese el nombre del responsable")
+      return
+    }
+
     try {
-      const totalCost = newRecord.liters * newRecord.cost_per_liter
+      // Get current fuel price
+      const currentPrice = fuelPrices.find(p => p.fuel_type === newRecord.fuel_type)
+      const costPerLiter = currentPrice?.price_per_liter || 0
+      const totalCost = newRecord.liters * costPerLiter
 
       const { error } = await supabase
         .from("maintenance_fuel_records")
@@ -118,10 +171,12 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
           equipment_id: newRecord.equipment_id,
           record_date: newRecord.record_date,
           liters: newRecord.liters,
-          cost_per_liter: newRecord.cost_per_liter || null,
+          cost_per_liter: costPerLiter || null,
           total_cost: totalCost || null,
           odometer_reading: newRecord.odometer_reading ? parseFloat(newRecord.odometer_reading) : null,
-          hours_reading: newRecord.hours_reading ? parseFloat(newRecord.hours_reading) : null,
+          horometer_reading: newRecord.hours_reading ? parseFloat(newRecord.hours_reading) : null,
+          responsible_name: newRecord.responsible_name,
+          fuel_type: newRecord.fuel_type,
           notes: newRecord.notes || null,
           plant,
           created_by: sessionStorage.getItem("maintenance_user") || "Sistema"
@@ -134,7 +189,8 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
         equipment_id: "",
         record_date: new Date().toISOString().split("T")[0],
         liters: 0,
-        cost_per_liter: 0,
+        responsible_name: "",
+        fuel_type: "Gasoil",
         odometer_reading: "",
         hours_reading: "",
         notes: ""
@@ -142,6 +198,7 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
       loadData()
     } catch (error) {
       console.error("Error adding record:", error)
+      alert("Error al registrar la carga")
     }
   }
 
@@ -168,7 +225,103 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
       loadData()
     } catch (error) {
       console.error("Error adding equipment:", error)
+      alert("Error al agregar equipo")
     }
+  }
+
+  async function handleUpdateEquipment(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const { error } = await supabase
+        .from("maintenance_fuel_equipment")
+        .update({
+          name: editEquipmentData.name,
+          equipment_type: editEquipmentData.equipment_type,
+          plate_number: editEquipmentData.plate_number || null,
+          fuel_type: editEquipmentData.fuel_type
+        })
+        .eq("id", editEquipmentData.id)
+
+      if (error) throw error
+
+      setShowEditEquipment(false)
+      loadData()
+    } catch (error) {
+      console.error("Error updating equipment:", error)
+      alert("Error al actualizar equipo")
+    }
+  }
+
+  async function handleDeleteEquipment() {
+    if (!equipmentToDelete) return
+    
+    try {
+      const { error } = await supabase
+        .from("maintenance_fuel_equipment")
+        .update({ is_active: false })
+        .eq("id", equipmentToDelete.id)
+
+      if (error) throw error
+
+      setShowDeleteConfirm(false)
+      setEquipmentToDelete(null)
+      loadData()
+    } catch (error) {
+      console.error("Error deleting equipment:", error)
+      alert("Error al eliminar equipo")
+    }
+  }
+
+  async function handleSaveFuelPrice(fuelType: string) {
+    const price = parseFloat(editingPrices[fuelType] || "0")
+    if (isNaN(price) || price <= 0) {
+      alert("Ingrese un precio válido")
+      return
+    }
+
+    const existingPrice = fuelPrices.find(p => p.fuel_type === fuelType)
+
+    try {
+      if (existingPrice) {
+        const { error } = await supabase
+          .from("maintenance_fuel_prices")
+          .update({ price_per_liter: price, updated_at: new Date().toISOString() })
+          .eq("id", existingPrice.id)
+        
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from("maintenance_fuel_prices")
+          .insert({
+            plant,
+            fuel_type: fuelType,
+            price_per_liter: price
+          })
+        
+        if (error) throw error
+      }
+
+      loadData()
+    } catch (error) {
+      console.error("Error saving price:", error)
+      alert("Error al guardar precio")
+    }
+  }
+
+  function openEditEquipment(eq: Equipment) {
+    setEditEquipmentData({
+      id: eq.id,
+      name: eq.name,
+      equipment_type: eq.equipment_type,
+      plate_number: eq.plate_number || "",
+      fuel_type: eq.fuel_type || "Gasoil"
+    })
+    setShowEditEquipment(true)
+  }
+
+  function openDeleteConfirm(eq: Equipment) {
+    setEquipmentToDelete(eq)
+    setShowDeleteConfirm(true)
   }
 
   // Stats
@@ -204,6 +357,14 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
 
   return (
     <div className="space-y-4">
+      {/* Header with Prices button */}
+      <div className="flex justify-end">
+        <Button variant="outline" onClick={() => setShowPricesDialog(true)} className="gap-2">
+          <DollarSign className="h-4 w-4" />
+          Precios Combustible
+        </Button>
+      </div>
+
       <Tabs value={activeSubTab} onValueChange={setActiveSubTab}>
         <TabsList>
           <TabsTrigger value="registros">Registros</TabsTrigger>
@@ -273,7 +434,14 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                       <Label htmlFor="equipment">Equipo *</Label>
                       <Select
                         value={newRecord.equipment_id}
-                        onValueChange={(value) => setNewRecord({ ...newRecord, equipment_id: value })}
+                        onValueChange={(value) => {
+                          if (value === "__new__") {
+                            setShowAddRecord(false)
+                            setShowAddEquipment(true)
+                          } else {
+                            setNewRecord({ ...newRecord, equipment_id: value })
+                          }
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Seleccionar" />
@@ -284,42 +452,67 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                               {eq.name} ({eq.equipment_type})
                             </SelectItem>
                           ))}
+                          <SelectItem value="__new__" className="text-primary font-medium border-t mt-1 pt-1">
+                            <span className="flex items-center gap-2">
+                              <Plus className="h-4 w-4" />
+                              Agregar nuevo equipo...
+                            </span>
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="liters">Litros *</Label>
+                      <Label htmlFor="responsible">Responsable *</Label>
                       <Input
-                        id="liters"
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={newRecord.liters || ""}
-                        onChange={(e) => setNewRecord({ ...newRecord, liters: parseFloat(e.target.value) || 0 })}
+                        id="responsible"
+                        value={newRecord.responsible_name}
+                        onChange={(e) => setNewRecord({ ...newRecord, responsible_name: e.target.value })}
+                        placeholder="Nombre del responsable"
                         required
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="cost">Precio por Litro</Label>
-                      <Input
-                        id="cost"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={newRecord.cost_per_liter || ""}
-                        onChange={(e) => setNewRecord({ ...newRecord, cost_per_liter: parseFloat(e.target.value) || 0 })}
-                        placeholder="$/L"
-                      />
+                      <Label htmlFor="fuel_type">Tipo Combustible *</Label>
+                      <Select
+                        value={newRecord.fuel_type}
+                        onValueChange={(value) => setNewRecord({ ...newRecord, fuel_type: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FUEL_TYPES.map(ft => (
+                            <SelectItem key={ft} value={ft}>{ft}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                  {newRecord.liters > 0 && newRecord.cost_per_liter > 0 && (
-                    <div className="bg-muted p-3 rounded-lg text-center">
-                      <p className="text-sm text-muted-foreground">Costo Total</p>
-                      <p className="text-xl font-bold">${(newRecord.liters * newRecord.cost_per_liter).toLocaleString("es-AR")}</p>
-                    </div>
-                  )}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="liters">Litros *</Label>
+                    <Input
+                      id="liters"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={newRecord.liters || ""}
+                      onChange={(e) => setNewRecord({ ...newRecord, liters: parseFloat(e.target.value) || 0 })}
+                      required
+                    />
+                    {newRecord.liters > 0 && newRecord.fuel_type && (
+                      <p className="text-sm text-muted-foreground">
+                        Precio actual: ${fuelPrices.find(p => p.fuel_type === newRecord.fuel_type)?.price_per_liter?.toFixed(0) || "No configurado"}/L
+                        {fuelPrices.find(p => p.fuel_type === newRecord.fuel_type) && (
+                          <> - Total estimado: <span className="font-medium text-foreground">${(newRecord.liters * (fuelPrices.find(p => p.fuel_type === newRecord.fuel_type)?.price_per_liter || 0)).toLocaleString('es-AR', { minimumFractionDigits: 0 })}</span></>
+                        )}
+                      </p>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="odometer">Odómetro (km)</Label>
@@ -374,17 +567,18 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                   <TableRow>
                     <TableHead>Fecha</TableHead>
                     <TableHead>Equipo</TableHead>
+                    <TableHead>Responsable</TableHead>
+                    <TableHead>Combustible</TableHead>
                     <TableHead className="text-center">Litros</TableHead>
                     <TableHead className="text-center">$/L</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead className="text-center">Odóm./Horím.</TableHead>
-                    <TableHead>Notas</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {fuelRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                         No hay registros de combustible
                       </TableCell>
                     </TableRow>
@@ -400,23 +594,24 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                             <p className="text-xs text-muted-foreground">{record.equipment?.equipment_type}</p>
                           </div>
                         </TableCell>
+                        <TableCell>{record.responsible_name || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{record.fuel_type || "Gasoil"}</Badge>
+                        </TableCell>
                         <TableCell className="text-center font-medium">
                           {record.liters.toFixed(1)} L
                         </TableCell>
                         <TableCell className="text-center text-muted-foreground">
-                          {record.cost_per_liter ? `$${record.cost_per_liter.toFixed(2)}` : "-"}
+                          {record.cost_per_liter ? `$${record.cost_per_liter.toFixed(0)}` : "-"}
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {record.total_cost ? `$${record.total_cost.toLocaleString("es-AR")}` : "-"}
                         </TableCell>
                         <TableCell className="text-center text-xs text-muted-foreground">
                           {record.odometer_reading ? `${record.odometer_reading} km` : ""}
-                          {record.odometer_reading && record.hours_reading ? " / " : ""}
-                          {record.hours_reading ? `${record.hours_reading} hs` : ""}
-                          {!record.odometer_reading && !record.hours_reading ? "-" : ""}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground max-w-[150px] truncate">
-                          {record.notes || "-"}
+                          {record.odometer_reading && record.horometer_reading ? " / " : ""}
+                          {record.horometer_reading ? `${record.horometer_reading} hs` : ""}
+                          {!record.odometer_reading && !record.horometer_reading ? "-" : ""}
                         </TableCell>
                       </TableRow>
                     ))
@@ -448,7 +643,7 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                         </div>
                         <div>
                           <p className="font-medium">{eq.name}</p>
-                          <p className="text-sm text-muted-foreground">{eq.equipment_type} • {eq.recordCount} cargas</p>
+                          <p className="text-sm text-muted-foreground">{eq.equipment_type} - {eq.recordCount} cargas</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -483,87 +678,10 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                 <CardTitle className="text-lg">Equipos</CardTitle>
                 <CardDescription>Equipos que consumen combustible</CardDescription>
               </div>
-              <Dialog open={showAddEquipment} onOpenChange={setShowAddEquipment}>
-                <DialogTrigger asChild>
-                  <Button size="sm">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Agregar Equipo
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Agregar Equipo</DialogTitle>
-                    <DialogDescription>
-                      Registre un nuevo equipo que consume combustible
-                    </DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={handleAddEquipment} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="eq_name">Nombre *</Label>
-                      <Input
-                        id="eq_name"
-                        value={newEquipment.name}
-                        onChange={(e) => setNewEquipment({ ...newEquipment, name: e.target.value })}
-                        placeholder="Ej: Pala CAT 1"
-                        required
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="eq_type">Tipo *</Label>
-                        <Select
-                          value={newEquipment.equipment_type}
-                          onValueChange={(value) => setNewEquipment({ ...newEquipment, equipment_type: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {EQUIPMENT_TYPES.map(type => (
-                              <SelectItem key={type} value={type}>
-                                {type}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="fuel_type">Combustible *</Label>
-                        <Select
-                          value={newEquipment.fuel_type}
-                          onValueChange={(value) => setNewEquipment({ ...newEquipment, fuel_type: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {FUEL_TYPES.map(type => (
-                              <SelectItem key={type} value={type}>
-                                {type}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="plate">Patente</Label>
-                      <Input
-                        id="plate"
-                        value={newEquipment.plate_number}
-                        onChange={(e) => setNewEquipment({ ...newEquipment, plate_number: e.target.value })}
-                        placeholder="ABC 123"
-                      />
-                    </div>
-                    <DialogFooter>
-                      <Button type="button" variant="outline" onClick={() => setShowAddEquipment(false)}>
-                        Cancelar
-                      </Button>
-                      <Button type="submit">Agregar</Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
+              <Button size="sm" onClick={() => setShowAddEquipment(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Agregar Equipo
+              </Button>
             </CardHeader>
             <CardContent>
               {equipment.length === 0 ? (
@@ -571,28 +689,259 @@ export function CombustibleModule({ plant }: CombustibleModuleProps) {
                   No hay equipos registrados
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {equipment.map(eq => (
-                    <div key={eq.id} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <Truck className="h-5 w-5 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">{eq.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {eq.equipment_type} • {eq.fuel_type}
-                            {eq.plate_number && ` • ${eq.plate_number}`}
-                          </p>
-                        </div>
-                      </div>
-                      <Badge variant="outline">{eq.fuel_type}</Badge>
-                    </div>
-                  ))}
-                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Patente</TableHead>
+                      <TableHead>Combustible</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {equipment.map(eq => (
+                      <TableRow key={eq.id}>
+                        <TableCell className="font-medium">{eq.name}</TableCell>
+                        <TableCell>{eq.equipment_type}</TableCell>
+                        <TableCell>{eq.plate_number || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{eq.fuel_type || "Gasoil"}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openEditEquipment(eq)}>
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => openDeleteConfirm(eq)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Dialog: Add Equipment */}
+      <Dialog open={showAddEquipment} onOpenChange={setShowAddEquipment}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Agregar Equipo</DialogTitle>
+            <DialogDescription>
+              Registre un nuevo equipo que consume combustible
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddEquipment} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="eq_name">Nombre *</Label>
+              <Input
+                id="eq_name"
+                value={newEquipment.name}
+                onChange={(e) => setNewEquipment({ ...newEquipment, name: e.target.value })}
+                placeholder="Ej: Pala CAT 950"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Tipo *</Label>
+                <Select
+                  value={newEquipment.equipment_type}
+                  onValueChange={(value) => setNewEquipment({ ...newEquipment, equipment_type: value })}
+                  required
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EQUIPMENT_TYPES.map(t => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Combustible</Label>
+                <Select
+                  value={newEquipment.fuel_type}
+                  onValueChange={(value) => setNewEquipment({ ...newEquipment, fuel_type: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FUEL_TYPES.map(ft => (
+                      <SelectItem key={ft} value={ft}>{ft}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="eq_plate">Patente (opcional)</Label>
+              <Input
+                id="eq_plate"
+                value={newEquipment.plate_number}
+                onChange={(e) => setNewEquipment({ ...newEquipment, plate_number: e.target.value })}
+                placeholder="ABC123"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowAddEquipment(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit">Agregar</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Edit Equipment */}
+      <Dialog open={showEditEquipment} onOpenChange={setShowEditEquipment}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Equipo</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateEquipment} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit_eq_name">Nombre *</Label>
+              <Input
+                id="edit_eq_name"
+                value={editEquipmentData.name}
+                onChange={(e) => setEditEquipmentData({ ...editEquipmentData, name: e.target.value })}
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Tipo *</Label>
+                <Select
+                  value={editEquipmentData.equipment_type}
+                  onValueChange={(value) => setEditEquipmentData({ ...editEquipmentData, equipment_type: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EQUIPMENT_TYPES.map(t => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Combustible</Label>
+                <Select
+                  value={editEquipmentData.fuel_type}
+                  onValueChange={(value) => setEditEquipmentData({ ...editEquipmentData, fuel_type: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FUEL_TYPES.map(ft => (
+                      <SelectItem key={ft} value={ft}>{ft}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_eq_plate">Patente (opcional)</Label>
+              <Input
+                id="edit_eq_plate"
+                value={editEquipmentData.plate_number}
+                onChange={(e) => setEditEquipmentData({ ...editEquipmentData, plate_number: e.target.value })}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowEditEquipment(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit">Guardar Cambios</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Delete Confirmation */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Confirmar Eliminación
+            </DialogTitle>
+            <DialogDescription>
+              ¿Está seguro que desea eliminar el equipo <strong>{equipmentToDelete?.name}</strong>?
+              <br /><br />
+              Esta acción no eliminará los registros de carga asociados, pero el equipo ya no estará disponible para nuevas cargas.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteEquipment}>
+              Eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Fuel Prices */}
+      <Dialog open={showPricesDialog} onOpenChange={setShowPricesDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5" />
+              Precios de Combustible
+            </DialogTitle>
+            <DialogDescription>
+              Configure el precio por litro de cada tipo de combustible. Estos precios se aplicarán automáticamente al registrar cargas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {FUEL_TYPES.map(fuelType => {
+              const existingPrice = fuelPrices.find(p => p.fuel_type === fuelType)
+              return (
+                <div key={fuelType} className="space-y-2">
+                  <Label>{fuelType}</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">$</span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={editingPrices[fuelType] || ""}
+                      onChange={(e) => setEditingPrices({ ...editingPrices, [fuelType]: e.target.value })}
+                      placeholder="0.00"
+                      className="flex-1"
+                    />
+                    <span className="text-muted-foreground">/L</span>
+                    <Button size="sm" onClick={() => handleSaveFuelPrice(fuelType)}>
+                      Guardar
+                    </Button>
+                  </div>
+                  {existingPrice && (
+                    <p className="text-xs text-muted-foreground">
+                      Última actualización: {format(new Date(existingPrice.updated_at), "dd/MM/yyyy HH:mm", { locale: es })}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setShowPricesDialog(false)}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
