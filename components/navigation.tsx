@@ -7,6 +7,7 @@ import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
+import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
 const navItems = [
   {
@@ -67,10 +68,14 @@ const navItems = [
 export function Navigation() {
   const pathname = usePathname()
   const { selectedPlant, setSelectedPlant, plantInfo } = usePlant()
+  const { user } = useAuth()
   const [plantDropdownOpen, setPlantDropdownOpen] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const navDropdownRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  // Filtrar items de navegación según el rol del usuario
+  const filteredNavItems = user ? navItems.filter(item => isRouteAllowed(user.role, item.href)) : []
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -141,7 +146,7 @@ export function Navigation() {
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-0.5">
-            {navItems.map((item) => {
+            {filteredNavItems.map((item) => {
               const Icon = item.icon
               const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
 
@@ -209,7 +214,7 @@ export function Navigation() {
 
         {/* Mobile navigation */}
         <div className="md:hidden flex gap-0.5 pb-2 overflow-x-auto -mx-1 px-1">
-          {navItems.flatMap((item) => {
+          {filteredNavItems.flatMap((item) => {
             if (item.children) {
               const ParentIcon = item.icon
               return item.children.map((child) => {

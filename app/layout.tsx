@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next"
 import { Inter, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { PlantProvider } from "@/lib/plant-context"
+import { AuthProvider } from "@/lib/auth-context"
 import "./globals.css"
 
 const _inter = Inter({ subsets: ["latin"] })
@@ -45,9 +46,11 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`font-sans antialiased`}>
-        <PlantProvider>
-          {children}
-        </PlantProvider>
+        <AuthProvider>
+          <PlantProvider>
+            {children}
+          </PlantProvider>
+        </AuthProvider>
         <Analytics />
       </body>
     </html>
