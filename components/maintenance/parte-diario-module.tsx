@@ -13,11 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Plus, Search, FileText, Trash2, Eye, Calendar, User, MapPin, Package } from "lucide-react"
 
-interface Section {
-  id: number
-  name: string
-}
-
 interface InventoryItem {
   id: number
   name: string
@@ -67,7 +62,6 @@ const AREAS_PREDEFINIDAS = [
 
 export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
   const [partes, setPartes] = useState<ParteDiario[]>([])
-  const [sections, setSections] = useState<Section[]>([])
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -100,14 +94,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
   async function loadData() {
     setLoading(true)
     try {
-      // Load sections
-      const { data: sectionsData } = await supabase
-        .from("maintenance_sections")
-        .select("*")
-        .eq("plant", plant)
-        .order("name")
-      setSections(sectionsData || [])
-
       // Load inventory items
       const { data: itemsData } = await supabase
         .from("maintenance_inventory")
@@ -122,7 +108,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
         .from("maintenance_parte_diario")
         .select(`
           *,
-          section:maintenance_sections(*),
           items:maintenance_parte_diario_items(
             *,
             item:maintenance_inventory(*)
@@ -157,7 +142,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
           parte_date: newParte.parte_date,
           operator_name: newParte.operator_name,
           area: newParte.area,
-          section_id: newParte.section_id || null,
           general_comment: newParte.general_comment || null
         })
         .select()
@@ -209,7 +193,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
         parte_date: new Date().toISOString().split("T")[0],
         operator_name: "",
         area: "",
-        section_id: "",
         general_comment: ""
       })
       setParteItems([])
@@ -238,7 +221,7 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
     
     // Add item (allow duplicates with different comments)
     setParteItems([...parteItems, { ...newItemEntry }])
-    setNewItemEntry({ item_id: "", quantity: 1, comment: "" })
+    setNewItemEntry({ item_id: 0, quantity: 1, comment: "" })
     setShowAddItem(false)
   }
 
@@ -359,51 +342,30 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="area">Área / Equipo Intervenido *</Label>
-                      <Select
-                        value={newParte.area}
-                        onValueChange={(value) => setNewParte({ ...newParte, area: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar área" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {AREAS_PREDEFINIDAS.map(area => (
-                            <SelectItem key={area} value={area}>
-                              {area}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {newParte.area === "Otro" && (
-                        <Input
-                          placeholder="Especifique el área..."
-                          onChange={(e) => setNewParte({ ...newParte, area: e.target.value })}
-                          className="mt-2"
-                        />
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="section">Sección (opcional)</Label>
-                      <Select
-                        value={newParte.section_id}
-                        onValueChange={(value) => setNewParte({ ...newParte, section_id: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar sección" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="">Sin sección</SelectItem>
-                          {sections.map(section => (
-                            <SelectItem key={section.id} value={section.id}>
-                              {section.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="area">Área / Equipo Intervenido *</Label>
+                    <Select
+                      value={newParte.area}
+                      onValueChange={(value) => setNewParte({ ...newParte, area: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar área" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {AREAS_PREDEFINIDAS.map(area => (
+                          <SelectItem key={area} value={area}>
+                            {area}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {newParte.area === "Otro" && (
+                      <Input
+                        placeholder="Especifique el área..."
+                        onChange={(e) => setNewParte({ ...newParte, area: e.target.value })}
+                        className="mt-2"
+                      />
+                    )}
                   </div>
                   
                   {/* Items/Insumos usados */}
@@ -425,15 +387,15 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
                             <div className="space-y-2">
                               <Label>Item del Pañol *</Label>
                               <Select
-                                value={newItemEntry.item_id}
-                                onValueChange={(value) => setNewItemEntry({ ...newItemEntry, item_id: value })}
+                                value={newItemEntry.item_id ? String(newItemEntry.item_id) : ""}
+                                onValueChange={(value) => setNewItemEntry({ ...newItemEntry, item_id: parseInt(value) })}
                               >
                                 <SelectTrigger>
                                   <SelectValue placeholder="Seleccionar item" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {inventoryItems.map(item => (
-                                    <SelectItem key={item.id} value={item.id}>
+                                    <SelectItem key={item.id} value={String(item.id)}>
                                       {item.name} {item.code ? `(${item.code})` : ''} - Stock: {item.current_stock} {item.unit}
                                     </SelectItem>
                                   ))}
