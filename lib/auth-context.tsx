@@ -106,6 +106,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push("/login")
   }
 
+  // Mostrar loading mientras se verifica la sesión
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground text-sm">Cargando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Si no hay usuario y no está en login, mostrar loading mientras redirige
+  if (!user && pathname !== "/login") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground text-sm">Redirigiendo...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <AuthContext.Provider value={{ user, login, logout, isLoading }}>
       {children}
