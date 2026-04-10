@@ -5,7 +5,7 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench } from "lucide-react"
+import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
 import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
@@ -68,7 +68,7 @@ const navItems = [
 export function Navigation() {
   const pathname = usePathname()
   const { selectedPlant, setSelectedPlant, plantInfo } = usePlant()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const [plantDropdownOpen, setPlantDropdownOpen] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -209,6 +209,18 @@ export function Navigation() {
                 </Link>
               )
             })}
+
+            {/* Logout button */}
+            {user && (
+              <button
+                onClick={logout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-red-100 hover:text-red-600 transition-colors ml-2"
+                title={`Cerrar sesión (${user.name})`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Salir
+              </button>
+            )}
           </div>
         </div>
 
