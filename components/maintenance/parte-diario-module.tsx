@@ -14,12 +14,12 @@ import { Badge } from "@/components/ui/badge"
 import { Plus, Search, FileText, Trash2, Eye, Calendar, User, MapPin, Package } from "lucide-react"
 
 interface Section {
-  id: string
+  id: number
   name: string
 }
 
 interface InventoryItem {
-  id: string
+  id: number
   name: string
   code: string | null
   unit: string
@@ -27,23 +27,21 @@ interface InventoryItem {
 }
 
 interface ParteDiarioItem {
-  id: string
-  parte_id: string
-  item_id: string
+  id: number
+  parte_id: number
+  item_id: number
   quantity: number
   comment: string | null
   item?: InventoryItem
 }
 
 interface ParteDiario {
-  id: string
+  id: number
   parte_date: string
   operator_name: string
   area: string
-  section_id: string | null
   general_comment: string | null
   created_at: string
-  section?: Section
   items?: ParteDiarioItem[]
 }
 
@@ -85,14 +83,13 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
     parte_date: new Date().toISOString().split("T")[0],
     operator_name: "",
     area: "",
-    section_id: "",
     general_comment: ""
   })
   
   // Items del parte
-  const [parteItems, setParteItems] = useState<{ item_id: string; quantity: number; comment: string }[]>([])
+  const [parteItems, setParteItems] = useState<{ item_id: number; quantity: number; comment: string }[]>([])
   const [showAddItem, setShowAddItem] = useState(false)
-  const [newItemEntry, setNewItemEntry] = useState({ item_id: "", quantity: 1, comment: "" })
+  const [newItemEntry, setNewItemEntry] = useState({ item_id: 0, quantity: 1, comment: "" })
 
   const supabase = createClient()
 
