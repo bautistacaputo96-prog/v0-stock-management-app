@@ -214,8 +214,19 @@ export function UnifiedPipeReport() {
       return null
     }
 
-    // Obtener fechas únicas con producción
-    const productionDates = new Set(productionData.map((p: any) => p.production_date))
+    // Filtrar solo días laborables (lunes a viernes) - la producción solo se carga L-V
+    const weekdayProductionData = productionData.filter((p: any) => {
+      const date = new Date(p.production_date + "T12:00:00")
+      const dayOfWeek = date.getDay() // 0 = Domingo, 6 = Sábado
+      return dayOfWeek !== 0 && dayOfWeek !== 6
+    })
+
+    if (weekdayProductionData.length === 0) {
+      return null
+    }
+
+    // Obtener fechas únicas con producción (solo días laborables)
+    const productionDates = new Set(weekdayProductionData.map((p: any) => p.production_date))
     const daysWorked = productionDates.size
 
     // Calcular producción por diámetro y totales
@@ -233,7 +244,7 @@ export function UnifiedPipeReport() {
     const downtimeData: Record<string, { minutes: number; comments: string[] }> = {}
     let totalDowntimeMinutes = 0
 
-    productionData.forEach((record: any) => {
+    weekdayProductionData.forEach((record: any) => {
       const dateKey = record.production_date
       if (!dailyProd[dateKey]) {
         dailyProd[dateKey] = { units: 0, weightKg: 0, scrapBoxes: 0, reprocessed: 0 }
