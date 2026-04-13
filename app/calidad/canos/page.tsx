@@ -1587,41 +1587,104 @@ export default function PipeQualityPage() {
               </CardContent>
             </Card>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-5 gap-4">
-              <Card className="bg-emerald-50 dark:bg-emerald-950/20">
-                <CardContent className="py-4 text-center">
-                  <p className="text-2xl font-bold text-emerald-600">{wasteData.totalProductionUnits}</p>
-                  <p className="text-xs text-muted-foreground">Producción Total (u)</p>
-                  <p className="text-sm font-medium text-emerald-600">{(wasteData.totalProductionKg / 1000).toFixed(2)} Tn</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-4 text-center">
-                  <p className="text-2xl font-bold text-orange-600">{wasteData.totalProductionBreakageUnits}</p>
-                  <p className="text-xs text-muted-foreground">Rotura Producción (u)</p>
-                  <p className="text-sm font-medium text-orange-600">{(wasteData.totalProductionBreakageKg / 1000).toFixed(2)} Tn</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-4 text-center">
-                  <p className="text-2xl font-bold text-red-600">{wasteData.totalControlBreakageUnits}</p>
-                  <p className="text-xs text-muted-foreground">Rotura Control (u)</p>
-                  <p className="text-sm font-medium text-red-600">{(wasteData.totalControlBreakageKg / 1000).toFixed(2)} Tn</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-4 text-center">
-                  <p className="text-2xl font-bold text-amber-600">{wasteData.totalScrapBoxes}</p>
-                  <p className="text-xs text-muted-foreground">Cajones Desperdicio</p>
-                  <p className="text-sm font-medium text-amber-600">{(wasteData.totalScrapBoxesKg / 1000).toFixed(2)} Tn</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-destructive/10">
-                <CardContent className="py-4 text-center">
-                  <p className="text-2xl font-bold text-destructive">{(wasteData.totalWasteKg / 1000).toFixed(2)} Tn</p>
-                  <p className="text-xs text-muted-foreground">Total Desperdicio</p>
-                  <p className="text-sm font-medium text-destructive">{wasteData.wastePercentage.toFixed(2)}% de producción</p>
+            {/* PARTE DIARIO - Cajones de Desperdicio */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                Parte Diario de Producción
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">Cajones de desperdicio cargados por el operario en el parte de producción</p>
+              <div className="grid grid-cols-3 gap-4">
+                <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-3xl font-bold text-amber-600">{wasteData.totalScrapBoxes}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Cajones Desperdicio</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-3xl font-bold text-amber-600">{(wasteData.totalScrapBoxesKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
+                    <p className="text-[10px] text-muted-foreground">({wasteData.scrapBoxWeight} kg/cajón)</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-3xl font-bold text-amber-600">
+                      {wasteData.totalProductionKg > 0 ? ((wasteData.totalScrapBoxesKg / wasteData.totalProductionKg) * 100).toFixed(2) : "0.00"}%
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">% vs Producción Total</p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* CONTROL DE CALIDAD - Segunda y Rotos */}
+            <div className="space-y-2 mt-6">
+              <h3 className="text-sm font-semibold text-orange-700 uppercase tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                Control de Calidad
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">Caños de segunda calidad y rotos registrados en el control de calidad</p>
+              <div className="grid grid-cols-4 gap-4">
+                <Card className="bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-emerald-600">{(wasteData.totalProductionKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Producción Total (Tn)</p>
+                    <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionUnits.toLocaleString()} unidades</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-orange-50 dark:bg-orange-950/20 border-orange-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-orange-600">{(wasteData.totalProductionBreakageKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Rotura Producción (Tn)</p>
+                    <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionBreakageUnits} unidades</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-red-50 dark:bg-red-950/20 border-red-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-red-600">{(wasteData.totalControlBreakageKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Rotura Control (Tn)</p>
+                    <p className="text-[10px] text-muted-foreground">{wasteData.totalControlBreakageUnits} unidades</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-red-100 dark:bg-red-950/30 border-red-300">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-red-700">
+                      {wasteData.totalProductionKg > 0 ? (((wasteData.totalProductionBreakageKg + wasteData.totalControlBreakageKg) / wasteData.totalProductionKg) * 100).toFixed(2) : "0.00"}%
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">% Rotura Total</p>
+                    <p className="text-[10px] text-muted-foreground">{((wasteData.totalProductionBreakageKg + wasteData.totalControlBreakageKg) / 1000).toFixed(2)} Tn</p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* RESUMEN TOTAL */}
+            <div className="space-y-2 mt-6">
+              <h3 className="text-sm font-semibold text-destructive uppercase tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-destructive"></span>
+                Resumen Total de Desperdicio
+              </h3>
+              <Card className="bg-destructive/10 border-destructive/30">
+                <CardContent className="py-4">
+                  <div className="grid grid-cols-3 gap-6 text-center">
+                    <div>
+                      <p className="text-3xl font-bold text-destructive">{(wasteData.totalWasteKg / 1000).toFixed(2)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Toneladas Totales</p>
+                      <p className="text-[10px] text-muted-foreground">Cajones + Rotura Prod + Rotura Control</p>
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold text-destructive">{wasteData.wastePercentage.toFixed(2)}%</p>
+                      <p className="text-xs text-muted-foreground mt-1">% de Producción Total</p>
+                    </div>
+                    <div className="text-left text-xs space-y-1">
+                      <p className="text-muted-foreground">Desglose:</p>
+                      <p className="text-amber-600">Cajones: {(wasteData.totalScrapBoxesKg / 1000).toFixed(2)} Tn ({wasteData.totalScrapBoxes} caj)</p>
+                      <p className="text-orange-600">Rotura Prod: {(wasteData.totalProductionBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalProductionBreakageUnits} u)</p>
+                      <p className="text-red-600">Rotura Control: {(wasteData.totalControlBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalControlBreakageUnits} u)</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
