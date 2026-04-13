@@ -994,25 +994,32 @@ export function ProductionHistory() {
                                     </div>
                                   </div>
                                   
-                                  {/* Desperdicio desde Control de Calidad */}
+                                  {/* Cajones de Desperdicio del Parte Diario */}
+                                  {record.scrap_boxes > 0 && (
+                                    <div className="mt-4 pt-4 border-t">
+                                      <p className="text-sm font-medium mb-2 text-amber-600">Cajones de Desperdicio (Parte Diario)</p>
+                                      <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3 inline-block">
+                                        <p className="text-xs text-muted-foreground">Desperdicio</p>
+                                        <p className="text-2xl font-bold text-amber-600">{record.scrap_boxes}</p>
+                                        <p className="text-xs text-muted-foreground">cajones</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Segunda y Rotos desde Control de Calidad */}
                                   {record.quality_waste && (record.quality_waste.second > 0 || record.quality_waste.broken > 0) && (
                                     <div className="mt-4 pt-4 border-t">
-                                      <p className="text-sm font-medium mb-2 text-amber-600">Cajones de Desperdicio (Control de Calidad)</p>
-                                      <div className="grid grid-cols-3 gap-4 text-sm">
-                                        <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                                      <p className="text-sm font-medium mb-2 text-orange-600">Segunda y Rotos (Control de Calidad)</p>
+                                      <div className="grid grid-cols-2 gap-4 text-sm">
+                                        <div className="bg-orange-50 dark:bg-orange-950/30 rounded-lg p-3">
                                           <p className="text-xs text-muted-foreground">Segunda</p>
-                                          <p className="text-lg font-bold text-amber-600">{record.quality_waste.second}</p>
-                                          <p className="text-xs text-muted-foreground">cajones</p>
+                                          <p className="text-lg font-bold text-orange-600">{record.quality_waste.second}</p>
+                                          <p className="text-xs text-muted-foreground">unidades</p>
                                         </div>
                                         <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
                                           <p className="text-xs text-muted-foreground">Rotos</p>
                                           <p className="text-lg font-bold text-red-600">{record.quality_waste.broken}</p>
-                                          <p className="text-xs text-muted-foreground">cajones</p>
-                                        </div>
-                                        <div className="bg-gray-50 dark:bg-gray-950/30 rounded-lg p-3">
-                                          <p className="text-xs text-muted-foreground">Total Desperdicio</p>
-                                          <p className="text-lg font-bold text-gray-700">{record.quality_waste.second + record.quality_waste.broken}</p>
-                                          <p className="text-xs text-muted-foreground">cajones</p>
+                                          <p className="text-xs text-muted-foreground">unidades</p>
                                         </div>
                                       </div>
                                     </div>
