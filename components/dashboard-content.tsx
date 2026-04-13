@@ -137,7 +137,7 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
   )
 }
 
-// ── Main Component ───────────────────────────────────��─────────────────────
+// ── Main Component ─────────────────────────────��─────��─────────────────────
 
 export function DashboardContent() {
   const { selectedPlant, plantName, isPlantLoaded } = usePlant()
@@ -152,10 +152,17 @@ export function DashboardContent() {
   const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
   const [qualityData, setQualityData] = useState<{
     totals: { first: number; second: number; broken: number; total: number }
+    totalsTn: { first: number; second: number; broken: number; total: number }
     byDiameter: Record<number, { first: number; second: number; broken: number; total: number }>
     topDefects: { reason: string; category: string; total: number }[]
     controlsCount: number
-    byDate: Record<string, { second: number; broken: number; total: number }>
+    byDate: Record<string, { second: number; broken: number; total: number; scrapBoxes: number }>
+  } | null>(null)
+  const [scrapData, setScrapData] = useState<{
+    totalBoxes: number
+    totalTn: number
+    boxWeightKg: number
+    byDate: Record<string, number>
   } | null>(null)
   
   // Determinar lineas disponibles segun planta:
@@ -378,12 +385,65 @@ export function DashboardContent() {
           .sort((a, b) => b.total - a.total)
           .slice(0, 6)
 
-        setQualityData({ totals, byDiameter, topDefects, controlsCount: controls.length, byDate })
+        // Calculate tonnage using weights
+        const totalsTn = { first: 0, second: 0, broken: 0, total: 0 }
+        Object.entries(byDiameter).forEach(([diam, data]) => {
+          const weight = weights[diam] || 0
+          totalsTn.first += (data.first * weight) / 1000
+          totalsTn.second += (data.second * weight) / 1000
+          totalsTn.broken += (data.broken * weight) / 1000
+        })
+        totalsTn.total = totalsTn.first + totalsTn.second + totalsTn.broken
+
+        setQualityData({ totals, totalsTn, byDiameter, topDefects, controlsCount: controls.length, byDate })
       } else {
         setQualityData(null)
       }
     } catch {
       setQualityData(null)
+    }
+
+    // Fetch scrap boxes from pipe_production (parte diario)
+    try {
+      // Get scrap box weight from product_config
+      const { data: scrapConfig } = await supabase
+        .from("product_config")
+        .select("piece_weight_kg")
+        .eq("product_code", "CAJON-DESP")
+        .eq("line_type", "caños")
+        .single()
+      
+      const boxWeightKg = scrapConfig?.piece_weight_kg || 150
+
+      // Get scrap boxes from production records
+      const { data: productionData } = await supabase
+        .from("pipe_production")
+        .select("production_date, scrap_boxes")
+        .gte("production_date", cmStart)
+        .lte("production_date", cmEnd)
+
+      if (productionData && productionData.length > 0) {
+        let totalBoxes = 0
+        const byDate: Record<string, number> = {}
+        
+        productionData.forEach((p: any) => {
+          const boxes = p.scrap_boxes || 0
+          totalBoxes += boxes
+          if (!byDate[p.production_date]) byDate[p.production_date] = 0
+          byDate[p.production_date] += boxes
+        })
+
+        setScrapData({
+          totalBoxes,
+          totalTn: (totalBoxes * boxWeightKg) / 1000,
+          boxWeightKg,
+          byDate
+        })
+      } else {
+        setScrapData(null)
+      }
+    } catch {
+      setScrapData(null)
     }
 
     setLoading(false)
@@ -520,7 +580,7 @@ export function DashboardContent() {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(d => {
           const availHours = d.availableMinutes / 60
-          const wasteData = qualityData?.byDate[d.date]
+          const scrapBoxes = scrapData?.byDate[d.date] || 0
           return {
             date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
             rawDate: d.date,
@@ -528,9 +588,7 @@ export function DashboardContent() {
             canos: d.totalUnits,
             tnTotal: Number(d.totalWeightTn.toFixed(2)),
             paradas: d.downtimeMin,
-            desperdicio: wasteData?.total || 0,
-            desperdicioSegunda: wasteData?.second || 0,
-            desperdicioRotos: wasteData?.broken || 0,
+            desperdicio: scrapBoxes,
             shift: "todos",
             operators: null,
             productionBySize: d.productionBySize,
@@ -543,7 +601,7 @@ export function DashboardContent() {
 
     return data.map(d => {
       const availHours = d.availableMinutes / 60
-      const wasteData = qualityData?.byDate[d.date]
+      const scrapBoxes = scrapData?.byDate[d.date] || 0
       return {
         date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
         rawDate: d.date,
@@ -551,15 +609,13 @@ export function DashboardContent() {
         canos: d.totalUnits,
         tnTotal: Number(d.totalWeightTn.toFixed(2)),
         paradas: d.downtimeMin,
-        desperdicio: wasteData?.total || 0,
-        desperdicioSegunda: wasteData?.second || 0,
-        desperdicioRotos: wasteData?.broken || 0,
+        desperdicio: scrapBoxes,
         shift: d.shift,
         operators: d.operatorsCount,
         productionBySize: d.productionBySize,
       }
     })
-  }, [currentMonth, pipeShiftFilter, pipeFilter, pipeMoldFilter, qualityData])
+  }, [currentMonth, pipeShiftFilter, pipeFilter, pipeMoldFilter, scrapData])
 
   // ── Pipe mold options ─────────────────────────────────────────────────
   const pipeMoldOptions = useMemo(() => {
@@ -634,7 +690,7 @@ export function DashboardContent() {
     return { avgTnHora, avgCanos, avgTnTotal, avgParadas, avgDesperdicio }
   }, [pipeChartData])
 
-  // ── Weekly pipe data ──────────────────────────────────────────────────
+  // ── Weekly pipe data ──────────────────��───────────────────────────────
   const weeklyPipeData = useMemo(() => {
     if (!currentMonth) return []
     const weeks = [
@@ -1117,20 +1173,38 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                     <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Total paradas del mes</div>
                   </div>
                 </div>
-                {/* Desperdicio del mes */}
-                {qualityData && (
+                {/* Desperdicio del mes - Cajones del parte diario */}
+                {scrapData && (
                   <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg p-4 flex items-center gap-4">
                     <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
                       <XCircle className="w-5 h-5 text-amber-600" />
                     </div>
                     <div>
                       <div className="text-2xl font-bold text-foreground">
-                        {qualityData.totals.second + qualityData.totals.broken}
-                        <span className="text-sm font-normal text-muted-foreground ml-1">caj</span>
+                        {scrapData.totalBoxes}
+                        <span className="text-sm font-normal text-muted-foreground ml-1">cajones</span>
                       </div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Desperdicio del mes</div>
                       <div className="text-[9px] text-amber-600 mt-0.5">
-                        2da: {qualityData.totals.second} | Rotos: {qualityData.totals.broken}
+                        {scrapData.totalTn.toFixed(2)} tn ({scrapData.boxWeightKg} kg/cajón)
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* Calidad - Segunda y Rotos */}
+                {qualityData && (
+                  <div className="bg-orange-500/5 border border-orange-500/15 rounded-lg p-4 flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {qualityData.totals.second + qualityData.totals.broken}
+                        <span className="text-sm font-normal text-muted-foreground ml-1">uds</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Segunda + Rotos</div>
+                      <div className="text-[9px] text-orange-600 mt-0.5">
+                        2da: {qualityData.totals.second} | Rotos: {qualityData.totals.broken} | {(qualityData.totalsTn.second + qualityData.totalsTn.broken).toFixed(2)} tn
                       </div>
                     </div>
                   </div>
