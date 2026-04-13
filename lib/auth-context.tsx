@@ -109,10 +109,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Mostrar loading mientras se verifica la sesión
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-zinc-950">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground text-sm">Cargando...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-zinc-500 text-sm">Cargando...</p>
         </div>
       </div>
     )
@@ -121,10 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Si no hay usuario y no está en login, mostrar loading mientras redirige
   if (!user && pathname !== "/login") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-zinc-950">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground text-sm">Redirigiendo...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-zinc-500 text-sm">Redirigiendo al login...</p>
         </div>
       </div>
     )
