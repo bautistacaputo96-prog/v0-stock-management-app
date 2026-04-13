@@ -372,7 +372,8 @@ export function UnifiedPipeReport() {
 
     const totalPlanned = Object.values(byDiameterPlanned).reduce((s, v) => s + v, 0)
 
-    // 5. Cargar control de calidad (solo para días con producción)
+    // 5. Cargar control de calidad (L-S, incluye sábados aunque no haya producción ese día)
+    // El control del sábado corresponde a caños producidos durante la semana
     const { data: qualityControls } = await supabase
       .from("pipe_quality_control")
       .select(`
@@ -388,10 +389,8 @@ export function UnifiedPipeReport() {
       .gte("control_date", periodStart)
       .lte("control_date", periodEnd)
 
-    // Filtrar solo controles de días con producción
-    const filteredQuality = qualityControls?.filter((qc: any) => 
-      productionDates.has(qc.control_date)
-    ) || []
+    // NO filtrar por días de producción - el control de calidad incluye sábados
+    const filteredQuality = qualityControls || []
 
     let qualityData: PeriodData["qualityData"] = null
     if (filteredQuality.length > 0) {
