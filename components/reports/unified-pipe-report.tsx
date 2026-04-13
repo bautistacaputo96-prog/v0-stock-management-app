@@ -478,18 +478,25 @@ export function UnifiedPipeReport() {
       materialConsumption = consumption
     }
 
-    // Calcular métricas
-    const qualityTotal = qualityData 
-      ? qualityData.totalFirst + qualityData.totalSecond + qualityData.totalBroken 
-      : 0
-    const qualityIndex = qualityTotal > 0 
-      ? (qualityData!.totalFirst / qualityTotal) * 100 
+    // Calcular métricas en TONELADAS
+    // Total producido (Tn) = Primera + Segunda + Rotos + Cajones Desperdicio (todo en Tn)
+    const scrapTn = (totalScrapBoxes * scrapBoxWeight) / 1000
+    const totalProducidoTn = qualityData 
+      ? qualityData.firstTn + qualityData.secondTn + qualityData.brokenTn + scrapTn
+      : scrapTn
+    
+    // Índice de Calidad = Primera (Tn) / Total Producido (Tn) x 100
+    const qualityIndex = totalProducidoTn > 0 && qualityData
+      ? (qualityData.firstTn / totalProducidoTn) * 100 
       : 100
       
-    // Índice de desperdicio: reprocesados_tn / total_producido_tn (cajones se contabilizan aparte)
+    // Índice de desperdicio: (Segunda + Rotos + Cajones) / Total Producido x 100
     const reprocessedTn = reprocessedWeightKg / 1000
-    const wasteIndex = totalWeightKg > 0 
-      ? (reprocessedWeightKg / totalWeightKg) * 100 
+    const despericioTn = qualityData 
+      ? qualityData.secondTn + qualityData.brokenTn + scrapTn
+      : scrapTn
+    const wasteIndex = totalProducidoTn > 0 
+      ? (despericioTn / totalProducidoTn) * 100 
       : 0
       
     const planCompliance = totalPlanned > 0 
