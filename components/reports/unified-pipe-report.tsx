@@ -24,9 +24,10 @@ interface PeriodData {
   // Producción (del parte diario)
   totalUnits: number
   totalWeightTn: number
-  byDiameter: Record<number, { produced: number; weightKg: number }>
-  dailyProduction: { date: string; units: number; weightTn: number; scrapBoxes: number }[]
+  byDiameter: Record<number, { produced: number; reprocessed: number; weightKg: number }>
+  dailyProduction: { date: string; units: number; weightTn: number; scrapBoxes: number; reprocessed: number }[]
   reprocessedUnits: number
+  reprocessedTn: number
   
   // Planificación
   totalPlanned: number
@@ -218,14 +219,15 @@ export function UnifiedPipeReport() {
     const daysWorked = productionDates.size
 
     // Calcular producción por diámetro y totales
-    const byDiameter: Record<number, { produced: number; weightKg: number }> = {}
+    const byDiameter: Record<number, { produced: number; reprocessed: number; weightKg: number }> = {}
     let totalUnits = 0
     let totalWeightKg = 0
     let totalScrapBoxes = 0
     let reprocessedUnits = 0
+    let reprocessedWeightKg = 0
     let availableMinutes = 0
     let effectiveMinutes = 0
-    const dailyProd: Record<string, { units: number; weightKg: number; scrapBoxes: number }> = {}
+    const dailyProd: Record<string, { units: number; weightKg: number; scrapBoxes: number; reprocessed: number }> = {}
     
     // Paradas con comentarios
     const downtimeData: Record<string, { minutes: number; comments: string[] }> = {}
@@ -234,7 +236,7 @@ export function UnifiedPipeReport() {
     productionData.forEach((record: any) => {
       const dateKey = record.production_date
       if (!dailyProd[dateKey]) {
-        dailyProd[dateKey] = { units: 0, weightKg: 0, scrapBoxes: 0 }
+        dailyProd[dateKey] = { units: 0, weightKg: 0, scrapBoxes: 0, reprocessed: 0 }
       }
 
       PIPE_DIAMETERS.forEach(d => {
@@ -242,21 +244,29 @@ export function UnifiedPipeReport() {
         const armado = record[`cc${d}_armado`] || 0
         const produced = simple + armado
         const weight = produced * (weights[d] || 0)
+        
+        // Reprocesados: de la columna "Rotura" del parte diario
+        const reprocessed = (record[`cc${d}_rotura`] || 0) + (record[`cc${d}_rotura_armado`] || 0)
+        const reprocessedWeight = reprocessed * (weights[d] || 0)
 
-        if (!byDiameter[d]) byDiameter[d] = { produced: 0, weightKg: 0 }
+        if (!byDiameter[d]) byDiameter[d] = { produced: 0, reprocessed: 0, weightKg: 0 }
         byDiameter[d].produced += produced
+        byDiameter[d].reprocessed += reprocessed
         byDiameter[d].weightKg += weight
         
         totalUnits += produced
         totalWeightKg += weight
+        reprocessedUnits += reprocessed
+        reprocessedWeightKg += reprocessedWeight
+        
         dailyProd[dateKey].units += produced
         dailyProd[dateKey].weightKg += weight
+        dailyProd[dateKey].reprocessed += reprocessed
       })
 
-      // Cajones de desperdicio y reprocesados
+      // Cajones de desperdicio
       totalScrapBoxes += record.scrap_boxes || 0
       dailyProd[dateKey].scrapBoxes += record.scrap_boxes || 0
-      reprocessedUnits += record.reprocessed_units || 0
 
       // Minutos disponibles y efectivos (estimación si no hay campo específico)
       // Turno de 8 horas = 480 min, menos limpieza
@@ -307,7 +317,8 @@ export function UnifiedPipeReport() {
         date,
         units: data.units,
         weightTn: data.weightKg / 1000,
-        scrapBoxes: data.scrapBoxes
+        scrapBoxes: data.scrapBoxes,
+        reprocessed: data.reprocessed
       }))
 
     // 4. Cargar planificación
@@ -465,11 +476,10 @@ export function UnifiedPipeReport() {
       ? (qualityData!.totalFirst / qualityTotal) * 100 
       : 100
       
-    // Índice de desperdicio: (rotos_tn + reprocesados_tn) / total_producido_tn
-    const brokenTn = qualityData?.brokenTn || 0
-    const reprocesadosTn = (reprocessedUnits * (weights[300] || 95)) / 1000 // Estimación
+    // Índice de desperdicio: reprocesados_tn / total_producido_tn (cajones se contabilizan aparte)
+    const reprocessedTn = reprocessedWeightKg / 1000
     const wasteIndex = totalWeightKg > 0 
-      ? ((brokenTn * 1000 + reprocesadosTn * 1000) / totalWeightKg) * 100 
+      ? (reprocessedWeightKg / totalWeightKg) * 100 
       : 0
       
     const planCompliance = totalPlanned > 0 
@@ -490,6 +500,7 @@ export function UnifiedPipeReport() {
       byDiameter,
       dailyProduction,
       reprocessedUnits,
+      reprocessedTn,
       totalPlanned,
       byDiameterPlanned,
       totalScrapBoxes,
@@ -700,11 +711,14 @@ export function UnifiedPipeReport() {
               </CardContent>
             </Card>
             
-            {/* Reprocesados */}
-            <Card>
+            {/* Reprocesados (del parte diario - columna Rotura) */}
+            <Card className="bg-amber-50 border-amber-200">
               <CardContent className="py-3 text-center">
                 <p className="text-2xl font-bold text-amber-600">{currentPeriod.reprocessedUnits}</p>
                 <p className="text-[10px] text-muted-foreground uppercase">Reprocesados</p>
+                <p className="text-[10px] text-amber-600 font-medium">
+                  {currentPeriod.reprocessedTn.toFixed(2)} Tn
+                </p>
                 <p className="text-[10px] text-muted-foreground">
                   {currentPeriod.totalUnits > 0 
                     ? ((currentPeriod.reprocessedUnits / currentPeriod.totalUnits) * 100).toFixed(1) 
@@ -716,52 +730,41 @@ export function UnifiedPipeReport() {
               </CardContent>
             </Card>
             
-            {/* Primera */}
-            <Card className="bg-green-50 border-green-200">
+            {/* Cajones de Desperdicio */}
+            <Card>
               <CardContent className="py-3 text-center">
-                <p className="text-2xl font-bold text-green-600">
-                  {currentPeriod.qualityData?.totalFirst.toLocaleString() || "-"}
+                <p className="text-2xl font-bold text-orange-600">{currentPeriod.totalScrapBoxes}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Cajones Desp.</p>
+                <p className="text-[10px] text-orange-600 font-medium">
+                  {currentPeriod.totalScrapTn.toFixed(2)} Tn
                 </p>
-                <p className="text-[10px] text-muted-foreground uppercase">Primera</p>
-                {previousPeriod?.qualityData && currentPeriod.qualityData && (
-                  <DeltaIndicator 
-                    current={currentPeriod.qualityData.totalFirst} 
-                    previous={previousPeriod.qualityData.totalFirst} 
-                  />
+                {previousPeriod && (
+                  <DeltaIndicator current={currentPeriod.totalScrapBoxes} previous={previousPeriod.totalScrapBoxes} invert />
                 )}
               </CardContent>
             </Card>
             
-            {/* Segunda */}
-            <Card className="bg-amber-50 border-amber-200">
+            {/* Toneladas Producidas */}
+            <Card className="bg-blue-50 border-blue-200">
               <CardContent className="py-3 text-center">
-                <p className="text-2xl font-bold text-amber-600">
-                  {currentPeriod.qualityData?.totalSecond.toLocaleString() || "-"}
-                </p>
-                <p className="text-[10px] text-muted-foreground uppercase">Segunda</p>
-                {previousPeriod?.qualityData && currentPeriod.qualityData && (
-                  <DeltaIndicator 
-                    current={currentPeriod.qualityData.totalSecond} 
-                    previous={previousPeriod.qualityData.totalSecond}
-                    invert
-                  />
+                <p className="text-2xl font-bold text-blue-600">{currentPeriod.totalWeightTn.toFixed(1)}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Toneladas</p>
+                {previousPeriod && (
+                  <DeltaIndicator current={currentPeriod.totalWeightTn} previous={previousPeriod.totalWeightTn} />
                 )}
               </CardContent>
             </Card>
             
-            {/* Rotos */}
+            {/* Paradas */}
             <Card className="bg-red-50 border-red-200">
               <CardContent className="py-3 text-center">
-                <p className="text-2xl font-bold text-red-600">
-                  {currentPeriod.qualityData?.totalBroken.toLocaleString() || "-"}
+                <p className="text-2xl font-bold text-red-600">{currentPeriod.totalDowntimeMinutes}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Min. Paradas</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Prom: {currentPeriod.avgDowntimePerDay.toFixed(0)} min/día
                 </p>
-                <p className="text-[10px] text-muted-foreground uppercase">Rotos</p>
-                {previousPeriod?.qualityData && currentPeriod.qualityData && (
-                  <DeltaIndicator 
-                    current={currentPeriod.qualityData.totalBroken} 
-                    previous={previousPeriod.qualityData.totalBroken}
-                    invert
-                  />
+                {previousPeriod && (
+                  <DeltaIndicator current={currentPeriod.totalDowntimeMinutes} previous={previousPeriod.totalDowntimeMinutes} invert />
                 )}
               </CardContent>
             </Card>
@@ -779,37 +782,32 @@ export function UnifiedPipeReport() {
                     <tr className="border-b bg-muted/50">
                       <th className="text-left py-2 px-2 font-medium">Diámetro</th>
                       <th className="text-center py-2 px-2 font-medium">Producido</th>
-                      <th className="text-center py-2 px-2 font-medium text-green-600">1ra</th>
-                      <th className="text-center py-2 px-2 font-medium text-amber-600">2da</th>
-                      <th className="text-center py-2 px-2 font-medium text-red-600">Rotos</th>
+                      <th className="text-center py-2 px-2 font-medium text-amber-600">Reproc.</th>
                       <th className="text-center py-2 px-2 font-medium">Plan</th>
                       <th className="text-center py-2 px-2 font-medium">Cumpl.</th>
-                      <th className="text-center py-2 px-2 font-medium text-red-600">% Rotura</th>
+                      <th className="text-center py-2 px-2 font-medium text-amber-600">% Reproc.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activeDiameters.map((d, idx) => {
                       const prod = currentPeriod.byDiameter[d]
-                      const qual = currentPeriod.qualityData?.byDiameter[d]
                       const planned = currentPeriod.byDiameterPlanned[d] || 0
                       const compliance = planned > 0 ? (prod.produced / planned) * 100 : 100
-                      const breakageRate = prod.produced > 0 && qual 
-                        ? (qual.broken / prod.produced) * 100 
+                      const reprocessedRate = prod.produced > 0 
+                        ? (prod.reprocessed / prod.produced) * 100 
                         : 0
                       
                       return (
                         <tr key={d} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
                           <td className="py-2 px-2 font-medium">CC{d}</td>
                           <td className="py-2 px-2 text-center font-semibold">{prod.produced.toLocaleString()}</td>
-                          <td className="py-2 px-2 text-center text-green-600">{qual?.first || "-"}</td>
-                          <td className="py-2 px-2 text-center text-amber-600">{qual?.second || "-"}</td>
-                          <td className="py-2 px-2 text-center text-red-600">{qual?.broken || "-"}</td>
+                          <td className="py-2 px-2 text-center text-amber-600">{prod.reprocessed || "-"}</td>
                           <td className="py-2 px-2 text-center text-muted-foreground">{planned || "-"}</td>
                           <td className={`py-2 px-2 text-center font-medium ${getStatusColor(compliance, 95)}`}>
                             {planned > 0 ? `${compliance.toFixed(0)}%` : "-"}
                           </td>
-                          <td className={`py-2 px-2 text-center ${breakageRate > 3 ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
-                            {qual ? `${breakageRate.toFixed(1)}%` : "-"}
+                          <td className={`py-2 px-2 text-center ${reprocessedRate > 3 ? "text-amber-600 font-medium" : "text-muted-foreground"}`}>
+                            {prod.reprocessed > 0 ? `${reprocessedRate.toFixed(1)}%` : "-"}
                           </td>
                         </tr>
                       )
@@ -818,14 +816,16 @@ export function UnifiedPipeReport() {
                     <tr className="border-t-2 bg-muted/50 font-semibold">
                       <td className="py-2 px-2">TOTAL</td>
                       <td className="py-2 px-2 text-center">{currentPeriod.totalUnits.toLocaleString()}</td>
-                      <td className="py-2 px-2 text-center text-green-600">{currentPeriod.qualityData?.totalFirst || "-"}</td>
-                      <td className="py-2 px-2 text-center text-amber-600">{currentPeriod.qualityData?.totalSecond || "-"}</td>
-                      <td className="py-2 px-2 text-center text-red-600">{currentPeriod.qualityData?.totalBroken || "-"}</td>
+                      <td className="py-2 px-2 text-center text-amber-600">{currentPeriod.reprocessedUnits}</td>
                       <td className="py-2 px-2 text-center text-muted-foreground">{currentPeriod.totalPlanned || "-"}</td>
                       <td className={`py-2 px-2 text-center ${getStatusColor(currentPeriod.planCompliance, 95)}`}>
                         {currentPeriod.planCompliance.toFixed(0)}%
                       </td>
-                      <td className="py-2 px-2 text-center">-</td>
+                      <td className="py-2 px-2 text-center text-amber-600">
+                        {currentPeriod.totalUnits > 0 
+                          ? ((currentPeriod.reprocessedUnits / currentPeriod.totalUnits) * 100).toFixed(1) 
+                          : "0"}%
+                      </td>
                     </tr>
                   </tbody>
                 </table>
