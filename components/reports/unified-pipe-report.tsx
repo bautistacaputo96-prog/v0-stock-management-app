@@ -64,11 +64,16 @@ interface PeriodData {
   wasteIndex: number
   availabilityIndex: number
   planCompliance: number
-  // Desglose de índices en Tn y %
+  // Desglose en Tn (para mostrar fórmulas)
   totalProducidoTn: number
-  firstTn: number
-  secondTn: number
-  brokenTn: number
+  canosPlayaTn: number
+  primeraTn: number
+  segundaTn: number
+  rotosCalidadTn: number
+  roturaProduccionTn: number
+  totalRoturaTn: number
+  totalDesperdicioTn: number
+  // Índices individuales
   secondIndex: number
   brokenIndex: number
   scrapIndex: number
@@ -486,26 +491,46 @@ export function UnifiedPipeReport() {
       materialConsumption = consumption
     }
 
-    // Calcular métricas en TONELADAS
-    // Total producido (Tn) = Primera + Segunda + Rotos + Cajones Desperdicio (todo en Tn)
-    const scrapTn = (totalScrapBoxes * scrapBoxWeight) / 1000
-    const totalProducidoTn = qualityData 
-      ? qualityData.firstTn + qualityData.secondTn + qualityData.brokenTn + scrapTn
-      : scrapTn
+    // ============================================
+    // CÁLCULO DE ÍNDICES (según lógica de negocio)
+    // ============================================
+    // 
+    // FUENTES DE DATOS:
+    // - Parte Diario: Caños a playa (producidos), Rotura (desperdicio), Cajones desperdicio
+    // - Control Calidad: Segunda, Rotos
+    //
+    // FÓRMULAS:
+    // - Primera = Caños a playa (Tn) - Segunda (Tn) - Rotos calidad (Tn)
+    // - Total Rotura = Rotura parte diario (Tn) + Rotos calidad (Tn)
+    // - Total Producido = Primera + Segunda + Rotos calidad + Rotura parte + Cajones
+    // ============================================
+
+    // Toneladas de cada concepto
+    const canosPlayaTn = totalWeightKg / 1000  // Del parte diario: van a clasificación
+    const roturaProduccionTn = reprocessedWeightKg / 1000  // Del parte diario: rotura directa
+    const cajonesDesperdicioTn = (totalScrapBoxes * scrapBoxWeight) / 1000  // Del parte diario
     
-    // Índice de Calidad = Primera (Tn) / Total Producido (Tn) x 100
-    const qualityIndex = totalProducidoTn > 0 && qualityData
-      ? (qualityData.firstTn / totalProducidoTn) * 100 
-      : 100
-      
-    // Índice de desperdicio: (Segunda + Rotos + Cajones) / Total Producido x 100
-    const reprocessedTn = reprocessedWeightKg / 1000
-    const despericioTn = qualityData 
-      ? qualityData.secondTn + qualityData.brokenTn + scrapTn
-      : scrapTn
-    const wasteIndex = totalProducidoTn > 0 
-      ? (despericioTn / totalProducidoTn) * 100 
-      : 0
+    const segundaTn = qualityData?.secondTn || 0  // Del control de calidad
+    const rotosCalidadTn = qualityData?.brokenTn || 0  // Del control de calidad
+    
+    // Primera = Caños a playa - Segunda - Rotos de calidad
+    const primeraTn = Math.max(0, canosPlayaTn - segundaTn - rotosCalidadTn)
+    
+    // Total Rotura = Rotura producción + Rotos calidad
+    const totalRoturaTn = roturaProduccionTn + rotosCalidadTn
+    
+    // Total Producido = Primera + Segunda + Rotos calidad + Rotura producción + Cajones
+    const totalProducidoTn = primeraTn + segundaTn + rotosCalidadTn + roturaProduccionTn + cajonesDesperdicioTn
+    
+    // Total Desperdicio = Segunda + Rotos calidad + Rotura producción + Cajones
+    const totalDesperdicioTn = segundaTn + rotosCalidadTn + roturaProduccionTn + cajonesDesperdicioTn
+    
+    // ÍNDICES (en porcentaje sobre Total Producido)
+    const qualityIndex = totalProducidoTn > 0 ? (primeraTn / totalProducidoTn) * 100 : 100
+    const secondIndex = totalProducidoTn > 0 ? (segundaTn / totalProducidoTn) * 100 : 0
+    const brokenIndex = totalProducidoTn > 0 ? (totalRoturaTn / totalProducidoTn) * 100 : 0
+    const scrapIndex = totalProducidoTn > 0 ? (cajonesDesperdicioTn / totalProducidoTn) * 100 : 0
+    const wasteIndex = totalProducidoTn > 0 ? (totalDesperdicioTn / totalProducidoTn) * 100 : 0
       
     const planCompliance = totalPlanned > 0 
       ? (totalUnits / totalPlanned) * 100 
@@ -519,28 +544,17 @@ export function UnifiedPipeReport() {
       ? totalDowntimeMinutes / daysWorked
       : 0
 
-    // Calcular toneladas desglosadas para los índices
-    const firstTn = qualityData?.firstTn || 0
-    const secondTn = qualityData?.secondTn || 0
-    const brokenTn = qualityData?.brokenTn || 0
-    const scrapTnCalc = (totalScrapBoxes * scrapBoxWeight) / 1000
-    
-    // Índices individuales (sobre total producido en Tn)
-    const secondIndex = totalProducidoTn > 0 ? (secondTn / totalProducidoTn) * 100 : 0
-    const brokenIndex = totalProducidoTn > 0 ? (brokenTn / totalProducidoTn) * 100 : 0
-    const scrapIndex = totalProducidoTn > 0 ? (scrapTnCalc / totalProducidoTn) * 100 : 0
-
     return {
       totalUnits,
       totalWeightTn: totalWeightKg / 1000,
       byDiameter,
       dailyProduction,
       reprocessedUnits,
-      reprocessedTn,
+      reprocessedTn: roturaProduccionTn,
       totalPlanned,
       byDiameterPlanned,
       totalScrapBoxes,
-      totalScrapTn: scrapTnCalc,
+      totalScrapTn: cajonesDesperdicioTn,
       scrapBoxWeight,
       qualityData,
       totalDowntimeMinutes,
@@ -553,11 +567,16 @@ export function UnifiedPipeReport() {
       wasteIndex,
       availabilityIndex,
       planCompliance,
-      // Desglose de índices en Tn y %
+      // Desglose en Tn (para mostrar fórmulas)
       totalProducidoTn,
-      firstTn,
-      secondTn,
-      brokenTn,
+      canosPlayaTn,
+      primeraTn,
+      segundaTn,
+      rotosCalidadTn,
+      roturaProduccionTn,
+      totalRoturaTn,
+      totalDesperdicioTn,
+      // Índices individuales
       secondIndex,
       brokenIndex,
       scrapIndex,
@@ -882,19 +901,25 @@ export function UnifiedPipeReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm uppercase tracking-wide">Índices de Calidad y Desperdicio</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Total producido: {currentPeriod.totalProducidoTn.toFixed(2)} Tn (Primera + Segunda + Rotos + Cajones)
-              </p>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <CardContent className="space-y-4">
+              {/* Fórmulas explicativas */}
+              <div className="bg-muted/50 rounded-lg p-3 text-xs space-y-1">
+                <p className="font-medium text-muted-foreground mb-2">Fórmulas de cálculo:</p>
+                <p><span className="text-green-600 font-medium">Primera</span> = Caños a playa ({currentPeriod.canosPlayaTn.toFixed(2)} Tn) - Segunda ({currentPeriod.segundaTn.toFixed(2)} Tn) - Rotos calidad ({currentPeriod.rotosCalidadTn.toFixed(2)} Tn) = <span className="font-bold text-green-600">{currentPeriod.primeraTn.toFixed(2)} Tn</span></p>
+                <p><span className="text-red-600 font-medium">Total Rotura</span> = Rotura producción ({currentPeriod.roturaProduccionTn.toFixed(2)} Tn) + Rotos calidad ({currentPeriod.rotosCalidadTn.toFixed(2)} Tn) = <span className="font-bold text-red-600">{currentPeriod.totalRoturaTn.toFixed(2)} Tn</span></p>
+                <p><span className="text-muted-foreground font-medium">Total Producido</span> = Primera + Segunda + Rotos + Rotura prod. + Cajones = <span className="font-bold">{currentPeriod.totalProducidoTn.toFixed(2)} Tn</span></p>
+              </div>
+
+              {/* Grid de índices */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 {/* Índice de Primera (Calidad) */}
-                <div className={`p-4 rounded-lg ${getStatusBg(currentPeriod.qualityIndex, 95)}`}>
-                  <p className={`text-3xl font-bold ${getStatusColor(currentPeriod.qualityIndex, 95)}`}>
+                <div className={`p-4 rounded-lg ${getStatusBg(currentPeriod.qualityIndex, 95)} border`}>
+                  <p className={`text-2xl font-bold ${getStatusColor(currentPeriod.qualityIndex, 95)}`}>
                     {currentPeriod.qualityIndex.toFixed(1)}%
                   </p>
                   <p className="text-xs font-medium uppercase mt-1 text-green-700">Primera</p>
-                  <p className="text-lg font-semibold text-green-600">{currentPeriod.firstTn.toFixed(2)} Tn</p>
+                  <p className="text-sm font-semibold text-green-600">{currentPeriod.primeraTn.toFixed(2)} Tn</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.qualityIndex} 
@@ -906,11 +931,12 @@ export function UnifiedPipeReport() {
                 
                 {/* Índice de Segunda */}
                 <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
-                  <p className="text-3xl font-bold text-amber-600">
+                  <p className="text-2xl font-bold text-amber-600">
                     {currentPeriod.secondIndex.toFixed(2)}%
                   </p>
                   <p className="text-xs font-medium uppercase mt-1 text-amber-700">Segunda</p>
-                  <p className="text-lg font-semibold text-amber-600">{currentPeriod.secondTn.toFixed(2)} Tn</p>
+                  <p className="text-sm font-semibold text-amber-600">{currentPeriod.segundaTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">Control calidad</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.secondIndex} 
@@ -921,13 +947,14 @@ export function UnifiedPipeReport() {
                   )}
                 </div>
                 
-                {/* Índice de Rotura */}
+                {/* Índice de Rotura Total */}
                 <div className="p-4 rounded-lg bg-red-50 border border-red-200">
-                  <p className="text-3xl font-bold text-red-600">
+                  <p className="text-2xl font-bold text-red-600">
                     {currentPeriod.brokenIndex.toFixed(2)}%
                   </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-red-700">Rotura</p>
-                  <p className="text-lg font-semibold text-red-600">{currentPeriod.brokenTn.toFixed(2)} Tn</p>
+                  <p className="text-xs font-medium uppercase mt-1 text-red-700">Rotura Total</p>
+                  <p className="text-sm font-semibold text-red-600">{currentPeriod.totalRoturaTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">Prod: {currentPeriod.roturaProduccionTn.toFixed(2)} + Cal: {currentPeriod.rotosCalidadTn.toFixed(2)}</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.brokenIndex} 
@@ -938,13 +965,14 @@ export function UnifiedPipeReport() {
                   )}
                 </div>
                 
-                {/* Índice de Desperdicio (Cajones) */}
+                {/* Índice de Cajones Desperdicio */}
                 <div className="p-4 rounded-lg bg-orange-50 border border-orange-200">
-                  <p className="text-3xl font-bold text-orange-600">
+                  <p className="text-2xl font-bold text-orange-600">
                     {currentPeriod.scrapIndex.toFixed(2)}%
                   </p>
                   <p className="text-xs font-medium uppercase mt-1 text-orange-700">Cajones Desp.</p>
-                  <p className="text-lg font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)} Tn</p>
+                  <p className="text-sm font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">{currentPeriod.totalScrapBoxes} cajones</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.scrapIndex} 
@@ -954,20 +982,23 @@ export function UnifiedPipeReport() {
                     />
                   )}
                 </div>
-              </div>
-              
-              {/* Resumen de desperdicio total */}
-              <div className="mt-4 pt-4 border-t flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    <span className="font-medium">Desperdicio Total:</span> Segunda + Rotura + Cajones
+
+                {/* Desperdicio Total */}
+                <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/30">
+                  <p className="text-2xl font-bold text-destructive">
+                    {currentPeriod.wasteIndex.toFixed(2)}%
                   </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-destructive">{currentPeriod.wasteIndex.toFixed(2)}%</p>
-                  <p className="text-sm text-destructive font-medium">
-                    {(currentPeriod.secondTn + currentPeriod.brokenTn + currentPeriod.totalScrapTn).toFixed(2)} Tn
-                  </p>
+                  <p className="text-xs font-medium uppercase mt-1 text-destructive">Desperdicio Total</p>
+                  <p className="text-sm font-semibold text-destructive">{currentPeriod.totalDesperdicioTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">2da + Rotura + Cajones</p>
+                  {previousPeriod && (
+                    <DeltaIndicator 
+                      current={currentPeriod.wasteIndex} 
+                      previous={previousPeriod.wasteIndex}
+                      invert
+                      showPP
+                    />
+                  )}
                 </div>
               </div>
             </CardContent>
