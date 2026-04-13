@@ -106,18 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push("/login")
   }
 
+  // Always render children - let individual pages handle loading states
   return (
     <AuthContext.Provider value={{ user, login, logout, isLoading }}>
-      {isLoading ? (
-        <div className="min-h-screen flex items-center justify-center bg-white">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-500 text-sm">Cargando...</p>
-          </div>
-        </div>
-      ) : (
-        children
-      )}
+      {children}
     </AuthContext.Provider>
   )
 }
