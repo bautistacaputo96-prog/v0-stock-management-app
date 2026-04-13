@@ -111,8 +111,37 @@ export function ProductionHistory() {
         .order("shift", { ascending: false })
         .limit(500)
 
+      // Load pipe quality control data to get waste info
+      const { data: qualityData } = await supabase
+        .from("pipe_quality_control")
+        .select(`
+          *,
+          items:pipe_quality_items(*)
+        `)
+        .order("control_date", { ascending: false })
+        .limit(500)
+
       if (pipeData) {
-        setPipeHistory(pipeData)
+        // Merge quality data with production data by date
+        const qualityByDate: Record<string, any> = {}
+        qualityData?.forEach((qc: any) => {
+          const date = qc.control_date
+          if (!qualityByDate[date]) {
+            qualityByDate[date] = { second: 0, broken: 0 }
+          }
+          qc.items?.forEach((item: any) => {
+            qualityByDate[date].second += item.second_quality || 0
+            qualityByDate[date].broken += item.broken || 0
+          })
+        })
+        
+        // Attach quality data to each production record
+        const enrichedPipeData = pipeData.map((record: any) => ({
+          ...record,
+          quality_waste: qualityByDate[record.production_date] || null
+        }))
+        
+        setPipeHistory(enrichedPipeData)
       }
 
       setLoading(false)
@@ -158,7 +187,38 @@ export function ProductionHistory() {
     const { data: pipeData } = await pipeQuery
 
     if (blockData) setBlockHistory(blockData)
-    if (pipeData) setPipeHistory(pipeData)
+    
+    if (pipeData) {
+      // Load quality data for the filtered date range
+      let qualityQuery = supabase
+        .from("pipe_quality_control")
+        .select("*, items:pipe_quality_items(*)")
+      
+      if (dateFrom) qualityQuery = qualityQuery.gte("control_date", dateFrom)
+      if (dateTo) qualityQuery = qualityQuery.lte("control_date", dateTo)
+      
+      const { data: qualityData } = await qualityQuery
+      
+      // Merge quality data with production data
+      const qualityByDate: Record<string, any> = {}
+      qualityData?.forEach((qc: any) => {
+        const date = qc.control_date
+        if (!qualityByDate[date]) {
+          qualityByDate[date] = { second: 0, broken: 0 }
+        }
+        qc.items?.forEach((item: any) => {
+          qualityByDate[date].second += item.second_quality || 0
+          qualityByDate[date].broken += item.broken || 0
+        })
+      })
+      
+      const enrichedPipeData = pipeData.map((record: any) => ({
+        ...record,
+        quality_waste: qualityByDate[record.production_date] || null
+      }))
+      
+      setPipeHistory(enrichedPipeData)
+    }
 
     setLoading(false)
   }
@@ -933,6 +993,30 @@ export function ProductionHistory() {
                                       )}
                                     </div>
                                   </div>
+                                  
+                                  {/* Desperdicio desde Control de Calidad */}
+                                  {record.quality_waste && (record.quality_waste.second > 0 || record.quality_waste.broken > 0) && (
+                                    <div className="mt-4 pt-4 border-t">
+                                      <p className="text-sm font-medium mb-2 text-amber-600">Cajones de Desperdicio (Control de Calidad)</p>
+                                      <div className="grid grid-cols-3 gap-4 text-sm">
+                                        <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                                          <p className="text-xs text-muted-foreground">Segunda</p>
+                                          <p className="text-lg font-bold text-amber-600">{record.quality_waste.second}</p>
+                                          <p className="text-xs text-muted-foreground">cajones</p>
+                                        </div>
+                                        <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
+                                          <p className="text-xs text-muted-foreground">Rotos</p>
+                                          <p className="text-lg font-bold text-red-600">{record.quality_waste.broken}</p>
+                                          <p className="text-xs text-muted-foreground">cajones</p>
+                                        </div>
+                                        <div className="bg-gray-50 dark:bg-gray-950/30 rounded-lg p-3">
+                                          <p className="text-xs text-muted-foreground">Total Desperdicio</p>
+                                          <p className="text-lg font-bold text-gray-700">{record.quality_waste.second + record.quality_waste.broken}</p>
+                                          <p className="text-xs text-muted-foreground">cajones</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             )}
