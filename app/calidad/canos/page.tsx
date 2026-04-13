@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { PipeQualityExecutiveReport } from "@/components/reports/pipe-quality-executive-report"
 import { exportElementToPDF } from "@/lib/pdf-export"
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts"
 
 const PIPE_DIAMETERS = [300, 400, 500, 600, 800, 1000, 1200]
 
@@ -110,6 +111,7 @@ export default function PipeQualityPage() {
   // Production data for waste report
   const [productionRecords, setProductionRecords] = useState<any[]>([])
   const [productConfig, setProductConfig] = useState<Record<string, number>>({})
+  const [wasteShiftFilter, setWasteShiftFilter] = useState<"todos" | "1" | "2">("todos")
 
   // Form state
   const [date, setDate] = useState(new Date().toISOString().split("T")[0])
@@ -399,8 +401,13 @@ export default function PipeQualityPage() {
       totalKg: number 
     }> = {}
 
+    // By date and shift aggregation (for chart)
+    const byDateShift: Record<string, Record<number, number>> = {} // date -> shift -> scrapBoxes
+
     filteredProduction.forEach(p => {
       const dateKey = p.production_date
+      const shift = p.shift || 1
+      
       if (!byDate[dateKey]) {
         byDate[dateKey] = { 
           productionBreakage: {}, 
@@ -413,6 +420,11 @@ export default function PipeQualityPage() {
           byDate[dateKey].controlBreakage[d] = 0
         })
       }
+      
+      // Track scrap boxes by date and shift
+      if (!byDateShift[dateKey]) byDateShift[dateKey] = {}
+      byDateShift[dateKey][shift] = (byDateShift[dateKey][shift] || 0) + (p.scrap_boxes || 0)
+      
       PIPE_DIAMETERS.forEach(d => {
         const rotura = (p[`cc${d}_rotura`] || 0) + (p[`cc${d}_rotura_armado`] || 0)
         byDate[dateKey].productionBreakage[d] += rotura
@@ -463,6 +475,7 @@ export default function PipeQualityPage() {
       totalWasteKg,
       wastePercentage,
       byDate: Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])),
+      byDateShift,
     }
   }, [productionRecords, controls, reportFromDate, reportToDate, productConfig])
 
@@ -1688,6 +1701,103 @@ export default function PipeQualityPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Gráfico de Tendencia - Cajones de Desperdicio */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Tendencia Diaria - Cajones de Desperdicio</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Turno:</span>
+                    <div className="flex gap-1">
+                      {(["todos", "1", "2"] as const).map((t) => (
+                        <Button
+                          key={t}
+                          size="sm"
+                          variant={wasteShiftFilter === t ? "default" : "outline"}
+                          onClick={() => setWasteShiftFilter(t)}
+                          className="h-7 px-3 text-xs"
+                        >
+                          {t === "todos" ? "Todos" : `T${t}`}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {wasteData.byDate.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No hay datos en el periodo seleccionado
+                  </div>
+                ) : (
+                  <div className="h-[280px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={wasteData.byDate.map(([date, data]) => {
+                          const shiftData = wasteData.byDateShift[date] || {}
+                          let cajones = 0
+                          if (wasteShiftFilter === "todos") {
+                            cajones = data.scrapBoxes
+                          } else {
+                            cajones = shiftData[Number(wasteShiftFilter)] || 0
+                          }
+                          return {
+                            date: new Date(date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
+                            cajones,
+                            t1: shiftData[1] || 0,
+                            t2: shiftData[2] || 0,
+                          }
+                        })}
+                        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                      >
+                        <defs>
+                          <linearGradient id="wasteGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="date" tick={{ fontSize: 10 }} className="text-muted-foreground" />
+                        <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={{ fontSize: 12 }}
+                          formatter={(value: number, name: string) => {
+                            if (name === "cajones") return [value, "Cajones"]
+                            return [value, name]
+                          }}
+                          labelFormatter={(label) => `Fecha: ${label}`}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="cajones"
+                          stroke="#f59e0b"
+                          strokeWidth={2}
+                          fill="url(#wasteGradient)"
+                          dot={{ r: 3, fill: "#f59e0b" }}
+                          name="cajones"
+                        />
+                        <ReferenceLine
+                          y={wasteData.byDate.reduce((sum, [, d]) => {
+                            const shiftData = wasteData.byDateShift[wasteData.byDate[0]?.[0]] ? wasteData.byDateShift : {}
+                            if (wasteShiftFilter === "todos") return sum + d.scrapBoxes
+                            return sum + ((shiftData as any)[wasteShiftFilter] || 0)
+                          }, 0) / (wasteData.byDate.length || 1)}
+                          stroke="#f59e0b"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.6}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                {wasteShiftFilter !== "todos" && (
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    Mostrando solo Turno {wasteShiftFilter}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Rotura por Molde */}
             <Card>
