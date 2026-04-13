@@ -64,6 +64,14 @@ interface PeriodData {
   wasteIndex: number
   availabilityIndex: number
   planCompliance: number
+  // Desglose de índices en Tn y %
+  totalProducidoTn: number
+  firstTn: number
+  secondTn: number
+  brokenTn: number
+  secondIndex: number
+  brokenIndex: number
+  scrapIndex: number
   daysWorked: number
   avgDowntimePerDay: number
 }
@@ -511,6 +519,17 @@ export function UnifiedPipeReport() {
       ? totalDowntimeMinutes / daysWorked
       : 0
 
+    // Calcular toneladas desglosadas para los índices
+    const firstTn = qualityData?.firstTn || 0
+    const secondTn = qualityData?.secondTn || 0
+    const brokenTn = qualityData?.brokenTn || 0
+    const scrapTnCalc = (totalScrapBoxes * scrapBoxWeight) / 1000
+    
+    // Índices individuales (sobre total producido en Tn)
+    const secondIndex = totalProducidoTn > 0 ? (secondTn / totalProducidoTn) * 100 : 0
+    const brokenIndex = totalProducidoTn > 0 ? (brokenTn / totalProducidoTn) * 100 : 0
+    const scrapIndex = totalProducidoTn > 0 ? (scrapTnCalc / totalProducidoTn) * 100 : 0
+
     return {
       totalUnits,
       totalWeightTn: totalWeightKg / 1000,
@@ -521,7 +540,7 @@ export function UnifiedPipeReport() {
       totalPlanned,
       byDiameterPlanned,
       totalScrapBoxes,
-      totalScrapTn: (totalScrapBoxes * scrapBoxWeight) / 1000,
+      totalScrapTn: scrapTnCalc,
       scrapBoxWeight,
       qualityData,
       totalDowntimeMinutes,
@@ -529,10 +548,19 @@ export function UnifiedPipeReport() {
       effectiveMinutes,
       topDowntimes,
       materialConsumption,
+      // Índices principales
       qualityIndex,
       wasteIndex,
       availabilityIndex,
       planCompliance,
+      // Desglose de índices en Tn y %
+      totalProducidoTn,
+      firstTn,
+      secondTn,
+      brokenTn,
+      secondIndex,
+      brokenIndex,
+      scrapIndex,
       daysWorked,
       avgDowntimePerDay
     }
@@ -850,49 +878,103 @@ export function UnifiedPipeReport() {
             </CardContent>
           </Card>
 
-          {/* SECCIÓN 3: ÍNDICES */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* Índice de Calidad */}
-            <Card className={getStatusBg(currentPeriod.qualityIndex, 95)}>
-              <CardContent className="py-4 text-center">
-                <p className={`text-3xl font-bold ${getStatusColor(currentPeriod.qualityIndex, 95)}`}>
-                  {currentPeriod.qualityIndex.toFixed(1)}%
-                </p>
-                <p className="text-xs text-muted-foreground uppercase mt-1">Índice de Calidad</p>
-                <p className="text-[10px] text-muted-foreground">Primera / Total clasificado</p>
-                {previousPeriod && (
-                  <div className="mt-1">
+          {/* SECCIÓN 3: ÍNDICES DE CALIDAD Y DESPERDICIO */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm uppercase tracking-wide">Índices de Calidad y Desperdicio</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Total producido: {currentPeriod.totalProducidoTn.toFixed(2)} Tn (Primera + Segunda + Rotos + Cajones)
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {/* Índice de Primera (Calidad) */}
+                <div className={`p-4 rounded-lg ${getStatusBg(currentPeriod.qualityIndex, 95)}`}>
+                  <p className={`text-3xl font-bold ${getStatusColor(currentPeriod.qualityIndex, 95)}`}>
+                    {currentPeriod.qualityIndex.toFixed(1)}%
+                  </p>
+                  <p className="text-xs font-medium uppercase mt-1 text-green-700">Primera</p>
+                  <p className="text-lg font-semibold text-green-600">{currentPeriod.firstTn.toFixed(2)} Tn</p>
+                  {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.qualityIndex} 
                       previous={previousPeriod.qualityIndex}
                       showPP
                     />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            
-            {/* Índice de Desperdicio */}
-            <Card className={getStatusBg(currentPeriod.wasteIndex, 3, true)}>
-              <CardContent className="py-4 text-center">
-                <p className={`text-3xl font-bold ${currentPeriod.wasteIndex <= 3 ? "text-green-600" : currentPeriod.wasteIndex <= 5 ? "text-amber-600" : "text-red-600"}`}>
-                  {currentPeriod.wasteIndex.toFixed(2)}%
-                </p>
-                <p className="text-xs text-muted-foreground uppercase mt-1">Índice de Desperdicio</p>
-                <p className="text-[10px] text-muted-foreground">(Rotos + Reproc.) / Producido</p>
-                {previousPeriod && (
-                  <div className="mt-1">
+                  )}
+                </div>
+                
+                {/* Índice de Segunda */}
+                <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
+                  <p className="text-3xl font-bold text-amber-600">
+                    {currentPeriod.secondIndex.toFixed(2)}%
+                  </p>
+                  <p className="text-xs font-medium uppercase mt-1 text-amber-700">Segunda</p>
+                  <p className="text-lg font-semibold text-amber-600">{currentPeriod.secondTn.toFixed(2)} Tn</p>
+                  {previousPeriod && (
                     <DeltaIndicator 
-                      current={currentPeriod.wasteIndex} 
-                      previous={previousPeriod.wasteIndex}
+                      current={currentPeriod.secondIndex} 
+                      previous={previousPeriod.secondIndex}
                       invert
                       showPP
                     />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            
+                  )}
+                </div>
+                
+                {/* Índice de Rotura */}
+                <div className="p-4 rounded-lg bg-red-50 border border-red-200">
+                  <p className="text-3xl font-bold text-red-600">
+                    {currentPeriod.brokenIndex.toFixed(2)}%
+                  </p>
+                  <p className="text-xs font-medium uppercase mt-1 text-red-700">Rotura</p>
+                  <p className="text-lg font-semibold text-red-600">{currentPeriod.brokenTn.toFixed(2)} Tn</p>
+                  {previousPeriod && (
+                    <DeltaIndicator 
+                      current={currentPeriod.brokenIndex} 
+                      previous={previousPeriod.brokenIndex}
+                      invert
+                      showPP
+                    />
+                  )}
+                </div>
+                
+                {/* Índice de Desperdicio (Cajones) */}
+                <div className="p-4 rounded-lg bg-orange-50 border border-orange-200">
+                  <p className="text-3xl font-bold text-orange-600">
+                    {currentPeriod.scrapIndex.toFixed(2)}%
+                  </p>
+                  <p className="text-xs font-medium uppercase mt-1 text-orange-700">Cajones Desp.</p>
+                  <p className="text-lg font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)} Tn</p>
+                  {previousPeriod && (
+                    <DeltaIndicator 
+                      current={currentPeriod.scrapIndex} 
+                      previous={previousPeriod.scrapIndex}
+                      invert
+                      showPP
+                    />
+                  )}
+                </div>
+              </div>
+              
+              {/* Resumen de desperdicio total */}
+              <div className="mt-4 pt-4 border-t flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-medium">Desperdicio Total:</span> Segunda + Rotura + Cajones
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-destructive">{currentPeriod.wasteIndex.toFixed(2)}%</p>
+                  <p className="text-sm text-destructive font-medium">
+                    {(currentPeriod.secondTn + currentPeriod.brokenTn + currentPeriod.totalScrapTn).toFixed(2)} Tn
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* SECCIÓN 3b: OTROS ÍNDICES (Disponibilidad y Cumplimiento) */}
+          <div className="grid grid-cols-2 gap-3">
             {/* Índice de Disponibilidad */}
             <Card className={getStatusBg(currentPeriod.availabilityIndex, 85)}>
               <CardContent className="py-4 text-center">
