@@ -64,19 +64,25 @@ interface PeriodData {
   wasteIndex: number
   availabilityIndex: number
   planCompliance: number
-  // Desglose en Tn (para mostrar fórmulas)
+  // Desglose en TONELADAS
   totalProducidoTn: number
   canosPlayaTn: number
   primeraTn: number
   segundaTn: number
   rotosCalidadTn: number
   roturaProduccionTn: number
-  totalRoturaTn: number
   totalDesperdicioTn: number
+  // Desglose en UNIDADES
+  canosPlayaUnits: number
+  primeraUnits: number
+  segundaUnits: number
+  rotosCalidadUnits: number
+  roturaProduccionUnits: number
   // Índices individuales
   secondIndex: number
   brokenIndex: number
   scrapIndex: number
+  roturaEnCajonesIndex: number
   daysWorked: number
   avgDowntimePerDay: number
 }
@@ -496,18 +502,22 @@ export function UnifiedPipeReport() {
     // ============================================
     // 
     // FUENTES DE DATOS:
-    // - Parte Diario: Caños a playa (producidos), Rotura (desperdicio), Cajones desperdicio
+    // - Parte Diario: Caños a playa (producidos), Rotura producción (INFO - ya incluida en cajones), Cajones desperdicio
     // - Control Calidad: Segunda, Rotos
     //
+    // IMPORTANTE: La rotura de producción YA ESTÁ INCLUIDA en los cajones de desperdicio
+    // Por lo tanto NO se suma al total (evitar doble conteo)
+    // Se muestra como dato informativo para saber qué % de cajones es rotura
+    //
     // FÓRMULAS:
-    // - Primera = Caños a playa (Tn) - Segunda (Tn) - Rotos calidad (Tn)
-    // - Total Rotura = Rotura parte diario (Tn) + Rotos calidad (Tn)
-    // - Total Producido = Primera + Segunda + Rotos calidad + Rotura parte + Cajones
+    // - Primera = Caños a playa - Segunda - Rotos calidad
+    // - Total Producido = Caños a playa + Cajones desperdicio (sin duplicar rotura)
+    // - Total Desperdicio = Segunda + Rotos calidad + Cajones desperdicio
     // ============================================
 
-    // Toneladas de cada concepto
+    // TONELADAS de cada concepto
     const canosPlayaTn = totalWeightKg / 1000  // Del parte diario: van a clasificación
-    const roturaProduccionTn = reprocessedWeightKg / 1000  // Del parte diario: rotura directa
+    const roturaProduccionTn = reprocessedWeightKg / 1000  // INFO: ya incluida en cajones
     const cajonesDesperdicioTn = (totalScrapBoxes * scrapBoxWeight) / 1000  // Del parte diario
     
     const segundaTn = qualityData?.secondTn || 0  // Del control de calidad
@@ -516,21 +526,28 @@ export function UnifiedPipeReport() {
     // Primera = Caños a playa - Segunda - Rotos de calidad
     const primeraTn = Math.max(0, canosPlayaTn - segundaTn - rotosCalidadTn)
     
-    // Total Rotura = Rotura producción + Rotos calidad
-    const totalRoturaTn = roturaProduccionTn + rotosCalidadTn
+    // Total Producido = Caños a playa + Cajones (rotura prod ya está en cajones, no sumar)
+    const totalProducidoTn = canosPlayaTn + cajonesDesperdicioTn
     
-    // Total Producido = Primera + Segunda + Rotos calidad + Rotura producción + Cajones
-    const totalProducidoTn = primeraTn + segundaTn + rotosCalidadTn + roturaProduccionTn + cajonesDesperdicioTn
+    // Total Desperdicio = Segunda + Rotos calidad + Cajones
+    const totalDesperdicioTn = segundaTn + rotosCalidadTn + cajonesDesperdicioTn
     
-    // Total Desperdicio = Segunda + Rotos calidad + Rotura producción + Cajones
-    const totalDesperdicioTn = segundaTn + rotosCalidadTn + roturaProduccionTn + cajonesDesperdicioTn
+    // UNIDADES de cada concepto (para mostrar en cantidad de caños)
+    const canosPlayaUnits = totalUnits  // Del parte diario
+    const roturaProduccionUnits = reprocessedUnits  // INFO: ya incluida en cajones
+    const segundaUnits = qualityData?.totalSecond || 0  // Del control de calidad
+    const rotosCalidadUnits = qualityData?.totalBroken || 0  // Del control de calidad
+    const primeraUnits = Math.max(0, canosPlayaUnits - segundaUnits - rotosCalidadUnits)
     
-    // ÍNDICES (en porcentaje sobre Total Producido)
+    // ÍNDICES (en porcentaje sobre Total Producido en Tn)
     const qualityIndex = totalProducidoTn > 0 ? (primeraTn / totalProducidoTn) * 100 : 100
     const secondIndex = totalProducidoTn > 0 ? (segundaTn / totalProducidoTn) * 100 : 0
-    const brokenIndex = totalProducidoTn > 0 ? (totalRoturaTn / totalProducidoTn) * 100 : 0
+    const brokenIndex = totalProducidoTn > 0 ? (rotosCalidadTn / totalProducidoTn) * 100 : 0  // Solo rotos calidad, no rotura prod
     const scrapIndex = totalProducidoTn > 0 ? (cajonesDesperdicioTn / totalProducidoTn) * 100 : 0
     const wasteIndex = totalProducidoTn > 0 ? (totalDesperdicioTn / totalProducidoTn) * 100 : 0
+    
+    // Índice de rotura producción (informativo - % de cajones que es rotura)
+    const roturaEnCajonesIndex = cajonesDesperdicioTn > 0 ? (roturaProduccionTn / cajonesDesperdicioTn) * 100 : 0
       
     const planCompliance = totalPlanned > 0 
       ? (totalUnits / totalPlanned) * 100 
@@ -567,19 +584,25 @@ export function UnifiedPipeReport() {
       wasteIndex,
       availabilityIndex,
       planCompliance,
-      // Desglose en Tn (para mostrar fórmulas)
+      // Desglose en TONELADAS
       totalProducidoTn,
       canosPlayaTn,
       primeraTn,
       segundaTn,
       rotosCalidadTn,
       roturaProduccionTn,
-      totalRoturaTn,
       totalDesperdicioTn,
+      // Desglose en UNIDADES
+      canosPlayaUnits,
+      primeraUnits,
+      segundaUnits,
+      rotosCalidadUnits,
+      roturaProduccionUnits,
       // Índices individuales
       secondIndex,
       brokenIndex,
       scrapIndex,
+      roturaEnCajonesIndex,
       daysWorked,
       avgDowntimePerDay
     }
@@ -906,20 +929,94 @@ export function UnifiedPipeReport() {
               {/* Fórmulas explicativas */}
               <div className="bg-muted/50 rounded-lg p-3 text-xs space-y-1">
                 <p className="font-medium text-muted-foreground mb-2">Fórmulas de cálculo:</p>
-                <p><span className="text-green-600 font-medium">Primera</span> = Caños a playa ({currentPeriod.canosPlayaTn.toFixed(2)} Tn) - Segunda ({currentPeriod.segundaTn.toFixed(2)} Tn) - Rotos calidad ({currentPeriod.rotosCalidadTn.toFixed(2)} Tn) = <span className="font-bold text-green-600">{currentPeriod.primeraTn.toFixed(2)} Tn</span></p>
-                <p><span className="text-red-600 font-medium">Total Rotura</span> = Rotura producción ({currentPeriod.roturaProduccionTn.toFixed(2)} Tn) + Rotos calidad ({currentPeriod.rotosCalidadTn.toFixed(2)} Tn) = <span className="font-bold text-red-600">{currentPeriod.totalRoturaTn.toFixed(2)} Tn</span></p>
-                <p><span className="text-muted-foreground font-medium">Total Producido</span> = Primera + Segunda + Rotos + Rotura prod. + Cajones = <span className="font-bold">{currentPeriod.totalProducidoTn.toFixed(2)} Tn</span></p>
+                <p><span className="text-green-600 font-medium">Primera</span> = Caños a playa - Segunda - Rotos calidad = <span className="font-bold text-green-600">{currentPeriod.primeraTn.toFixed(2)} Tn</span> ({currentPeriod.primeraUnits.toLocaleString()} u)</p>
+                <p><span className="text-muted-foreground font-medium">Total Producido</span> = Caños a playa + Cajones desperdicio = <span className="font-bold">{currentPeriod.totalProducidoTn.toFixed(2)} Tn</span></p>
+                <p className="text-[10px] text-muted-foreground italic mt-1">Nota: La rotura de producción ({currentPeriod.roturaProduccionUnits} u / {currentPeriod.roturaProduccionTn.toFixed(2)} Tn) ya está incluida en los cajones de desperdicio, representa el {currentPeriod.roturaEnCajonesIndex.toFixed(1)}% de los cajones</p>
               </div>
 
-              {/* Grid de índices */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {/* Tabla resumen en UNIDADES y TONELADAS */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left py-2 px-2 font-medium">Concepto</th>
+                      <th className="text-center py-2 px-2 font-medium">Unidades</th>
+                      <th className="text-center py-2 px-2 font-medium">Toneladas</th>
+                      <th className="text-center py-2 px-2 font-medium">% del Total</th>
+                      <th className="text-left py-2 px-2 font-medium">Fuente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-blue-50">
+                      <td className="py-2 px-2 font-medium">Caños a playa</td>
+                      <td className="py-2 px-2 text-center">{currentPeriod.canosPlayaUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center">{currentPeriod.canosPlayaTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center">-</td>
+                      <td className="py-2 px-2 text-muted-foreground">Parte diario</td>
+                    </tr>
+                    <tr className="bg-green-50">
+                      <td className="py-2 px-2 font-medium text-green-700">Primera</td>
+                      <td className="py-2 px-2 text-center font-semibold text-green-600">{currentPeriod.primeraUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center font-semibold text-green-600">{currentPeriod.primeraTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center font-bold text-green-600">{currentPeriod.qualityIndex.toFixed(1)}%</td>
+                      <td className="py-2 px-2 text-muted-foreground">Calculado</td>
+                    </tr>
+                    <tr className="bg-amber-50">
+                      <td className="py-2 px-2 font-medium text-amber-700">Segunda</td>
+                      <td className="py-2 px-2 text-center font-semibold text-amber-600">{currentPeriod.segundaUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center font-semibold text-amber-600">{currentPeriod.segundaTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center font-bold text-amber-600">{currentPeriod.secondIndex.toFixed(2)}%</td>
+                      <td className="py-2 px-2 text-muted-foreground">Control calidad</td>
+                    </tr>
+                    <tr className="bg-red-50">
+                      <td className="py-2 px-2 font-medium text-red-700">Rotos (calidad)</td>
+                      <td className="py-2 px-2 text-center font-semibold text-red-600">{currentPeriod.rotosCalidadUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center font-semibold text-red-600">{currentPeriod.rotosCalidadTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center font-bold text-red-600">{currentPeriod.brokenIndex.toFixed(2)}%</td>
+                      <td className="py-2 px-2 text-muted-foreground">Control calidad</td>
+                    </tr>
+                    <tr className="bg-orange-50">
+                      <td className="py-2 px-2 font-medium text-orange-700">Cajones desperdicio</td>
+                      <td className="py-2 px-2 text-center text-orange-600">{currentPeriod.totalScrapBoxes} caj</td>
+                      <td className="py-2 px-2 text-center font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center font-bold text-orange-600">{currentPeriod.scrapIndex.toFixed(2)}%</td>
+                      <td className="py-2 px-2 text-muted-foreground">Parte diario</td>
+                    </tr>
+                    <tr className="text-muted-foreground">
+                      <td className="py-2 px-2 pl-4 text-[10px]">└ Rotura producción (incluida)</td>
+                      <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaProduccionUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaProduccionTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaEnCajonesIndex.toFixed(1)}% caj</td>
+                      <td className="py-2 px-2 text-[10px]">Parte diario</td>
+                    </tr>
+                    <tr className="border-t-2 bg-muted/50 font-semibold">
+                      <td className="py-2 px-2">TOTAL PRODUCIDO</td>
+                      <td className="py-2 px-2 text-center">-</td>
+                      <td className="py-2 px-2 text-center">{currentPeriod.totalProducidoTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center">100%</td>
+                      <td className="py-2 px-2"></td>
+                    </tr>
+                    <tr className="bg-destructive/10 font-semibold">
+                      <td className="py-2 px-2 text-destructive">DESPERDICIO TOTAL</td>
+                      <td className="py-2 px-2 text-center text-destructive">-</td>
+                      <td className="py-2 px-2 text-center text-destructive">{currentPeriod.totalDesperdicioTn.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-center text-destructive">{currentPeriod.wasteIndex.toFixed(2)}%</td>
+                      <td className="py-2 px-2 text-[10px] text-muted-foreground">2da + Rotos + Cajones</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Grid de índices visual */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {/* Índice de Primera (Calidad) */}
                 <div className={`p-4 rounded-lg ${getStatusBg(currentPeriod.qualityIndex, 95)} border`}>
                   <p className={`text-2xl font-bold ${getStatusColor(currentPeriod.qualityIndex, 95)}`}>
                     {currentPeriod.qualityIndex.toFixed(1)}%
                   </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-green-700">Primera</p>
+                  <p className="text-xs font-medium uppercase mt-1 text-green-700">Índice Primera</p>
                   <p className="text-sm font-semibold text-green-600">{currentPeriod.primeraTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">{currentPeriod.primeraUnits.toLocaleString()} unidades</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.qualityIndex} 
@@ -934,9 +1031,9 @@ export function UnifiedPipeReport() {
                   <p className="text-2xl font-bold text-amber-600">
                     {currentPeriod.secondIndex.toFixed(2)}%
                   </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-amber-700">Segunda</p>
+                  <p className="text-xs font-medium uppercase mt-1 text-amber-700">Índice Segunda</p>
                   <p className="text-sm font-semibold text-amber-600">{currentPeriod.segundaTn.toFixed(2)} Tn</p>
-                  <p className="text-[10px] text-muted-foreground">Control calidad</p>
+                  <p className="text-[10px] text-muted-foreground">{currentPeriod.segundaUnits.toLocaleString()} unidades</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.secondIndex} 
@@ -947,36 +1044,18 @@ export function UnifiedPipeReport() {
                   )}
                 </div>
                 
-                {/* Índice de Rotura Total */}
+                {/* Índice de Rotura (solo calidad) */}
                 <div className="p-4 rounded-lg bg-red-50 border border-red-200">
                   <p className="text-2xl font-bold text-red-600">
                     {currentPeriod.brokenIndex.toFixed(2)}%
                   </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-red-700">Rotura Total</p>
-                  <p className="text-sm font-semibold text-red-600">{currentPeriod.totalRoturaTn.toFixed(2)} Tn</p>
-                  <p className="text-[10px] text-muted-foreground">Prod: {currentPeriod.roturaProduccionTn.toFixed(2)} + Cal: {currentPeriod.rotosCalidadTn.toFixed(2)}</p>
+                  <p className="text-xs font-medium uppercase mt-1 text-red-700">Índice Rotura</p>
+                  <p className="text-sm font-semibold text-red-600">{currentPeriod.rotosCalidadTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">{currentPeriod.rotosCalidadUnits.toLocaleString()} unidades</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.brokenIndex} 
                       previous={previousPeriod.brokenIndex}
-                      invert
-                      showPP
-                    />
-                  )}
-                </div>
-                
-                {/* Índice de Cajones Desperdicio */}
-                <div className="p-4 rounded-lg bg-orange-50 border border-orange-200">
-                  <p className="text-2xl font-bold text-orange-600">
-                    {currentPeriod.scrapIndex.toFixed(2)}%
-                  </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-orange-700">Cajones Desp.</p>
-                  <p className="text-sm font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)} Tn</p>
-                  <p className="text-[10px] text-muted-foreground">{currentPeriod.totalScrapBoxes} cajones</p>
-                  {previousPeriod && (
-                    <DeltaIndicator 
-                      current={currentPeriod.scrapIndex} 
-                      previous={previousPeriod.scrapIndex}
                       invert
                       showPP
                     />
@@ -990,7 +1069,7 @@ export function UnifiedPipeReport() {
                   </p>
                   <p className="text-xs font-medium uppercase mt-1 text-destructive">Desperdicio Total</p>
                   <p className="text-sm font-semibold text-destructive">{currentPeriod.totalDesperdicioTn.toFixed(2)} Tn</p>
-                  <p className="text-[10px] text-muted-foreground">2da + Rotura + Cajones</p>
+                  <p className="text-[10px] text-muted-foreground">2da + Rotos + Cajones</p>
                   {previousPeriod && (
                     <DeltaIndicator 
                       current={currentPeriod.wasteIndex} 
@@ -1000,6 +1079,66 @@ export function UnifiedPipeReport() {
                     />
                   )}
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* SECCIÓN 3b: DESGLOSE POR TIPO DE CAÑO */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm uppercase tracking-wide">Desglose por Tipo de Caño</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left py-2 px-2 font-medium">Diámetro</th>
+                      <th className="text-center py-2 px-2 font-medium">Producido</th>
+                      <th className="text-center py-2 px-2 font-medium">Rotura Prod.</th>
+                      <th className="text-center py-2 px-2 font-medium text-green-600">1ra (Calidad)</th>
+                      <th className="text-center py-2 px-2 font-medium text-amber-600">2da (Calidad)</th>
+                      <th className="text-center py-2 px-2 font-medium text-red-600">Rotos (Calidad)</th>
+                      <th className="text-center py-2 px-2 font-medium">% Calidad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {PIPE_DIAMETERS.filter(d => 
+                      currentPeriod.byDiameter[d]?.produced > 0 || 
+                      currentPeriod.qualityData?.byDiameter[d]
+                    ).map((d, idx) => {
+                      const prod = currentPeriod.byDiameter[d] || { produced: 0, reprocessed: 0, weightKg: 0 }
+                      const qual = currentPeriod.qualityData?.byDiameter[d]
+                      const totalClassified = qual ? qual.first + qual.second + qual.broken : 0
+                      const qualityRate = totalClassified > 0 ? (qual!.first / totalClassified) * 100 : 0
+                      
+                      return (
+                        <tr key={d} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
+                          <td className="py-2 px-2 font-medium">CC{d}</td>
+                          <td className="py-2 px-2 text-center">{prod.produced.toLocaleString()}</td>
+                          <td className="py-2 px-2 text-center text-orange-600">{prod.reprocessed || "-"}</td>
+                          <td className="py-2 px-2 text-center text-green-600 font-medium">{qual?.first || "-"}</td>
+                          <td className="py-2 px-2 text-center text-amber-600">{qual?.second || "-"}</td>
+                          <td className="py-2 px-2 text-center text-red-600">{qual?.broken || "-"}</td>
+                          <td className={`py-2 px-2 text-center font-medium ${qualityRate >= 95 ? "text-green-600" : qualityRate >= 90 ? "text-amber-600" : "text-red-600"}`}>
+                            {qual ? `${qualityRate.toFixed(1)}%` : "-"}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="border-t-2 bg-muted/50 font-semibold">
+                      <td className="py-2 px-2">TOTAL</td>
+                      <td className="py-2 px-2 text-center">{currentPeriod.canosPlayaUnits.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-center text-orange-600">{currentPeriod.roturaProduccionUnits}</td>
+                      <td className="py-2 px-2 text-center text-green-600">{currentPeriod.qualityData?.totalFirst || "-"}</td>
+                      <td className="py-2 px-2 text-center text-amber-600">{currentPeriod.qualityData?.totalSecond || "-"}</td>
+                      <td className="py-2 px-2 text-center text-red-600">{currentPeriod.qualityData?.totalBroken || "-"}</td>
+                      <td className={`py-2 px-2 text-center font-bold ${currentPeriod.qualityIndex >= 95 ? "text-green-600" : currentPeriod.qualityIndex >= 90 ? "text-amber-600" : "text-red-600"}`}>
+                        {currentPeriod.qualityIndex.toFixed(1)}%
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </CardContent>
           </Card>
