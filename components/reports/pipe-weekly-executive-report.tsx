@@ -23,6 +23,12 @@ interface DowntimeData {
   percentage: number
 }
 
+interface DefectReasonData {
+  reason: string
+  count: number
+  percentage: number
+}
+
 interface PipeWeeklyReportData {
   totalUnits: number
   totalPlanned: number
@@ -31,7 +37,10 @@ interface PipeWeeklyReportData {
   secondPercent: number
   brokenPercent: number
   wastePercent: number
+  wasteBoxes?: number
+  wasteTons?: number
   topDowntimes: DowntimeData[]
+  topDefectReasons?: DefectReasonData[]
   totalDowntimeMinutes: number
   prevWeekUnits: number
   prevWeekQuality: number
@@ -328,6 +337,81 @@ export const PipeWeeklyExecutiveReport = forwardRef<HTMLDivElement, PipeWeeklyEx
           </>
         )}
 
+        {/* Top 3 Razones de Defectos/Roturas */}
+        {reportData.topDefectReasons && reportData.topDefectReasons.length > 0 && (
+          <>
+            <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#111827', marginBottom: '2mm', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e5e7eb', paddingBottom: '1mm' }}>
+              Top 3 Razones de Defectos / Roturas
+            </div>
+            
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '4mm', fontSize: '8pt' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#fefce8' }}>
+                  <th style={{ padding: '1.5mm', textAlign: 'center', fontWeight: '600', borderBottom: '1px solid #fde047', color: '#854d0e', width: '8%' }}>#</th>
+                  <th style={{ padding: '1.5mm', textAlign: 'left', fontWeight: '600', borderBottom: '1px solid #fde047', color: '#854d0e' }}>Motivo</th>
+                  <th style={{ padding: '1.5mm', textAlign: 'center', fontWeight: '600', borderBottom: '1px solid #fde047', color: '#854d0e', width: '15%' }}>Cantidad</th>
+                  <th style={{ padding: '1.5mm', textAlign: 'center', fontWeight: '600', borderBottom: '1px solid #fde047', color: '#854d0e', width: '15%' }}>% Total</th>
+                  <th style={{ padding: '1.5mm', textAlign: 'left', fontWeight: '600', borderBottom: '1px solid #fde047', color: '#854d0e', width: '30%' }}>Impacto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportData.topDefectReasons.slice(0, 3).map((defect, idx) => (
+                  <tr key={idx} style={{ backgroundColor: idx % 2 === 1 ? '#fafafa' : '#ffffff' }}>
+                    <td style={{ padding: '1.5mm', textAlign: 'center', borderBottom: '1px solid #e5e7eb', fontWeight: '700', color: '#d97706' }}>{idx + 1}</td>
+                    <td style={{ padding: '1.5mm', borderBottom: '1px solid #e5e7eb' }}>{defect.reason}</td>
+                    <td style={{ padding: '1.5mm', textAlign: 'center', borderBottom: '1px solid #e5e7eb', fontWeight: '600' }}>{defect.count}</td>
+                    <td style={{ padding: '1.5mm', textAlign: 'center', borderBottom: '1px solid #e5e7eb', fontWeight: '500' }}>{defect.percentage.toFixed(1)}%</td>
+                    <td style={{ padding: '1.5mm', borderBottom: '1px solid #e5e7eb' }}>
+                      <div style={{ 
+                        height: '4mm', 
+                        backgroundColor: '#fef9c3', 
+                        borderRadius: '2px',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{ 
+                          height: '100%', 
+                          width: `${Math.min(defect.percentage, 100)}%`,
+                          backgroundColor: idx === 0 ? '#d97706' : idx === 1 ? '#f59e0b' : '#fbbf24'
+                        }} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* Desperdicio */}
+        <div style={{ display: 'flex', gap: '4mm', marginBottom: '4mm' }}>
+          <div style={{ flex: 1, backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '2mm', padding: '3mm' }}>
+            <div style={{ fontSize: '7pt', color: '#991b1b', textTransform: 'uppercase', fontWeight: '600', marginBottom: '1mm' }}>Desperdicio Semanal</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div>
+                <span style={{ fontSize: '14pt', fontWeight: '700', color: '#dc2626' }}>{reportData.wasteBoxes || 0}</span>
+                <span style={{ fontSize: '8pt', color: '#991b1b', marginLeft: '1mm' }}>cajones</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '10pt', fontWeight: '600', color: '#b91c1c' }}>{(reportData.wasteTons || 0).toFixed(2)}</span>
+                <span style={{ fontSize: '8pt', color: '#991b1b', marginLeft: '1mm' }}>toneladas</span>
+              </div>
+            </div>
+          </div>
+          <div style={{ flex: 1, backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '2mm', padding: '3mm' }}>
+            <div style={{ fontSize: '7pt', color: '#166534', textTransform: 'uppercase', fontWeight: '600', marginBottom: '1mm' }}>Índice de Calidad</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div>
+                <span style={{ fontSize: '14pt', fontWeight: '700', color: reportData.qualityIndex >= 95 ? '#16a34a' : reportData.qualityIndex >= 90 ? '#d97706' : '#dc2626' }}>
+                  {reportData.qualityIndex.toFixed(1)}%
+                </span>
+              </div>
+              <div style={{ fontSize: '8pt', color: '#166534' }}>
+                Primera: {(100 - reportData.secondPercent - reportData.brokenPercent).toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Resumen Ejecutivo */}
         <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#111827', marginBottom: '2mm', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e5e7eb', paddingBottom: '1mm' }}>
           Resumen Ejecutivo
@@ -348,8 +432,14 @@ export const PipeWeeklyExecutiveReport = forwardRef<HTMLDivElement, PipeWeeklyEx
           <p style={{ margin: '0 0 2mm 0' }}>
             <strong>Calidad:</strong> Índice de calidad del <strong>{reportData.qualityIndex.toFixed(1)}%</strong> 
             ({qualityTrend >= 0 ? '+' : ''}{qualityTrend.toFixed(1)}pp vs semana anterior). 
-            Desperdicio total: {reportData.wastePercent.toFixed(1)}% (Segunda: {reportData.secondPercent.toFixed(1)}%, Rotura: {reportData.brokenPercent.toFixed(1)}%).
+            Desperdicio: {reportData.wasteBoxes || 0} cajones ({(reportData.wasteTons || 0).toFixed(2)} tn) - 
+            Segunda: {reportData.secondPercent.toFixed(1)}%, Rotura: {reportData.brokenPercent.toFixed(1)}%.
           </p>
+          {reportData.topDefectReasons && reportData.topDefectReasons.length > 0 && (
+            <p style={{ margin: '0 0 2mm 0' }}>
+              <strong>Defectos:</strong> Principal causa de rechazo: {reportData.topDefectReasons[0]?.reason} ({reportData.topDefectReasons[0]?.percentage.toFixed(0)}% del total).
+            </p>
+          )}
           {reportData.topDowntimes.length > 0 && (
             <p style={{ margin: '0' }}>
               <strong>Paradas:</strong> {reportData.totalDowntimeMinutes} minutos totales ({(reportData.totalDowntimeMinutes / 60).toFixed(1)} horas). 

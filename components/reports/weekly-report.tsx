@@ -79,6 +79,17 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
   const [prevWeekAvg, setPrevWeekAvg] = useState<{downtime: number, avgTrays: number} | null>(null)
   const [scrapTrend, setScrapTrend] = useState<"stable" | "increasing" | "decreasing">("stable")
   const [scrapOutlier, setScrapOutlier] = useState<{date: string, value: number} | null>(null)
+  
+  // Datos de calidad de caños desde control de calidad
+  const [pipeQualityData, setPipeQualityData] = useState<{
+    byDiameter: Record<number, { first: number; second: number; broken: number }>;
+    totalFirst: number;
+    totalSecond: number;
+    totalBroken: number;
+    topDefectReasons: { reason: string; count: number; percentage: number }[];
+    wasteBoxes: number;
+    wasteTons: number;
+  } | null>(null)
 
   const supabase = getSupabase()
 
@@ -308,6 +319,85 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             })
           } else {
             setPrevWeekAvg(null)
+          }
+
+          // Cargar datos de calidad de caños (control de calidad)
+          const { data: qualityControls } = await supabase
+            .from("pipe_quality_control")
+            .select(`
+              *,
+              items:pipe_quality_items(
+                *,
+                defects:pipe_quality_defects(
+                  *,
+                  reason:pipe_defect_reasons(reason, category)
+                )
+              )
+            `)
+            .gte("control_date", weekStart)
+            .lte("control_date", weekEnd)
+
+          if (qualityControls && qualityControls.length > 0) {
+            const byDiameter: Record<number, { first: number; second: number; broken: number }> = {}
+            let totalFirst = 0, totalSecond = 0, totalBroken = 0
+            const defectCounts: Record<string, number> = {}
+
+            qualityControls.forEach((control: any) => {
+              control.items?.forEach((item: any) => {
+                const diameter = item.diameter
+                if (!byDiameter[diameter]) {
+                  byDiameter[diameter] = { first: 0, second: 0, broken: 0 }
+                }
+                byDiameter[diameter].first += item.first_quality || 0
+                byDiameter[diameter].second += item.second_quality || 0
+                byDiameter[diameter].broken += item.broken || 0
+                totalFirst += item.first_quality || 0
+                totalSecond += item.second_quality || 0
+                totalBroken += item.broken || 0
+
+                // Contar razones de defectos
+                item.defects?.forEach((defect: any) => {
+                  const reasonName = defect.reason?.reason || defect.defect_type || "Sin especificar"
+                  if (!defectCounts[reasonName]) defectCounts[reasonName] = 0
+                  defectCounts[reasonName] += defect.quantity || 1
+                })
+              })
+            })
+
+            // Top 3 razones de defectos
+            const totalDefects = Object.values(defectCounts).reduce((s, v) => s + v, 0)
+            const topDefectReasons = Object.entries(defectCounts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 3)
+              .map(([reason, count]) => ({
+                reason,
+                count,
+                percentage: totalDefects > 0 ? (count / totalDefects) * 100 : 0
+              }))
+
+            // Calcular desperdicio en cajones y toneladas
+            // Asumiendo 1 cajón = 1 caño roto o de segunda, y peso promedio por diámetro
+            const wasteUnits = totalSecond + totalBroken
+            const wasteBoxes = wasteUnits // 1 cajón por unidad defectuosa
+            // Calcular toneladas basado en pesos promedio por diámetro
+            let wasteTons = 0
+            Object.entries(byDiameter).forEach(([diam, data]) => {
+              const diamNum = parseInt(diam)
+              const weight = weights[diam] || (diamNum * 2) // peso aproximado en kg
+              wasteTons += (data.second + data.broken) * weight / 1000
+            })
+
+            setPipeQualityData({
+              byDiameter,
+              totalFirst,
+              totalSecond,
+              totalBroken,
+              topDefectReasons,
+              wasteBoxes,
+              wasteTons
+            })
+          } else {
+            setPipeQualityData(null)
           }
         } else {
           const metrics = data.map(calculateReportMetrics)
@@ -614,19 +704,31 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
                         totalUnits: pipeMetrics.totalUnits,
                         totalPlanned: Object.values(pipeTargets).reduce((s, v) => s + v, 0),
                         byDiameter: pipeMetrics.productionByType.reduce((acc, p) => {
-                          acc[parseInt(p.size)] = {
+                          const diameter = parseInt(p.size)
+                          const qualityData = pipeQualityData?.byDiameter[diameter]
+                          acc[diameter] = {
                             produced: p.quantity,
                             planned: pipeTargets[p.size] || 0,
-                            first: p.quantity, // Default to all first quality
-                            second: 0,
-                            broken: 0
+                            first: qualityData?.first ?? p.quantity,
+                            second: qualityData?.second ?? 0,
+                            broken: qualityData?.broken ?? 0
                           }
                           return acc
                         }, {} as Record<number, { produced: number; planned: number; first: number; second: number; broken: number }>),
-                        qualityIndex: pipeMetrics.quality,
-                        secondPercent: 0,
-                        brokenPercent: 100 - pipeMetrics.quality,
-                        wastePercent: 100 - pipeMetrics.quality,
+                        qualityIndex: pipeQualityData 
+                          ? (pipeQualityData.totalFirst / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : pipeMetrics.quality,
+                        secondPercent: pipeQualityData 
+                          ? (pipeQualityData.totalSecond / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 0,
+                        brokenPercent: pipeQualityData 
+                          ? (pipeQualityData.totalBroken / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 100 - pipeMetrics.quality,
+                        wastePercent: pipeQualityData 
+                          ? ((pipeQualityData.totalSecond + pipeQualityData.totalBroken) / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 100 - pipeMetrics.quality,
+                        wasteBoxes: pipeQualityData?.wasteBoxes ?? 0,
+                        wasteTons: pipeQualityData?.wasteTons ?? 0,
                         topDowntimes: pipeMetrics.downtimes
                           .sort((a: any, b: any) => b.minutes - a.minutes)
                           .slice(0, 3)
@@ -635,6 +737,7 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
                             minutes: dt.minutes,
                             percentage: pipeMetrics.totalDowntimeMinutes > 0 ? (dt.minutes / pipeMetrics.totalDowntimeMinutes) * 100 : 0
                           })),
+                        topDefectReasons: pipeQualityData?.topDefectReasons ?? [],
                         totalDowntimeMinutes: pipeMetrics.totalDowntimeMinutes,
                         prevWeekUnits: prevWeekAvg?.avgTrays ? prevWeekAvg.avgTrays * 5 : 0,
                         prevWeekQuality: 0
@@ -655,19 +758,31 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
                     totalUnits: pipeMetrics.totalUnits,
                     totalPlanned: Object.values(pipeTargets).reduce((s, v) => s + v, 0),
                     byDiameter: pipeMetrics.productionByType.reduce((acc, p) => {
-                      acc[parseInt(p.size)] = {
+                      const diameter = parseInt(p.size)
+                      const qualityData = pipeQualityData?.byDiameter[diameter]
+                      acc[diameter] = {
                         produced: p.quantity,
                         planned: pipeTargets[p.size] || 0,
-                        first: p.quantity,
-                        second: 0,
-                        broken: 0
+                        first: qualityData?.first ?? p.quantity,
+                        second: qualityData?.second ?? 0,
+                        broken: qualityData?.broken ?? 0
                       }
                       return acc
                     }, {} as Record<number, { produced: number; planned: number; first: number; second: number; broken: number }>),
-                    qualityIndex: pipeMetrics.quality,
-                    secondPercent: 0,
-                    brokenPercent: 100 - pipeMetrics.quality,
-                    wastePercent: 100 - pipeMetrics.quality,
+                    qualityIndex: pipeQualityData 
+                      ? (pipeQualityData.totalFirst / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : pipeMetrics.quality,
+                    secondPercent: pipeQualityData 
+                      ? (pipeQualityData.totalSecond / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 0,
+                    brokenPercent: pipeQualityData 
+                      ? (pipeQualityData.totalBroken / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 100 - pipeMetrics.quality,
+                    wastePercent: pipeQualityData 
+                      ? ((pipeQualityData.totalSecond + pipeQualityData.totalBroken) / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 100 - pipeMetrics.quality,
+                    wasteBoxes: pipeQualityData?.wasteBoxes ?? 0,
+                    wasteTons: pipeQualityData?.wasteTons ?? 0,
                     topDowntimes: pipeMetrics.downtimes
                       .sort((a: any, b: any) => b.minutes - a.minutes)
                       .slice(0, 3)
@@ -676,6 +791,7 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
                         minutes: dt.minutes,
                         percentage: pipeMetrics.totalDowntimeMinutes > 0 ? (dt.minutes / pipeMetrics.totalDowntimeMinutes) * 100 : 0
                       })),
+                    topDefectReasons: pipeQualityData?.topDefectReasons ?? [],
                     totalDowntimeMinutes: pipeMetrics.totalDowntimeMinutes,
                     prevWeekUnits: prevWeekAvg?.avgTrays ? prevWeekAvg.avgTrays * 5 : 0,
                     prevWeekQuality: 0
