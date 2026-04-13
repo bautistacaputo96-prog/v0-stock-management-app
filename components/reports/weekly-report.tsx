@@ -285,16 +285,21 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             await loadDailyPlanned(endYear, endMonth)
           }
 
-          // Build daily pipe production array
+          // Build daily pipe production array - SOLO días con producción real (Lunes a Viernes)
           const dailyArray: { date: string; production: Record<string, number>; planned: Record<string, number> }[] = []
           const currentDate = new Date(weekStart)
           while (currentDate <= weekEndDate) {
             const dateKey = currentDate.toISOString().split("T")[0]
-            dailyArray.push({
-              date: dateKey,
-              production: dailyProd[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {}),
-              planned: dailyPlanned[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {})
-            })
+            const dayOfWeek = currentDate.getDay() // 0 = Domingo, 6 = Sábado
+            
+            // Solo incluir días laborables (Lunes a Viernes) o días que tengan producción real
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+              dailyArray.push({
+                date: dateKey,
+                production: dailyProd[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {}),
+                planned: dailyPlanned[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {})
+              })
+            }
             currentDate.setDate(currentDate.getDate() + 1)
           }
           setDailyPipeProduction(dailyArray)
@@ -321,7 +326,10 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             setPrevWeekAvg(null)
           }
 
-          // Cargar datos de calidad de caños (control de calidad)
+          // Obtener las fechas con producción real (solo días que tienen partes de producción)
+          const productionDates = new Set(pipeData.map((p: any) => p.production_date))
+
+          // Cargar datos de calidad de caños (control de calidad) - SOLO para días con producción
           const { data: qualityControls } = await supabase
             .from("pipe_quality_control")
             .select(`
@@ -336,13 +344,18 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             `)
             .gte("control_date", weekStart)
             .lte("control_date", weekEnd)
+          
+          // Filtrar solo controles de calidad que correspondan a días con producción
+          const filteredQualityControls = qualityControls?.filter((qc: any) => 
+            productionDates.has(qc.control_date)
+          ) || []
 
-          if (qualityControls && qualityControls.length > 0) {
+          if (filteredQualityControls && filteredQualityControls.length > 0) {
             const byDiameter: Record<number, { first: number; second: number; broken: number }> = {}
             let totalFirst = 0, totalSecond = 0, totalBroken = 0
             const defectCounts: Record<string, number> = {}
 
-            qualityControls.forEach((control: any) => {
+            filteredQualityControls.forEach((control: any) => {
               control.items?.forEach((item: any) => {
                 const diameter = item.diameter
                 if (!byDiameter[diameter]) {
