@@ -137,7 +137,7 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
   )
 }
 
-// ── Main Component ─────────────────────────────��─────��─────────────────────
+// ── Main Component ─────────────────────────────���─────��─────────────────────
 
 export function DashboardContent() {
   const { selectedPlant, plantName, isPlantLoaded } = usePlant()
@@ -163,6 +163,7 @@ export function DashboardContent() {
     totalTn: number
     boxWeightKg: number
     byDate: Record<string, number>
+    byDateShift: Record<string, Record<number, number>>
   } | null>(null)
   
   // Determinar lineas disponibles segun planta:
@@ -415,29 +416,38 @@ export function DashboardContent() {
       
       const boxWeightKg = scrapConfig?.piece_weight_kg || 150
 
-      // Get scrap boxes from production records
+      // Get scrap boxes from production records - include shift for filtering
       const { data: productionData } = await supabase
         .from("pipe_production")
-        .select("production_date, scrap_boxes")
+        .select("production_date, shift, scrap_boxes")
         .gte("production_date", cmStart)
         .lte("production_date", cmEnd)
 
       if (productionData && productionData.length > 0) {
         let totalBoxes = 0
         const byDate: Record<string, number> = {}
+        const byDateShift: Record<string, Record<number, number>> = {}
         
         productionData.forEach((p: any) => {
           const boxes = p.scrap_boxes || 0
+          const shift = p.shift || 1
           totalBoxes += boxes
+          
+          // Agrupar por fecha (total)
           if (!byDate[p.production_date]) byDate[p.production_date] = 0
           byDate[p.production_date] += boxes
+          
+          // Agrupar por fecha y turno
+          if (!byDateShift[p.production_date]) byDateShift[p.production_date] = {}
+          byDateShift[p.production_date][shift] = boxes
         })
 
         setScrapData({
           totalBoxes,
           totalTn: (totalBoxes * boxWeightKg) / 1000,
           boxWeightKg,
-          byDate
+          byDate,
+          byDateShift
         })
       } else {
         setScrapData(null)
@@ -580,6 +590,7 @@ export function DashboardContent() {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(d => {
           const availHours = d.availableMinutes / 60
+          // Para "todos", usar el total diario de cajones
           const scrapBoxes = scrapData?.byDate[d.date] || 0
           return {
             date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
@@ -601,7 +612,8 @@ export function DashboardContent() {
 
     return data.map(d => {
       const availHours = d.availableMinutes / 60
-      const scrapBoxes = scrapData?.byDate[d.date] || 0
+      // Para turno específico, usar el dato de ese turno
+      const scrapBoxes = scrapData?.byDateShift[d.date]?.[d.shift] || 0
       return {
         date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
         rawDate: d.date,
