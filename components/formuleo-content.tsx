@@ -180,7 +180,6 @@ export function FormuleoContent() {
           }
         })
         setPipeFormulas(formulas)
-        console.log("[v0] Loaded pipe formulas:", formulas)
       }
       
       // Load operators
@@ -271,7 +270,6 @@ export function FormuleoContent() {
         }
       })
       setPipeFormulas(formulas)
-      console.log("[v0] Reloaded pipe formulas:", formulas)
     }
   }
 
@@ -400,11 +398,7 @@ export function FormuleoContent() {
     const supabase = getSupabase()
     const formula = pipeFormulas[diameter]
     
-    console.log("[v0] executePipeSave called for diameter:", diameter)
-    console.log("[v0] formula data:", formula)
-    
     if (!formula) {
-      console.log("[v0] No formula found, returning")
       setSaving(false)
       return
     }
@@ -428,16 +422,11 @@ export function FormuleoContent() {
         is_active: true
       }
       
-      console.log("[v0] dataToSave:", dataToSave)
-      console.log("[v0] formula.id:", formula.id)
-      
       if (formula.id) {
-        const { error: updateError } = await supabase
+        await supabase
           .from("pipe_mix_designs")
           .update(dataToSave)
           .eq("id", formula.id)
-        
-        console.log("[v0] Update result - error:", updateError)
         
         // Save to history
         await supabase.from("pipe_mix_design_history").insert({
@@ -452,14 +441,11 @@ export function FormuleoContent() {
           modified_at: new Date().toISOString()
         })
       } else {
-        console.log("[v0] Inserting new pipe formula")
-        const { data, error: insertError } = await supabase
+        const { data } = await supabase
           .from("pipe_mix_designs")
           .insert(dataToSave)
           .select()
           .single()
-        
-        console.log("[v0] Insert result - data:", data, "error:", insertError)
         
         if (data) {
           setPipeFormulas(prev => ({
@@ -1064,28 +1050,47 @@ export function FormuleoContent() {
                             {formula.additive_liters.toFixed(2)} L
                           </td>
                           <td className="py-1 px-1 text-center">
-                            {formula.spec_pdf_url ? (
-                              <a 
-                                href={formula.spec_pdf_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded"
-                              >
-                                <FileText className="w-4 h-4 text-blue-600" />
-                              </a>
+                            {formula.spec_pdf_url && !formula.spec_pdf_url.startsWith("blob:") ? (
+                              <div className="flex items-center gap-1">
+                                <a 
+                                  href={formula.spec_pdf_url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded"
+                                  title="Ver ficha técnica"
+                                >
+                                  <FileText className="w-4 h-4 text-blue-600" />
+                                </a>
+                              </div>
                             ) : (
-                              <label className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded cursor-pointer">
+                              <label className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded cursor-pointer" title="Subir ficha técnica PDF">
                                 <Upload className="w-4 h-4 text-muted-foreground" />
                                 <input 
                                   type="file" 
                                   accept=".pdf"
                                   className="hidden"
-                                  onChange={(e) => {
+                                  onChange={async (e) => {
                                     const file = e.target.files?.[0]
                                     if (file) {
-                                      // For now, we'll use a placeholder - in production you'd upload to storage
-                                      const url = URL.createObjectURL(file)
-                                      updatePipeFormula(diameter, "spec_pdf_url", url)
+                                      try {
+                                        const formData = new FormData()
+                                        formData.append('file', file)
+                                        formData.append('diameter', diameter.toString())
+                                        
+                                        const response = await fetch('/api/upload-pdf', {
+                                          method: 'POST',
+                                          body: formData
+                                        })
+                                        
+                                        if (response.ok) {
+                                          const { url } = await response.json()
+                                          updatePipeFormula(diameter, "spec_pdf_url", url)
+                                        } else {
+                                          console.error("Error uploading PDF")
+                                        }
+                                      } catch (error) {
+                                        console.error("Upload error:", error)
+                                      }
                                     }
                                   }}
                                 />
