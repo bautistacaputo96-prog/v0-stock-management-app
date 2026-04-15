@@ -24,22 +24,23 @@ const PIPE_DIAMETERS_BY_PLANT: Record<string, number[]> = {
 }
 
 interface PastonFormula {
-  id?: string
+  id?: number
   plant: string
-  name: string
   sand_kg: number
   sand_supplier: string
   stone_kg: number
   stone_supplier: string
   cement_kg: number
-  cement_supplier: string
-  tank_liters: number // Tanque de 1000L generalmente
-  additive1_liters: number // Mark V
-  additive2_liters: number // Daraccel
-  water_liters: number // Calculado: tank - aditivos
-  diluted_per_paston_liters: number // Litros de aditivo diluido por pastón
+  tank_capacity_liters: number // Tanque de 1000L generalmente
+  additive_1_kg: number // Mark V (en kg/litros)
+  additive_1_name: string
+  additive_2_kg: number // Daraccel (en kg/litros)
+  additive_2_name: string
+  water_in_tank_liters: number // Calculado: tank - aditivos
+  diluted_additive_per_paston_liters: number // Litros de aditivo diluido por pastón
   modified_by: string
   modified_at: string
+  is_active: boolean
 }
 
 interface PipeFormula {
@@ -76,20 +77,21 @@ export function FormuleoContent() {
   // Paston formula state
   const [pastonFormula, setPastonFormula] = useState<PastonFormula>({
     plant: plantValue,
-    name: "Fórmula Principal",
     sand_kg: 0,
     sand_supplier: "",
     stone_kg: 0,
     stone_supplier: "",
     cement_kg: 0,
-    cement_supplier: "",
-    tank_liters: 1000,
-    additive1_liters: 0,
-    additive2_liters: 0,
-    water_liters: 1000,
-    diluted_per_paston_liters: 0,
+    tank_capacity_liters: 1000,
+    additive_1_kg: 0,
+    additive_1_name: "Mark V",
+    additive_2_kg: 0,
+    additive_2_name: "Daraccel",
+    water_in_tank_liters: 1000,
+    diluted_additive_per_paston_liters: 0,
     modified_by: OPERATORS[0],
-    modified_at: new Date().toISOString()
+    modified_at: new Date().toISOString(),
+    is_active: true
   })
   
   // Pipe formulas state
@@ -111,7 +113,6 @@ export function FormuleoContent() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [sandSuppliers, setSandSuppliers] = useState<Supplier[]>([])
   const [stoneSuppliers, setStoneSuppliers] = useState<Supplier[]>([])
-  const [cementSuppliers, setCementSuppliers] = useState<Supplier[]>([])
 
   // Load data
   const loadData = useCallback(async () => {
@@ -141,10 +142,10 @@ export function FormuleoContent() {
       if (pipeData) {
         const formulas: Record<number, PipeFormula> = {}
         pipeData.forEach((p: any) => {
-          formulas[p.pipe_size] = {
+          formulas[p.diameter] = {
             id: p.id,
             plant: p.plant,
-            pipe_size: p.pipe_size,
+            pipe_size: p.diameter,
             paston_formula_id: pastonData?.id || "",
             pipe_weight_kg: p.pipe_weight_kg || 0,
             cement_kg: p.cement_kg || 0,
@@ -185,9 +186,6 @@ export function FormuleoContent() {
         setStoneSuppliers(suppliersData.filter((s: Supplier) => 
           s.material_type?.toLowerCase().includes("piedra")
         ))
-        setCementSuppliers(suppliersData.filter((s: Supplier) => 
-          s.material_type?.toLowerCase().includes("cemento")
-        ))
       }
       
     } catch (error) {
@@ -203,23 +201,23 @@ export function FormuleoContent() {
 
   // Calculate water liters when additives change
   useEffect(() => {
-    const water = pastonFormula.tank_liters - pastonFormula.additive1_liters - pastonFormula.additive2_liters
-    setPastonFormula(prev => ({ ...prev, water_liters: Math.max(0, water) }))
-  }, [pastonFormula.tank_liters, pastonFormula.additive1_liters, pastonFormula.additive2_liters])
+    const water = pastonFormula.tank_capacity_liters - pastonFormula.additive_1_kg - pastonFormula.additive_2_kg
+    setPastonFormula(prev => ({ ...prev, water_in_tank_liters: Math.max(0, water) }))
+  }, [pastonFormula.tank_capacity_liters, pastonFormula.additive_1_kg, pastonFormula.additive_2_kg])
 
   // Calculate additive percentages per kg of cement
-  const calculateAdditivePercentage = (additiveLiters: number) => {
-    if (pastonFormula.cement_kg <= 0 || pastonFormula.tank_liters <= 0 || pastonFormula.diluted_per_paston_liters <= 0) return 0
+  const calculateAdditivePercentage = (additiveKg: number) => {
+    if (pastonFormula.cement_kg <= 0 || pastonFormula.tank_capacity_liters <= 0 || pastonFormula.diluted_additive_per_paston_liters <= 0) return 0
     // Proporción de aditivo en el tanque
-    const additiveRatio = additiveLiters / pastonFormula.tank_liters
+    const additiveRatio = additiveKg / pastonFormula.tank_capacity_liters
     // Litros de este aditivo por pastón
-    const additivePerPaston = additiveRatio * pastonFormula.diluted_per_paston_liters
+    const additivePerPaston = additiveRatio * pastonFormula.diluted_additive_per_paston_liters
     // Porcentaje sobre kg de cemento
     return (additivePerPaston / pastonFormula.cement_kg) * 100
   }
 
-  const markVPercentage = calculateAdditivePercentage(pastonFormula.additive1_liters)
-  const daraccelPercentage = calculateAdditivePercentage(pastonFormula.additive2_liters)
+  const markVPercentage = calculateAdditivePercentage(pastonFormula.additive_1_kg)
+  const daraccelPercentage = calculateAdditivePercentage(pastonFormula.additive_2_kg)
 
   // Save paston formula
   const savePastonFormula = async () => {
@@ -228,11 +226,26 @@ export function FormuleoContent() {
     
     try {
       const dataToSave = {
-        ...pastonFormula,
         plant: plantValue,
+        sand_kg: pastonFormula.sand_kg,
+        sand_supplier: pastonFormula.sand_supplier,
+        stone_kg: pastonFormula.stone_kg,
+        stone_supplier: pastonFormula.stone_supplier,
+        cement_kg: pastonFormula.cement_kg,
+        tank_capacity_liters: pastonFormula.tank_capacity_liters,
+        additive_1_kg: pastonFormula.additive_1_kg,
+        additive_1_name: pastonFormula.additive_1_name || "Mark V",
+        additive_2_kg: pastonFormula.additive_2_kg,
+        additive_2_name: pastonFormula.additive_2_name || "Daraccel",
+        water_in_tank_liters: pastonFormula.water_in_tank_liters,
+        diluted_additive_per_paston_liters: pastonFormula.diluted_additive_per_paston_liters,
         modified_by: selectedOperator,
-        modified_at: new Date().toISOString()
+        modified_at: new Date().toISOString(),
+        is_active: true
       }
+      
+      // Get previous values for history
+      const previousValues = pastonFormula.id ? { ...pastonFormula } : null
       
       if (pastonFormula.id) {
         // Update
@@ -240,6 +253,17 @@ export function FormuleoContent() {
           .from("paston_formulas")
           .update(dataToSave)
           .eq("id", pastonFormula.id)
+          
+        // Save to history
+        await supabase.from("paston_formulas_history").insert({
+          paston_formula_id: pastonFormula.id,
+          plant: plantValue,
+          previous_values: previousValues,
+          new_values: dataToSave,
+          change_reason: "Actualización de fórmula",
+          modified_by: selectedOperator,
+          modified_at: new Date().toISOString()
+        })
       } else {
         // Insert
         const { data } = await supabase
@@ -252,15 +276,6 @@ export function FormuleoContent() {
           setPastonFormula(data)
         }
       }
-      
-      // Save to history
-      await supabase.from("paston_formulas_history").insert({
-        paston_formula_id: pastonFormula.id,
-        plant: plantValue,
-        formula_data: dataToSave,
-        modified_by: selectedOperator,
-        modified_at: new Date().toISOString()
-      })
       
     } catch (error) {
       console.error("Error saving paston formula:", error)
@@ -283,14 +298,15 @@ export function FormuleoContent() {
     try {
       const dataToSave = {
         plant: plantValue,
-        pipe_size: diameter,
+        diameter: diameter,
         pipe_weight_kg: formula.pipe_weight_kg,
         cement_kg: formula.cement_kg,
         sand_kg: formula.sand_kg,
         stone_kg: formula.stone_kg,
         additive_liters: formula.additive_liters,
         modified_by: selectedOperator,
-        modified_at: new Date().toISOString()
+        modified_at: new Date().toISOString(),
+        is_active: true
       }
       
       if (formula.id) {
@@ -522,39 +538,20 @@ export function FormuleoContent() {
                 
                 {/* Cemento */}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Cemento</Label>
-                  <Select
-                    value={pastonFormula.cement_supplier}
-                    onValueChange={(value) => setPastonFormula(prev => ({ ...prev, cement_supplier: value }))}
-                  >
-                    <SelectTrigger className="text-xs">
-                      <SelectValue placeholder="Seleccionar cemento" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cementSuppliers.length > 0 ? (
-                        cementSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs font-medium">Cemento (kg)</Label>
                   <Input
                     type="number"
                     value={pastonFormula.cement_kg || ""}
                     onChange={(e) => setPastonFormula(prev => ({ ...prev, cement_kg: parseFloat(e.target.value) || 0 }))}
                     placeholder="Kg por pastón"
-                    className="text-xs"
                   />
+                  <p className="text-[10px] text-muted-foreground">CPC40 - Holcim/Avellaneda</p>
                 </div>
               </div>
 
               {/* Tanque de aditivos */}
               <div className="border rounded-lg p-4 bg-muted/30">
-                <h4 className="font-medium text-sm mb-3">Tanque de Aditivo Diluido ({pastonFormula.tank_liters}L)</h4>
+                <h4 className="font-medium text-sm mb-3">Tanque de Aditivo Diluido ({pastonFormula.tank_capacity_liters}L)</h4>
                 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {/* Mark V */}
@@ -598,8 +595,8 @@ export function FormuleoContent() {
                     </div>
                     <Input
                       type="number"
-                      value={pastonFormula.additive1_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive1_liters: parseFloat(e.target.value) || 0 }))}
+                      value={pastonFormula.additive_1_kg || ""}
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_1_kg: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                     />
                     <div className="space-y-1">
@@ -652,8 +649,8 @@ export function FormuleoContent() {
                     </div>
                     <Input
                       type="number"
-                      value={pastonFormula.additive2_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive2_liters: parseFloat(e.target.value) || 0 }))}
+                      value={pastonFormula.additive_2_kg || ""}
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_2_kg: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                     />
                     <div className="space-y-1">
@@ -669,7 +666,7 @@ export function FormuleoContent() {
                     <Label className="text-xs font-medium">Agua (L)</Label>
                     <Input
                       type="number"
-                      value={pastonFormula.water_liters.toFixed(1)}
+                      value={pastonFormula.water_in_tank_liters.toFixed(1)}
                       disabled
                       className="bg-muted"
                     />
@@ -681,8 +678,8 @@ export function FormuleoContent() {
                     <Label className="text-xs font-medium">Diluido/Pastón (L)</Label>
                     <Input
                       type="number"
-                      value={pastonFormula.diluted_per_paston_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, diluted_per_paston_liters: parseFloat(e.target.value) || 0 }))}
+                      value={pastonFormula.diluted_additive_per_paston_liters || ""}
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, diluted_additive_per_paston_liters: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                     />
                     <p className="text-[10px] text-muted-foreground">Litros de mezcla por pastón</p>
@@ -701,8 +698,8 @@ export function FormuleoContent() {
                       <span className="font-mono font-medium">{markVPercentage.toFixed(3)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Darasell:</span>
-                      <span className="font-mono font-medium">{darasellPercentage.toFixed(3)}%</span>
+                      <span>Daraccel:</span>
+                      <span className="font-mono font-medium">{daraccelPercentage.toFixed(3)}%</span>
                     </div>
                   </div>
                 </div>
