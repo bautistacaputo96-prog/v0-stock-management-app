@@ -1064,22 +1064,6 @@ export function FormuleoContent() {
                       const sandPct = totalWeight > 0 ? (formula.sand_kg / totalWeight * 100) : 0
                       const stonePct = totalWeight > 0 ? (formula.stone_kg / totalWeight * 100) : 0
                       
-                      // Calculate additive concentrations (% of cement)
-                      const add1PctOfCement = formula.cement_kg > 0 
-                        ? ((pastonFormula.additive_1_kg / pastonFormula.cement_kg) * formula.cement_kg / formula.cement_kg * 100) 
-                        : 0
-                      const add2PctOfCement = formula.cement_kg > 0 
-                        ? ((pastonFormula.additive_2_kg / pastonFormula.cement_kg) * formula.cement_kg / formula.cement_kg * 100) 
-                        : 0
-                      
-                      // Get additive liters for this pipe
-                      const add1Liters = formula.cement_kg > 0 && pastonFormula.cement_kg > 0
-                        ? (pastonFormula.additive_1_kg / pastonFormula.cement_kg) * formula.cement_kg / (additive1Density || 1.2)
-                        : 0
-                      const add2Liters = formula.cement_kg > 0 && pastonFormula.cement_kg > 0
-                        ? (pastonFormula.additive_2_kg / pastonFormula.cement_kg) * formula.cement_kg / (additive2Density || 1.3)
-                        : 0
-                      
                       return (
                         <React.Fragment key={diameter}>
                           <tr className={idx % 2 === 1 ? "bg-muted/30" : ""}>
@@ -1210,17 +1194,15 @@ export function FormuleoContent() {
                                   <div className="font-medium text-emerald-600 dark:text-emerald-400">Aditivos</div>
                                   <div className="space-y-1 text-[10px]">
                                     <div>
-                                      <span className="text-muted-foreground">{pastonFormula.additive_1_name}:</span>{" "}
-                                      <span className="font-mono">{add1Liters.toFixed(2)} L</span>
-                                      <span className="text-muted-foreground ml-1">
-                                        ({pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_1_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.)
+                                      <span className="text-muted-foreground">{pastonFormula.additive_1_name || "Aditivo 1"}:</span>{" "}
+                                      <span className="font-mono font-bold">
+                                        {pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_1_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.
                                       </span>
                                     </div>
                                     <div>
-                                      <span className="text-muted-foreground">{pastonFormula.additive_2_name}:</span>{" "}
-                                      <span className="font-mono">{add2Liters.toFixed(2)} L</span>
-                                      <span className="text-muted-foreground ml-1">
-                                        ({pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_2_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.)
+                                      <span className="text-muted-foreground">{pastonFormula.additive_2_name || "Aditivo 2"}:</span>{" "}
+                                      <span className="font-mono font-bold">
+                                        {pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_2_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.
                                       </span>
                                     </div>
                                   </div>
