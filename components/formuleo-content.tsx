@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { getSupabase } from "@/lib/supabase"
@@ -115,6 +115,13 @@ export function FormuleoContent() {
   const [showHistory, setShowHistory] = useState(false)
   const [history, setHistory] = useState<any[]>([])
   
+  // Save confirmation dialog
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false)
+  const [saveOperator, setSaveOperator] = useState("")
+  const [saveReason, setSaveReason] = useState("")
+  const [pendingSaveType, setPendingSaveType] = useState<"paston" | "pipe" | null>(null)
+  const [pendingPipeDiameter, setPendingPipeDiameter] = useState<number | null>(null)
+  
   // Technical sheet dialogs
   const [showMarkVSheet, setShowMarkVSheet] = useState(false)
   const [showDaraccelSheet, setShowDaraccelSheet] = useState(false)
@@ -188,8 +195,7 @@ export function FormuleoContent() {
         .select("*")
         .eq("is_active", true)
       
-      console.log("[v0] Suppliers loaded:", suppliersData?.length, "Error:", suppliersError)
-      console.log("[v0] All suppliers:", suppliersData?.map(s => ({ name: s.name, type: s.material_type, detail: s.product_detail, line: s.line_type })))
+
       
       if (suppliersData) {
         setSuppliers(suppliersData)
@@ -213,10 +219,7 @@ export function FormuleoContent() {
           matchesMaterial(s, ["aditivo", "mark", "darac", "additive"])
         )
         
-        console.log("[v0] Sand suppliers:", sand.map(s => ({ name: s.name, type: s.material_type, detail: s.product_detail })))
-        console.log("[v0] Stone suppliers:", stone.map(s => ({ name: s.name, type: s.material_type })))
-        console.log("[v0] Cement suppliers:", cement.map(s => ({ name: s.name, type: s.material_type })))
-        console.log("[v0] Additive suppliers:", additives.map(s => ({ name: s.name, type: s.material_type, density: s.density, unit: s.unit })))
+
         
         setSandSuppliers(sand)
         setStoneSuppliers(stone)
@@ -255,8 +258,41 @@ export function FormuleoContent() {
   const markVPercentage = calculateAdditivePercentage(pastonFormula.additive_1_kg)
   const daraccelPercentage = calculateAdditivePercentage(pastonFormula.additive_2_kg)
 
-  // Save paston formula
-  const savePastonFormula = async () => {
+  // Request save confirmation for paston
+  const requestPastonSave = () => {
+    setPendingSaveType("paston")
+    setPendingPipeDiameter(null)
+    setSaveOperator("")
+    setSaveReason("")
+    setShowSaveConfirm(true)
+  }
+
+  // Request save confirmation for pipe
+  const requestPipeSave = (diameter: number) => {
+    setPendingSaveType("pipe")
+    setPendingPipeDiameter(diameter)
+    setSaveOperator("")
+    setSaveReason("")
+    setShowSaveConfirm(true)
+  }
+
+  // Confirm and execute save
+  const confirmSave = async () => {
+    if (!saveOperator.trim()) return
+    
+    if (pendingSaveType === "paston") {
+      await executePastonSave()
+    } else if (pendingSaveType === "pipe" && pendingPipeDiameter) {
+      await executePipeSave(pendingPipeDiameter)
+    }
+    
+    setShowSaveConfirm(false)
+    setPendingSaveType(null)
+    setPendingPipeDiameter(null)
+  }
+
+  // Execute paston formula save
+  const executePastonSave = async () => {
     setSaving(true)
     const supabase = getSupabase()
     
@@ -276,7 +312,7 @@ export function FormuleoContent() {
         additive_2_name: pastonFormula.additive_2_name || "Daraccel",
         water_in_tank_liters: pastonFormula.water_in_tank_liters,
         diluted_additive_per_paston_liters: pastonFormula.diluted_additive_per_paston_liters,
-        modified_by: selectedOperator,
+        modified_by: saveOperator,
         modified_at: new Date().toISOString(),
         is_active: true
       }
@@ -297,8 +333,8 @@ export function FormuleoContent() {
           plant: plantValue,
           previous_values: previousValues,
           new_values: dataToSave,
-          change_reason: "Actualización de fórmula",
-          modified_by: selectedOperator,
+          change_reason: saveReason || "Actualización de fórmula",
+          modified_by: saveOperator,
           modified_at: new Date().toISOString()
         })
       } else {
@@ -321,8 +357,8 @@ export function FormuleoContent() {
     }
   }
 
-  // Save pipe formula
-  const savePipeFormula = async (diameter: number) => {
+  // Execute pipe formula save
+  const executePipeSave = async (diameter: number) => {
     setSaving(true)
     const supabase = getSupabase()
     const formula = pipeFormulas[diameter]
@@ -333,6 +369,9 @@ export function FormuleoContent() {
     }
     
     try {
+      // Get previous values for history
+      const previousValues = formula.id ? { ...formula } : null
+      
       const dataToSave = {
         plant: plantValue,
         diameter: diameter,
@@ -341,7 +380,7 @@ export function FormuleoContent() {
         sand_kg: formula.sand_kg,
         stone_kg: formula.stone_kg,
         additive_liters: formula.additive_liters,
-        modified_by: selectedOperator,
+        modified_by: saveOperator,
         modified_at: new Date().toISOString(),
         is_active: true
       }
@@ -351,6 +390,19 @@ export function FormuleoContent() {
           .from("pipe_mix_designs")
           .update(dataToSave)
           .eq("id", formula.id)
+        
+        // Save to history
+        await supabase.from("pipe_mix_design_history").insert({
+          pipe_mix_design_id: formula.id,
+          diameter: diameter,
+          pipe_weight_kg: previousValues?.pipe_weight_kg,
+          cement_kg: previousValues?.cement_kg,
+          sand_kg: previousValues?.sand_kg,
+          stone_kg: previousValues?.stone_kg,
+          additive_liters: previousValues?.additive_liters,
+          modified_by: saveOperator,
+          modified_at: new Date().toISOString()
+        })
       } else {
         const { data } = await supabase
           .from("pipe_mix_designs")
@@ -828,7 +880,7 @@ export function FormuleoContent() {
               </div>
 
               <div className="flex justify-end">
-                <Button onClick={savePastonFormula} disabled={saving}>
+                <Button onClick={requestPastonSave} disabled={saving}>
                   {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   Guardar Fórmula Pastón
                 </Button>
@@ -940,7 +992,7 @@ export function FormuleoContent() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => savePipeFormula(diameter)}
+                              onClick={() => requestPipeSave(diameter)}
                               disabled={saving}
                               className="h-8 w-8 p-0"
                             >
@@ -1005,6 +1057,53 @@ export function FormuleoContent() {
                 ))}
               </div>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Confirmation Dialog */}
+      <Dialog open={showSaveConfirm} onOpenChange={setShowSaveConfirm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar Cambios</DialogTitle>
+            <DialogDescription>
+              {pendingSaveType === "paston" 
+                ? "Estás por guardar cambios en la fórmula del pastón." 
+                : `Estás por guardar cambios en la fórmula del caño de ${pendingPipeDiameter}mm.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="save-operator">Operador que realiza el cambio *</Label>
+              <Select value={saveOperator} onValueChange={setSaveOperator}>
+                <SelectTrigger id="save-operator">
+                  <SelectValue placeholder="Seleccionar operador..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {operators.map(op => (
+                    <SelectItem key={op} value={op}>{op}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="save-reason">Motivo del cambio (opcional)</Label>
+              <Input
+                id="save-reason"
+                value={saveReason}
+                onChange={(e) => setSaveReason(e.target.value)}
+                placeholder="Ej: Ajuste de dosificación..."
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowSaveConfirm(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmSave} disabled={!saveOperator.trim() || saving}>
+              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+              Confirmar y Guardar
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
