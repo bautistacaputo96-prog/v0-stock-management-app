@@ -12,7 +12,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Pencil, Trash2, Truck, Building2, Package, ClipboardList } from "lucide-react"
+import { Plus, Pencil, Trash2, Truck, Building2, Package, ClipboardList, AlertTriangle, TrendingDown, TrendingUp } from "lucide-react"
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts"
 import { usePlant } from "@/lib/plant-context"
 import { getSupabase } from "@/lib/supabase"
 import Link from "next/link"
@@ -37,6 +46,30 @@ interface Carrier {
   created_at: string
 }
 
+interface StockAlert {
+  material: string
+  stockTn: number
+  daysOfStock: number
+  status: "critical" | "warning" | "ok"
+  dailyConsumptionTn: number
+}
+
+interface StockData {
+  currentStockKg: Record<string, number>
+  daysOfStock: Record<string, number>
+  dailyConsumptionKg: Record<string, number>
+  stockEvolution: Record<string, number | string>[]
+  alerts: StockAlert[]
+  planning: {
+    material: string
+    stockTn: number
+    dailyConsumptionTn: number
+    daysOfStock: number
+    exhaustionDate: string | null
+    suggestedOrderDate: string | null
+  }[]
+}
+
 const MATERIAL_TYPES = [
   "Arena",
   "Piedra",
@@ -55,7 +88,7 @@ export default function MateriaPrimaPage() {
   const { selectedPlant } = usePlant()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get("tab")
-  const [activeTab, setActiveTab] = useState(tabParam || "resumen")
+  const [activeTab, setActiveTab] = useState(tabParam || "stock")
   
   // Update tab when URL changes
   useEffect(() => {
@@ -87,6 +120,10 @@ export default function MateriaPrimaPage() {
     license_plate: "",
     company: ""
   })
+  
+  // Stock state
+  const [stockData, setStockData] = useState<StockData | null>(null)
+  const [loadingStock, setLoadingStock] = useState(true)
 
   // Load suppliers
   useEffect(() => {
@@ -97,6 +134,25 @@ export default function MateriaPrimaPage() {
   useEffect(() => {
     loadCarriers()
   }, [])
+  
+  // Load stock data
+  useEffect(() => {
+    loadStock()
+  }, [selectedPlant])
+  
+  const loadStock = async () => {
+    setLoadingStock(true)
+    try {
+      const res = await fetch(`/api/materia-prima/stock?plant=${selectedPlant}&lead_time=3`)
+      if (res.ok) {
+        const data = await res.json()
+        setStockData(data)
+      }
+    } catch (error) {
+      console.error("Error loading stock:", error)
+    }
+    setLoadingStock(false)
+  }
 
   const loadSuppliers = async () => {
     setLoadingSuppliers(true)
@@ -235,18 +291,14 @@ export default function MateriaPrimaPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
-            <TabsTrigger value="resumen" className="gap-2">
+          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+            <TabsTrigger value="stock" className="gap-2">
               <Package className="w-4 h-4" />
-              <span className="hidden sm:inline">Resumen</span>
+              <span className="hidden sm:inline">Stock</span>
             </TabsTrigger>
             <TabsTrigger value="ingreso" className="gap-2">
               <ClipboardList className="w-4 h-4" />
               <span className="hidden sm:inline">Ingreso</span>
-            </TabsTrigger>
-            <TabsTrigger value="stock" className="gap-2">
-              <Package className="w-4 h-4" />
-              <span className="hidden sm:inline">Stock</span>
             </TabsTrigger>
             <TabsTrigger value="proveedores" className="gap-2">
               <Building2 className="w-4 h-4" />
@@ -257,82 +309,6 @@ export default function MateriaPrimaPage() {
               <span className="hidden sm:inline">Fletes</span>
             </TabsTrigger>
           </TabsList>
-
-          {/* RESUMEN */}
-          <TabsContent value="resumen" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Proveedores Activos</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-3xl font-bold">{activeSuppliers.length}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {activeSuppliers.filter(s => s.material_type === "Arena").length} arena, {" "}
-                    {activeSuppliers.filter(s => s.material_type === "Piedra").length} piedra, {" "}
-                    {activeSuppliers.filter(s => s.material_type === "Cemento").length} cemento
-                  </p>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Transportistas Activos</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-3xl font-bold">{activeCarriers.length}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Choferes registrados</p>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Accesos Rápidos</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Link href="/materia-prima/ingreso">
-                    <Button variant="outline" size="sm" className="w-full justify-start">
-                      <ClipboardList className="w-4 h-4 mr-2" />
-                      Registrar Ingreso
-                    </Button>
-                  </Link>
-                  <Link href="/materia-prima/stock">
-                    <Button variant="outline" size="sm" className="w-full justify-start">
-                      <Package className="w-4 h-4 mr-2" />
-                      Ver Stock
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Lista rápida de proveedores por tipo */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {["Arena", "Piedra", "Cemento"].map(tipo => (
-                <Card key={tipo}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">{tipo}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {activeSuppliers
-                        .filter(s => s.material_type === tipo)
-                        .slice(0, 5)
-                        .map(s => (
-                          <div key={s.id} className="flex justify-between items-center text-sm">
-                            <span>{s.product_detail || s.name}</span>
-                            <Badge variant="outline" className="text-xs">{s.name}</Badge>
-                          </div>
-                        ))}
-                      {activeSuppliers.filter(s => s.material_type === tipo).length === 0 && (
-                        <p className="text-sm text-muted-foreground">Sin proveedores</p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
 
           {/* INGRESO - Redirect to existing page */}
           <TabsContent value="ingreso">
@@ -348,18 +324,174 @@ export default function MateriaPrimaPage() {
             </Card>
           </TabsContent>
 
-          {/* STOCK - Redirect to existing page */}
-          <TabsContent value="stock">
-            <Card>
-              <CardContent className="py-8 text-center">
-                <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Control de Stock</h3>
-                <p className="text-muted-foreground mb-4">Consultá el stock actual de materias primas</p>
-                <Link href="/materia-prima/stock">
-                  <Button>Ir a Control de Stock</Button>
-                </Link>
-              </CardContent>
-            </Card>
+          {/* STOCK - Dashboard integrado */}
+          <TabsContent value="stock" className="space-y-6">
+            {loadingStock ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Cargando datos de stock...</p>
+              </div>
+            ) : stockData ? (
+              <>
+                {/* Alertas de stock crítico */}
+                {stockData.alerts?.some(a => a.status === "critical" || a.status === "warning") && (
+                  <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                        <AlertTriangle className="w-4 h-4" />
+                        Alertas de Stock
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {stockData.alerts?.filter(a => a.status !== "ok").map(alert => (
+                          <div key={alert.material} className={`flex items-center justify-between p-2 rounded ${
+                            alert.status === "critical" ? "bg-red-100 dark:bg-red-950/30" : "bg-yellow-100 dark:bg-yellow-950/30"
+                          }`}>
+                            <span className="font-medium capitalize">{alert.material}</span>
+                            <span className={alert.status === "critical" ? "text-red-600" : "text-yellow-600"}>
+                              {alert.daysOfStock} días de stock - {alert.stockTn.toFixed(1)} Tn
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Cards de stock actual */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {stockData.alerts?.map(item => (
+                    <Card key={item.material} className={
+                      item.status === "critical" ? "border-red-500/50" :
+                      item.status === "warning" ? "border-yellow-500/50" : ""
+                    }>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-muted-foreground capitalize flex items-center justify-between">
+                          {item.material}
+                          {item.status === "critical" && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                          {item.status === "warning" && <AlertTriangle className="w-4 h-4 text-yellow-500" />}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-2xl font-bold">{item.stockTn.toFixed(1)} Tn</p>
+                        <div className="flex items-center gap-1 mt-1">
+                          <span className={`text-xs ${
+                            item.status === "critical" ? "text-red-600" :
+                            item.status === "warning" ? "text-yellow-600" : "text-green-600"
+                          }`}>
+                            {item.daysOfStock} días
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            · {item.dailyConsumptionTn.toFixed(2)} Tn/día
+                          </span>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="w-full bg-muted rounded-full h-1.5 mt-2">
+                          <div
+                            className={`h-1.5 rounded-full ${
+                              item.status === "critical" ? "bg-red-500" :
+                              item.status === "warning" ? "bg-yellow-500" : "bg-green-500"
+                            }`}
+                            style={{ width: `${Math.min((item.daysOfStock / 30) * 100, 100)}%` }}
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                {/* Gráfico de evolución */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium">Evolución del Stock (últimos 30 días)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={stockData.stockEvolution}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                          <XAxis 
+                            dataKey="date" 
+                            tick={{ fontSize: 10 }}
+                            tickFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}
+                          />
+                          <YAxis tick={{ fontSize: 10 }} />
+                          <Tooltip 
+                            labelFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR")}
+                            formatter={(value: number) => [`${value.toFixed(1)} Tn`]}
+                          />
+                          <Line type="monotone" dataKey="arena" stroke="#f59e0b" strokeWidth={2} dot={false} name="Arena" />
+                          <Line type="monotone" dataKey="piedra" stroke="#6366f1" strokeWidth={2} dot={false} name="Piedra" />
+                          <Line type="monotone" dataKey="cemento" stroke="#94a3b8" strokeWidth={2} dot={false} name="Cemento" />
+                          <Line type="monotone" dataKey="aditivo" stroke="#10b981" strokeWidth={2} dot={false} name="Aditivo" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex flex-wrap gap-4 mt-4 justify-center">
+                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-500" /> Arena</div>
+                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500" /> Piedra</div>
+                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-slate-400" /> Cemento</div>
+                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Aditivo</div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Tabla de planificación */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium">Planificación de Compras</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Material</TableHead>
+                          <TableHead className="text-right">Stock Actual</TableHead>
+                          <TableHead className="text-right">Consumo/Día</TableHead>
+                          <TableHead className="text-right">Días de Stock</TableHead>
+                          <TableHead>Fecha Agotamiento</TableHead>
+                          <TableHead>Pedir Antes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {stockData.planning?.map(row => {
+                          const today = new Date().toISOString().split("T")[0]
+                          const isUrgent = row.suggestedOrderDate && row.suggestedOrderDate <= today
+                          return (
+                            <TableRow key={row.material} className={isUrgent ? "bg-red-50 dark:bg-red-950/30" : ""}>
+                              <TableCell className="font-medium capitalize">{row.material}</TableCell>
+                              <TableCell className="text-right">{row.stockTn.toFixed(1)} Tn</TableCell>
+                              <TableCell className="text-right">{row.dailyConsumptionTn.toFixed(2)} Tn</TableCell>
+                              <TableCell className="text-right">{Math.round(row.daysOfStock)}</TableCell>
+                              <TableCell>{row.exhaustionDate ? new Date(row.exhaustionDate + "T12:00:00").toLocaleDateString("es-AR") : "—"}</TableCell>
+                              <TableCell className={isUrgent ? "text-red-600 font-bold" : ""}>
+                                {row.suggestedOrderDate ? new Date(row.suggestedOrderDate + "T12:00:00").toLocaleDateString("es-AR") : "—"}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+
+                {/* Link a vista completa */}
+                <div className="text-center">
+                  <Link href="/materia-prima/stock">
+                    <Button variant="outline">
+                      Ver análisis completo de stock
+                    </Button>
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-8 text-center">
+                  <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">No hay datos de stock disponibles</p>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* PROVEEDORES */}
