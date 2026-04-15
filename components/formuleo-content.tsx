@@ -162,7 +162,7 @@ export function FormuleoContent() {
       const { data: opsData } = await supabase
         .from("formuleo_operators")
         .select("name")
-        .eq("plant", plantValue)
+        .eq("is_active", true)
       
       if (opsData && opsData.length > 0) {
         const customOps = opsData.map((o: any) => o.name).filter((n: string) => !OPERATORS.includes(n))
@@ -472,10 +472,7 @@ export function FormuleoContent() {
                       {sandSuppliers.length > 0 ? (
                         sandSuppliers.map((s) => (
                           <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{s.product_detail || s.material_type}</span>
-                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
-                            </div>
+                            {s.product_detail || s.material_type} - {s.name}
                           </SelectItem>
                         ))
                       ) : (
@@ -506,10 +503,7 @@ export function FormuleoContent() {
                       {stoneSuppliers.length > 0 ? (
                         stoneSuppliers.map((s) => (
                           <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{s.product_detail || s.material_type}</span>
-                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
-                            </div>
+                            {s.product_detail || s.material_type} - {s.name}
                           </SelectItem>
                         ))
                       ) : (
@@ -540,10 +534,7 @@ export function FormuleoContent() {
                       {cementSuppliers.length > 0 ? (
                         cementSuppliers.map((s) => (
                           <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{s.product_detail || s.material_type}</span>
-                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
-                            </div>
+                            {s.product_detail || s.material_type} - {s.name}
                           </SelectItem>
                         ))
                       ) : (
