@@ -173,11 +173,14 @@ export function FormuleoContent() {
             sand_kg: p.sand_kg || 0,
             stone_kg: p.stone_kg || 0,
             additive_liters: p.additive_liters || 0,
+            cycle_time_min: p.cycle_time_min || 0,
+            spec_pdf_url: p.spec_pdf_url || null,
             modified_by: p.modified_by || OPERATORS[0],
             modified_at: p.modified_at || new Date().toISOString()
           }
         })
         setPipeFormulas(formulas)
+        console.log("[v0] Loaded pipe formulas:", formulas)
       }
       
       // Load operators
@@ -239,6 +242,38 @@ export function FormuleoContent() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Function to reload pipe formulas
+  const loadPipeFormulas = async () => {
+    const supabase = getSupabase()
+    const { data: pipeData } = await supabase
+      .from("pipe_mix_designs")
+      .select("*")
+      .eq("plant", plantValue)
+    
+    if (pipeData) {
+      const formulas: Record<number, PipeFormula> = {}
+      pipeData.forEach((p: any) => {
+        formulas[p.diameter] = {
+          id: p.id,
+          plant: p.plant,
+          pipe_size: p.diameter,
+          paston_formula_id: pastonFormula.id || "",
+          pipe_weight_kg: p.pipe_weight_kg || 0,
+          cement_kg: p.cement_kg || 0,
+          sand_kg: p.sand_kg || 0,
+          stone_kg: p.stone_kg || 0,
+          additive_liters: p.additive_liters || 0,
+          cycle_time_min: p.cycle_time_min || 0,
+          spec_pdf_url: p.spec_pdf_url || null,
+          modified_by: p.modified_by || OPERATORS[0],
+          modified_at: p.modified_at || new Date().toISOString()
+        }
+      })
+      setPipeFormulas(formulas)
+      console.log("[v0] Reloaded pipe formulas:", formulas)
+    }
+  }
 
   // Calculate water liters when additives change
   useEffect(() => {
@@ -365,7 +400,11 @@ export function FormuleoContent() {
     const supabase = getSupabase()
     const formula = pipeFormulas[diameter]
     
+    console.log("[v0] executePipeSave called for diameter:", diameter)
+    console.log("[v0] formula data:", formula)
+    
     if (!formula) {
+      console.log("[v0] No formula found, returning")
       setSaving(false)
       return
     }
@@ -383,17 +422,22 @@ export function FormuleoContent() {
         stone_kg: formula.stone_kg,
         additive_liters: formula.additive_liters,
         cycle_time_min: formula.cycle_time_min || null,
-        spec_pdf_url: formula.spec_pdf_url || null,
+        spec_pdf_url: formula.spec_pdf_url?.startsWith("blob:") ? null : (formula.spec_pdf_url || null),
         modified_by: saveOperator,
         modified_at: new Date().toISOString(),
         is_active: true
       }
       
+      console.log("[v0] dataToSave:", dataToSave)
+      console.log("[v0] formula.id:", formula.id)
+      
       if (formula.id) {
-        await supabase
+        const { error: updateError } = await supabase
           .from("pipe_mix_designs")
           .update(dataToSave)
           .eq("id", formula.id)
+        
+        console.log("[v0] Update result - error:", updateError)
         
         // Save to history
         await supabase.from("pipe_mix_design_history").insert({
@@ -408,11 +452,14 @@ export function FormuleoContent() {
           modified_at: new Date().toISOString()
         })
       } else {
-        const { data } = await supabase
+        console.log("[v0] Inserting new pipe formula")
+        const { data, error: insertError } = await supabase
           .from("pipe_mix_designs")
           .insert(dataToSave)
           .select()
           .single()
+        
+        console.log("[v0] Insert result - data:", data, "error:", insertError)
         
         if (data) {
           setPipeFormulas(prev => ({
@@ -422,8 +469,11 @@ export function FormuleoContent() {
         }
       }
       
+      // Reload the data after save
+      await loadPipeFormulas()
+      
     } catch (error) {
-      console.error("Error saving pipe formula:", error)
+      console.error("[v0] Error saving pipe formula:", error)
     } finally {
       setSaving(false)
     }
