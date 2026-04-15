@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -241,6 +241,53 @@ export function FormuleoContent() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Save PDF URL directly to database
+  const savePdfUrl = async (diameter: number, pdfUrl: string) => {
+    const supabase = getSupabase()
+    const formula = pipeFormulas[diameter]
+    
+    if (formula?.id) {
+      // Update existing record
+      await supabase
+        .from("pipe_mix_designs")
+        .update({ spec_pdf_url: pdfUrl })
+        .eq("id", formula.id)
+    } else {
+      // Create new record with just the PDF
+      const { data } = await supabase
+        .from("pipe_mix_designs")
+        .insert({
+          plant: plantValue,
+          diameter: diameter,
+          pipe_weight_kg: formula?.pipe_weight_kg || 0,
+          cement_kg: formula?.cement_kg || 0,
+          sand_kg: formula?.sand_kg || 0,
+          stone_kg: formula?.stone_kg || 0,
+          additive_liters: formula?.additive_liters || 0,
+          cycle_time_min: formula?.cycle_time_min || 0,
+          spec_pdf_url: pdfUrl,
+          modified_by: "Sistema",
+          modified_at: new Date().toISOString(),
+          is_active: true
+        })
+        .select()
+        .single()
+      
+      if (data) {
+        setPipeFormulas(prev => ({
+          ...prev,
+          [diameter]: { ...prev[diameter], id: data.id, spec_pdf_url: pdfUrl }
+        }))
+      }
+    }
+    
+    // Update local state
+    setPipeFormulas(prev => ({
+      ...prev,
+      [diameter]: { ...prev[diameter], spec_pdf_url: pdfUrl }
+    }))
+  }
 
   // Function to reload pipe formulas
   const loadPipeFormulas = async () => {
@@ -990,10 +1037,6 @@ export function FormuleoContent() {
                       <th className="text-left py-2 px-2 font-medium">Caño</th>
                       <th className="text-center py-2 px-2 font-medium">Peso (kg)</th>
                       <th className="text-center py-2 px-2 font-medium">Min/Caño</th>
-                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Cemento</th>
-                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Arena</th>
-                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Piedra</th>
-                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Aditivo</th>
                       <th className="text-center py-2 px-2 font-medium">Ficha</th>
                       <th className="text-center py-2 px-2 font-medium">Modificado</th>
                       <th className="py-2 px-2"></th>
@@ -1015,41 +1058,52 @@ export function FormuleoContent() {
                         modified_at: ""
                       }
                       
+                      // Calculate percentages
+                      const totalWeight = formula.cement_kg + formula.sand_kg + formula.stone_kg
+                      const cementPct = totalWeight > 0 ? (formula.cement_kg / totalWeight * 100) : 0
+                      const sandPct = totalWeight > 0 ? (formula.sand_kg / totalWeight * 100) : 0
+                      const stonePct = totalWeight > 0 ? (formula.stone_kg / totalWeight * 100) : 0
+                      
+                      // Calculate additive concentrations (% of cement)
+                      const add1PctOfCement = formula.cement_kg > 0 
+                        ? ((pastonFormula.additive_1_kg / pastonFormula.cement_kg) * formula.cement_kg / formula.cement_kg * 100) 
+                        : 0
+                      const add2PctOfCement = formula.cement_kg > 0 
+                        ? ((pastonFormula.additive_2_kg / pastonFormula.cement_kg) * formula.cement_kg / formula.cement_kg * 100) 
+                        : 0
+                      
+                      // Get additive liters for this pipe
+                      const add1Liters = formula.cement_kg > 0 && pastonFormula.cement_kg > 0
+                        ? (pastonFormula.additive_1_kg / pastonFormula.cement_kg) * formula.cement_kg / (additive1Density || 1.2)
+                        : 0
+                      const add2Liters = formula.cement_kg > 0 && pastonFormula.cement_kg > 0
+                        ? (pastonFormula.additive_2_kg / pastonFormula.cement_kg) * formula.cement_kg / (additive2Density || 1.3)
+                        : 0
+                      
                       return (
-                        <tr key={diameter} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
-                          <td className="py-2 px-2 font-medium">CC{diameter}</td>
-                          <td className="py-1 px-1">
-                            <Input
-                              type="number"
-                              value={formula.pipe_weight_kg || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "pipe_weight_kg", parseFloat(e.target.value) || 0)}
-                              className="h-8 w-20 text-center text-xs"
-                              placeholder="0"
-                            />
-                          </td>
-                          <td className="py-1 px-1">
-                            <Input
-                              type="number"
-                              step="0.1"
-                              value={formula.cycle_time_min || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "cycle_time_min", parseFloat(e.target.value) || 0)}
-                              className="h-8 w-16 text-center text-xs"
-                              placeholder="0"
-                            />
-                          </td>
-                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
-                            {formula.cement_kg.toFixed(1)} kg
-                          </td>
-                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
-                            {formula.sand_kg.toFixed(1)} kg
-                          </td>
-                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
-                            {formula.stone_kg.toFixed(1)} kg
-                          </td>
-                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
-                            {formula.additive_liters.toFixed(2)} L
-                          </td>
-                          <td className="py-1 px-1 text-center">
+                        <React.Fragment key={diameter}>
+                          <tr className={idx % 2 === 1 ? "bg-muted/30" : ""}>
+                            <td className="py-2 px-2 font-medium" rowSpan={2}>CC{diameter}</td>
+                            <td className="py-1 px-1" rowSpan={2}>
+                              <Input
+                                type="number"
+                                value={formula.pipe_weight_kg || ""}
+                                onChange={(e) => updatePipeFormula(diameter, "pipe_weight_kg", parseFloat(e.target.value) || 0)}
+                                className="h-8 w-20 text-center text-xs"
+                                placeholder="0"
+                              />
+                            </td>
+                            <td className="py-1 px-1" rowSpan={2}>
+                              <Input
+                                type="number"
+                                step="0.1"
+                                value={formula.cycle_time_min || ""}
+                                onChange={(e) => updatePipeFormula(diameter, "cycle_time_min", parseFloat(e.target.value) || 0)}
+                                className="h-8 w-16 text-center text-xs"
+                                placeholder="0"
+                              />
+                            </td>
+                            <td className="py-1 px-1 text-center" rowSpan={2}>
                             {formula.spec_pdf_url && !formula.spec_pdf_url.startsWith("blob:") ? (
                               <div className="flex items-center gap-1">
                                 <a 
@@ -1085,6 +1139,8 @@ export function FormuleoContent() {
                                         if (response.ok) {
                                           const { url } = await response.json()
                                           updatePipeFormula(diameter, "spec_pdf_url", url)
+                                          // Auto-save to database
+                                          await savePdfUrl(diameter, url)
                                         } else {
                                           console.error("Error uploading PDF")
                                         }
@@ -1096,28 +1152,83 @@ export function FormuleoContent() {
                                 />
                               </label>
                             )}
-                          </td>
-                          <td className="py-2 px-2 text-center text-[10px] text-muted-foreground">
-                            {formula.modified_at ? (
-                              <>
-                                {new Date(formula.modified_at).toLocaleDateString("es-AR")}
-                                <br />
-                                {formula.modified_by}
-                              </>
-                            ) : "-"}
-                          </td>
-                          <td className="py-1 px-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => requestPipeSave(diameter)}
-                              disabled={saving}
-                              className="h-8 w-8 p-0"
-                            >
-                              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                            </Button>
-                          </td>
-                        </tr>
+                            </td>
+                            <td className="py-2 px-2 text-center text-[10px] text-muted-foreground" rowSpan={2}>
+                              {formula.modified_at ? (
+                                <>
+                                  {new Date(formula.modified_at).toLocaleDateString("es-AR")}
+                                  <br />
+                                  {formula.modified_by}
+                                </>
+                              ) : "-"}
+                            </td>
+                            <td className="py-1 px-1" rowSpan={2}>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => requestPipeSave(diameter)}
+                                disabled={saving}
+                                className="h-8 w-8 p-0"
+                              >
+                                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                              </Button>
+                            </td>
+                          </tr>
+                          {/* Detail row with aggregates */}
+                          <tr className={`${idx % 2 === 1 ? "bg-muted/30" : ""} border-b`}>
+                            <td colSpan={4} className="py-2 px-3">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                {/* Cemento */}
+                                <div className="bg-slate-100 dark:bg-slate-800 p-2 rounded">
+                                  <div className="font-medium text-slate-600 dark:text-slate-400">Cemento</div>
+                                  <div className="text-[10px] text-muted-foreground truncate" title={pastonFormula.cement_supplier || "Sin especificar"}>
+                                    {pastonFormula.cement_supplier || "Sin especificar"}
+                                  </div>
+                                  <div className="font-mono font-bold">{formula.cement_kg.toFixed(1)} kg</div>
+                                  <div className="text-muted-foreground">{cementPct.toFixed(1)}%</div>
+                                </div>
+                                {/* Arena */}
+                                <div className="bg-amber-100 dark:bg-amber-900/30 p-2 rounded">
+                                  <div className="font-medium text-amber-600 dark:text-amber-400">Arena</div>
+                                  <div className="text-[10px] text-muted-foreground truncate" title={pastonFormula.sand_supplier || "Sin especificar"}>
+                                    {pastonFormula.sand_supplier || "Sin especificar"}
+                                  </div>
+                                  <div className="font-mono font-bold">{formula.sand_kg.toFixed(1)} kg</div>
+                                  <div className="text-muted-foreground">{sandPct.toFixed(1)}%</div>
+                                </div>
+                                {/* Piedra */}
+                                <div className="bg-indigo-100 dark:bg-indigo-900/30 p-2 rounded">
+                                  <div className="font-medium text-indigo-600 dark:text-indigo-400">Piedra</div>
+                                  <div className="text-[10px] text-muted-foreground truncate" title={pastonFormula.stone_supplier || "Sin especificar"}>
+                                    {pastonFormula.stone_supplier || "Sin especificar"}
+                                  </div>
+                                  <div className="font-mono font-bold">{formula.stone_kg.toFixed(1)} kg</div>
+                                  <div className="text-muted-foreground">{stonePct.toFixed(1)}%</div>
+                                </div>
+                                {/* Aditivos */}
+                                <div className="bg-emerald-100 dark:bg-emerald-900/30 p-2 rounded">
+                                  <div className="font-medium text-emerald-600 dark:text-emerald-400">Aditivos</div>
+                                  <div className="space-y-1 text-[10px]">
+                                    <div>
+                                      <span className="text-muted-foreground">{pastonFormula.additive_1_name}:</span>{" "}
+                                      <span className="font-mono">{add1Liters.toFixed(2)} L</span>
+                                      <span className="text-muted-foreground ml-1">
+                                        ({pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_1_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.)
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground">{pastonFormula.additive_2_name}:</span>{" "}
+                                      <span className="font-mono">{add2Liters.toFixed(2)} L</span>
+                                      <span className="text-muted-foreground ml-1">
+                                        ({pastonFormula.cement_kg > 0 ? ((pastonFormula.additive_2_kg / pastonFormula.cement_kg) * 100).toFixed(2) : 0}% cem.)
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        </React.Fragment>
                       )
                     })}
                   </tbody>
