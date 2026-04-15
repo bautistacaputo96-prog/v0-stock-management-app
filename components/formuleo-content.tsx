@@ -95,7 +95,7 @@ export function FormuleoContent() {
   
   // Technical sheet dialogs
   const [showMarkVSheet, setShowMarkVSheet] = useState(false)
-  const [showDarasellSheet, setShowDarasellSheet] = useState(false)
+  const [showDaraccelSheet, setShowDaraccelSheet] = useState(false)
 
   // Load data
   const loadData = useCallback(async () => {
@@ -182,7 +182,7 @@ export function FormuleoContent() {
   }
 
   const markVPercentage = calculateAdditivePercentage(pastonFormula.additive1_liters)
-  const darasellPercentage = calculateAdditivePercentage(pastonFormula.additive2_liters)
+  const daraccelPercentage = calculateAdditivePercentage(pastonFormula.additive2_liters)
 
   // Save paston formula
   const savePastonFormula = async () => {
@@ -482,14 +482,31 @@ export function FormuleoContent() {
                             <FileText className="w-3 h-3" />
                           </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-2xl">
+                        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
                           <DialogHeader>
-                            <DialogTitle>Ficha Técnica - Mark V</DialogTitle>
+                            <DialogTitle>Ficha Técnica - MARK V</DialogTitle>
                           </DialogHeader>
-                          <div className="p-4 bg-muted rounded-lg text-sm">
-                            <p className="text-muted-foreground">
-                              Ficha técnica pendiente de cargar. Por favor, proporcioná el documento para agregarlo aquí.
-                            </p>
+                          <div className="space-y-4">
+                            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                              <h4 className="font-semibold text-blue-800 mb-2">Dosificación Recomendada</h4>
+                              <p className="text-sm"><strong>Concentrado:</strong> 13-33 cc/100 kg de cemento</p>
+                              <p className="text-sm"><strong>Diluido (1:10):</strong> 196-447 cc/100 kg de cemento</p>
+                              <p className="text-xs text-muted-foreground mt-2">Dilución: 1 parte MARK V en 10 partes de agua (20L en 200L total)</p>
+                            </div>
+                            <div className="p-4 bg-muted rounded-lg text-sm space-y-2">
+                              <p><strong>Descripción:</strong> Aditivo plastificante concentrado para productos de hormigón de bajo asentamiento.</p>
+                              <p><strong>Aplicaciones:</strong> Bloques de mampostería, tubos de hormigón, losetas.</p>
+                              <p><strong>Ventajas:</strong> Impacto leve, ciclos más cortos, ángulos y aristas más agudos, menos piezas irregulares, superficie más densa.</p>
+                              <p><strong>Especificaciones:</strong> ASTM C494:2015 tipo S</p>
+                              <p><strong>Densidad:</strong> 1,025 - 1,065 g/cm³</p>
+                            </div>
+                            <a 
+                              href="/fichas-tecnicas/mark-v.pdf" 
+                              target="_blank" 
+                              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:underline"
+                            >
+                              <FileText className="w-4 h-4" /> Ver ficha técnica completa (PDF)
+                            </a>
                           </div>
                         </DialogContent>
                       </Dialog>
@@ -500,29 +517,50 @@ export function FormuleoContent() {
                       onChange={(e) => setPastonFormula(prev => ({ ...prev, additive1_liters: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                     />
-                    <p className="text-[10px] text-muted-foreground">
-                      {markVPercentage.toFixed(3)}% sobre cemento
-                    </p>
+                    <div className="space-y-1">
+                      <p className={`text-xs font-medium ${markVPercentage > 0 ? (markVPercentage >= 0.013 && markVPercentage <= 0.033 ? "text-green-600" : "text-amber-600") : "text-muted-foreground"}`}>
+                        {markVPercentage.toFixed(4)}% sobre cemento
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Rango: 0.013% - 0.033% (conc.)</p>
+                    </div>
                   </div>
                   
-                  {/* Darasell */}
+                  {/* Daraccel */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs font-medium">Darasell (L)</Label>
-                      <Dialog open={showDarasellSheet} onOpenChange={setShowDarasellSheet}>
+                      <Label className="text-xs font-medium">Daraccel (L)</Label>
+                      <Dialog open={showDaraccelSheet} onOpenChange={setShowDaraccelSheet}>
                         <DialogTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-6 px-2">
                             <FileText className="w-3 h-3" />
                           </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-2xl">
+                        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
                           <DialogHeader>
-                            <DialogTitle>Ficha Técnica - Darasell</DialogTitle>
+                            <DialogTitle>Ficha Técnica - DARACCEL</DialogTitle>
                           </DialogHeader>
-                          <div className="p-4 bg-muted rounded-lg text-sm">
-                            <p className="text-muted-foreground">
-                              Ficha técnica pendiente de cargar. Por favor, proporcioná el documento para agregarlo aquí.
-                            </p>
+                          <div className="space-y-4">
+                            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                              <h4 className="font-semibold text-blue-800 mb-2">Dosificación Recomendada</h4>
+                              <p className="text-sm"><strong>Rango:</strong> 0.7% a 3.5% del peso del cemento</p>
+                              <p className="text-sm"><strong>Típico:</strong> 1% a 1.5% para reducir fraguado 2-3 horas a 10°C</p>
+                              <p className="text-xs text-muted-foreground mt-2">Mayor dosificación = mayor aceleración de fraguado</p>
+                            </div>
+                            <div className="p-4 bg-muted rounded-lg text-sm space-y-2">
+                              <p><strong>Descripción:</strong> Aditivo acelerante de fraguado líquido.</p>
+                              <p><strong>Aplicaciones:</strong> Hormigonado en climas fríos, cuando se requiere aceleración de fraguado.</p>
+                              <p><strong>Ventajas:</strong> Desmolde y terminación temprana, mayor resistencia inicial (25-50% a 3 días), reducción de costos.</p>
+                              <p><strong>Especificaciones:</strong> ASTM C494:2015 Tipo C</p>
+                              <p><strong>Densidad:</strong> 1,29 - 1,40 g/L</p>
+                              <p><strong>Color:</strong> Azul</p>
+                            </div>
+                            <a 
+                              href="/fichas-tecnicas/daraccel.pdf" 
+                              target="_blank" 
+                              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:underline"
+                            >
+                              <FileText className="w-4 h-4" /> Ver ficha técnica completa (PDF)
+                            </a>
                           </div>
                         </DialogContent>
                       </Dialog>
@@ -533,9 +571,12 @@ export function FormuleoContent() {
                       onChange={(e) => setPastonFormula(prev => ({ ...prev, additive2_liters: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                     />
-                    <p className="text-[10px] text-muted-foreground">
-                      {darasellPercentage.toFixed(3)}% sobre cemento
-                    </p>
+                    <div className="space-y-1">
+                      <p className={`text-xs font-medium ${daraccelPercentage > 0 ? (daraccelPercentage >= 0.7 && daraccelPercentage <= 3.5 ? "text-green-600" : "text-amber-600") : "text-muted-foreground"}`}>
+                        {daraccelPercentage.toFixed(2)}% sobre cemento
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Rango: 0.7% - 3.5%</p>
+                    </div>
                   </div>
                   
                   {/* Agua */}
