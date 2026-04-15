@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Navigation } from "@/components/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -84,7 +84,7 @@ const LINE_TYPES = [
   { value: "ambos", label: "Ambos" }
 ]
 
-export default function MateriaPrimaPage() {
+function MateriaPrimaContent() {
   const { selectedPlant } = usePlant()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get("tab")
@@ -864,5 +864,22 @@ export default function MateriaPrimaPage() {
         </Tabs>
       </main>
     </div>
+  )
+}
+
+export default function MateriaPrimaPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background">
+        <Navigation />
+        <main className="container mx-auto p-6">
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">Cargando...</p>
+          </div>
+        </main>
+      </div>
+    }>
+      <MateriaPrimaContent />
+    </Suspense>
   )
 }
