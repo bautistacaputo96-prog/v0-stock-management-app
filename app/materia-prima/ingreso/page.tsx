@@ -9,14 +9,28 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Navigation } from "@/components/navigation"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
   PlusCircle,
   FileDown,
   AlertTriangle,
   CheckCircle2,
   Loader2,
-  UserPlus,
   Truck,
   FlaskConical,
+  Plus,
 } from "lucide-react"
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -86,7 +100,9 @@ interface Supplier {
 interface Carrier {
   id: number
   name: string
-  contact: string | null
+  phone: string | null
+  truck_plate: string | null
+  company: string | null
 }
 
 interface Receipt {
@@ -120,20 +136,24 @@ export default function IngresoMPPage() {
   const [quantityKg, setQuantityKg] = useState("")
   const [notes, setNotes] = useState("")
 
-  // Material selection (pill)
-  const [selectedMaterial, setSelectedMaterial] = useState<MaterialKey | "">("")
+  // Supplier selection
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>("")
+  const [showNewSupplierDialog, setShowNewSupplierDialog] = useState(false)
+  const [newSupplierName, setNewSupplierName] = useState("")
+  const [newSupplierMaterialType, setNewSupplierMaterialType] = useState("")
+  const [newSupplierProductDetail, setNewSupplierProductDetail] = useState("")
+  const [savingSupplier, setSavingSupplier] = useState(false)
 
-  // Supplier combobox
-  const [supplierSearch, setSupplierSearch] = useState("")
-  const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null)
-  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false)
+  // Material selection - filtered by selected supplier
+  const [selectedMaterial, setSelectedMaterial] = useState<string>("")
 
   // Carrier dropdown
-  const [selectedCarrierId, setSelectedCarrierId] = useState<number | null>(null)
-  const [showCarrierDropdown, setShowCarrierDropdown] = useState(false)
-  const [showNewCarrierForm, setShowNewCarrierForm] = useState(false)
+  const [selectedCarrierId, setSelectedCarrierId] = useState<string>("")
+  const [showNewCarrierDialog, setShowNewCarrierDialog] = useState(false)
   const [newCarrierName, setNewCarrierName] = useState("")
-  const [newCarrierContact, setNewCarrierContact] = useState("")
+  const [newCarrierPhone, setNewCarrierPhone] = useState("")
+  const [newCarrierPlate, setNewCarrierPlate] = useState("")
+  const [newCarrierCompany, setNewCarrierCompany] = useState("")
   const [savingCarrier, setSavingCarrier] = useState(false)
 
   // Lab sample question (Arena Especial y Piedra 0/10)
@@ -154,9 +174,21 @@ export default function IngresoMPPage() {
   const [humidityPercentage, setHumidityPercentage] = useState("")
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const isCemento = selectedMaterial === "cemento"
-  const isArena = selectedMaterial === "arena_especial"
-  const isArenaOrPiedra = LAB_SAMPLE_MATERIALS.includes(selectedMaterial as MaterialKey)
+  const selectedSupplier = suppliers.find((s) => s.id.toString() === selectedSupplierId)
+  const selectedCarrier = carriers.find((c) => c.id.toString() === selectedCarrierId)
+  
+  // Get unique supplier names for the dropdown
+  const uniqueSupplierNames = [...new Set(suppliers.map(s => s.name))]
+  
+  // Get materials for the selected supplier
+  const supplierMaterials = selectedSupplier 
+    ? suppliers.filter(s => s.name === selectedSupplier.name)
+    : []
+  
+  const isCemento = selectedMaterial?.toLowerCase().includes("cemento")
+  const isArena = selectedMaterial?.toLowerCase().includes("arena")
+  const isPiedra = selectedMaterial?.toLowerCase().includes("piedra")
+  const isArenaOrPiedra = isArena || isPiedra
   const needsLabAnswer = isArenaOrPiedra
 
   const drySampleVal = parseFloat(drySample) || 0
@@ -173,20 +205,9 @@ export default function IngresoMPPage() {
   const quantityTn = (parseFloat(quantityKg) || 0) / 1000
   const creditTn = quantityTn * (excessPercentage / 100)
 
-  const filteredSuppliers = supplierSearch.trim()
-    ? suppliers.filter((s) =>
-        s.name.toLowerCase().includes(supplierSearch.toLowerCase())
-      )
-    : suppliers
-  const supplierNameExists = suppliers.some(
-    (s) => s.name.toLowerCase() === supplierSearch.trim().toLowerCase()
-  )
-
-  const selectedCarrier = carriers.find((c) => c.id === selectedCarrierId)
-
   const canSubmit =
     !!remitoNumber &&
-    !!supplierSearch.trim() &&
+    !!selectedSupplierId &&
     !!selectedMaterial &&
     !!quantityKg &&
     !!selectedCarrierId &&
@@ -224,33 +245,31 @@ export default function IngresoMPPage() {
   }, [fetchSuppliers, fetchCarriers, fetchReceipts])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
-  const selectSupplier = (supplier: Supplier) => {
-    setSelectedSupplierId(supplier.id)
-    setSupplierSearch(supplier.name)
-    setShowSupplierDropdown(false)
-  }
-
-  const addNewSupplier = async () => {
-    if (!supplierSearch.trim() || !selectedMaterial) return
+  const saveNewSupplier = async () => {
+    if (!newSupplierName.trim() || !newSupplierMaterialType.trim()) return
+    setSavingSupplier(true)
     try {
       const res = await fetch("/api/quality/suppliers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: supplierSearch.trim(),
-          material_type: selectedMaterial,
-          product_detail:
-            FIXED_MATERIALS.find((m) => m.key === selectedMaterial)?.label || selectedMaterial,
+          name: newSupplierName.trim(),
+          material_type: newSupplierMaterialType.trim(),
+          product_detail: newSupplierProductDetail.trim() || newSupplierMaterialType.trim(),
           line_type: "ambas",
         }),
       })
       if (res.ok) {
         const created = await res.json()
         await fetchSuppliers()
-        setSelectedSupplierId(created.id)
-        setShowSupplierDropdown(false)
+        setSelectedSupplierId(created.id.toString())
+        setShowNewSupplierDialog(false)
+        setNewSupplierName("")
+        setNewSupplierMaterialType("")
+        setNewSupplierProductDetail("")
       }
     } catch { /* ignore */ }
+    setSavingSupplier(false)
   }
 
   const saveNewCarrier = async () => {
@@ -262,24 +281,43 @@ export default function IngresoMPPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: newCarrierName.trim(),
-          contact: newCarrierContact.trim() || null,
+          phone: newCarrierPhone.trim() || null,
+          truck_plate: newCarrierPlate.trim() || null,
+          company: newCarrierCompany.trim() || null,
         }),
       })
       if (res.ok) {
         const created = await res.json()
         await fetchCarriers()
-        setSelectedCarrierId(created.id)
-        setShowNewCarrierForm(false)
-        setShowCarrierDropdown(false)
+        setSelectedCarrierId(created.id.toString())
+        setShowNewCarrierDialog(false)
         setNewCarrierName("")
-        setNewCarrierContact("")
+        setNewCarrierPhone("")
+        setNewCarrierPlate("")
+        setNewCarrierCompany("")
       }
     } catch { /* ignore */ }
     setSavingCarrier(false)
   }
 
-  const selectMaterial = (mat: MaterialKey) => {
-    setSelectedMaterial(mat)
+  const handleSupplierChange = (supplierId: string) => {
+    setSelectedSupplierId(supplierId)
+    setSelectedMaterial("") // Reset material when supplier changes
+    setLabSampleTaken(null)
+    setShowGranulometry(false)
+    setShowHumidity(false)
+    setSieveValues({})
+    setDrySample("")
+    setHumidityPercentage("")
+  }
+
+  const handleMaterialChange = (materialId: string) => {
+    // Find the supplier entry for this material
+    const supplierEntry = suppliers.find(s => s.id.toString() === materialId)
+    if (supplierEntry) {
+      setSelectedSupplierId(materialId)
+      setSelectedMaterial(supplierEntry.material_type)
+    }
     setLabSampleTaken(null)
     setShowGranulometry(false)
     setShowHumidity(false)
@@ -291,17 +329,16 @@ export default function IngresoMPPage() {
   const resetForm = () => {
     setDate(new Date().toISOString().split("T")[0])
     setRemitoNumber("")
-    setSupplierSearch("")
-    setSelectedSupplierId(null)
+    setSelectedSupplierId("")
     setSelectedMaterial("")
     setProductionLine("")
     setQuantityKg("")
     setNotes("")
-    setSelectedCarrierId(null)
-    setShowCarrierDropdown(false)
-    setShowNewCarrierForm(false)
+    setSelectedCarrierId("")
     setNewCarrierName("")
-    setNewCarrierContact("")
+    setNewCarrierPhone("")
+    setNewCarrierPlate("")
+    setNewCarrierCompany("")
     setLabSampleTaken(null)
     setShowGranulometry(false)
     setSieveValues({})
@@ -316,37 +353,15 @@ export default function IngresoMPPage() {
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      // Resolve supplier ID
-      let suppId = selectedSupplierId
-      if (!suppId) {
-        const res = await fetch("/api/quality/suppliers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: supplierSearch.trim(),
-            material_type: selectedMaterial,
-            product_detail:
-              FIXED_MATERIALS.find((m) => m.key === selectedMaterial)?.label || selectedMaterial,
-            line_type: "ambas",
-          }),
-        })
-        if (res.ok) {
-          const created = await res.json()
-          suppId = created.id
-          await fetchSuppliers()
-        }
-      }
-      if (!suppId) { setSubmitting(false); return }
-
       const payload: Record<string, unknown> = {
         plant: selectedPlant,
         date,
         remito_number: remitoNumber,
-        supplier_id: suppId,
+        supplier_id: parseInt(selectedSupplierId),
         material_type: selectedMaterial,
         quantity_kg: parseFloat(quantityKg),
         production_line: isCemento ? productionLine : null,
-        carrier_id: selectedCarrierId,
+        carrier_id: parseInt(selectedCarrierId),
         lab_sample_taken: isArenaOrPiedra ? labSampleTaken : false,
         notes,
       }
@@ -443,73 +458,98 @@ export default function IngresoMPPage() {
                   />
                 </div>
 
-                {/* Proveedor */}
-                <div className="space-y-1.5 relative">
+                {/* Proveedor - Select con opción de agregar */}
+                <div className="space-y-1.5">
                   <Label className="text-xs">Proveedor *</Label>
-                  <Input
-                    value={supplierSearch}
-                    onChange={(e) => {
-                      setSupplierSearch(e.target.value)
-                      setSelectedSupplierId(null)
-                      setShowSupplierDropdown(true)
-                    }}
-                    onFocus={() => setShowSupplierDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 200)}
-                    placeholder="Escribir proveedor..."
-                    className="text-sm"
-                    autoComplete="off"
-                  />
-                  {showSupplierDropdown && supplierSearch.trim().length > 0 && (
-                    <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                      {filteredSuppliers.map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => selectSupplier(s)}
-                        >
-                          {s.name}{" "}
-                          <span className="text-muted-foreground text-xs">
-                            — {s.product_detail}
-                          </span>
-                        </button>
-                      ))}
-                      {!supplierNameExists && supplierSearch.trim().length >= 2 && (
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-muted/50 transition-colors flex items-center gap-2 border-t border-border/50"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={addNewSupplier}
-                        >
-                          <UserPlus className="h-3.5 w-3.5" />
-                          Agregar "{supplierSearch.trim()}"
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    <Select value={selectedSupplierId} onValueChange={handleSupplierChange}>
+                      <SelectTrigger className="text-sm flex-1">
+                        <SelectValue placeholder="Seleccionar proveedor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {uniqueSupplierNames.map((name) => (
+                          <SelectItem key={name} value={suppliers.find(s => s.name === name)?.id.toString() || name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Dialog open={showNewSupplierDialog} onOpenChange={setShowNewSupplierDialog}>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" size="icon" className="shrink-0">
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Agregar Nuevo Proveedor</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 pt-4">
+                          <div className="space-y-2">
+                            <Label>Nombre del Proveedor *</Label>
+                            <Input
+                              value={newSupplierName}
+                              onChange={(e) => setNewSupplierName(e.target.value)}
+                              placeholder="Ej: Piatti, Cementos Avellaneda"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Tipo de Material *</Label>
+                            <Input
+                              value={newSupplierMaterialType}
+                              onChange={(e) => setNewSupplierMaterialType(e.target.value)}
+                              placeholder="Ej: Arena, Piedra, Cemento"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Detalle del Producto</Label>
+                            <Input
+                              value={newSupplierProductDetail}
+                              onChange={(e) => setNewSupplierProductDetail(e.target.value)}
+                              placeholder="Ej: Arena de trituración, Piedra 0/10, CPC40"
+                            />
+                          </div>
+                          <Button 
+                            onClick={saveNewSupplier} 
+                            disabled={savingSupplier || !newSupplierName.trim() || !newSupplierMaterialType.trim()}
+                            className="w-full"
+                          >
+                            {savingSupplier ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                            Guardar Proveedor
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
               </div>
 
-              {/* Selector de material — pills */}
+              {/* Selector de material - filtrado por proveedor */}
               <div className="space-y-2">
                 <Label className="text-xs">Tipo de Materia Prima *</Label>
-                <div className="flex flex-wrap gap-2">
-                  {FIXED_MATERIALS.map((mat) => (
-                    <button
-                      key={mat.key}
-                      type="button"
-                      onClick={() => selectMaterial(mat.key)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                        selectedMaterial === mat.key
-                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                          : "bg-background text-foreground border-border hover:border-primary/50 hover:bg-muted/50"
-                      }`}
-                    >
-                      {mat.label}
-                    </button>
-                  ))}
-                </div>
+                {selectedSupplier ? (
+                  <Select value={selectedSupplierId} onValueChange={handleMaterialChange}>
+                    <SelectTrigger className="text-sm">
+                      <SelectValue placeholder="Seleccionar material" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {supplierMaterials.map((s) => (
+                        <SelectItem key={s.id} value={s.id.toString()}>
+                          {s.product_detail || s.material_type}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground p-2 border rounded-md bg-muted/30">
+                    Seleccioná un proveedor primero para ver los materiales disponibles
+                  </p>
+                )}
+                {selectedMaterial && (
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedMaterial} - {selectedSupplier?.product_detail}
+                  </Badge>
+                )}
               </div>
 
               {/* Línea de producción — solo cemento */}
@@ -541,140 +581,98 @@ export default function IngresoMPPage() {
                 </div>
               )}
 
-              {/* Flete (Carrier) — obligatorio */}
+              {/* Flete (Carrier) — obligatorio con Select y Dialog */}
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1.5">
                   <Truck className="h-3 w-3" />
                   Flete *
                 </Label>
-
-                {/* Selected carrier badge o dropdown trigger */}
-                {selectedCarrier && !showCarrierDropdown ? (
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30 text-sm">
-                      <Truck className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="font-medium">{selectedCarrier.name}</span>
-                      {selectedCarrier.contact && (
-                        <span className="text-muted-foreground text-xs">
-                          · {selectedCarrier.contact}
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs text-muted-foreground h-8"
-                      onClick={() => {
-                        setSelectedCarrierId(null)
-                        setShowCarrierDropdown(true)
-                        setShowNewCarrierForm(false)
-                      }}
-                    >
-                      Cambiar
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="border border-border rounded-lg overflow-hidden">
-                    {/* Lista de carriers */}
-                    <div className="max-h-44 overflow-y-auto">
+                <div className="flex gap-2">
+                  <Select value={selectedCarrierId} onValueChange={setSelectedCarrierId}>
+                    <SelectTrigger className="text-sm flex-1">
+                      <SelectValue placeholder="Seleccionar transportista" />
+                    </SelectTrigger>
+                    <SelectContent>
                       {carriers.length === 0 ? (
-                        <p className="px-3 py-2 text-xs text-muted-foreground">
-                          No hay transportistas cargados
-                        </p>
+                        <SelectItem value="none" disabled>No hay transportistas cargados</SelectItem>
                       ) : (
                         carriers.map((c) => (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedCarrierId(c.id)
-                              setShowCarrierDropdown(false)
-                              setShowNewCarrierForm(false)
-                            }}
-                            className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors hover:bg-muted/50 ${
-                              selectedCarrierId === c.id ? "bg-primary/5" : ""
-                            }`}
-                          >
-                            <Truck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-medium">{c.name}</span>
-                            {c.contact && (
-                              <span className="text-muted-foreground text-xs ml-auto">
-                                {c.contact}
-                              </span>
-                            )}
-                          </button>
+                          <SelectItem key={c.id} value={c.id.toString()}>
+                            <span className="flex items-center gap-2">
+                              {c.name}
+                              {c.truck_plate && (
+                                <span className="text-muted-foreground text-xs">
+                                  ({c.truck_plate})
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
                         ))
                       )}
-                    </div>
-
-                    {/* Agregar nuevo flete */}
-                    {!showNewCarrierForm ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowNewCarrierForm(true)}
-                        className="w-full text-left px-3 py-2 text-sm text-primary flex items-center gap-2 border-t border-border/50 hover:bg-muted/30 transition-colors"
-                      >
-                        <PlusCircle className="h-3.5 w-3.5" />
-                        Agregar nuevo flete
-                      </button>
-                    ) : (
-                      <div className="border-t border-border/50 p-3 space-y-3 bg-muted/20">
-                        <p className="text-xs font-medium text-foreground">
-                          Nuevo transportista
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-[10px]">Nombre *</Label>
+                    </SelectContent>
+                  </Select>
+                  <Dialog open={showNewCarrierDialog} onOpenChange={setShowNewCarrierDialog}>
+                    <DialogTrigger asChild>
+                      <Button type="button" variant="outline" size="icon" className="shrink-0">
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Agregar Nuevo Transportista</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4 pt-4">
+                        <div className="space-y-2">
+                          <Label>Nombre del Chofer *</Label>
+                          <Input
+                            value={newCarrierName}
+                            onChange={(e) => setNewCarrierName(e.target.value)}
+                            placeholder="Nombre completo"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Teléfono</Label>
                             <Input
-                              value={newCarrierName}
-                              onChange={(e) => setNewCarrierName(e.target.value)}
-                              placeholder="Nombre del transportista"
-                              className="text-xs h-8"
+                              value={newCarrierPhone}
+                              onChange={(e) => setNewCarrierPhone(e.target.value)}
+                              placeholder="11-1234-5678"
                             />
                           </div>
-                          <div className="space-y-1">
-                            <Label className="text-[10px]">Contacto</Label>
+                          <div className="space-y-2">
+                            <Label>Patente del Camión</Label>
                             <Input
-                              value={newCarrierContact}
-                              onChange={(e) => setNewCarrierContact(e.target.value)}
-                              placeholder="Teléfono o email"
-                              className="text-xs h-8"
+                              value={newCarrierPlate}
+                              onChange={(e) => setNewCarrierPlate(e.target.value)}
+                              placeholder="ABC123"
                             />
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="text-xs h-7 gap-1"
-                            onClick={saveNewCarrier}
-                            disabled={savingCarrier || !newCarrierName.trim()}
-                          >
-                            {savingCarrier ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="h-3 w-3" />
-                            )}
-                            Guardar
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7"
-                            onClick={() => {
-                              setShowNewCarrierForm(false)
-                              setNewCarrierName("")
-                              setNewCarrierContact("")
-                            }}
-                          >
-                            Cancelar
-                          </Button>
+                        <div className="space-y-2">
+                          <Label>Empresa de Transporte</Label>
+                          <Input
+                            value={newCarrierCompany}
+                            onChange={(e) => setNewCarrierCompany(e.target.value)}
+                            placeholder="Nombre de la empresa (opcional)"
+                          />
                         </div>
+                        <Button 
+                          onClick={saveNewCarrier} 
+                          disabled={savingCarrier || !newCarrierName.trim()}
+                          className="w-full"
+                        >
+                          {savingCarrier ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                          Guardar Transportista
+                        </Button>
                       </div>
-                    )}
-                  </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+                {selectedCarrier && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedCarrier.phone && `Tel: ${selectedCarrier.phone}`}
+                    {selectedCarrier.company && ` · ${selectedCarrier.company}`}
+                  </p>
                 )}
               </div>
 
