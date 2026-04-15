@@ -31,9 +31,11 @@ interface Supplier {
   name: string
   material_type: string
   product_detail: string | null
-  line_type: string | null
+  line_type: string
   is_active: boolean
   created_at: string
+  density: number | null
+  unit: string | null
 }
 
 interface Carrier {
@@ -106,7 +108,9 @@ function MateriaPrimaContent() {
     name: "",
     material_type: "",
     product_detail: "",
-    line_type: "ambos"
+    line_type: "ambos",
+    density: "",
+    unit: "kg"
   })
   
   // Carriers state
@@ -197,7 +201,9 @@ function MateriaPrimaContent() {
       material_type: supplierForm.material_type,
       product_detail: supplierForm.product_detail || null,
       line_type: supplierForm.line_type,
-      is_active: true
+      is_active: true,
+      density: supplierForm.density ? parseFloat(supplierForm.density) : null,
+      unit: supplierForm.unit || "kg"
     }
     
     if (editingSupplier) {
@@ -211,10 +217,10 @@ function MateriaPrimaContent() {
         .insert(dataToSave)
     }
     
-    setShowSupplierDialog(false)
-    setEditingSupplier(null)
-    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos" })
-    loadSuppliers()
+  setShowSupplierDialog(false)
+  setEditingSupplier(null)
+  setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos", density: "", unit: "kg" })
+  loadSuppliers()
   }
 
   const deleteSupplier = async (id: number) => {
@@ -269,7 +275,9 @@ function MateriaPrimaContent() {
       name: supplier.name,
       material_type: supplier.material_type,
       product_detail: supplier.product_detail || "",
-      line_type: supplier.line_type || "ambos"
+      line_type: supplier.line_type || "ambos",
+      density: supplier.density?.toString() || "",
+      unit: supplier.unit || "kg"
     })
     setShowSupplierDialog(true)
   }
@@ -340,126 +348,60 @@ function MateriaPrimaContent() {
             ) : stockData ? (
               <>
                 {/* STOCK ACTUAL - Cards grandes y prominentes */}
-                <div>
-                  <h2 className="text-lg font-semibold mb-4">Stock Actual</h2>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    {stockData.alerts?.map(item => {
-                      const bgColor = item.material === "arena" ? "from-amber-500/10 to-amber-500/5 border-amber-500/30" :
-                                     item.material === "piedra" ? "from-indigo-500/10 to-indigo-500/5 border-indigo-500/30" :
-                                     item.material === "cemento" ? "from-slate-500/10 to-slate-500/5 border-slate-500/30" :
-                                     "from-emerald-500/10 to-emerald-500/5 border-emerald-500/30"
-                      const iconColor = item.material === "arena" ? "text-amber-600" :
-                                       item.material === "piedra" ? "text-indigo-600" :
-                                       item.material === "cemento" ? "text-slate-600" :
-                                       "text-emerald-600"
-                      return (
-                        <Card key={item.material} className={`bg-gradient-to-br ${bgColor} border-2 ${
-                          item.status === "critical" ? "!border-red-500 animate-pulse" :
-                          item.status === "warning" ? "!border-yellow-500" : ""
-                        }`}>
-                          <CardContent className="pt-6">
-                            <div className="flex items-start justify-between mb-2">
-                              <span className={`text-sm font-medium uppercase tracking-wide ${iconColor}`}>
-                                {item.material}
-                              </span>
-                              {item.status === "critical" && <AlertTriangle className="w-5 h-5 text-red-500" />}
-                              {item.status === "warning" && <AlertTriangle className="w-5 h-5 text-yellow-500" />}
-                            </div>
-                            <p className="text-4xl font-bold tracking-tight">{item.stockTn.toFixed(1)}</p>
-                            <p className="text-lg text-muted-foreground -mt-1">toneladas</p>
-                            <div className="mt-4 pt-4 border-t border-border/50">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Consumo diario:</span>
-                                <span className="font-medium">{item.dailyConsumptionTn.toFixed(2)} Tn</span>
-                              </div>
-                              <div className="flex justify-between text-sm mt-1">
-                                <span className="text-muted-foreground">Días de stock:</span>
-                                <span className={`font-bold ${
-                                  item.status === "critical" ? "text-red-600" :
-                                  item.status === "warning" ? "text-yellow-600" : "text-green-600"
-                                }`}>
-                                  {item.daysOfStock} días
-                                </span>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Detalle de cálculo de stock */}
-                {(stockData as any).debug && (
-                  <Card className="border-blue-500/30 bg-blue-50/30 dark:bg-blue-950/10">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-400">
-                        Detalle de Cálculo (Ingresos - Consumos = Stock)
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {((stockData as any).debug as any[]).map((d: any) => (
-                          <div key={d.material} className="text-xs space-y-1 p-2 bg-background rounded border">
-                            <p className="font-bold capitalize">{d.material}</p>
-                            <p className="text-green-600">+ Ingresos: {d.totalReceivedTn.toFixed(2)} Tn</p>
-                            <p className="text-red-600">- Consumo total: {d.totalConsumedTn.toFixed(2)} Tn</p>
-                            <p className="text-muted-foreground text-[10px] pl-2">
-                              Bloques: {(d.blockConsumptionKg/1000).toFixed(2)} Tn
-                            </p>
-                            <p className="text-muted-foreground text-[10px] pl-2">
-                              Caños: {(d.pipeConsumptionKg/1000).toFixed(2)} Tn
-                            </p>
-                            <p className="text-muted-foreground text-[10px] pl-2">
-                              Pavers: {(d.paverConsumptionKg/1000).toFixed(2)} Tn
-                            </p>
-                            <p className="font-bold border-t pt-1">= Stock: {d.stockTn.toFixed(2)} Tn</p>
+                    <div>
+                      <Label>Línea de Producción</Label>
+                      <Select
+                        value={supplierForm.line_type}
+                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, line_type: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LINE_TYPES.map(lt => (
+                            <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    {/* Campos adicionales para aditivos */}
+                    {supplierForm.material_type === "Aditivo" && (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label>Densidad (kg/L)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={supplierForm.density}
+                              onChange={(e) => setSupplierForm(prev => ({ ...prev, density: e.target.value }))}
+                              placeholder="Ej: 1.045"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Según ficha técnica</p>
                           </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Alertas de stock crítico */}
-                {stockData.alerts?.some(a => a.status === "critical" || a.status === "warning") && (
-                  <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
-                        <AlertTriangle className="w-4 h-4" />
-                        Alertas de Stock
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {stockData.alerts?.filter(a => a.status !== "ok").map(alert => (
-                          <div key={alert.material} className={`flex items-center justify-between p-2 rounded ${
-                            alert.status === "critical" ? "bg-red-100 dark:bg-red-950/30" : "bg-yellow-100 dark:bg-yellow-950/30"
-                          }`}>
-                            <span className="font-medium capitalize">{alert.material}</span>
-                            <span className={alert.status === "critical" ? "text-red-600" : "text-yellow-600"}>
-                              {alert.daysOfStock} días de stock - {alert.stockTn.toFixed(1)} Tn
-                            </span>
+                          <div>
+                            <Label>Unidad de medida</Label>
+                            <Select
+                              value={supplierForm.unit}
+                              onValueChange={(value) => setSupplierForm(prev => ({ ...prev, unit: value }))}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="kg">Kilogramos (kg)</SelectItem>
+                                <SelectItem value="lts">Litros (lts)</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Gráfico de evolución con filtro de fechas y materiales */}
-                <Card>
-                  <CardHeader className="space-y-4">
-                    <div className="flex flex-row items-center justify-between">
-                      <CardTitle className="text-sm font-medium">Evolución del Stock</CardTitle>
-                      <div className="flex gap-1">
-                        <Button 
-                          variant={stockDateRange === "7d" ? "default" : "outline"} 
-                          size="sm"
-                          onClick={() => setStockDateRange("7d")}
-                        >
-                          7 días
-                        </Button>
+                        </div>
+                      </>
+                    )}
+                    
+                    <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
+                      {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
+                    </Button>
                         <Button 
                           variant={stockDateRange === "30d" ? "default" : "outline"} 
                           size="sm"
@@ -615,7 +557,7 @@ function MateriaPrimaContent() {
                 <DialogTrigger asChild>
                   <Button onClick={() => {
                     setEditingSupplier(null)
-                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos" })
+                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos", density: "", unit: "kg" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Proveedor
@@ -674,6 +616,39 @@ function MateriaPrimaContent() {
                         </SelectContent>
                       </Select>
                     </div>
+                    
+                    {/* Campos adicionales para aditivos */}
+                    {supplierForm.material_type === "Aditivo" && (
+                      <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                        <div className="space-y-2">
+                          <Label className="text-sm">Densidad (kg/L)</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={supplierForm.density}
+                            onChange={(e) => setSupplierForm(prev => ({ ...prev, density: e.target.value }))}
+                            placeholder="Ej: 1.045"
+                          />
+                          <p className="text-xs text-muted-foreground">Según ficha técnica</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm">Unidad de compra</Label>
+                          <Select
+                            value={supplierForm.unit}
+                            onValueChange={(value) => setSupplierForm(prev => ({ ...prev, unit: value }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="kg">Kilogramos (kg)</SelectItem>
+                              <SelectItem value="lts">Litros (lts)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    )}
+                    
                     <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
                       {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
                     </Button>
@@ -691,6 +666,7 @@ function MateriaPrimaContent() {
                       <TableHead>Tipo Material</TableHead>
                       <TableHead>Producto</TableHead>
                       <TableHead>Línea</TableHead>
+                      <TableHead>Densidad</TableHead>
                       <TableHead>Estado</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
@@ -698,13 +674,13 @@ function MateriaPrimaContent() {
                   <TableBody>
                     {loadingSuppliers ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           Cargando proveedores...
                         </TableCell>
                       </TableRow>
                     ) : suppliers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No hay proveedores registrados
                         </TableCell>
                       </TableRow>
@@ -721,6 +697,9 @@ function MateriaPrimaContent() {
                             {supplier.line_type === "bloques" && "Bloques"}
                             {supplier.line_type === "ambos" && "Ambos"}
                             {!supplier.line_type && "-"}
+                          </TableCell>
+                          <TableCell>
+                            {supplier.density ? `${supplier.density} kg/L` : "-"}
                           </TableCell>
                           <TableCell>
                             <Badge variant={supplier.is_active ? "default" : "secondary"}>

@@ -64,6 +64,8 @@ interface Supplier {
   material_type: string
   product_detail: string | null
   line_type: string
+  density: number | null
+  unit: string | null
 }
 
 export function FormuleoContent() {
@@ -103,6 +105,12 @@ export function FormuleoContent() {
   const [showAddOperator, setShowAddOperator] = useState(false)
   const [operators, setOperators] = useState<string[]>(OPERATORS)
   
+  // Additive unit state (kg or liters)
+  const [additive1Unit, setAdditive1Unit] = useState<"kg" | "lts">("kg")
+  const [additive2Unit, setAdditive2Unit] = useState<"kg" | "lts">("kg")
+  const [additive1Density, setAdditive1Density] = useState<number>(1.2) // Default density for Mark V
+  const [additive2Density, setAdditive2Density] = useState<number>(1.3) // Default density for Daraccel
+  
   // History dialog
   const [showHistory, setShowHistory] = useState(false)
   const [history, setHistory] = useState<any[]>([])
@@ -116,6 +124,7 @@ export function FormuleoContent() {
   const [sandSuppliers, setSandSuppliers] = useState<Supplier[]>([])
   const [stoneSuppliers, setStoneSuppliers] = useState<Supplier[]>([])
   const [cementSuppliers, setCementSuppliers] = useState<Supplier[]>([])
+  const [additiveSuppliers, setAdditiveSuppliers] = useState<Supplier[]>([])
 
   // Load data
   const loadData = useCallback(async () => {
@@ -200,14 +209,19 @@ export function FormuleoContent() {
         const cement = suppliersData.filter((s: Supplier) => 
           matchesMaterial(s, ["cemento", "cpc"])
         )
+        const additives = suppliersData.filter((s: Supplier) => 
+          matchesMaterial(s, ["aditivo", "mark", "darac", "additive"])
+        )
         
         console.log("[v0] Sand suppliers:", sand.map(s => ({ name: s.name, type: s.material_type, detail: s.product_detail })))
         console.log("[v0] Stone suppliers:", stone.map(s => ({ name: s.name, type: s.material_type })))
         console.log("[v0] Cement suppliers:", cement.map(s => ({ name: s.name, type: s.material_type })))
+        console.log("[v0] Additive suppliers:", additives.map(s => ({ name: s.name, type: s.material_type, density: s.density, unit: s.unit })))
         
         setSandSuppliers(sand)
         setStoneSuppliers(stone)
         setCementSuppliers(cement)
+        setAdditiveSuppliers(additives)
       }
       
     } catch (error) {
@@ -599,7 +613,7 @@ export function FormuleoContent() {
                   {/* Mark V */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs font-medium">Mark V (L)</Label>
+                      <Label className="text-xs font-medium">Mark V</Label>
                       <Dialog open={showMarkVSheet} onOpenChange={setShowMarkVSheet}>
                         <DialogTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-6 px-2">
@@ -635,12 +649,45 @@ export function FormuleoContent() {
                         </DialogContent>
                       </Dialog>
                     </div>
-                    <Input
-                      type="number"
-                      value={pastonFormula.additive_1_kg || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_1_kg: parseFloat(e.target.value) || 0 }))}
-                      placeholder="0"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        value={pastonFormula.additive_1_kg || ""}
+                        onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_1_kg: parseFloat(e.target.value) || 0 }))}
+                        placeholder="0"
+                        className="flex-1"
+                      />
+                      <Select value={additive1Unit} onValueChange={(v) => setAdditive1Unit(v as "kg" | "lts")}>
+                        <SelectTrigger className="w-20 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="kg">Kg</SelectItem>
+                          <SelectItem value="lts">Lts</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <Label className="text-[10px] text-muted-foreground">Densidad:</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={additive1Density}
+                        onChange={(e) => setAdditive1Density(parseFloat(e.target.value) || 1)}
+                        className="h-6 w-16 text-[10px]"
+                      />
+                      <span className="text-muted-foreground">kg/L</span>
+                    </div>
+                    {additive1Unit === "lts" && pastonFormula.additive_1_kg > 0 && (
+                      <p className="text-[10px] text-blue-600">
+                        = {(pastonFormula.additive_1_kg * additive1Density).toFixed(2)} kg
+                      </p>
+                    )}
+                    {additive1Unit === "kg" && pastonFormula.additive_1_kg > 0 && (
+                      <p className="text-[10px] text-blue-600">
+                        = {(pastonFormula.additive_1_kg / additive1Density).toFixed(2)} lts
+                      </p>
+                    )}
                     <div className="space-y-1">
                       <p className={`text-xs font-medium ${markVPercentage > 0 ? (markVPercentage >= 0.013 && markVPercentage <= 0.033 ? "text-green-600" : "text-amber-600") : "text-muted-foreground"}`}>
                         {markVPercentage.toFixed(4)}% sobre cemento
@@ -652,7 +699,7 @@ export function FormuleoContent() {
                   {/* Daraccel */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs font-medium">Daraccel (L)</Label>
+                      <Label className="text-xs font-medium">Daraccel</Label>
                       <Dialog open={showDaraccelSheet} onOpenChange={setShowDaraccelSheet}>
                         <DialogTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-6 px-2">
@@ -689,12 +736,45 @@ export function FormuleoContent() {
                         </DialogContent>
                       </Dialog>
                     </div>
-                    <Input
-                      type="number"
-                      value={pastonFormula.additive_2_kg || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_2_kg: parseFloat(e.target.value) || 0 }))}
-                      placeholder="0"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        value={pastonFormula.additive_2_kg || ""}
+                        onChange={(e) => setPastonFormula(prev => ({ ...prev, additive_2_kg: parseFloat(e.target.value) || 0 }))}
+                        placeholder="0"
+                        className="flex-1"
+                      />
+                      <Select value={additive2Unit} onValueChange={(v) => setAdditive2Unit(v as "kg" | "lts")}>
+                        <SelectTrigger className="w-20 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="kg">Kg</SelectItem>
+                          <SelectItem value="lts">Lts</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <Label className="text-[10px] text-muted-foreground">Densidad:</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={additive2Density}
+                        onChange={(e) => setAdditive2Density(parseFloat(e.target.value) || 1)}
+                        className="h-6 w-16 text-[10px]"
+                      />
+                      <span className="text-muted-foreground">kg/L</span>
+                    </div>
+                    {additive2Unit === "lts" && pastonFormula.additive_2_kg > 0 && (
+                      <p className="text-[10px] text-blue-600">
+                        = {(pastonFormula.additive_2_kg * additive2Density).toFixed(2)} kg
+                      </p>
+                    )}
+                    {additive2Unit === "kg" && pastonFormula.additive_2_kg > 0 && (
+                      <p className="text-[10px] text-blue-600">
+                        = {(pastonFormula.additive_2_kg / additive2Density).toFixed(2)} lts
+                      </p>
+                    )}
                     <div className="space-y-1">
                       <p className={`text-xs font-medium ${daraccelPercentage > 0 ? (daraccelPercentage >= 0.7 && daraccelPercentage <= 3.5 ? "text-green-600" : "text-amber-600") : "text-muted-foreground"}`}>
                         {daraccelPercentage.toFixed(2)}% sobre cemento
