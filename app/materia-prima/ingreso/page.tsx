@@ -205,14 +205,17 @@ export default function IngresoMPPage() {
   const quantityTn = (parseFloat(quantityKg) || 0) / 1000
   const creditTn = quantityTn * (excessPercentage / 100)
 
-  const canSubmit =
-    !!remitoNumber &&
-    !!selectedSupplierId &&
-    !!selectedMaterial &&
-    !!quantityKg &&
-    !!selectedCarrierId &&
-    (!isCemento || !!productionLine) &&
-    (!needsLabAnswer || labSampleTaken !== null)
+  // Validation messages
+  const missingFields: string[] = []
+  if (!remitoNumber) missingFields.push("Número de Remito")
+  if (!selectedSupplierId) missingFields.push("Proveedor")
+  if (!selectedMaterial) missingFields.push("Tipo de Materia Prima")
+  if (!quantityKg) missingFields.push("Cantidad (kg)")
+  if (!selectedCarrierId) missingFields.push("Flete")
+  if (isCemento && !productionLine) missingFields.push("Línea de Producción")
+  if (needsLabAnswer && labSampleTaken === null) missingFields.push("Muestra de Laboratorio")
+
+  const canSubmit = missingFields.length === 0
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchSuppliers = useCallback(async () => {
@@ -1023,13 +1026,13 @@ export default function IngresoMPPage() {
                 >
                   Cancelar
                 </Button>
-                {!canSubmit && (
-                  <p className="text-[11px] text-muted-foreground">
-                    {!selectedMaterial && "Seleccioná un material. "}
-                    {!selectedCarrierId && "Seleccioná un flete. "}
-                    {needsLabAnswer && labSampleTaken === null &&
-                      "Respondé si se extrajo muestra de laboratorio."}
-                  </p>
+                {!canSubmit && missingFields.length > 0 && (
+                  <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-3 py-2 rounded-md">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <p className="text-xs">
+                      <span className="font-medium">Faltan datos:</span> {missingFields.join(", ")}
+                    </p>
+                  </div>
                 )}
               </div>
             </CardContent>
