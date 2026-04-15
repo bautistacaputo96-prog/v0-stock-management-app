@@ -32,9 +32,10 @@ interface PastonFormula {
   stone_kg: number
   stone_supplier: string
   cement_kg: number
+  cement_supplier: string
   tank_liters: number // Tanque de 1000L generalmente
   additive1_liters: number // Mark V
-  additive2_liters: number // Darasell
+  additive2_liters: number // Daraccel
   water_liters: number // Calculado: tank - aditivos
   diluted_per_paston_liters: number // Litros de aditivo diluido por pastón
   modified_by: string
@@ -55,6 +56,14 @@ interface PipeFormula {
   modified_at: string
 }
 
+interface Supplier {
+  id: number
+  name: string
+  material_type: string
+  product_detail: string | null
+  line_type: string
+}
+
 export function FormuleoContent() {
   const { selectedPlant } = usePlant()
   const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant || "silke"
@@ -73,6 +82,7 @@ export function FormuleoContent() {
     stone_kg: 0,
     stone_supplier: "",
     cement_kg: 0,
+    cement_supplier: "",
     tank_liters: 1000,
     additive1_liters: 0,
     additive2_liters: 0,
@@ -96,6 +106,12 @@ export function FormuleoContent() {
   // Technical sheet dialogs
   const [showMarkVSheet, setShowMarkVSheet] = useState(false)
   const [showDaraccelSheet, setShowDaraccelSheet] = useState(false)
+  
+  // Suppliers from materia prima
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [sandSuppliers, setSandSuppliers] = useState<Supplier[]>([])
+  const [stoneSuppliers, setStoneSuppliers] = useState<Supplier[]>([])
+  const [cementSuppliers, setCementSuppliers] = useState<Supplier[]>([])
 
   // Load data
   const loadData = useCallback(async () => {
@@ -151,6 +167,27 @@ export function FormuleoContent() {
       if (opsData && opsData.length > 0) {
         const customOps = opsData.map((o: any) => o.name).filter((n: string) => !OPERATORS.includes(n))
         setOperators([...OPERATORS, ...customOps])
+      }
+      
+      // Load suppliers from materia prima
+      const { data: suppliersData } = await supabase
+        .from("suppliers")
+        .select("*")
+        .eq("is_active", true)
+        .or(`line_type.eq.canos,line_type.is.null`)
+      
+      if (suppliersData) {
+        setSuppliers(suppliersData)
+        // Filter by material type
+        setSandSuppliers(suppliersData.filter((s: Supplier) => 
+          s.material_type?.toLowerCase().includes("arena")
+        ))
+        setStoneSuppliers(suppliersData.filter((s: Supplier) => 
+          s.material_type?.toLowerCase().includes("piedra")
+        ))
+        setCementSuppliers(suppliersData.filter((s: Supplier) => 
+          s.material_type?.toLowerCase().includes("cemento")
+        ))
       }
       
     } catch (error) {
@@ -423,46 +460,103 @@ export function FormuleoContent() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Arena */}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Arena (kg)</Label>
+                  <Label className="text-xs font-medium">Arena</Label>
+                  <Select
+                    value={pastonFormula.sand_supplier}
+                    onValueChange={(value) => setPastonFormula(prev => ({ ...prev, sand_supplier: value }))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="Seleccionar arena" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sandSuppliers.length > 0 ? (
+                        sandSuppliers.map((s) => (
+                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{s.product_detail || s.material_type}</span>
+                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="number"
                     value={pastonFormula.sand_kg || ""}
                     onChange={(e) => setPastonFormula(prev => ({ ...prev, sand_kg: parseFloat(e.target.value) || 0 }))}
-                    placeholder="0"
-                  />
-                  <Input
-                    value={pastonFormula.sand_supplier}
-                    onChange={(e) => setPastonFormula(prev => ({ ...prev, sand_supplier: e.target.value }))}
-                    placeholder="Proveedor de arena"
+                    placeholder="Kg por pastón"
                     className="text-xs"
                   />
                 </div>
                 
                 {/* Piedra */}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Piedra (kg)</Label>
+                  <Label className="text-xs font-medium">Piedra</Label>
+                  <Select
+                    value={pastonFormula.stone_supplier}
+                    onValueChange={(value) => setPastonFormula(prev => ({ ...prev, stone_supplier: value }))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="Seleccionar piedra" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stoneSuppliers.length > 0 ? (
+                        stoneSuppliers.map((s) => (
+                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{s.product_detail || s.material_type}</span>
+                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="number"
                     value={pastonFormula.stone_kg || ""}
                     onChange={(e) => setPastonFormula(prev => ({ ...prev, stone_kg: parseFloat(e.target.value) || 0 }))}
-                    placeholder="0"
-                  />
-                  <Input
-                    value={pastonFormula.stone_supplier}
-                    onChange={(e) => setPastonFormula(prev => ({ ...prev, stone_supplier: e.target.value }))}
-                    placeholder="Proveedor de piedra"
+                    placeholder="Kg por pastón"
                     className="text-xs"
                   />
                 </div>
                 
                 {/* Cemento */}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Cemento (kg)</Label>
+                  <Label className="text-xs font-medium">Cemento</Label>
+                  <Select
+                    value={pastonFormula.cement_supplier}
+                    onValueChange={(value) => setPastonFormula(prev => ({ ...prev, cement_supplier: value }))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="Seleccionar cemento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cementSuppliers.length > 0 ? (
+                        cementSuppliers.map((s) => (
+                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{s.product_detail || s.material_type}</span>
+                              <span className="text-[10px] text-muted-foreground">{s.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="number"
                     value={pastonFormula.cement_kg || ""}
                     onChange={(e) => setPastonFormula(prev => ({ ...prev, cement_kg: parseFloat(e.target.value) || 0 }))}
-                    placeholder="0"
+                    placeholder="Kg por pastón"
+                    className="text-xs"
                   />
                 </div>
               </div>
