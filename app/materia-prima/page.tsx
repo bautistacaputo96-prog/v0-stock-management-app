@@ -867,18 +867,21 @@ function MateriaPrimaContent() {
   )
 }
 
+// Wrapped in Suspense to handle useSearchParams
 export default function MateriaPrimaPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-background">
-        <Navigation />
-        <main className="container mx-auto p-6">
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Cargando...</p>
-          </div>
-        </main>
-      </div>
-    }>
+    <Suspense 
+      fallback={
+        <div className="min-h-screen bg-background">
+          <Navigation />
+          <main className="container mx-auto p-6">
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">Cargando...</p>
+            </div>
+          </main>
+        </div>
+      }
+    >
       <MateriaPrimaContent />
     </Suspense>
   )
