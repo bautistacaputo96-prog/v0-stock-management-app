@@ -173,25 +173,41 @@ export function FormuleoContent() {
         setOperators([...OPERATORS, ...customOps])
       }
       
-      // Load suppliers from materia prima
-      const { data: suppliersData } = await supabase
+      // Load suppliers from materia prima - all active suppliers
+      const { data: suppliersData, error: suppliersError } = await supabase
         .from("suppliers")
         .select("*")
         .eq("is_active", true)
-        .or(`line_type.eq.canos,line_type.is.null`)
+      
+      console.log("[v0] Suppliers loaded:", suppliersData?.length, "Error:", suppliersError)
+      console.log("[v0] All suppliers:", suppliersData?.map(s => ({ name: s.name, type: s.material_type, detail: s.product_detail, line: s.line_type })))
       
       if (suppliersData) {
         setSuppliers(suppliersData)
-        // Filter by material type
-        setSandSuppliers(suppliersData.filter((s: Supplier) => 
-          s.material_type?.toLowerCase().includes("arena")
-        ))
-        setStoneSuppliers(suppliersData.filter((s: Supplier) => 
-          s.material_type?.toLowerCase().includes("piedra")
-        ))
-        setCementSuppliers(suppliersData.filter((s: Supplier) => 
-          s.material_type?.toLowerCase().includes("cemento")
-        ))
+        // Filter by material type or product detail - case insensitive
+        const matchesMaterial = (s: Supplier, keywords: string[]) => {
+          const type = s.material_type?.toLowerCase() || ""
+          const detail = s.product_detail?.toLowerCase() || ""
+          return keywords.some(k => type.includes(k) || detail.includes(k))
+        }
+        
+        const sand = suppliersData.filter((s: Supplier) => 
+          matchesMaterial(s, ["arena"])
+        )
+        const stone = suppliersData.filter((s: Supplier) => 
+          matchesMaterial(s, ["piedra"])
+        )
+        const cement = suppliersData.filter((s: Supplier) => 
+          matchesMaterial(s, ["cemento", "cpc"])
+        )
+        
+        console.log("[v0] Sand suppliers:", sand.map(s => ({ name: s.name, type: s.material_type, detail: s.product_detail })))
+        console.log("[v0] Stone suppliers:", stone.map(s => ({ name: s.name, type: s.material_type })))
+        console.log("[v0] Cement suppliers:", cement.map(s => ({ name: s.name, type: s.material_type })))
+        
+        setSandSuppliers(sand)
+        setStoneSuppliers(stone)
+        setCementSuppliers(cement)
       }
       
     } catch (error) {
