@@ -5,7 +5,7 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut, FlaskConical } from "lucide-react"
+import { LayoutDashboard, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut, FlaskConical } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
 import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
@@ -61,11 +61,6 @@ const navItems = [
     title: "Mantenimiento",
     href: "/mantenimiento",
     icon: Wrench,
-  },
-  {
-    title: "Configuracion",
-    href: "/configuracion",
-    icon: Settings,
   },
 ]
 
