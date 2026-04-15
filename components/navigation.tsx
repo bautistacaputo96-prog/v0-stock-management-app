@@ -5,7 +5,7 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut } from "lucide-react"
+import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut, FlaskConical } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
 import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
@@ -41,12 +41,16 @@ const navItems = [
     children: [
       { title: "Panel General", href: "/calidad" },
       { title: "Control Canos", href: "/calidad/canos" },
-      { title: "Dosificaciones", href: "/calidad/dosificaciones" },
       { title: "Granulometria", href: "/calidad/granulometria" },
       { title: "Humedad", href: "/calidad/humedad" },
       { title: "Ensayos", href: "/calidad/ensayos" },
       { title: "Parametros IRAM", href: "/calidad/parametros" },
     ],
+  },
+  {
+    title: "Formuleo",
+    href: "/formuleo",
+    icon: FlaskConical,
   },
   {
     title: "RRHH",
