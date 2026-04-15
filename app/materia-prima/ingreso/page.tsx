@@ -31,6 +31,8 @@ import {
   Truck,
   FlaskConical,
   Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -129,6 +131,7 @@ export default function IngresoMPPage() {
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  const [editingReceiptId, setEditingReceiptId] = useState<number | null>(null)
 
   // Basic form
   const [date, setDate] = useState(new Date().toISOString().split("T")[0])
@@ -341,6 +344,7 @@ export default function IngresoMPPage() {
   }
 
   const resetForm = () => {
+    setEditingReceiptId(null)
     setDate(new Date().toISOString().split("T")[0])
     setRemitoNumber("")
     setSelectedSupplierId("")
@@ -361,6 +365,37 @@ export default function IngresoMPPage() {
     setGranObs("")
     setShowHumidity(false)
     setHumidityPercentage("")
+  }
+
+  const handleEditReceipt = (receipt: any) => {
+    setEditingReceiptId(receipt.id)
+    setDate(receipt.receipt_date || new Date().toISOString().split("T")[0])
+    setRemitoNumber(receipt.remito_number || "")
+    setSelectedSupplierId(receipt.supplier_id?.toString() || "")
+    setSelectedMaterial(receipt.material_type || "")
+    setProductionLine(receipt.production_line || "")
+    setQuantityKg(receipt.quantity_tn ? (receipt.quantity_tn * 1000).toString() : "")
+    setNotes(receipt.observations || "")
+    setSelectedCarrierId(receipt.carrier_id?.toString() || "")
+    setShowForm(true)
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
+  const handleDeleteReceipt = async (id: number) => {
+    if (!confirm("¿Estás seguro de que querés eliminar este ingreso?")) return
+    try {
+      const res = await fetch(`/api/quality/mp-receipts/${id}`, {
+        method: "DELETE",
+      })
+      if (res.ok) {
+        await fetchReceipts()
+      } else {
+        alert("Error al eliminar el ingreso")
+      }
+    } catch {
+      alert("Error al eliminar el ingreso")
+    }
   }
 
   const handleSubmit = async () => {
@@ -402,8 +437,12 @@ export default function IngresoMPPage() {
         }
       }
 
-      const res = await fetch("/api/quality/mp-receipts", {
-        method: "POST",
+      const url = editingReceiptId 
+        ? `/api/quality/mp-receipts/${editingReceiptId}`
+        : "/api/quality/mp-receipts"
+      
+      const res = await fetch(url, {
+        method: editingReceiptId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
@@ -412,8 +451,14 @@ export default function IngresoMPPage() {
         resetForm()
         setShowForm(false)
         fetchReceipts()
+      } else {
+        const errorData = await res.json()
+        alert(errorData.error || "Error al guardar el ingreso")
       }
-    } catch { /* ignore */ }
+    } catch (error) {
+      console.error("[v0] Error submitting receipt:", error)
+      alert("Error al guardar el ingreso")
+    }
     setSubmitting(false)
   }
 
@@ -447,7 +492,7 @@ export default function IngresoMPPage() {
         {showForm && (
           <Card className="border-primary/20">
             <CardHeader className="pb-4">
-              <CardTitle className="text-base">Nuevo Ingreso de Materia Prima</CardTitle>
+              <CardTitle className="text-base">{editingReceiptId ? "Editar Ingreso de Materia Prima" : "Nuevo Ingreso de Materia Prima"}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
 
@@ -1032,12 +1077,12 @@ export default function IngresoMPPage() {
                   size="sm"
                   className="gap-2"
                 >
-                  {submitting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
-                  Registrar Ingreso
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                {editingReceiptId ? "Actualizar Ingreso" : "Registrar Ingreso"}
                 </Button>
                 <Button
                   variant="outline"
@@ -1090,17 +1135,17 @@ export default function IngresoMPPage() {
                       <th className="text-left py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Material</th>
                       <th className="text-left py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Flete</th>
                       <th className="text-right py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Cantidad</th>
-                      <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Lab</th>
+                      <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {receipts.map((r) => (
+                    {receipts.map((r: any) => (
                       <tr
                         key={r.id}
                         className="border-b border-border/50 hover:bg-muted/30 transition-colors"
                       >
                         <td className="py-2.5 px-3 text-xs">
-                          {new Date(r.date + "T12:00:00").toLocaleDateString("es-AR")}
+                          {r.receipt_date ? new Date(r.receipt_date + "T12:00:00").toLocaleDateString("es-AR") : "—"}
                         </td>
                         <td className="py-2.5 px-3 text-xs font-mono">
                           {r.remito_number}
@@ -1110,23 +1155,34 @@ export default function IngresoMPPage() {
                         </td>
                         <td className="py-2.5 px-3">
                           <Badge variant="secondary" className="text-[10px]">
-                            {FIXED_MATERIALS.find(
-                              (m) => m.key === r.material_type
-                            )?.label || r.material_type?.replace(/_/g, " ")}
+                            {r.material_type?.replace(/_/g, " ") || "—"}
                           </Badge>
                         </td>
                         <td className="py-2.5 px-3 text-xs text-muted-foreground">
                           {r.carrier?.name || "—"}
                         </td>
                         <td className="py-2.5 px-3 text-xs text-right font-medium">
-                          {(r.quantity_kg / 1000).toFixed(1)} Tn
+                          {typeof r.quantity_tn === "number" ? r.quantity_tn.toFixed(1) : "—"} Tn
                         </td>
                         <td className="py-2.5 px-3 text-center">
-                          {r.lab_sample_taken ? (
-                            <FlaskConical className="h-3.5 w-3.5 text-blue-500 mx-auto" />
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleEditReceipt(r)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteReceipt(r.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))}
