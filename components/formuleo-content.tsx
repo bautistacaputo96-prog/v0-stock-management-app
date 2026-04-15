@@ -524,8 +524,6 @@ export function FormuleoContent() {
       }
     })
   }
-    }))
-  }
 
   // Calculate percentages for pipe formula
   const calculatePipePercentages = (formula: PipeFormula) => {
