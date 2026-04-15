@@ -303,9 +303,20 @@ export default function IngresoMPPage() {
     setSavingCarrier(false)
   }
 
-  const handleSupplierChange = (supplierId: string) => {
-    setSelectedSupplierId(supplierId)
-    setSelectedMaterial("") // Reset material when supplier changes
+  const handleSupplierChange = (supplierName: string) => {
+    // Find all entries for this supplier
+    const supplierEntries = suppliers.filter(s => s.name === supplierName)
+    if (supplierEntries.length > 0) {
+      // If only one material for this supplier, auto-select it
+      if (supplierEntries.length === 1) {
+        setSelectedSupplierId(supplierEntries[0].id.toString())
+        setSelectedMaterial(supplierEntries[0].material_type)
+      } else {
+        // Multiple materials - select first as supplier reference but clear material
+        setSelectedSupplierId(supplierEntries[0].id.toString())
+        setSelectedMaterial("")
+      }
+    }
     setLabSampleTaken(null)
     setShowGranulometry(false)
     setShowHumidity(false)
@@ -465,13 +476,13 @@ export default function IngresoMPPage() {
                 <div className="space-y-1.5">
                   <Label className="text-xs">Proveedor *</Label>
                   <div className="flex gap-2">
-                    <Select value={selectedSupplierId} onValueChange={handleSupplierChange}>
+                    <Select value={selectedSupplier?.name || ""} onValueChange={handleSupplierChange}>
                       <SelectTrigger className="text-sm flex-1">
                         <SelectValue placeholder="Seleccionar proveedor" />
                       </SelectTrigger>
                       <SelectContent>
                         {uniqueSupplierNames.map((name) => (
-                          <SelectItem key={name} value={suppliers.find(s => s.name === name)?.id.toString() || name}>
+                          <SelectItem key={name} value={name}>
                             {name}
                           </SelectItem>
                         ))}
@@ -531,24 +542,33 @@ export default function IngresoMPPage() {
               <div className="space-y-2">
                 <Label className="text-xs">Tipo de Materia Prima *</Label>
                 {selectedSupplier ? (
-                  <Select value={selectedSupplierId} onValueChange={handleMaterialChange}>
-                    <SelectTrigger className="text-sm">
-                      <SelectValue placeholder="Seleccionar material" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {supplierMaterials.map((s) => (
-                        <SelectItem key={s.id} value={s.id.toString()}>
-                          {s.product_detail || s.material_type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  supplierMaterials.length === 1 ? (
+                    // Solo un material para este proveedor - mostrar automáticamente
+                    <div className="p-2 border rounded-md bg-muted/30">
+                      <p className="text-sm font-medium">{supplierMaterials[0].product_detail || supplierMaterials[0].material_type}</p>
+                      <p className="text-xs text-muted-foreground">{supplierMaterials[0].material_type}</p>
+                    </div>
+                  ) : (
+                    // Múltiples materiales - mostrar Select
+                    <Select value={selectedSupplierId} onValueChange={handleMaterialChange}>
+                      <SelectTrigger className="text-sm">
+                        <SelectValue placeholder="Seleccionar material" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supplierMaterials.map((s) => (
+                          <SelectItem key={s.id} value={s.id.toString()}>
+                            {s.product_detail || s.material_type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
                 ) : (
                   <p className="text-xs text-muted-foreground p-2 border rounded-md bg-muted/30">
                     Seleccioná un proveedor primero para ver los materiales disponibles
                   </p>
                 )}
-                {selectedMaterial && (
+                {selectedMaterial && supplierMaterials.length > 1 && (
                   <Badge variant="secondary" className="text-xs">
                     {selectedMaterial} - {selectedSupplier?.product_detail}
                   </Badge>
