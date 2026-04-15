@@ -28,7 +28,7 @@ const USERS: Record<string, { password: string; role: UserRole }> = {
 
 // Rutas permitidas por rol
 export const ALLOWED_ROUTES: Record<UserRole, string[]> = {
-  produccion: ["/", "/produccion", "/informes", "/materia-prima", "/calidad", "/configuracion"],
+  produccion: ["/", "/produccion", "/informes", "/materia-prima", "/calidad", "/formuleo"],
   administrativo: ["/rrhh"],
   mantenimiento: ["/mantenimiento"],
 }
