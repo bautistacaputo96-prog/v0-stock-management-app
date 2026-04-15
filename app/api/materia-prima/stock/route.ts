@@ -211,6 +211,18 @@ export async function GET(request: Request) {
       return { material: cat, ingresosTn, consumoTeoricoTn, diferenciaPct }
     })
 
+    // Debug info - breakdown of receipts and consumption
+    const debug = categories.map(cat => ({
+      material: cat,
+      totalReceivedTn: totalReceivedKg[cat] / 1000,
+      totalConsumedTn: totalConsumedKg[cat] / 1000,
+      stockTn: currentStockKg[cat] / 1000,
+      receiptsCount: safeReceipts.filter(r => categorize(r.material_type) === cat).length,
+      blockConsumptionKg: getConsumedByCategory(safeBlockProductions, cat),
+      pipeConsumptionKg: getConsumedByCategory(safePipeProductions, cat),
+      paverConsumptionKg: getConsumedByCategory(safePaverProductions, cat),
+    }))
+
     return NextResponse.json({
       currentStockKg,
       daysOfStock,
@@ -220,6 +232,7 @@ export async function GET(request: Request) {
       massBalance,
       alerts,
       categories,
+      debug,
     })
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Error al obtener stock"

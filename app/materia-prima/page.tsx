@@ -125,6 +125,12 @@ export default function MateriaPrimaPage() {
   const [stockData, setStockData] = useState<StockData | null>(null)
   const [loadingStock, setLoadingStock] = useState(true)
   const [stockDateRange, setStockDateRange] = useState<"7d" | "30d" | "90d">("30d")
+  const [visibleMaterials, setVisibleMaterials] = useState<Record<string, boolean>>({
+    arena: true,
+    piedra: true,
+    cemento: true,
+    aditivo: true,
+  })
 
   // Load suppliers
   useEffect(() => {
@@ -383,6 +389,38 @@ export default function MateriaPrimaPage() {
                   </div>
                 </div>
 
+                {/* Detalle de cálculo de stock */}
+                {(stockData as any).debug && (
+                  <Card className="border-blue-500/30 bg-blue-50/30 dark:bg-blue-950/10">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-400">
+                        Detalle de Cálculo (Ingresos - Consumos = Stock)
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {((stockData as any).debug as any[]).map((d: any) => (
+                          <div key={d.material} className="text-xs space-y-1 p-2 bg-background rounded border">
+                            <p className="font-bold capitalize">{d.material}</p>
+                            <p className="text-green-600">+ Ingresos: {d.totalReceivedTn.toFixed(2)} Tn</p>
+                            <p className="text-red-600">- Consumo total: {d.totalConsumedTn.toFixed(2)} Tn</p>
+                            <p className="text-muted-foreground text-[10px] pl-2">
+                              Bloques: {(d.blockConsumptionKg/1000).toFixed(2)} Tn
+                            </p>
+                            <p className="text-muted-foreground text-[10px] pl-2">
+                              Caños: {(d.pipeConsumptionKg/1000).toFixed(2)} Tn
+                            </p>
+                            <p className="text-muted-foreground text-[10px] pl-2">
+                              Pavers: {(d.paverConsumptionKg/1000).toFixed(2)} Tn
+                            </p>
+                            <p className="font-bold border-t pt-1">= Stock: {d.stockTn.toFixed(2)} Tn</p>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* Alertas de stock crítico */}
                 {stockData.alerts?.some(a => a.status === "critical" || a.status === "warning") && (
                   <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
@@ -409,31 +447,68 @@ export default function MateriaPrimaPage() {
                   </Card>
                 )}
 
-                {/* Gráfico de evolución con filtro de fechas */}
+                {/* Gráfico de evolución con filtro de fechas y materiales */}
                 <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-sm font-medium">Evolución del Stock</CardTitle>
-                    <div className="flex gap-1">
-                      <Button 
-                        variant={stockDateRange === "7d" ? "default" : "outline"} 
+                  <CardHeader className="space-y-4">
+                    <div className="flex flex-row items-center justify-between">
+                      <CardTitle className="text-sm font-medium">Evolución del Stock</CardTitle>
+                      <div className="flex gap-1">
+                        <Button 
+                          variant={stockDateRange === "7d" ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => setStockDateRange("7d")}
+                        >
+                          7 días
+                        </Button>
+                        <Button 
+                          variant={stockDateRange === "30d" ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => setStockDateRange("30d")}
+                        >
+                          30 días
+                        </Button>
+                        <Button 
+                          variant={stockDateRange === "90d" ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => setStockDateRange("90d")}
+                        >
+                          90 días
+                        </Button>
+                      </div>
+                    </div>
+                    {/* Filtros de material */}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant={visibleMaterials.arena ? "default" : "outline"}
                         size="sm"
-                        onClick={() => setStockDateRange("7d")}
+                        className={visibleMaterials.arena ? "bg-amber-500 hover:bg-amber-600" : ""}
+                        onClick={() => setVisibleMaterials(prev => ({ ...prev, arena: !prev.arena }))}
                       >
-                        7 días
+                        Arena
                       </Button>
-                      <Button 
-                        variant={stockDateRange === "30d" ? "default" : "outline"} 
+                      <Button
+                        variant={visibleMaterials.piedra ? "default" : "outline"}
                         size="sm"
-                        onClick={() => setStockDateRange("30d")}
+                        className={visibleMaterials.piedra ? "bg-indigo-500 hover:bg-indigo-600" : ""}
+                        onClick={() => setVisibleMaterials(prev => ({ ...prev, piedra: !prev.piedra }))}
                       >
-                        30 días
+                        Piedra
                       </Button>
-                      <Button 
-                        variant={stockDateRange === "90d" ? "default" : "outline"} 
+                      <Button
+                        variant={visibleMaterials.cemento ? "default" : "outline"}
                         size="sm"
-                        onClick={() => setStockDateRange("90d")}
+                        className={visibleMaterials.cemento ? "bg-slate-500 hover:bg-slate-600" : ""}
+                        onClick={() => setVisibleMaterials(prev => ({ ...prev, cemento: !prev.cemento }))}
                       >
-                        90 días
+                        Cemento
+                      </Button>
+                      <Button
+                        variant={visibleMaterials.aditivo ? "default" : "outline"}
+                        size="sm"
+                        className={visibleMaterials.aditivo ? "bg-emerald-500 hover:bg-emerald-600" : ""}
+                        onClick={() => setVisibleMaterials(prev => ({ ...prev, aditivo: !prev.aditivo }))}
+                      >
+                        Aditivo
                       </Button>
                     </div>
                   </CardHeader>
@@ -456,18 +531,20 @@ export default function MateriaPrimaPage() {
                             labelFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}
                             formatter={(value: number, name: string) => [`${value.toFixed(1)} Tn`, name.charAt(0).toUpperCase() + name.slice(1)]}
                           />
-                          <Line type="monotone" dataKey="arena" stroke="#f59e0b" strokeWidth={2} dot={stockDateRange === "7d"} name="Arena" />
-                          <Line type="monotone" dataKey="piedra" stroke="#6366f1" strokeWidth={2} dot={stockDateRange === "7d"} name="Piedra" />
-                          <Line type="monotone" dataKey="cemento" stroke="#94a3b8" strokeWidth={2} dot={stockDateRange === "7d"} name="Cemento" />
-                          <Line type="monotone" dataKey="aditivo" stroke="#10b981" strokeWidth={2} dot={stockDateRange === "7d"} name="Aditivo" />
+                          {visibleMaterials.arena && (
+                            <Line type="monotone" dataKey="arena" stroke="#f59e0b" strokeWidth={2} dot={stockDateRange === "7d"} name="Arena" />
+                          )}
+                          {visibleMaterials.piedra && (
+                            <Line type="monotone" dataKey="piedra" stroke="#6366f1" strokeWidth={2} dot={stockDateRange === "7d"} name="Piedra" />
+                          )}
+                          {visibleMaterials.cemento && (
+                            <Line type="monotone" dataKey="cemento" stroke="#94a3b8" strokeWidth={2} dot={stockDateRange === "7d"} name="Cemento" />
+                          )}
+                          {visibleMaterials.aditivo && (
+                            <Line type="monotone" dataKey="aditivo" stroke="#10b981" strokeWidth={2} dot={stockDateRange === "7d"} name="Aditivo" />
+                          )}
                         </LineChart>
                       </ResponsiveContainer>
-                    </div>
-                    <div className="flex flex-wrap gap-4 mt-4 justify-center">
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-500" /> Arena</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500" /> Piedra</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-slate-400" /> Cemento</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Aditivo</div>
                     </div>
                   </CardContent>
                 </Card>
