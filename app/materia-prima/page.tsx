@@ -31,7 +31,7 @@ interface Carrier {
   id: number
   name: string
   phone: string | null
-  truck_plate: string | null
+  license_plate: string | null
   company: string | null
   is_active: boolean
   created_at: string
@@ -84,7 +84,7 @@ export default function MateriaPrimaPage() {
   const [carrierForm, setCarrierForm] = useState({
     name: "",
     phone: "",
-    truck_plate: "",
+    license_plate: "",
     company: ""
   })
 
@@ -169,7 +169,7 @@ export default function MateriaPrimaPage() {
     const dataToSave = {
       name: carrierForm.name,
       phone: carrierForm.phone || null,
-      truck_plate: carrierForm.truck_plate || null,
+      license_plate: carrierForm.license_plate || null,
       company: carrierForm.company || null,
       is_active: true
     }
@@ -187,7 +187,7 @@ export default function MateriaPrimaPage() {
     
     setShowCarrierDialog(false)
     setEditingCarrier(null)
-    setCarrierForm({ name: "", phone: "", truck_plate: "", company: "" })
+    setCarrierForm({ name: "", phone: "", license_plate: "", company: "" })
     loadCarriers()
   }
 
@@ -216,7 +216,7 @@ export default function MateriaPrimaPage() {
     setCarrierForm({
       name: carrier.name,
       phone: carrier.phone || "",
-      truck_plate: carrier.truck_plate || "",
+      license_plate: carrier.license_plate || "",
       company: carrier.company || ""
     })
     setShowCarrierDialog(true)
@@ -509,7 +509,7 @@ export default function MateriaPrimaPage() {
                 <DialogTrigger asChild>
                   <Button onClick={() => {
                     setEditingCarrier(null)
-                    setCarrierForm({ name: "", phone: "", truck_plate: "", company: "" })
+                    setCarrierForm({ name: "", phone: "", license_plate: "", company: "" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Chofer
@@ -539,8 +539,8 @@ export default function MateriaPrimaPage() {
                     <div className="space-y-2">
                       <Label>Patente del Camión (opcional)</Label>
                       <Input
-                        value={carrierForm.truck_plate}
-                        onChange={(e) => setCarrierForm(prev => ({ ...prev, truck_plate: e.target.value }))}
+                        value={carrierForm.license_plate}
+                        onChange={(e) => setCarrierForm(prev => ({ ...prev, license_plate: e.target.value }))}
                         placeholder="Ej: AA123BB"
                       />
                     </div>
@@ -591,7 +591,7 @@ export default function MateriaPrimaPage() {
                         <TableRow key={carrier.id} className={!carrier.is_active ? "opacity-50" : ""}>
                           <TableCell className="font-medium">{carrier.name}</TableCell>
                           <TableCell>{carrier.phone || "-"}</TableCell>
-                          <TableCell>{carrier.truck_plate || "-"}</TableCell>
+                          <TableCell>{carrier.license_plate || "-"}</TableCell>
                           <TableCell>{carrier.company || "-"}</TableCell>
                           <TableCell>
                             <Badge variant={carrier.is_active ? "default" : "secondary"}>

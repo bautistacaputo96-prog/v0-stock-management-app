@@ -28,8 +28,9 @@ export async function POST(request: Request) {
       .insert({ 
         name: body.name.trim(), 
         phone: body.phone?.trim() || null,
-        truck_plate: body.truck_plate?.trim() || null,
+        license_plate: body.license_plate?.trim() || null,
         company: body.company?.trim() || null,
+        contact: body.contact?.trim() || null,
         is_active: true
       })
       .select()

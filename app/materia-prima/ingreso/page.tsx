@@ -101,7 +101,7 @@ interface Carrier {
   id: number
   name: string
   phone: string | null
-  truck_plate: string | null
+  license_plate: string | null
   company: string | null
 }
 
@@ -282,7 +282,7 @@ export default function IngresoMPPage() {
         body: JSON.stringify({
           name: newCarrierName.trim(),
           phone: newCarrierPhone.trim() || null,
-          truck_plate: newCarrierPlate.trim() || null,
+          license_plate: newCarrierPlate.trim() || null,
           company: newCarrierCompany.trim() || null,
         }),
       })
@@ -600,9 +600,9 @@ export default function IngresoMPPage() {
                           <SelectItem key={c.id} value={c.id.toString()}>
                             <span className="flex items-center gap-2">
                               {c.name}
-                              {c.truck_plate && (
+                              {c.license_plate && (
                                 <span className="text-muted-foreground text-xs">
-                                  ({c.truck_plate})
+                                  ({c.license_plate})
                                 </span>
                               )}
                             </span>
