@@ -31,6 +31,7 @@ interface PastonFormula {
   stone_kg: number
   stone_supplier: string
   cement_kg: number
+  cement_supplier: string
   tank_capacity_liters: number // Tanque de 1000L generalmente
   additive_1_kg: number // Mark V (en kg/litros)
   additive_1_name: string
@@ -82,6 +83,7 @@ export function FormuleoContent() {
     stone_kg: 0,
     stone_supplier: "",
     cement_kg: 0,
+    cement_supplier: "",
     tank_capacity_liters: 1000,
     additive_1_kg: 0,
     additive_1_name: "Mark V",
@@ -113,6 +115,7 @@ export function FormuleoContent() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [sandSuppliers, setSandSuppliers] = useState<Supplier[]>([])
   const [stoneSuppliers, setStoneSuppliers] = useState<Supplier[]>([])
+  const [cementSuppliers, setCementSuppliers] = useState<Supplier[]>([])
 
   // Load data
   const loadData = useCallback(async () => {
@@ -186,6 +189,9 @@ export function FormuleoContent() {
         setStoneSuppliers(suppliersData.filter((s: Supplier) => 
           s.material_type?.toLowerCase().includes("piedra")
         ))
+        setCementSuppliers(suppliersData.filter((s: Supplier) => 
+          s.material_type?.toLowerCase().includes("cemento")
+        ))
       }
       
     } catch (error) {
@@ -232,6 +238,7 @@ export function FormuleoContent() {
         stone_kg: pastonFormula.stone_kg,
         stone_supplier: pastonFormula.stone_supplier,
         cement_kg: pastonFormula.cement_kg,
+        cement_supplier: pastonFormula.cement_supplier,
         tank_capacity_liters: pastonFormula.tank_capacity_liters,
         additive_1_kg: pastonFormula.additive_1_kg,
         additive_1_name: pastonFormula.additive_1_name || "Mark V",
@@ -538,14 +545,33 @@ export function FormuleoContent() {
                 
                 {/* Cemento */}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Cemento (kg)</Label>
+                  <Label className="text-xs font-medium">Cemento</Label>
+                  <Select
+                    value={pastonFormula.cement_supplier}
+                    onValueChange={(value) => setPastonFormula(prev => ({ ...prev, cement_supplier: value }))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="Seleccionar cemento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cementSuppliers.length > 0 ? (
+                        cementSuppliers.map((s) => (
+                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
+                            {s.product_detail || s.material_type} - {s.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="number"
                     value={pastonFormula.cement_kg || ""}
                     onChange={(e) => setPastonFormula(prev => ({ ...prev, cement_kg: parseFloat(e.target.value) || 0 }))}
                     placeholder="Kg por pastón"
+                    className="text-xs"
                   />
-                  <p className="text-[10px] text-muted-foreground">CPC40 - Holcim/Avellaneda</p>
                 </div>
               </div>
 
