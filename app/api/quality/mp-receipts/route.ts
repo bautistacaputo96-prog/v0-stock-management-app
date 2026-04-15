@@ -49,7 +49,7 @@ export async function POST(request: Request) {
         material_type: body.material_type,
         quantity_tn: quantityTn,
         production_line: body.production_line || null,
-        line_type: body.line_type || null,
+        line_type: body.line_type || body.production_line || "ambas",
         observations: body.notes || null,
         carrier_id: body.carrier_id || null,
       })
