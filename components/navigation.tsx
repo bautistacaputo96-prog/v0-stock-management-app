@@ -30,8 +30,11 @@ const navItems = [
     href: "/materia-prima",
     icon: Package,
     children: [
-      { title: "Control de Stock", href: "/materia-prima/stock" },
+      { title: "Resumen", href: "/materia-prima" },
       { title: "Ingreso MP", href: "/materia-prima/ingreso" },
+      { title: "Control de Stock", href: "/materia-prima/stock" },
+      { title: "Proveedores", href: "/materia-prima?tab=proveedores" },
+      { title: "Fletes", href: "/materia-prima?tab=fletes" },
     ],
   },
   {
