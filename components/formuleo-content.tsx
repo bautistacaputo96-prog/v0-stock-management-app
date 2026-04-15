@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { getSupabase } from "@/lib/supabase"
 import { usePlant } from "@/lib/plant-context"
-import { Loader2, Save, FileText, Plus, Trash2, History, FlaskConical, Cylinder, Info } from "lucide-react"
+import { Loader2, Save, FileText, Plus, Trash2, History, FlaskConical, Cylinder, Info, Upload } from "lucide-react"
 
 // Operadores disponibles
 const OPERATORS = ["Emanuel Perez", "Bautista Caputo"]
@@ -54,6 +54,8 @@ interface PipeFormula {
   sand_kg: number
   stone_kg: number
   additive_liters: number
+  cycle_time_min: number
+  spec_pdf_url: string | null
   modified_by: string
   modified_at: string
 }
@@ -380,6 +382,8 @@ export function FormuleoContent() {
         sand_kg: formula.sand_kg,
         stone_kg: formula.stone_kg,
         additive_liters: formula.additive_liters,
+        cycle_time_min: formula.cycle_time_min || null,
+        spec_pdf_url: formula.spec_pdf_url || null,
         modified_by: saveOperator,
         modified_at: new Date().toISOString(),
         is_active: true
@@ -455,25 +459,71 @@ export function FormuleoContent() {
     setShowHistory(true)
   }
 
+  // Calculate pipe formula from paston proportions
+  const calculatePipeFromPaston = (pipeWeight: number) => {
+    // Get total weight of aggregates in paston (excluding water and additives)
+    const totalPastonWeight = pastonFormula.sand_kg + pastonFormula.stone_kg + pastonFormula.cement_kg
+    
+    if (totalPastonWeight === 0) return { cement_kg: 0, sand_kg: 0, stone_kg: 0, additive_liters: 0 }
+    
+    // Calculate proportions
+    const cementRatio = pastonFormula.cement_kg / totalPastonWeight
+    const sandRatio = pastonFormula.sand_kg / totalPastonWeight
+    const stoneRatio = pastonFormula.stone_kg / totalPastonWeight
+    
+    // Calculate additive per kg of cement (from paston formula)
+    const totalAdditiveKg = pastonFormula.additive_1_kg + pastonFormula.additive_2_kg
+    const additivePerCementKg = pastonFormula.cement_kg > 0 ? totalAdditiveKg / pastonFormula.cement_kg : 0
+    
+    // Apply to pipe weight
+    const cement_kg = pipeWeight * cementRatio
+    const sand_kg = pipeWeight * sandRatio
+    const stone_kg = pipeWeight * stoneRatio
+    const additive_liters = cement_kg * additivePerCementKg
+    
+    return { cement_kg, sand_kg, stone_kg, additive_liters }
+  }
+
   // Update pipe formula field
-  const updatePipeFormula = (diameter: number, field: keyof PipeFormula, value: number) => {
-    setPipeFormulas(prev => ({
-      ...prev,
-      [diameter]: {
-        ...prev[diameter] || {
-          plant: plantValue,
-          pipe_size: diameter,
-          paston_formula_id: pastonFormula.id || "",
-          pipe_weight_kg: 0,
-          cement_kg: 0,
-          sand_kg: 0,
-          stone_kg: 0,
-          additive_liters: 0,
-          modified_by: selectedOperator,
-          modified_at: new Date().toISOString()
-        },
-        [field]: value
+  const updatePipeFormula = (diameter: number, field: keyof PipeFormula, value: number | string) => {
+    setPipeFormulas(prev => {
+      const current = prev[diameter] || {
+        plant: plantValue,
+        pipe_size: diameter,
+        paston_formula_id: pastonFormula.id || "",
+        pipe_weight_kg: 0,
+        cement_kg: 0,
+        sand_kg: 0,
+        stone_kg: 0,
+        additive_liters: 0,
+        cycle_time_min: 0,
+        spec_pdf_url: null,
+        modified_by: "",
+        modified_at: ""
       }
+      
+      // If updating weight, auto-calculate all aggregates from paston proportions
+      if (field === "pipe_weight_kg") {
+        const calculated = calculatePipeFromPaston(value as number)
+        return {
+          ...prev,
+          [diameter]: {
+            ...current,
+            pipe_weight_kg: value as number,
+            ...calculated
+          }
+        }
+      }
+      
+      return {
+        ...prev,
+        [diameter]: {
+          ...current,
+          [field]: value
+        }
+      }
+    })
+  }
     }))
   }
 
@@ -893,7 +943,10 @@ export function FormuleoContent() {
         <TabsContent value="canos" className="space-y-4">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Fórmulas por Tipo de Caño</CardTitle>
+              <CardTitle className="text-sm">Parámetros por Tipo de Caño</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Ingresá el peso del caño y la fórmula se calcula automáticamente según las proporciones del pastón.
+              </p>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -902,13 +955,12 @@ export function FormuleoContent() {
                     <tr className="border-b bg-muted/50">
                       <th className="text-left py-2 px-2 font-medium">Caño</th>
                       <th className="text-center py-2 px-2 font-medium">Peso (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Cemento (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Arena (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Piedra (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Aditivo (L)</th>
-                      <th className="text-center py-2 px-2 font-medium">% Cem.</th>
-                      <th className="text-center py-2 px-2 font-medium">% Arena</th>
-                      <th className="text-center py-2 px-2 font-medium">% Piedra</th>
+                      <th className="text-center py-2 px-2 font-medium">Min/Caño</th>
+                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Cemento</th>
+                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Arena</th>
+                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Piedra</th>
+                      <th className="text-center py-2 px-2 font-medium bg-muted/30">Aditivo</th>
+                      <th className="text-center py-2 px-2 font-medium">Ficha</th>
                       <th className="text-center py-2 px-2 font-medium">Modificado</th>
                       <th className="py-2 px-2"></th>
                     </tr>
@@ -923,10 +975,11 @@ export function FormuleoContent() {
                         sand_kg: 0,
                         stone_kg: 0,
                         additive_liters: 0,
+                        cycle_time_min: 0,
+                        spec_pdf_url: null,
                         modified_by: "",
                         modified_at: ""
                       }
-                      const percentages = calculatePipePercentages(formula as PipeFormula)
                       
                       return (
                         <tr key={diameter} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
@@ -936,49 +989,61 @@ export function FormuleoContent() {
                               type="number"
                               value={formula.pipe_weight_kg || ""}
                               onChange={(e) => updatePipeFormula(diameter, "pipe_weight_kg", parseFloat(e.target.value) || 0)}
-                              className="h-8 text-center text-xs"
+                              className="h-8 w-20 text-center text-xs"
                               placeholder="0"
                             />
                           </td>
                           <td className="py-1 px-1">
                             <Input
                               type="number"
-                              value={formula.cement_kg || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "cement_kg", parseFloat(e.target.value) || 0)}
-                              className="h-8 text-center text-xs"
+                              step="0.1"
+                              value={formula.cycle_time_min || ""}
+                              onChange={(e) => updatePipeFormula(diameter, "cycle_time_min", parseFloat(e.target.value) || 0)}
+                              className="h-8 w-16 text-center text-xs"
                               placeholder="0"
                             />
                           </td>
-                          <td className="py-1 px-1">
-                            <Input
-                              type="number"
-                              value={formula.sand_kg || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "sand_kg", parseFloat(e.target.value) || 0)}
-                              className="h-8 text-center text-xs"
-                              placeholder="0"
-                            />
+                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
+                            {formula.cement_kg.toFixed(1)} kg
                           </td>
-                          <td className="py-1 px-1">
-                            <Input
-                              type="number"
-                              value={formula.stone_kg || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "stone_kg", parseFloat(e.target.value) || 0)}
-                              className="h-8 text-center text-xs"
-                              placeholder="0"
-                            />
+                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
+                            {formula.sand_kg.toFixed(1)} kg
                           </td>
-                          <td className="py-1 px-1">
-                            <Input
-                              type="number"
-                              value={formula.additive_liters || ""}
-                              onChange={(e) => updatePipeFormula(diameter, "additive_liters", parseFloat(e.target.value) || 0)}
-                              className="h-8 text-center text-xs"
-                              placeholder="0"
-                            />
+                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
+                            {formula.stone_kg.toFixed(1)} kg
                           </td>
-                          <td className="py-2 px-2 text-center text-xs font-mono">{percentages.cement.toFixed(1)}%</td>
-                          <td className="py-2 px-2 text-center text-xs font-mono">{percentages.sand.toFixed(1)}%</td>
-                          <td className="py-2 px-2 text-center text-xs font-mono">{percentages.stone.toFixed(1)}%</td>
+                          <td className="py-2 px-2 text-center text-xs font-mono bg-muted/20">
+                            {formula.additive_liters.toFixed(2)} L
+                          </td>
+                          <td className="py-1 px-1 text-center">
+                            {formula.spec_pdf_url ? (
+                              <a 
+                                href={formula.spec_pdf_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded"
+                              >
+                                <FileText className="w-4 h-4 text-blue-600" />
+                              </a>
+                            ) : (
+                              <label className="inline-flex items-center justify-center h-8 w-8 hover:bg-muted rounded cursor-pointer">
+                                <Upload className="w-4 h-4 text-muted-foreground" />
+                                <input 
+                                  type="file" 
+                                  accept=".pdf"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file) {
+                                      // For now, we'll use a placeholder - in production you'd upload to storage
+                                      const url = URL.createObjectURL(file)
+                                      updatePipeFormula(diameter, "spec_pdf_url", url)
+                                    }
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </td>
                           <td className="py-2 px-2 text-center text-[10px] text-muted-foreground">
                             {formula.modified_at ? (
                               <>
