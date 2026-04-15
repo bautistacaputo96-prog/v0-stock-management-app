@@ -347,134 +347,6 @@ function MateriaPrimaContent() {
               </div>
             ) : stockData ? (
               <>
-                {/* STOCK ACTUAL - Cards grandes y prominentes */}
-                    <div>
-                      <Label>Línea de Producción</Label>
-                      <Select
-                        value={supplierForm.line_type}
-                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, line_type: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {LINE_TYPES.map(lt => (
-                            <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    {/* Campos adicionales para aditivos */}
-                    {supplierForm.material_type === "Aditivo" && (
-                      <>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label>Densidad (kg/L)</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={supplierForm.density}
-                              onChange={(e) => setSupplierForm(prev => ({ ...prev, density: e.target.value }))}
-                              placeholder="Ej: 1.045"
-                            />
-                            <p className="text-xs text-muted-foreground mt-1">Según ficha técnica</p>
-                          </div>
-                          <div>
-                            <Label>Unidad de medida</Label>
-                            <Select
-                              value={supplierForm.unit}
-                              onValueChange={(value) => setSupplierForm(prev => ({ ...prev, unit: value }))}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="kg">Kilogramos (kg)</SelectItem>
-                                <SelectItem value="lts">Litros (lts)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                    
-                    <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
-                      {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Proveedor</TableHead>
-                      <TableHead>Tipo Material</TableHead>
-                      <TableHead>Producto</TableHead>
-                      <TableHead>Línea</TableHead>
-                      <TableHead>Densidad</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loadingSuppliers ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          Cargando proveedores...
-                        </TableCell>
-                      </TableRow>
-                    ) : suppliers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          No hay proveedores registrados
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      suppliers.map((supplier) => (
-                        <TableRow key={supplier.id}>
-                          <TableCell className="font-medium">{supplier.name}</TableCell>
-                          <TableCell>{supplier.material_type}</TableCell>
-                          <TableCell>{supplier.product_detail || "-"}</TableCell>
-                          <TableCell>
-                            {supplier.line_type === "canos" && "Caños"}
-                            {supplier.line_type === "bloques" && "Bloques"}
-                            {supplier.line_type === "ambos" && "Ambos"}
-                            {!supplier.line_type && "-"}
-                          </TableCell>
-                          <TableCell>
-                            {supplier.density ? `${supplier.density} kg/L` : "-"}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={supplier.is_active ? "default" : "secondary"}>
-                              {supplier.is_active ? "Activo" : "Inactivo"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
-                                <Pencil className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
-                                {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* STOCK TAB */}
-          <TabsContent value="stock" className="space-y-4">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -623,6 +495,304 @@ function MateriaPrimaContent() {
                 </Button>
               </Link>
             </div>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-8 text-center">
+                  <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">No hay datos de stock disponibles</p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* PROVEEDORES */}
+          <TabsContent value="proveedores" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+              <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
+                <DialogTrigger asChild>
+                  <Button onClick={() => {
+                    setEditingSupplier(null)
+                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos", density: "", unit: "kg" })
+                  }}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Agregar Proveedor
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{editingSupplier ? "Editar Proveedor" : "Nuevo Proveedor"}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div>
+                      <Label>Nombre del Proveedor</Label>
+                      <Input
+                        value={supplierForm.name}
+                        onChange={(e) => setSupplierForm(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="Ej: Piatti, Cementos Avellaneda"
+                      />
+                    </div>
+                    <div>
+                      <Label>Tipo de Material</Label>
+                      <Select
+                        value={supplierForm.material_type}
+                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, material_type: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MATERIAL_TYPES.map(type => (
+                            <SelectItem key={type} value={type}>{type}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Detalle del Producto (opcional)</Label>
+                      <Input
+                        value={supplierForm.product_detail}
+                        onChange={(e) => setSupplierForm(prev => ({ ...prev, product_detail: e.target.value }))}
+                        placeholder="Ej: Arena de trituracion, Piedra 0/10, CPC40"
+                      />
+                    </div>
+                    <div>
+                      <Label>Linea de Produccion</Label>
+                      <Select
+                        value={supplierForm.line_type}
+                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, line_type: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LINE_TYPES.map(lt => (
+                            <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    {supplierForm.material_type === "Aditivo" && (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label>Densidad (kg/L)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={supplierForm.density}
+                              onChange={(e) => setSupplierForm(prev => ({ ...prev, density: e.target.value }))}
+                              placeholder="Ej: 1.045"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Segun ficha tecnica</p>
+                          </div>
+                          <div>
+                            <Label>Unidad de medida</Label>
+                            <Select
+                              value={supplierForm.unit}
+                              onValueChange={(value) => setSupplierForm(prev => ({ ...prev, unit: value }))}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="kg">Kilogramos (kg)</SelectItem>
+                                <SelectItem value="lts">Litros (lts)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    
+                    <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
+                      {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Proveedor</TableHead>
+                      <TableHead>Tipo Material</TableHead>
+                      <TableHead>Producto</TableHead>
+                      <TableHead>Linea</TableHead>
+                      <TableHead>Densidad</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loadingSuppliers ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          Cargando proveedores...
+                        </TableCell>
+                      </TableRow>
+                    ) : suppliers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No hay proveedores registrados
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      suppliers.map(supplier => (
+                        <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
+                          <TableCell className="font-medium">{supplier.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{supplier.material_type}</Badge>
+                          </TableCell>
+                          <TableCell>{supplier.product_detail || "-"}</TableCell>
+                          <TableCell>
+                            {supplier.line_type === "canos" && "Canos"}
+                            {supplier.line_type === "bloques" && "Bloques"}
+                            {supplier.line_type === "ambos" && "Ambos"}
+                            {!supplier.line_type && "-"}
+                          </TableCell>
+                          <TableCell>
+                            {supplier.density ? `${supplier.density} kg/L` : "-"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={supplier.is_active ? "default" : "secondary"}>
+                              {supplier.is_active ? "Activo" : "Inactivo"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
+                              {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* FLETES / TRANSPORTISTAS */}
+          <TabsContent value="fletes" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold">Transportistas / Choferes</h2>
+              <Dialog open={showCarrierDialog} onOpenChange={setShowCarrierDialog}>
+                <DialogTrigger asChild>
+                  <Button onClick={() => {
+                    setEditingCarrier(null)
+                    setCarrierForm({ name: "", phone: "", license_plate: "", company: "" })
+                  }}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Agregar Chofer
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{editingCarrier ? "Editar Chofer" : "Nuevo Chofer"}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div>
+                      <Label>Nombre del Chofer</Label>
+                      <Input
+                        value={carrierForm.name}
+                        onChange={(e) => setCarrierForm(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="Nombre completo"
+                      />
+                    </div>
+                    <div>
+                      <Label>Telefono (opcional)</Label>
+                      <Input
+                        value={carrierForm.phone}
+                        onChange={(e) => setCarrierForm(prev => ({ ...prev, phone: e.target.value }))}
+                        placeholder="Ej: 11-1234-5678"
+                      />
+                    </div>
+                    <div>
+                      <Label>Patente del Camion (opcional)</Label>
+                      <Input
+                        value={carrierForm.license_plate}
+                        onChange={(e) => setCarrierForm(prev => ({ ...prev, license_plate: e.target.value }))}
+                        placeholder="Ej: AA123BB"
+                      />
+                    </div>
+                    <div>
+                      <Label>Empresa de Transporte (opcional)</Label>
+                      <Input
+                        value={carrierForm.company}
+                        onChange={(e) => setCarrierForm(prev => ({ ...prev, company: e.target.value }))}
+                        placeholder="Nombre de la empresa"
+                      />
+                    </div>
+                    <Button onClick={saveCarrier} className="w-full" disabled={!carrierForm.name}>
+                      {editingCarrier ? "Guardar Cambios" : "Agregar Chofer"}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Chofer</TableHead>
+                      <TableHead>Telefono</TableHead>
+                      <TableHead>Patente</TableHead>
+                      <TableHead>Empresa</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loadingCarriers ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          Cargando choferes...
+                        </TableCell>
+                      </TableRow>
+                    ) : carriers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No hay choferes registrados
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      carriers.map(carrier => (
+                        <TableRow key={carrier.id} className={!carrier.is_active ? "opacity-50" : ""}>
+                          <TableCell className="font-medium">{carrier.name}</TableCell>
+                          <TableCell>{carrier.phone || "-"}</TableCell>
+                          <TableCell>{carrier.license_plate || "-"}</TableCell>
+                          <TableCell>{carrier.company || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={carrier.is_active ? "default" : "secondary"}>
+                              {carrier.is_active ? "Activo" : "Inactivo"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" onClick={() => openEditCarrier(carrier)}>
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => toggleCarrierActive(carrier)}>
+                              {carrier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </main>
