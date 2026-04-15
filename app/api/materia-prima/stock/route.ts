@@ -165,15 +165,15 @@ export async function GET(request: Request) {
       }
     })
 
-    // ── 30-day stock evolution ─────────────────────────────────────────────
-    const last30Dates: string[] = []
-    for (let i = 29; i >= 0; i--) {
-      last30Dates.push(dateStr(-i))
+    // ── 90-day stock evolution ─────────────────────────────────────────────
+    const last90Dates: string[] = []
+    for (let i = 89; i >= 0; i--) {
+      last90Dates.push(dateStr(-i))
     }
 
     const allProductions = [...safeBlockProductions, ...safePipeProductions, ...safePaverProductions]
 
-    const stockEvolution = last30Dates.map((d) => {
+    const stockEvolution = last90Dates.map((d) => {
       const entry: Record<string, number | string> = { date: d }
       for (const cat of categories) {
         const received = safeReceipts

@@ -124,6 +124,7 @@ export default function MateriaPrimaPage() {
   // Stock state
   const [stockData, setStockData] = useState<StockData | null>(null)
   const [loadingStock, setLoadingStock] = useState(true)
+  const [stockDateRange, setStockDateRange] = useState<"7d" | "30d" | "90d">("30d")
 
   // Load suppliers
   useEffect(() => {
@@ -332,6 +333,56 @@ export default function MateriaPrimaPage() {
               </div>
             ) : stockData ? (
               <>
+                {/* STOCK ACTUAL - Cards grandes y prominentes */}
+                <div>
+                  <h2 className="text-lg font-semibold mb-4">Stock Actual</h2>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {stockData.alerts?.map(item => {
+                      const bgColor = item.material === "arena" ? "from-amber-500/10 to-amber-500/5 border-amber-500/30" :
+                                     item.material === "piedra" ? "from-indigo-500/10 to-indigo-500/5 border-indigo-500/30" :
+                                     item.material === "cemento" ? "from-slate-500/10 to-slate-500/5 border-slate-500/30" :
+                                     "from-emerald-500/10 to-emerald-500/5 border-emerald-500/30"
+                      const iconColor = item.material === "arena" ? "text-amber-600" :
+                                       item.material === "piedra" ? "text-indigo-600" :
+                                       item.material === "cemento" ? "text-slate-600" :
+                                       "text-emerald-600"
+                      return (
+                        <Card key={item.material} className={`bg-gradient-to-br ${bgColor} border-2 ${
+                          item.status === "critical" ? "!border-red-500 animate-pulse" :
+                          item.status === "warning" ? "!border-yellow-500" : ""
+                        }`}>
+                          <CardContent className="pt-6">
+                            <div className="flex items-start justify-between mb-2">
+                              <span className={`text-sm font-medium uppercase tracking-wide ${iconColor}`}>
+                                {item.material}
+                              </span>
+                              {item.status === "critical" && <AlertTriangle className="w-5 h-5 text-red-500" />}
+                              {item.status === "warning" && <AlertTriangle className="w-5 h-5 text-yellow-500" />}
+                            </div>
+                            <p className="text-4xl font-bold tracking-tight">{item.stockTn.toFixed(1)}</p>
+                            <p className="text-lg text-muted-foreground -mt-1">toneladas</p>
+                            <div className="mt-4 pt-4 border-t border-border/50">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Consumo diario:</span>
+                                <span className="font-medium">{item.dailyConsumptionTn.toFixed(2)} Tn</span>
+                              </div>
+                              <div className="flex justify-between text-sm mt-1">
+                                <span className="text-muted-foreground">Días de stock:</span>
+                                <span className={`font-bold ${
+                                  item.status === "critical" ? "text-red-600" :
+                                  item.status === "warning" ? "text-yellow-600" : "text-green-600"
+                                }`}>
+                                  {item.daysOfStock} días
+                                </span>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </div>
+
                 {/* Alertas de stock crítico */}
                 {stockData.alerts?.some(a => a.status === "critical" || a.status === "warning") && (
                   <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
@@ -358,72 +409,57 @@ export default function MateriaPrimaPage() {
                   </Card>
                 )}
 
-                {/* Cards de stock actual */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {stockData.alerts?.map(item => (
-                    <Card key={item.material} className={
-                      item.status === "critical" ? "border-red-500/50" :
-                      item.status === "warning" ? "border-yellow-500/50" : ""
-                    }>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground capitalize flex items-center justify-between">
-                          {item.material}
-                          {item.status === "critical" && <AlertTriangle className="w-4 h-4 text-red-500" />}
-                          {item.status === "warning" && <AlertTriangle className="w-4 h-4 text-yellow-500" />}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-2xl font-bold">{item.stockTn.toFixed(1)} Tn</p>
-                        <div className="flex items-center gap-1 mt-1">
-                          <span className={`text-xs ${
-                            item.status === "critical" ? "text-red-600" :
-                            item.status === "warning" ? "text-yellow-600" : "text-green-600"
-                          }`}>
-                            {item.daysOfStock} días
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            · {item.dailyConsumptionTn.toFixed(2)} Tn/día
-                          </span>
-                        </div>
-                        {/* Progress bar */}
-                        <div className="w-full bg-muted rounded-full h-1.5 mt-2">
-                          <div
-                            className={`h-1.5 rounded-full ${
-                              item.status === "critical" ? "bg-red-500" :
-                              item.status === "warning" ? "bg-yellow-500" : "bg-green-500"
-                            }`}
-                            style={{ width: `${Math.min((item.daysOfStock / 30) * 100, 100)}%` }}
-                          />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                {/* Gráfico de evolución */}
+                {/* Gráfico de evolución con filtro de fechas */}
                 <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium">Evolución del Stock (últimos 30 días)</CardTitle>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-sm font-medium">Evolución del Stock</CardTitle>
+                    <div className="flex gap-1">
+                      <Button 
+                        variant={stockDateRange === "7d" ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setStockDateRange("7d")}
+                      >
+                        7 días
+                      </Button>
+                      <Button 
+                        variant={stockDateRange === "30d" ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setStockDateRange("30d")}
+                      >
+                        30 días
+                      </Button>
+                      <Button 
+                        variant={stockDateRange === "90d" ? "default" : "outline"} 
+                        size="sm"
+                        onClick={() => setStockDateRange("90d")}
+                      >
+                        90 días
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="h-64">
+                    <div className="h-72">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={stockData.stockEvolution}>
+                        <LineChart data={
+                          stockDateRange === "7d" ? stockData.stockEvolution?.slice(-7) :
+                          stockDateRange === "30d" ? stockData.stockEvolution?.slice(-30) :
+                          stockData.stockEvolution
+                        }>
                           <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                           <XAxis 
                             dataKey="date" 
                             tick={{ fontSize: 10 }}
                             tickFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}
                           />
-                          <YAxis tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} unit=" Tn" />
                           <Tooltip 
-                            labelFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR")}
-                            formatter={(value: number) => [`${value.toFixed(1)} Tn`]}
+                            labelFormatter={(d) => new Date(d + "T12:00:00").toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}
+                            formatter={(value: number, name: string) => [`${value.toFixed(1)} Tn`, name.charAt(0).toUpperCase() + name.slice(1)]}
                           />
-                          <Line type="monotone" dataKey="arena" stroke="#f59e0b" strokeWidth={2} dot={false} name="Arena" />
-                          <Line type="monotone" dataKey="piedra" stroke="#6366f1" strokeWidth={2} dot={false} name="Piedra" />
-                          <Line type="monotone" dataKey="cemento" stroke="#94a3b8" strokeWidth={2} dot={false} name="Cemento" />
-                          <Line type="monotone" dataKey="aditivo" stroke="#10b981" strokeWidth={2} dot={false} name="Aditivo" />
+                          <Line type="monotone" dataKey="arena" stroke="#f59e0b" strokeWidth={2} dot={stockDateRange === "7d"} name="Arena" />
+                          <Line type="monotone" dataKey="piedra" stroke="#6366f1" strokeWidth={2} dot={stockDateRange === "7d"} name="Piedra" />
+                          <Line type="monotone" dataKey="cemento" stroke="#94a3b8" strokeWidth={2} dot={stockDateRange === "7d"} name="Cemento" />
+                          <Line type="monotone" dataKey="aditivo" stroke="#10b981" strokeWidth={2} dot={stockDateRange === "7d"} name="Aditivo" />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
