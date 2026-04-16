@@ -80,11 +80,21 @@ const MATERIAL_TYPES = [
   "Otro"
 ]
 
-const LINE_TYPES = [
-  { value: "canos", label: "Caños" },
+// Line types per plant
+const LINE_TYPES_PIPES = [
+  { value: "canos", label: "Canos" },
   { value: "bloques", label: "Bloques" },
   { value: "ambos", label: "Ambos" }
 ]
+
+const LINE_TYPES_PAVERS = [
+  { value: "adoquines", label: "Adoquines" }
+]
+
+const getLineTypes = (plant: string) => {
+  if (plant === "ranchos") return LINE_TYPES_PAVERS
+  return LINE_TYPES_PIPES
+}
 
 function MateriaPrimaContent() {
   const { selectedPlant } = usePlant()
@@ -222,10 +232,11 @@ function MateriaPrimaContent() {
         .insert(dataToSave)
     }
     
-  setShowSupplierDialog(false)
-  setEditingSupplier(null)
-  setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos", density: "", unit: "kg" })
-  loadSuppliers()
+    setShowSupplierDialog(false)
+    setEditingSupplier(null)
+    const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
+    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
+    loadSuppliers()
   }
 
   const deleteSupplier = async (id: number) => {
@@ -520,7 +531,8 @@ function MateriaPrimaContent() {
                 <DialogTrigger asChild>
                   <Button onClick={() => {
                     setEditingSupplier(null)
-                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: "ambos", density: "", unit: "kg" })
+                    const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
+                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Proveedor
@@ -573,7 +585,7 @@ function MateriaPrimaContent() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {LINE_TYPES.map(lt => (
+                          {getLineTypes(selectedPlant).map(lt => (
                             <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
                           ))}
                         </SelectContent>

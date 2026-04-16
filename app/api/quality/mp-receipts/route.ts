@@ -18,7 +18,8 @@ export async function GET(request: Request) {
       .select("*, supplier:suppliers(*), carrier:carriers(*)")
       .order("receipt_date", { ascending: false })
 
-    // Note: mp_receipts table doesn't have plant column, filter would need to be added if needed
+    // Filter by plant
+    if (plant) query = query.eq("plant", plant)
     if (from) query = query.gte("receipt_date", from)
     if (to) query = query.lte("receipt_date", to)
     if (supplierId) query = query.eq("supplier_id", supplierId)
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
         line_type: body.line_type || body.production_line || "ambas",
         observations: body.notes || null,
         carrier_id: body.carrier_id || null,
+        plant: body.plant || "mercedes",
       })
       .select("*, supplier:suppliers(*), carrier:carriers(*)")
       .single()

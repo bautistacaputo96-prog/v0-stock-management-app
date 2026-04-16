@@ -9,7 +9,27 @@ import { LayoutDashboard, FileText, Users, ChevronDown, Factory, Package, Shield
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
 import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
-const navItems = [
+// Calidad children for pipes (Mercedes, Silke, Villa Rosa)
+const CALIDAD_CHILDREN_PIPES = [
+  { title: "Panel General", href: "/calidad" },
+  { title: "Control Canos", href: "/calidad/canos" },
+  { title: "Granulometria", href: "/calidad/granulometria" },
+  { title: "Humedad", href: "/calidad/humedad" },
+  { title: "Ensayos", href: "/calidad/ensayos" },
+  { title: "Parametros IRAM", href: "/calidad/parametros" },
+]
+
+// Calidad children for pavers (Ranchos)
+const CALIDAD_CHILDREN_PAVERS = [
+  { title: "Panel General", href: "/calidad" },
+  { title: "Control Adoquines", href: "/calidad/adoquines" },
+  { title: "Granulometria", href: "/calidad/granulometria" },
+  { title: "Humedad", href: "/calidad/humedad" },
+  { title: "Ensayos", href: "/calidad/ensayos" },
+  { title: "Parametros IRAM", href: "/calidad/parametros" },
+]
+
+const getNavItems = (plantId: string) => [
   {
     title: "Dashboard",
     href: "/",
@@ -40,14 +60,7 @@ const navItems = [
     title: "Calidad",
     href: "/calidad",
     icon: ShieldCheck,
-    children: [
-      { title: "Panel General", href: "/calidad" },
-      { title: "Control Canos", href: "/calidad/canos" },
-      { title: "Granulometria", href: "/calidad/granulometria" },
-      { title: "Humedad", href: "/calidad/humedad" },
-      { title: "Ensayos", href: "/calidad/ensayos" },
-      { title: "Parametros IRAM", href: "/calidad/parametros" },
-    ],
+    children: plantId === "ranchos" ? CALIDAD_CHILDREN_PAVERS : CALIDAD_CHILDREN_PIPES,
   },
   {
     title: "Formuleo",
@@ -75,7 +88,8 @@ export function Navigation() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const navDropdownRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
-  // Filtrar items de navegación según el rol del usuario
+  // Get nav items based on selected plant and filter by user role
+  const navItems = getNavItems(selectedPlant)
   const filteredNavItems = user ? navItems.filter(item => isRouteAllowed(user.role, item.href)) : []
 
   useEffect(() => {
