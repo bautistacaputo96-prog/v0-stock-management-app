@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
           specimens:quality_flexion_specimens(*)
         `)
         .eq("plant", "ranchos")
-        .order("extraction_date", { ascending: false })
+        .order("sample_date", { ascending: false })
         .limit(50)
       
       if (error) throw error
@@ -53,17 +53,15 @@ export async function GET(request: NextRequest) {
 
     if (type === "flexion-pending") {
       // Get specimens pending testing (7 or 28 days reached)
-      const today = new Date().toISOString().split("T")[0]
-      
+      // Specimens without test_date are pending
       const { data, error } = await supabase
         .from("quality_flexion_specimens")
         .select(`
           *,
           sample:quality_flexion_samples(*)
         `)
-        .is("tested_at", null)
-        .lte("scheduled_test_date", today)
-        .order("scheduled_test_date", { ascending: true })
+        .is("test_date", null)
+        .order("test_age_days", { ascending: true })
       
       if (error) throw error
       return NextResponse.json(data || [])
@@ -87,16 +85,15 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === "flexion-results") {
-      // Get flexion results for chart
+      // Get flexion results for chart - specimens have resistance_mpa not result_mpa
       const { data, error } = await supabase
         .from("quality_flexion_specimens")
         .select(`
           *,
           sample:quality_flexion_samples(*)
         `)
-        .eq("plant", "ranchos")
-        .not("result_mpa", "is", null)
-        .order("tested_at", { ascending: false })
+        .not("resistance_mpa", "is", null)
+        .order("test_date", { ascending: false })
         .limit(100)
       
       if (error) throw error
@@ -166,51 +163,52 @@ export async function POST(request: NextRequest) {
 
     if (type === "flexion-sample") {
       // Create flexion sample with 3 specimens
+      // Using correct column names from schema
       const { data: sample, error: sampleError } = await supabase
         .from("quality_flexion_samples")
         .insert({
           plant: "ranchos",
           sample_code: data.sample_code,
           adoquin_type: data.adoquin_type,
-          extraction_date: data.extraction_date,
+          adoquin_height_cm: data.adoquin_type?.includes("8") ? 8 : 6,
+          sample_date: data.sample_date || new Date().toISOString().split("T")[0],
           production_date: data.production_date,
-          formula_snapshot: data.formula_snapshot,
-          notes: data.notes
+          length_mm: 200,
+          width_mm: 100,
+          lote: data.lote || null,
+          formula_cement_kg: data.formula_cement_kg || null,
+          formula_sand_kg: data.formula_sand_kg || null,
+          formula_stone_kg: data.formula_stone_kg || null,
+          formula_additive_lts: data.formula_additive_lts || null,
+          status: "pending",
+          observations: data.notes || null,
+          created_by: data.created_by || "Sistema"
         })
         .select()
         .single()
       
-      if (sampleError) throw sampleError
-
-      // Calculate test dates
-      const extractionDate = new Date(data.extraction_date)
-      const date7 = new Date(extractionDate)
-      date7.setDate(date7.getDate() + 7)
-      const date28 = new Date(extractionDate)
-      date28.setDate(date28.getDate() + 28)
+      if (sampleError) {
+        console.error("Error creating sample:", sampleError)
+        throw sampleError
+      }
 
       // Create 3 specimens: 1 for 7 days, 2 for 28 days
+      // Using correct column names: test_age_days, specimen_number
       const specimens = [
         {
           sample_id: sample.id,
-          plant: "ranchos",
           specimen_number: 1,
-          target_age_days: 7,
-          scheduled_test_date: date7.toISOString().split("T")[0]
+          test_age_days: 7
         },
         {
           sample_id: sample.id,
-          plant: "ranchos",
           specimen_number: 2,
-          target_age_days: 28,
-          scheduled_test_date: date28.toISOString().split("T")[0]
+          test_age_days: 28
         },
         {
           sample_id: sample.id,
-          plant: "ranchos",
           specimen_number: 3,
-          target_age_days: 28,
-          scheduled_test_date: date28.toISOString().split("T")[0]
+          test_age_days: 28
         }
       ]
 
@@ -218,7 +216,10 @@ export async function POST(request: NextRequest) {
         .from("quality_flexion_specimens")
         .insert(specimens)
       
-      if (specimensError) throw specimensError
+      if (specimensError) {
+        console.error("Error creating specimens:", specimensError)
+        throw specimensError
+      }
 
       return NextResponse.json(sample)
     }
@@ -238,7 +239,7 @@ export async function POST(request: NextRequest) {
 
       // Calculate force using cubic polynomial: F = A*dial^3 + B*dial^2 + C*dial + D
       const dial = data.dial_reading
-      const force_kn = 
+      const load_kn = 
         calibration.coef_a * Math.pow(dial, 3) +
         calibration.coef_b * Math.pow(dial, 2) +
         calibration.coef_c * dial +
@@ -247,25 +248,30 @@ export async function POST(request: NextRequest) {
       // Calculate MPa: Flexion with central point load
       // Formula: σ = (3 * P * L) / (2 * b * h^2)
       // Where P = force (N), L = span (mm), b = width (mm), h = height (mm)
-      const force_n = force_kn * 1000
+      const load_n = load_kn * 1000
       const span_mm = 180 // Distance between supports (20cm - 1cm each side)
-      const width_mm = data.width_mm || 100
+      const width_mm = 100 // Standard adoquin width
       const height_mm = data.height_mm || (data.adoquin_type?.includes("8") ? 80 : 60)
+      const area_mm2 = width_mm * height_mm
       
-      const result_mpa = (3 * force_n * span_mm) / (2 * width_mm * Math.pow(height_mm, 2))
+      const resistance_mpa = (3 * load_n * span_mm) / (2 * width_mm * Math.pow(height_mm, 2))
+      const complies_min = resistance_mpa >= 3.8 // IRAM minimum individual
 
+      // Use correct column names from schema
       const { data: result, error } = await supabase
         .from("quality_flexion_specimens")
         .update({
-          tested_at: new Date().toISOString(),
+          test_date: new Date().toISOString().split("T")[0],
           dial_reading: dial,
-          force_kn: force_kn,
-          result_mpa: result_mpa,
-          weight_sss_g: data.weight_sss_g,
+          calibration_id: calibration.id,
+          load_kn: load_kn,
+          area_mm2: area_mm2,
+          resistance_mpa: resistance_mpa,
+          complies_min: complies_min,
+          weight_sss_g: data.weight_sss_g || null,
           height_mm: height_mm,
-          width_mm: width_mm,
           tested_by: data.tested_by,
-          notes: data.notes
+          observations: data.notes || null
         })
         .eq("id", data.specimen_id)
         .select()
