@@ -158,8 +158,9 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
 
 export function RanchosDashboardContent() {
   const now = new Date()
-  const [selectedMonthIdx, setSelectedMonthIdx] = useState(now.getMonth())
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear())
+  // Default to January 2025 where we have paver production data
+  const [selectedMonthIdx, setSelectedMonthIdx] = useState(0) // January
+  const [selectedYear, setSelectedYear] = useState(2025)
   const [loading, setLoading] = useState(true)
   const [records, setRecords] = useState<any[]>([])
   const [prevRecords, setPrevRecords] = useState<any[]>([])
