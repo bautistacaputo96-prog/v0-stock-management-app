@@ -37,8 +37,10 @@ interface PastonFormula {
   cement_supplier: string
   additive_1_name: string
   additive_1_kg: number
+  additive_1_pdf_url?: string
   additive_2_name: string
   additive_2_kg: number
+  additive_2_pdf_url?: string
   water_liters: number
   tank_capacity_liters: number
   diluted_additive_per_paston_liters: number
@@ -84,8 +86,10 @@ const defaultPastonFormula: PastonFormula = {
   cement_supplier: "",
   additive_1_name: "Mark V",
   additive_1_kg: 0,
+  additive_1_pdf_url: "",
   additive_2_name: "Daraccel",
   additive_2_kg: 0,
+  additive_2_pdf_url: "",
   water_liters: 0,
   tank_capacity_liters: 1000,
   diluted_additive_per_paston_liters: 0,
