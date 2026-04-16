@@ -55,10 +55,9 @@ interface FlexionSample {
   id: string
   sample_code: string
   adoquin_type: string
-  extraction_date: string
+  sample_date: string
   production_date: string
-  formula_snapshot: any
-  notes: string
+  observations: string | null
   specimens: FlexionSpecimen[]
 }
 
@@ -66,16 +65,18 @@ interface FlexionSpecimen {
   id: string
   sample_id: string
   specimen_number: number
-  target_age_days: number
-  scheduled_test_date: string
-  tested_at: string | null
+  test_age_days: number
+  test_date: string | null
   dial_reading: number | null
-  force_kn: number | null
-  result_mpa: number | null
+  calibration_id: string | null
+  load_kn: number | null
+  area_mm2: number | null
+  resistance_mpa: number | null
+  complies_min: boolean | null
   weight_sss_g: number | null
   height_mm: number | null
-  width_mm: number | null
   tested_by: string | null
+  observations: string | null
   sample?: FlexionSample
 }
 
@@ -133,7 +134,7 @@ export default function CalidadAdoquinesPage() {
   const [sampleForm, setSampleForm] = useState({
     sample_code: "",
     adoquin_type: "",
-    extraction_date: new Date().toISOString().split("T")[0],
+    sample_date: new Date().toISOString().split("T")[0],
     production_date: new Date().toISOString().split("T")[0],
     notes: ""
   })
@@ -237,7 +238,7 @@ export default function CalidadAdoquinesPage() {
         setSampleForm({
           sample_code: "",
           adoquin_type: "",
-          extraction_date: new Date().toISOString().split("T")[0],
+          sample_date: new Date().toISOString().split("T")[0],
           production_date: new Date().toISOString().split("T")[0],
           notes: ""
         })
@@ -345,11 +346,11 @@ export default function CalidadAdoquinesPage() {
 
   // Chart data
   const chartData = flexionResults
-    .filter(r => r.result_mpa !== null)
+    .filter(r => r.resistance_mpa !== null)
     .map(r => ({
-      date: r.tested_at ? new Date(r.tested_at).toLocaleDateString("es-AR") : "",
-      mpa: r.result_mpa,
-      age: r.target_age_days,
+      date: r.test_date ? new Date(r.test_date).toLocaleDateString("es-AR") : "",
+      mpa: r.resistance_mpa,
+      age: r.test_age_days,
       code: r.sample?.sample_code || ""
     }))
     .reverse()
@@ -430,7 +431,7 @@ export default function CalidadAdoquinesPage() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">
-                    {flexionResults.filter(r => (r.result_mpa || 0) >= parameters.flexion_min_individual_mpa).length}
+                    {flexionResults.filter(r => (r.resistance_mpa || 0) >= parameters.flexion_min_individual_mpa).length}
                   </p>
                   <p className="text-xs text-muted-foreground">Ensayos aprobados</p>
                 </div>
@@ -541,8 +542,8 @@ export default function CalidadAdoquinesPage() {
                             </TableCell>
                             <TableCell>#{specimen.specimen_number}</TableCell>
                             <TableCell>
-                              <Badge variant={specimen.target_age_days === 7 ? "secondary" : "default"}>
-                                {specimen.target_age_days} dias
+                              <Badge variant={specimen.test_age_days === 7 ? "secondary" : "default"}>
+                                {specimen.test_age_days} dias
                               </Badge>
                             </TableCell>
                             <TableCell>
@@ -622,8 +623,8 @@ export default function CalidadAdoquinesPage() {
                         <Label>Fecha de Extraccion</Label>
                         <Input
                           type="date"
-                          value={sampleForm.extraction_date}
-                          onChange={(e) => setSampleForm(prev => ({ ...prev, extraction_date: e.target.value }))}
+                      value={sampleForm.sample_date}
+                      onChange={(e) => setSampleForm(prev => ({ ...prev, sample_date: e.target.value }))}
                         />
                       </div>
                       <div className="space-y-2">
@@ -691,21 +692,21 @@ export default function CalidadAdoquinesPage() {
                       </TableRow>
                     ) : (
                       flexionSamples.map((sample) => {
-                        const spec7 = sample.specimens?.find(s => s.target_age_days === 7)
-                        const specs28 = sample.specimens?.filter(s => s.target_age_days === 28) || []
-                        const avg28 = specs28.filter(s => s.result_mpa).length > 0
-                          ? specs28.reduce((sum, s) => sum + (s.result_mpa || 0), 0) / specs28.filter(s => s.result_mpa).length
+                        const spec7 = sample.specimens?.find(s => s.test_age_days === 7)
+                        const specs28 = sample.specimens?.filter(s => s.test_age_days === 28) || []
+                        const avg28 = specs28.filter(s => s.resistance_mpa).length > 0
+                          ? specs28.reduce((sum, s) => sum + (s.resistance_mpa || 0), 0) / specs28.filter(s => s.resistance_mpa).length
                           : null
 
                         const renderResult = (spec: FlexionSpecimen | undefined) => {
                           if (!spec) return <span className="text-muted-foreground">-</span>
-                          if (!spec.result_mpa) {
+                          if (!spec.resistance_mpa) {
                             return <Badge variant="outline">Pendiente</Badge>
                           }
-                          const passed = spec.result_mpa >= parameters.flexion_min_individual_mpa
+                          const passed = spec.resistance_mpa >= parameters.flexion_min_individual_mpa
                           return (
                             <span className={passed ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
-                              {spec.result_mpa.toFixed(2)} MPa
+                              {spec.resistance_mpa.toFixed(2)} MPa
                             </span>
                           )
                         }
@@ -717,7 +718,7 @@ export default function CalidadAdoquinesPage() {
                               <Badge variant="outline">{sample.adoquin_type}</Badge>
                             </TableCell>
                             <TableCell>
-                              {new Date(sample.extraction_date).toLocaleDateString("es-AR")}
+                              {new Date(sample.sample_date).toLocaleDateString("es-AR")}
                             </TableCell>
                             <TableCell>{renderResult(spec7)}</TableCell>
                             <TableCell>{renderResult(specs28[0])}</TableCell>
@@ -814,21 +815,21 @@ export default function CalidadAdoquinesPage() {
                   </TableHeader>
                   <TableBody>
                     {flexionResults.slice(0, 20).map((result) => {
-                      const passed = (result.result_mpa || 0) >= parameters.flexion_min_individual_mpa
+                      const passed = (result.resistance_mpa || 0) >= parameters.flexion_min_individual_mpa
                       return (
                         <TableRow key={result.id}>
                           <TableCell>
-                            {result.tested_at ? new Date(result.tested_at).toLocaleDateString("es-AR") : "-"}
+                            {result.test_date ? new Date(result.test_date).toLocaleDateString("es-AR") : "-"}
                           </TableCell>
                           <TableCell className="font-mono">{result.sample?.sample_code}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{result.sample?.adoquin_type}</Badge>
                           </TableCell>
-                          <TableCell>{result.target_age_days}d</TableCell>
+                          <TableCell>{result.test_age_days}d</TableCell>
                           <TableCell>{result.dial_reading}</TableCell>
-                          <TableCell>{result.force_kn?.toFixed(2)}</TableCell>
+                          <TableCell>{result.load_kn?.toFixed(2)}</TableCell>
                           <TableCell className={passed ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                            {result.result_mpa?.toFixed(2)} MPa
+                            {result.resistance_mpa?.toFixed(2)} MPa
                           </TableCell>
                           <TableCell>
                             <Badge variant={passed ? "default" : "destructive"}>
@@ -1062,7 +1063,7 @@ export default function CalidadAdoquinesPage() {
                     </div>
                     <div>
                       <span className="text-muted-foreground">Edad:</span>
-                      <span className="ml-2">{selectedSpecimen.target_age_days} dias</span>
+                      <span className="ml-2">{selectedSpecimen.test_age_days} dias</span>
                     </div>
                   </div>
                 </div>
