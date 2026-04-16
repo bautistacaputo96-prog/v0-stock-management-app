@@ -193,22 +193,26 @@ export async function POST(request: NextRequest) {
       }
 
       // Create 3 specimens: 1 for 7 days, 2 for 28 days
-      // Using correct column names: test_age_days, specimen_number
+      // Using correct column names: test_age_days, specimen_number, height_mm (required)
+      const heightMm = data.adoquin_type?.includes("8") ? 80 : 60
       const specimens = [
         {
           sample_id: sample.id,
           specimen_number: 1,
-          test_age_days: 7
+          test_age_days: 7,
+          height_mm: heightMm
         },
         {
           sample_id: sample.id,
           specimen_number: 2,
-          test_age_days: 28
+          test_age_days: 28,
+          height_mm: heightMm
         },
         {
           sample_id: sample.id,
           specimen_number: 3,
-          test_age_days: 28
+          test_age_days: 28,
+          height_mm: heightMm
         }
       ]
 
