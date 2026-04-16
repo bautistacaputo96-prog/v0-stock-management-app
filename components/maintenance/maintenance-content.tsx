@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Lock, Wrench, Package, Fuel, ClipboardList, Settings } from "lucide-react"
+import { Lock, Wrench, Package, Fuel, ClipboardList, Settings, FileText } from "lucide-react"
 import { PanolModule } from "./panol-module"
 import { TareasModule } from "./tareas-module"
 import { CombustibleModule } from "./combustible-module"
+import { ParteDiarioModule } from "./parte-diario-module"
 
 const PLANTS = [
   { id: "silke", name: "SILKE" },
@@ -26,7 +27,7 @@ export function MaintenanceContent() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [selectedPlant, setSelectedPlant] = useState("silke")
-  const [activeTab, setActiveTab] = useState("panol")
+  const [activeTab, setActiveTab] = useState("parte")
   
   const supabase = createClient()
 
@@ -167,7 +168,11 @@ export function MaintenanceContent() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[500px]">
+          <TabsTrigger value="parte" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            <span className="hidden sm:inline">Parte Diario</span>
+          </TabsTrigger>
           <TabsTrigger value="panol" className="flex items-center gap-2">
             <Package className="h-4 w-4" />
             <span className="hidden sm:inline">Pañol</span>
@@ -181,6 +186,10 @@ export function MaintenanceContent() {
             <span className="hidden sm:inline">Combustible</span>
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="parte">
+          <ParteDiarioModule plant={selectedPlant} />
+        </TabsContent>
 
         <TabsContent value="panol">
           <PanolModule plant={selectedPlant} />

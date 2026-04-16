@@ -30,7 +30,7 @@ interface MonthData {
 
 type ActiveLine = "bloques" | "canos" | "produccion-diaria"
 type BlockChartMetric = "bandejas" | "descartados" | "paradas" | "horasProducidas"
-type PipeChartMetric = "tnHora" | "canos" | "tnTotal" | "paradas" | "canosVsPlan"
+type PipeChartMetric = "tnHora" | "canos" | "tnTotal" | "paradas" | "desperdicio" | "canosVsPlan"
 type PipeFilter = "todos" | "3" | "4"
 type PipeShiftFilter = "todos" | "1" | "2"
 
@@ -137,7 +137,7 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
   )
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────
+// ── Main Component ─────────────────────────────���─────��─────────────────────
 
 export function DashboardContent() {
   const { selectedPlant, plantName, isPlantLoaded } = usePlant()
@@ -152,9 +152,18 @@ export function DashboardContent() {
   const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
   const [qualityData, setQualityData] = useState<{
     totals: { first: number; second: number; broken: number; total: number }
+    totalsTn: { first: number; second: number; broken: number; total: number }
     byDiameter: Record<number, { first: number; second: number; broken: number; total: number }>
     topDefects: { reason: string; category: string; total: number }[]
     controlsCount: number
+    byDate: Record<string, { second: number; broken: number; total: number; scrapBoxes: number }>
+  } | null>(null)
+  const [scrapData, setScrapData] = useState<{
+    totalBoxes: number
+    totalTn: number
+    boxWeightKg: number
+    byDate: Record<string, number>
+    byDateShift: Record<string, Record<number, number>>
   } | null>(null)
   
   // Determinar lineas disponibles segun planta:
@@ -338,9 +347,13 @@ export function DashboardContent() {
 
         const totals = { first: 0, second: 0, broken: 0, total: 0 }
         const byDiameter: Record<number, { first: number; second: number; broken: number; total: number }> = {}
+        const byDate: Record<string, { second: number; broken: number; total: number }> = {}
         const defectMap = new Map<number, { reason: string; category: string; total: number }>()
 
         for (const ctrl of controls as any[]) {
+          const ctrlDate = ctrl.control_date
+          if (!byDate[ctrlDate]) byDate[ctrlDate] = { second: 0, broken: 0, total: 0 }
+          
           for (const item of ctrl.pipe_quality_items || []) {
             const d = item.diameter
             if (!byDiameter[d]) byDiameter[d] = { first: 0, second: 0, broken: 0, total: 0 }
@@ -352,6 +365,12 @@ export function DashboardContent() {
             totals.second += item.second_quality || 0
             totals.broken += item.broken || 0
             totals.total += (item.first_quality || 0) + (item.second_quality || 0) + (item.broken || 0)
+            
+            // Agregar a byDate
+            byDate[ctrlDate].second += item.second_quality || 0
+            byDate[ctrlDate].broken += item.broken || 0
+            byDate[ctrlDate].total += (item.second_quality || 0) + (item.broken || 0)
+            
             for (const defect of item.pipe_quality_defects || []) {
               const info = reasonsMap.get(defect.defect_reason_id) as any
               if (!info) continue
@@ -367,12 +386,74 @@ export function DashboardContent() {
           .sort((a, b) => b.total - a.total)
           .slice(0, 6)
 
-        setQualityData({ totals, byDiameter, topDefects, controlsCount: controls.length })
+        // Calculate tonnage using weights
+        const totalsTn = { first: 0, second: 0, broken: 0, total: 0 }
+        Object.entries(byDiameter).forEach(([diam, data]) => {
+          const weight = weights[diam] || 0
+          totalsTn.first += (data.first * weight) / 1000
+          totalsTn.second += (data.second * weight) / 1000
+          totalsTn.broken += (data.broken * weight) / 1000
+        })
+        totalsTn.total = totalsTn.first + totalsTn.second + totalsTn.broken
+
+        setQualityData({ totals, totalsTn, byDiameter, topDefects, controlsCount: controls.length, byDate })
       } else {
         setQualityData(null)
       }
     } catch {
       setQualityData(null)
+    }
+
+    // Fetch scrap boxes from pipe_production (parte diario)
+    try {
+      // Get scrap box weight from product_config
+      const { data: scrapConfig } = await supabase
+        .from("product_config")
+        .select("piece_weight_kg")
+        .eq("product_code", "CAJON-DESP")
+        .eq("line_type", "caños")
+        .single()
+      
+      const boxWeightKg = scrapConfig?.piece_weight_kg || 150
+
+      // Get scrap boxes from production records - include shift for filtering
+      const { data: productionData } = await supabase
+        .from("pipe_production")
+        .select("production_date, shift, scrap_boxes")
+        .gte("production_date", cmStart)
+        .lte("production_date", cmEnd)
+
+      if (productionData && productionData.length > 0) {
+        let totalBoxes = 0
+        const byDate: Record<string, number> = {}
+        const byDateShift: Record<string, Record<number, number>> = {}
+        
+        productionData.forEach((p: any) => {
+          const boxes = p.scrap_boxes || 0
+          const shift = p.shift || 1
+          totalBoxes += boxes
+          
+          // Agrupar por fecha (total)
+          if (!byDate[p.production_date]) byDate[p.production_date] = 0
+          byDate[p.production_date] += boxes
+          
+          // Agrupar por fecha y turno
+          if (!byDateShift[p.production_date]) byDateShift[p.production_date] = {}
+          byDateShift[p.production_date][shift] = boxes
+        })
+
+        setScrapData({
+          totalBoxes,
+          totalTn: (totalBoxes * boxWeightKg) / 1000,
+          boxWeightKg,
+          byDate,
+          byDateShift
+        })
+      } else {
+        setScrapData(null)
+      }
+    } catch {
+      setScrapData(null)
     }
 
     setLoading(false)
@@ -477,24 +558,76 @@ export function DashboardContent() {
   const pipeChartData = useMemo(() => {
     if (!currentMonth) return []
     let data = currentMonth.pipeDailyData
-    if (pipeShiftFilter !== "todos") data = data.filter(d => d.shift === Number(pipeShiftFilter))
+    
+    // Aplicar filtros de operarios y molde
     if (pipeFilter !== "todos") data = data.filter(d => d.operatorsCount === Number(pipeFilter))
     if (pipeMoldFilter !== "todos") data = data.filter(d => d.productionBySize[pipeMoldFilter] != null)
+    
+    // Si el turno es "todos", agrupar por día
+    if (pipeShiftFilter === "todos") {
+      const byDate: Record<string, { 
+        totalUnits: number; totalWeightTn: number; downtimeMin: number; 
+        availableMinutes: number; productionBySize: Record<string, number>; date: string 
+      }> = {}
+      
+      data.forEach(d => {
+        if (!byDate[d.date]) {
+          byDate[d.date] = { 
+            totalUnits: 0, totalWeightTn: 0, downtimeMin: 0, 
+            availableMinutes: 0, productionBySize: {}, date: d.date 
+          }
+        }
+        byDate[d.date].totalUnits += d.totalUnits
+        byDate[d.date].totalWeightTn += d.totalWeightTn
+        byDate[d.date].downtimeMin += d.downtimeMin
+        byDate[d.date].availableMinutes += d.availableMinutes
+        Object.entries(d.productionBySize).forEach(([size, qty]) => {
+          byDate[d.date].productionBySize[size] = (byDate[d.date].productionBySize[size] || 0) + qty
+        })
+      })
+      
+      return Object.values(byDate)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(d => {
+          const availHours = d.availableMinutes / 60
+          // Para "todos", usar el total diario de cajones
+          const scrapBoxes = scrapData?.byDate[d.date] || 0
+          return {
+            date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
+            rawDate: d.date,
+            tnHora: availHours > 0 ? Number((d.totalWeightTn / availHours).toFixed(2)) : 0,
+            canos: d.totalUnits,
+            tnTotal: Number(d.totalWeightTn.toFixed(2)),
+            paradas: d.downtimeMin,
+            desperdicio: scrapBoxes,
+            shift: "todos",
+            operators: null,
+            productionBySize: d.productionBySize,
+          }
+        })
+    }
+    
+    // Si hay filtro de turno específico, no agrupar
+    data = data.filter(d => d.shift === Number(pipeShiftFilter))
 
     return data.map(d => {
       const availHours = d.availableMinutes / 60
+      // Para turno específico, usar el dato de ese turno
+      const scrapBoxes = scrapData?.byDateShift[d.date]?.[d.shift] || 0
       return {
         date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
+        rawDate: d.date,
         tnHora: availHours > 0 ? Number((d.totalWeightTn / availHours).toFixed(2)) : 0,
         canos: d.totalUnits,
         tnTotal: Number(d.totalWeightTn.toFixed(2)),
         paradas: d.downtimeMin,
+        desperdicio: scrapBoxes,
         shift: d.shift,
         operators: d.operatorsCount,
         productionBySize: d.productionBySize,
       }
     })
-  }, [currentMonth, pipeShiftFilter, pipeFilter, pipeMoldFilter])
+  }, [currentMonth, pipeShiftFilter, pipeFilter, pipeMoldFilter, scrapData])
 
   // ── Pipe mold options ─────────────────────────────────────────────────
   const pipeMoldOptions = useMemo(() => {
@@ -565,10 +698,11 @@ export function DashboardContent() {
     const avgCanos = pipeChartData.reduce((s, d) => s + d.canos, 0) / n
     const avgTnTotal = pipeChartData.reduce((s, d) => s + d.tnTotal, 0) / n
     const avgParadas = pipeChartData.reduce((s, d) => s + d.paradas, 0) / n
-    return { avgTnHora, avgCanos, avgTnTotal, avgParadas }
+    const avgDesperdicio = pipeChartData.reduce((s, d) => s + d.desperdicio, 0) / n
+    return { avgTnHora, avgCanos, avgTnTotal, avgParadas, avgDesperdicio }
   }, [pipeChartData])
 
-  // ── Weekly pipe data ──────────────────────────────────────────────────
+  // ── Weekly pipe data ──────────────────��───────────────────────────────
   const weeklyPipeData = useMemo(() => {
     if (!currentMonth) return []
     const weeks = [
@@ -666,8 +800,8 @@ export function DashboardContent() {
   const chartMetricLabels: Record<BlockChartMetric, string> = {
     bandejas: "Bandejas", descartados: "Bloques descartados", paradas: "Min. paradas", horasProducidas: "Horas producidas"
   }
-  const pipeChartLabels: Record<PipeChartMetric, string> = {
-    tnHora: "Tn/Hora disp.", canos: "Canos producidos", tnTotal: "Tn producidas", paradas: "Min. paradas", canosVsPlan: "Real vs Plan"
+const pipeChartLabels: Record<PipeChartMetric, string> = {
+  tnHora: "Tn/Hora disp.", canos: "Canos producidos", tnTotal: "Tn producidas", paradas: "Min. paradas", desperdicio: "Desperdicio", canosVsPlan: "Real vs Plan"
   }
 
   return (
@@ -1051,6 +1185,42 @@ export function DashboardContent() {
                     <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Total paradas del mes</div>
                   </div>
                 </div>
+                {/* Desperdicio del mes - Cajones del parte diario */}
+                {scrapData && (
+                  <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg p-4 flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                      <XCircle className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {scrapData.totalBoxes}
+                        <span className="text-sm font-normal text-muted-foreground ml-1">cajones</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Desperdicio del mes</div>
+                      <div className="text-[9px] text-amber-600 mt-0.5">
+                        {scrapData.totalTn.toFixed(2)} tn ({scrapData.boxWeightKg} kg/cajón)
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* Calidad - Segunda y Rotos */}
+                {qualityData && (
+                  <div className="bg-orange-500/5 border border-orange-500/15 rounded-lg p-4 flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {qualityData.totals.second + qualityData.totals.broken}
+                        <span className="text-sm font-normal text-muted-foreground ml-1">uds</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Segunda + Rotos</div>
+                      <div className="text-[9px] text-orange-600 mt-0.5">
+                        2da: {qualityData.totals.second} | Rotos: {qualityData.totals.broken} | {(qualityData.totalsTn.second + qualityData.totalsTn.broken).toFixed(2)} tn
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Planificado vs Producido - Calculo diario solo dias con produccion */}
                 {(() => {
                   // Agrupar produccion por dia del mes
@@ -1290,8 +1460,8 @@ export function DashboardContent() {
                         <AreaChart data={pipeChartData}>
                           <defs>
                             <linearGradient id="pipeFill" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={pipeChartMetric === "paradas" ? "#dc2626" : "#1e3a5f"} stopOpacity={0.15} />
-                              <stop offset="95%" stopColor={pipeChartMetric === "paradas" ? "#dc2626" : "#1e3a5f"} stopOpacity={0} />
+                              <stop offset="5%" stopColor={pipeChartMetric === "paradas" ? "#dc2626" : pipeChartMetric === "desperdicio" ? "#f59e0b" : "#1e3a5f"} stopOpacity={0.15} />
+                              <stop offset="95%" stopColor={pipeChartMetric === "paradas" ? "#dc2626" : pipeChartMetric === "desperdicio" ? "#f59e0b" : "#1e3a5f"} stopOpacity={0} />
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1363,10 +1533,10 @@ export function DashboardContent() {
                           <Area
                             type="monotone"
                             dataKey={pipeChartMetric}
-                            stroke={pipeChartMetric === "paradas" ? "#dc2626" : "#1e3a5f"}
+                            stroke={pipeChartMetric === "paradas" ? "#dc2626" : pipeChartMetric === "desperdicio" ? "#f59e0b" : "#1e3a5f"}
                             strokeWidth={2}
                             fill="url(#pipeFill)"
-                            dot={{ r: 2.5, fill: pipeChartMetric === "paradas" ? "#dc2626" : "#1e3a5f" }}
+                            dot={{ r: 2.5, fill: pipeChartMetric === "paradas" ? "#dc2626" : pipeChartMetric === "desperdicio" ? "#f59e0b" : "#1e3a5f" }}
                             name={pipeChartLabels[pipeChartMetric]}
                           />
                           {/* Average reference lines from filtered data */}
@@ -1374,6 +1544,7 @@ export function DashboardContent() {
                           {pipeChartMetric === "canos" && filteredPipeAvg && <ReferenceLine y={Math.round(filteredPipeAvg.avgCanos)} stroke="#1e3a5f" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${Math.round(filteredPipeAvg.avgCanos)}`, position: 'insideTopRight', fontSize: 10, fill: '#1e3a5f', fontWeight: 600 }} />}
                           {pipeChartMetric === "tnTotal" && filteredPipeAvg && <ReferenceLine y={Number(filteredPipeAvg.avgTnTotal.toFixed(2))} stroke="#1e3a5f" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${filteredPipeAvg.avgTnTotal.toFixed(2)} tn`, position: 'insideTopRight', fontSize: 10, fill: '#1e3a5f', fontWeight: 600 }} />}
                           {pipeChartMetric === "paradas" && filteredPipeAvg && <ReferenceLine y={Math.round(filteredPipeAvg.avgParadas)} stroke="#dc2626" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${Math.round(filteredPipeAvg.avgParadas)} min`, position: 'insideTopRight', fontSize: 10, fill: '#dc2626', fontWeight: 600 }} />}
+                          {pipeChartMetric === "desperdicio" && filteredPipeAvg && <ReferenceLine y={Math.round(filteredPipeAvg.avgDesperdicio)} stroke="#f59e0b" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${Math.round(filteredPipeAvg.avgDesperdicio)} caj`, position: 'insideTopRight', fontSize: 10, fill: '#f59e0b', fontWeight: 600 }} />}
                         </AreaChart>
                       </ResponsiveContainer>
                     ) : (

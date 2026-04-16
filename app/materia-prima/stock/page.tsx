@@ -90,7 +90,21 @@ export default function StockPage() {
     setLoading(true)
     fetch(`/api/materia-prima/stock?plant=${selectedPlant}&lead_time=${leadTime}`)
       .then((r) => r.json())
-      .then((d) => setData(d))
+      .then((d) => {
+        // Ensure all required fields exist with defaults
+        setData({
+          currentStockKg: d.currentStockKg || {},
+          daysOfStock: d.daysOfStock || {},
+          dailyConsumptionKg: d.dailyConsumptionKg || {},
+          stockEvolution: d.stockEvolution || [],
+          planning: d.planning || [],
+          massBalance: d.massBalance || []
+        })
+      })
+      .catch((err) => {
+        console.error("Error fetching stock data:", err)
+        setData(null)
+      })
       .finally(() => setLoading(false))
   }, [selectedPlant, leadTime])
 

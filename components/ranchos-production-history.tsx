@@ -88,6 +88,9 @@ export function RanchosProductionHistory() {
       Producto: r.product_type_code || "",
       Formula: r.paston_formula || "",
       Pastones: r.pastones_count || 0,
+      Bandejas: r.tables_produced || 0,
+      "Paletizado 1ra": r.palletized_first || 0,
+      "Paletizado 2da": r.palletized_second || 0,
       "Silo 1 (tn)": r.cement_silo_1_tn || 0,
       "Silo 2 (tn)": r.cement_silo_2_tn || 0,
       "Min paradas": (r.paver_downtime || []).reduce((s: number, d: any) => s + (d.minutes || 0), 0),
@@ -150,6 +153,9 @@ export function RanchosProductionHistory() {
                   <th className="pb-2 pr-3">Horario</th>
                   <th className="pb-2 pr-3">Producto</th>
                   <th className="pb-2 pr-3 text-right">Pastones</th>
+                  <th className="pb-2 pr-3 text-right">Bandejas</th>
+                  <th className="pb-2 pr-3 text-right">Palet. 1ra</th>
+                  <th className="pb-2 pr-3 text-right">Palet. 2da</th>
                   <th className="pb-2 pr-3 text-right">Cemento (tn)</th>
                   <th className="pb-2 pr-3 text-right">Paradas</th>
                   <th className="pb-2 text-center">Acciones</th>
@@ -186,6 +192,9 @@ export function RanchosProductionHistory() {
                           </span>
                         </td>
                         <td className="py-2 pr-3 text-right font-medium">{record.pastones_count || 0}</td>
+                        <td className="py-2 pr-3 text-right">{record.tables_produced || "-"}</td>
+                        <td className="py-2 pr-3 text-right text-green-600 font-medium">{record.palletized_first || "-"}</td>
+                        <td className="py-2 pr-3 text-right text-amber-600">{record.palletized_second || "-"}</td>
                         <td className="py-2 pr-3 text-right">{cementoTotal}</td>
                         <td className="py-2 pr-3 text-right">{totalDowntime > 0 ? `${totalDowntime} min` : "-"}</td>
                         <td className="py-2 text-center">
@@ -197,7 +206,7 @@ export function RanchosProductionHistory() {
 
                       {isExpanded && (
                         <tr>
-                          <td colSpan={7} className="py-3 px-4 bg-muted/20">
+                          <td colSpan={10} className="py-3 px-4 bg-muted/20">
                             <div className="space-y-3">
                               {/* Details */}
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -205,6 +214,14 @@ export function RanchosProductionHistory() {
                                 <div><span className="text-muted-foreground">Pastones:</span> <span className="font-medium">{record.pastones_count || 0}</span></div>
                                 <div><span className="text-muted-foreground">Silo 1:</span> <span className="font-medium">{record.cement_silo_1_tn || 0} tn</span></div>
                                 <div><span className="text-muted-foreground">Silo 2:</span> <span className="font-medium">{record.cement_silo_2_tn || 0} tn</span></div>
+                              </div>
+                              
+                              {/* Producción y Paletizado */}
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mt-2 pt-2 border-t border-dashed">
+                                <div><span className="text-muted-foreground">Bandejas producidas:</span> <span className="font-medium">{record.tables_produced || "-"}</span></div>
+                                <div><span className="text-muted-foreground">Peso húmedo (kg):</span> <span className="font-medium">{record.wet_piece_weight_kg || "-"}</span></div>
+                                <div><span className="text-muted-foreground">Paletizado 1ra:</span> <span className="font-bold text-green-600">{record.palletized_first || "-"}</span></div>
+                                <div><span className="text-muted-foreground">Paletizado 2da:</span> <span className="font-bold text-amber-600">{record.palletized_second || "-"}</span></div>
                               </div>
 
                               {/* Suppliers */}

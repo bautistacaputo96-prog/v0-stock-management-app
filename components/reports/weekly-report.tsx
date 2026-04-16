@@ -6,8 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FileDown, TrendingUp, TrendingDown, Minus, Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { FileDown, TrendingUp, TrendingDown, Minus, Calendar, ChevronLeft, ChevronRight, Eye, X } from "lucide-react"
 import { ProductionTrendChart } from "./production-trend-chart"
+import { PipeWeeklyExecutiveReport } from "./pipe-weekly-executive-report"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   calculateReportMetrics,
   getDowntimeDetails,
@@ -69,6 +71,7 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
   const [loading, setLoading] = useState(false)
   const [prevRecords, setPrevRecords] = useState<any[]>([])
   const reportRef = useRef<HTMLDivElement>(null)
+  const [showPreview, setShowPreview] = useState(false)
   const { toast } = useToast()
   
   // Datos históricos para comparaciones
@@ -76,6 +79,17 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
   const [prevWeekAvg, setPrevWeekAvg] = useState<{downtime: number, avgTrays: number} | null>(null)
   const [scrapTrend, setScrapTrend] = useState<"stable" | "increasing" | "decreasing">("stable")
   const [scrapOutlier, setScrapOutlier] = useState<{date: string, value: number} | null>(null)
+  
+  // Datos de calidad de caños desde control de calidad
+  const [pipeQualityData, setPipeQualityData] = useState<{
+    byDiameter: Record<number, { first: number; second: number; broken: number }>;
+    totalFirst: number;
+    totalSecond: number;
+    totalBroken: number;
+    topDefectReasons: { reason: string; count: number; percentage: number }[];
+    wasteBoxes: number;
+    wasteTons: number;
+  } | null>(null)
 
   const supabase = getSupabase()
 
@@ -271,16 +285,21 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             await loadDailyPlanned(endYear, endMonth)
           }
 
-          // Build daily pipe production array
+          // Build daily pipe production array - SOLO días con producción real (Lunes a Viernes)
           const dailyArray: { date: string; production: Record<string, number>; planned: Record<string, number> }[] = []
           const currentDate = new Date(weekStart)
           while (currentDate <= weekEndDate) {
             const dateKey = currentDate.toISOString().split("T")[0]
-            dailyArray.push({
-              date: dateKey,
-              production: dailyProd[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {}),
-              planned: dailyPlanned[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {})
-            })
+            const dayOfWeek = currentDate.getDay() // 0 = Domingo, 6 = Sábado
+            
+            // Solo incluir días laborables (Lunes a Viernes) o días que tengan producción real
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+              dailyArray.push({
+                date: dateKey,
+                production: dailyProd[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {}),
+                planned: dailyPlanned[dateKey] || pipeSizes.reduce((acc, s) => ({ ...acc, [s]: 0 }), {})
+              })
+            }
             currentDate.setDate(currentDate.getDate() + 1)
           }
           setDailyPipeProduction(dailyArray)
@@ -305,6 +324,93 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             })
           } else {
             setPrevWeekAvg(null)
+          }
+
+          // Obtener las fechas con producción real (solo días que tienen partes de producción)
+          const productionDates = new Set(pipeData.map((p: any) => p.production_date))
+
+          // Cargar datos de calidad de caños (control de calidad) - SOLO para días con producción
+          const { data: qualityControls } = await supabase
+            .from("pipe_quality_control")
+            .select(`
+              *,
+              items:pipe_quality_items(
+                *,
+                defects:pipe_quality_defects(
+                  *,
+                  reason:pipe_defect_reasons(reason, category)
+                )
+              )
+            `)
+            .gte("control_date", weekStart)
+            .lte("control_date", weekEnd)
+          
+          // Filtrar solo controles de calidad que correspondan a días con producción
+          const filteredQualityControls = qualityControls?.filter((qc: any) => 
+            productionDates.has(qc.control_date)
+          ) || []
+
+          if (filteredQualityControls && filteredQualityControls.length > 0) {
+            const byDiameter: Record<number, { first: number; second: number; broken: number }> = {}
+            let totalFirst = 0, totalSecond = 0, totalBroken = 0
+            const defectCounts: Record<string, number> = {}
+
+            filteredQualityControls.forEach((control: any) => {
+              control.items?.forEach((item: any) => {
+                const diameter = item.diameter
+                if (!byDiameter[diameter]) {
+                  byDiameter[diameter] = { first: 0, second: 0, broken: 0 }
+                }
+                byDiameter[diameter].first += item.first_quality || 0
+                byDiameter[diameter].second += item.second_quality || 0
+                byDiameter[diameter].broken += item.broken || 0
+                totalFirst += item.first_quality || 0
+                totalSecond += item.second_quality || 0
+                totalBroken += item.broken || 0
+
+                // Contar razones de defectos
+                item.defects?.forEach((defect: any) => {
+                  const reasonName = defect.reason?.reason || defect.defect_type || "Sin especificar"
+                  if (!defectCounts[reasonName]) defectCounts[reasonName] = 0
+                  defectCounts[reasonName] += defect.quantity || 1
+                })
+              })
+            })
+
+            // Top 3 razones de defectos
+            const totalDefects = Object.values(defectCounts).reduce((s, v) => s + v, 0)
+            const topDefectReasons = Object.entries(defectCounts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 3)
+              .map(([reason, count]) => ({
+                reason,
+                count,
+                percentage: totalDefects > 0 ? (count / totalDefects) * 100 : 0
+              }))
+
+            // Calcular desperdicio en cajones y toneladas
+            // Asumiendo 1 cajón = 1 caño roto o de segunda, y peso promedio por diámetro
+            const wasteUnits = totalSecond + totalBroken
+            const wasteBoxes = wasteUnits // 1 cajón por unidad defectuosa
+            // Calcular toneladas basado en pesos promedio por diámetro
+            let wasteTons = 0
+            Object.entries(byDiameter).forEach(([diam, data]) => {
+              const diamNum = parseInt(diam)
+              const weight = weights[diam] || (diamNum * 2) // peso aproximado en kg
+              wasteTons += (data.second + data.broken) * weight / 1000
+            })
+
+            setPipeQualityData({
+              byDiameter,
+              totalFirst,
+              totalSecond,
+              totalBroken,
+              topDefectReasons,
+              wasteBoxes,
+              wasteTons
+            })
+          } else {
+            setPipeQualityData(null)
           }
         } else {
           const metrics = data.map(calculateReportMetrics)
@@ -561,22 +667,159 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
             prevMonthLabel={prevWeekLabel}
           />
 
-          {/* PDF export */}
-          <div className="flex items-center gap-2">
-            <Button onClick={exportToPDF} disabled={!hasData} variant="outline" size="sm" className="gap-2 bg-card border-border text-foreground hover:bg-muted">
-              <FileDown className="h-3.5 w-3.5" />
-              Exportar PDF
-            </Button>
-          </div>
+          {/* PDF export buttons */}
+          {lineType === "caños" && pipeMetrics && (
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setShowPreview(true)} disabled={!hasData} variant="outline" size="sm" className="gap-2 bg-card border-border text-foreground hover:bg-muted">
+                <Eye className="h-3.5 w-3.5" />
+                Previsualizar
+              </Button>
+              <Button onClick={exportToPDF} disabled={!hasData} variant="default" size="sm" className="gap-2">
+                <FileDown className="h-3.5 w-3.5" />
+                Descargar PDF
+              </Button>
+            </div>
+          )}
+          
+          {lineType === "bloques" && averageMetrics && (
+            <div className="flex items-center gap-2">
+              <Button onClick={exportToPDF} disabled={!hasData} variant="outline" size="sm" className="gap-2 bg-card border-border text-foreground hover:bg-muted">
+                <FileDown className="h-3.5 w-3.5" />
+                Exportar PDF
+              </Button>
+            </div>
+          )}
 
           {lineType === "caños" && pipeMetrics ? (
-        <div ref={reportRef} className="space-y-4 bg-background p-4">
-          <div className="text-center border-b pb-4">
-            <h2 className="text-xl font-bold">SILKE - Informe Semanal - Canos</h2>
-            <p className="text-muted-foreground">
-              Semana del {formatDateForDisplay(weekStart)} al {formatDateForDisplay(weekEnd)}
-            </p>
-          </div>
+            <>
+              {/* Preview Dialog */}
+              <Dialog open={showPreview} onOpenChange={setShowPreview}>
+                <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-auto p-0">
+                  <div className="sticky top-0 z-10 bg-background border-b px-4 py-3 flex items-center justify-between">
+                    <DialogTitle>Previsualización - Informe Semanal</DialogTitle>
+                    <div className="flex items-center gap-2">
+                      <Button onClick={exportToPDF} size="sm" className="gap-2">
+                        <FileDown className="h-3.5 w-3.5" />
+                        Descargar PDF
+                      </Button>
+                      <Button onClick={() => setShowPreview(false)} variant="ghost" size="sm">
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="p-4 flex justify-center bg-gray-100">
+                    <PipeWeeklyExecutiveReport
+                      ref={reportRef}
+                      weekStart={weekStart}
+                      weekEnd={weekEnd}
+                      daysWorked={records.length}
+                      reportData={{
+                        totalUnits: pipeMetrics.totalUnits,
+                        totalPlanned: Object.values(pipeTargets).reduce((s, v) => s + v, 0),
+                        byDiameter: pipeMetrics.productionByType.reduce((acc, p) => {
+                          const diameter = parseInt(p.size)
+                          const qualityData = pipeQualityData?.byDiameter[diameter]
+                          acc[diameter] = {
+                            produced: p.quantity,
+                            planned: pipeTargets[p.size] || 0,
+                            first: qualityData?.first ?? p.quantity,
+                            second: qualityData?.second ?? 0,
+                            broken: qualityData?.broken ?? 0
+                          }
+                          return acc
+                        }, {} as Record<number, { produced: number; planned: number; first: number; second: number; broken: number }>),
+                        qualityIndex: pipeQualityData 
+                          ? (pipeQualityData.totalFirst / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : pipeMetrics.quality,
+                        secondPercent: pipeQualityData 
+                          ? (pipeQualityData.totalSecond / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 0,
+                        brokenPercent: pipeQualityData 
+                          ? (pipeQualityData.totalBroken / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 100 - pipeMetrics.quality,
+                        wastePercent: pipeQualityData 
+                          ? ((pipeQualityData.totalSecond + pipeQualityData.totalBroken) / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                          : 100 - pipeMetrics.quality,
+                        wasteBoxes: pipeQualityData?.wasteBoxes ?? 0,
+                        wasteTons: pipeQualityData?.wasteTons ?? 0,
+                        topDowntimes: pipeMetrics.downtimes
+                          .sort((a: any, b: any) => b.minutes - a.minutes)
+                          .slice(0, 3)
+                          .map((dt: any) => ({
+                            reason: dt.reason,
+                            minutes: dt.minutes,
+                            percentage: pipeMetrics.totalDowntimeMinutes > 0 ? (dt.minutes / pipeMetrics.totalDowntimeMinutes) * 100 : 0
+                          })),
+                        topDefectReasons: pipeQualityData?.topDefectReasons ?? [],
+                        totalDowntimeMinutes: pipeMetrics.totalDowntimeMinutes,
+                        prevWeekUnits: prevWeekAvg?.avgTrays ? prevWeekAvg.avgTrays * 5 : 0,
+                        prevWeekQuality: 0
+                      }}
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              {/* Hidden report for PDF export */}
+              <div className="hidden">
+                <PipeWeeklyExecutiveReport
+                  ref={reportRef}
+                  weekStart={weekStart}
+                  weekEnd={weekEnd}
+                  daysWorked={records.length}
+                  reportData={{
+                    totalUnits: pipeMetrics.totalUnits,
+                    totalPlanned: Object.values(pipeTargets).reduce((s, v) => s + v, 0),
+                    byDiameter: pipeMetrics.productionByType.reduce((acc, p) => {
+                      const diameter = parseInt(p.size)
+                      const qualityData = pipeQualityData?.byDiameter[diameter]
+                      acc[diameter] = {
+                        produced: p.quantity,
+                        planned: pipeTargets[p.size] || 0,
+                        first: qualityData?.first ?? p.quantity,
+                        second: qualityData?.second ?? 0,
+                        broken: qualityData?.broken ?? 0
+                      }
+                      return acc
+                    }, {} as Record<number, { produced: number; planned: number; first: number; second: number; broken: number }>),
+                    qualityIndex: pipeQualityData 
+                      ? (pipeQualityData.totalFirst / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : pipeMetrics.quality,
+                    secondPercent: pipeQualityData 
+                      ? (pipeQualityData.totalSecond / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 0,
+                    brokenPercent: pipeQualityData 
+                      ? (pipeQualityData.totalBroken / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 100 - pipeMetrics.quality,
+                    wastePercent: pipeQualityData 
+                      ? ((pipeQualityData.totalSecond + pipeQualityData.totalBroken) / (pipeQualityData.totalFirst + pipeQualityData.totalSecond + pipeQualityData.totalBroken)) * 100 
+                      : 100 - pipeMetrics.quality,
+                    wasteBoxes: pipeQualityData?.wasteBoxes ?? 0,
+                    wasteTons: pipeQualityData?.wasteTons ?? 0,
+                    topDowntimes: pipeMetrics.downtimes
+                      .sort((a: any, b: any) => b.minutes - a.minutes)
+                      .slice(0, 3)
+                      .map((dt: any) => ({
+                        reason: dt.reason,
+                        minutes: dt.minutes,
+                        percentage: pipeMetrics.totalDowntimeMinutes > 0 ? (dt.minutes / pipeMetrics.totalDowntimeMinutes) * 100 : 0
+                      })),
+                    topDefectReasons: pipeQualityData?.topDefectReasons ?? [],
+                    totalDowntimeMinutes: pipeMetrics.totalDowntimeMinutes,
+                    prevWeekUnits: prevWeekAvg?.avgTrays ? prevWeekAvg.avgTrays * 5 : 0,
+                    prevWeekQuality: 0
+                  }}
+                />
+              </div>
+
+              {/* Dashboard view */}
+              <div className="space-y-4 bg-background p-4">
+                <div className="text-center border-b pb-4">
+                  <h2 className="text-xl font-bold">SILKE - Informe Semanal - Canos</h2>
+                  <p className="text-muted-foreground">
+                    Semana del {formatDateForDisplay(weekStart)} al {formatDateForDisplay(weekEnd)}
+                  </p>
+                </div>
 
           {/* OEE Indicators */}
           <Card>
@@ -956,7 +1199,8 @@ export function WeeklyReport({ lineType }: WeeklyReportProps) {
               </CardContent>
             </Card>
           )}
-        </div>
+              </div>
+            </>
       ) : (
         <div ref={reportRef} className="bg-white px-4 py-5 text-[13px]">
           {/* Encabezado del Informe */}

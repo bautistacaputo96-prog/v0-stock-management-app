@@ -5,8 +5,9 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Settings, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench } from "lucide-react"
+import { LayoutDashboard, FileText, Users, ChevronDown, Factory, Package, ShieldCheck, Wrench, LogOut, FlaskConical } from "lucide-react"
 import { usePlant, PLANTS, type PlantId } from "@/lib/plant-context"
+import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 
 const navItems = [
   {
@@ -29,8 +30,10 @@ const navItems = [
     href: "/materia-prima",
     icon: Package,
     children: [
-      { title: "Control de Stock", href: "/materia-prima/stock" },
+      { title: "Control de Stock", href: "/materia-prima" },
       { title: "Ingreso MP", href: "/materia-prima/ingreso" },
+      { title: "Proveedores", href: "/materia-prima?tab=proveedores" },
+      { title: "Fletes", href: "/materia-prima?tab=fletes" },
     ],
   },
   {
@@ -38,10 +41,18 @@ const navItems = [
     href: "/calidad",
     icon: ShieldCheck,
     children: [
+      { title: "Panel General", href: "/calidad" },
       { title: "Control Canos", href: "/calidad/canos" },
+      { title: "Granulometria", href: "/calidad/granulometria" },
+      { title: "Humedad", href: "/calidad/humedad" },
       { title: "Ensayos", href: "/calidad/ensayos" },
       { title: "Parametros IRAM", href: "/calidad/parametros" },
     ],
+  },
+  {
+    title: "Formuleo",
+    href: "/formuleo",
+    icon: FlaskConical,
   },
   {
     title: "RRHH",
@@ -53,20 +64,19 @@ const navItems = [
     href: "/mantenimiento",
     icon: Wrench,
   },
-  {
-    title: "Configuracion",
-    href: "/configuracion",
-    icon: Settings,
-  },
 ]
 
 export function Navigation() {
   const pathname = usePathname()
   const { selectedPlant, setSelectedPlant, plantInfo } = usePlant()
+  const { user, logout } = useAuth()
   const [plantDropdownOpen, setPlantDropdownOpen] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const navDropdownRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  // Filtrar items de navegación según el rol del usuario
+  const filteredNavItems = user ? navItems.filter(item => isRouteAllowed(user.role, item.href)) : []
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -137,7 +147,7 @@ export function Navigation() {
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-0.5">
-            {navItems.map((item) => {
+            {filteredNavItems.map((item) => {
               const Icon = item.icon
               const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
 
@@ -200,12 +210,24 @@ export function Navigation() {
                 </Link>
               )
             })}
+
+            {/* Logout button */}
+            {user && (
+              <button
+                onClick={logout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-red-100 hover:text-red-600 transition-colors ml-2"
+                title={`Cerrar sesión (${user.name})`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Salir
+              </button>
+            )}
           </div>
         </div>
 
         {/* Mobile navigation */}
         <div className="md:hidden flex gap-0.5 pb-2 overflow-x-auto -mx-1 px-1">
-          {navItems.flatMap((item) => {
+          {filteredNavItems.flatMap((item) => {
             if (item.children) {
               const ParentIcon = item.icon
               return item.children.map((child) => {

@@ -31,7 +31,7 @@ export function PlantReportsRouter() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground tracking-tight">Informes de Produccion</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Genera informes diarios, semanales, mensuales o por rango de fechas</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Genera informes de produccion por rango de fechas</p>
       </div>
       <ReportsContent />
     </div>
