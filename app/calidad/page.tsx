@@ -161,8 +161,6 @@ export default function CalidadPage() {
   const plantName = plantInfo.name
   const productType = isPaverPlant ? "adoquines" : "canos"
   
-  console.log("[v0] CalidadPage - selectedPlant:", selectedPlant, "isPaverPlant:", isPaverPlant)
-  
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">

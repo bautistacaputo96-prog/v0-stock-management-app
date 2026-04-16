@@ -41,6 +41,7 @@ interface PastonFormula {
   additive_2_kg: number
   water_liters: number
   tank_capacity_liters: number
+  diluted_additive_per_paston_liters: number
   modified_by: string
   modified_at: string
 }
@@ -86,7 +87,8 @@ const defaultPastonFormula: PastonFormula = {
   additive_2_name: "Daraccel",
   additive_2_kg: 0,
   water_liters: 0,
-  tank_capacity_liters: 200,
+  tank_capacity_liters: 1000,
+  diluted_additive_per_paston_liters: 0,
   modified_by: "",
   modified_at: ""
 }
@@ -705,11 +707,36 @@ export function FormuleoRanchosContent() {
                     <Input
                       type="number"
                       value={pastonFormula.tank_capacity_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, tank_capacity_liters: parseFloat(e.target.value) || 200 }))}
-                      placeholder="200"
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, tank_capacity_liters: parseFloat(e.target.value) || 1000 }))}
+                      placeholder="1000"
                       className="text-xs"
                     />
                     <p className="text-[10px] text-muted-foreground">Litros totales</p>
+                  </div>
+                </div>
+                
+                {/* Diluido por paston */}
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 max-w-xs space-y-2">
+                      <Label className="text-xs font-medium">Diluido/Paston (L)</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={pastonFormula.diluted_additive_per_paston_liters || ""}
+                        onChange={(e) => setPastonFormula(prev => ({ ...prev, diluted_additive_per_paston_liters: parseFloat(e.target.value) || 0 }))}
+                        placeholder="Litros de diluido por paston"
+                        className="text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground">Cantidad de aditivo diluido que se agrega por cada paston</p>
+                    </div>
+                    {pastonFormula.diluted_additive_per_paston_liters > 0 && pastonFormula.tank_capacity_liters > 0 && (
+                      <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                        <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                          Rinde: {Math.floor(pastonFormula.tank_capacity_liters / pastonFormula.diluted_additive_per_paston_liters)} pastones por tanque
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
