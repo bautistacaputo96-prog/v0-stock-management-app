@@ -197,12 +197,16 @@ export function FormuleoRanchosContent() {
     setLoading(false)
   }
   
-  // Save paston formula
+  // Request paston save - always ask for name and reason
+  const requestPastonSave = () => {
+    setShowFormulaChangeDialog(true)
+    setPendingFormulaSave("paston")
+  }
+  
+  // Save paston formula (called after dialog confirmation)
   const savePastonFormula = async () => {
-    if (!selectedOperator && !formulaChangedBy) {
-      setShowFormulaChangeDialog(true)
-      setPendingFormulaSave("paston")
-      return
+    if (!formulaChangedBy) {
+      return // Safety check - should have name from dialog
     }
     
     setSaving(true)
@@ -232,19 +236,17 @@ export function FormuleoRanchosContent() {
       }
     }
     
-    // Log formula change if reason provided
-    if (formulaChangeReason) {
-      await supabase
-        .from("paver_formula_changes")
-        .insert({
-          plant: plantValue,
-          formula_type: "paston",
-          changed_by: formulaChangedBy || selectedOperator,
-          change_reason: formulaChangeReason,
-          previous_values: JSON.stringify(pastonFormula),
-          new_values: JSON.stringify(dataToSave)
-        })
-    }
+    // Log formula change (always log when saving)
+    await supabase
+      .from("paver_formula_changes")
+      .insert({
+        plant: plantValue,
+        formula_type: "paston",
+        changed_by: formulaChangedBy,
+        change_reason: formulaChangeReason || "Actualizacion de formula",
+        previous_values: JSON.stringify(pastonFormula),
+        new_values: JSON.stringify(dataToSave)
+      })
     
     setFormulaChangeReason("")
     setFormulaChangedBy("")
@@ -749,7 +751,7 @@ export function FormuleoRanchosContent() {
 
               {/* Save button */}
               <div className="flex justify-end">
-                <Button onClick={savePastonFormula} disabled={saving || !selectedOperator}>
+                <Button onClick={requestPastonSave} disabled={saving}>
                   {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   Guardar Formula Paston
                 </Button>
@@ -771,8 +773,6 @@ export function FormuleoRanchosContent() {
                     <tr className="border-b bg-muted/50">
                       <th className="text-left py-2 px-2 font-medium">Tipo</th>
                       <th className="text-center py-2 px-2 font-medium">Peso (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Min/Ciclo</th>
-                      <th className="text-center py-2 px-2 font-medium">Ficha</th>
                       <th className="text-center py-2 px-2 font-medium">Modificado</th>
                       <th className="py-2 px-2"></th>
                     </tr>
@@ -833,55 +833,6 @@ export function FormuleoRanchosContent() {
                                 placeholder="0"
                               />
                             </td>
-                            <td className="py-1 px-1" rowSpan={2}>
-                              <Input
-                                type="number"
-                                step="0.1"
-                                value={formula.cycle_time_min || ""}
-                                onChange={(e) => updateAdoquinFormula(adoquin.code, "cycle_time_min", parseFloat(e.target.value) || 0)}
-                                className="h-8 w-16 text-center text-xs"
-                                placeholder="0"
-                              />
-                            </td>
-                            <td className="py-1 px-1 text-center" rowSpan={2}>
-                              {formula.spec_pdf_url ? (
-                                <a href={formula.spec_pdf_url} target="_blank" rel="noopener noreferrer">
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <FileText className="w-4 h-4 text-blue-600" />
-                                  </Button>
-                                </a>
-                              ) : (
-                                <label className="cursor-pointer">
-                                  <input
-                                    type="file"
-                                    accept=".pdf"
-                                    className="hidden"
-                                    onChange={async (e) => {
-                                      const file = e.target.files?.[0]
-                                      if (!file) return
-                                      
-                                      const formData = new FormData()
-                                      formData.append("file", file)
-                                      formData.append("folder", `fichas-tecnicas/adoquines`)
-                                      
-                                      const response = await fetch("/api/upload-pdf", {
-                                        method: "POST",
-                                        body: formData
-                                      })
-                                      
-                                      if (response.ok) {
-                                        const { url } = await response.json()
-                                        updateAdoquinFormula(adoquin.code, "spec_pdf_url", url)
-                                        await savePdfUrl(adoquin.code, url)
-                                      }
-                                    }}
-                                  />
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" asChild>
-                                    <span><Upload className="w-4 h-4 text-muted-foreground" /></span>
-                                  </Button>
-                                </label>
-                              )}
-                            </td>
                             <td className="py-2 px-2 text-center text-[10px] text-muted-foreground" rowSpan={2}>
                               {formula.modified_at ? (
                                 <>
@@ -905,7 +856,7 @@ export function FormuleoRanchosContent() {
                           </tr>
                           {/* Detail row with aggregates */}
                           <tr className={`${idx % 2 === 1 ? "bg-muted/30" : ""} border-b`}>
-                            <td colSpan={5} className="py-2 px-3">
+                            <td colSpan={3} className="py-2 px-3">
                               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
                                 {/* Cemento */}
                                 <div className="bg-slate-100 dark:bg-slate-800 p-2 rounded">
