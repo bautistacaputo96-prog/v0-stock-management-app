@@ -162,22 +162,19 @@ export default function CalidadPage() {
   const productType = isPaverPlant ? "adoquines" : "canos"
   
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Beaker className="h-6 w-6 text-green-600" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">Control de Calidad - {plantName}</h1>
-              <p className="text-muted-foreground">Gestion integral de calidad de materiales y {productType}</p>
-            </div>
-          </div>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+          <Beaker className="h-6 w-6 text-green-600" />
         </div>
-      </header>
+        <div>
+          <h1 className="text-2xl font-bold">Control de Calidad - {plantName}</h1>
+          <p className="text-muted-foreground">Gestion integral de calidad de materiales y {productType}</p>
+        </div>
+      </div>
 
-      <main className="container mx-auto px-4 py-6 space-y-8">
+      <div className="space-y-8">
         {/* Quick Access Modules */}
         <section>
           <h2 className="text-lg font-semibold mb-4">Modulos de Control</h2>
@@ -300,7 +297,7 @@ export default function CalidadPage() {
             </Card>
           </div>
         </section>
-      </main>
+      </div>
     </div>
   )
 }
