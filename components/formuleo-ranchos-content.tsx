@@ -128,8 +128,6 @@ export function FormuleoRanchosContent() {
   const [showAddOperator, setShowAddOperator] = useState(false)
   const [newOperatorName, setNewOperatorName] = useState("")
   const [showHistory, setShowHistory] = useState(false)
-  const [showMarkVSheet, setShowMarkVSheet] = useState(false)
-  const [showDaraccelSheet, setShowDaraccelSheet] = useState(false)
   
   // Formula change tracking
   const [showFormulaChangeDialog, setShowFormulaChangeDialog] = useState(false)
@@ -231,8 +229,10 @@ export function FormuleoRanchosContent() {
       tank_capacity_liters: pastonFormula.tank_capacity_liters,
       additive_1_kg: pastonFormula.additive_1_kg,
       additive_1_name: pastonFormula.additive_1_name || "Mark V",
+      additive_1_pdf_url: pastonFormula.additive_1_pdf_url || null,
       additive_2_kg: pastonFormula.additive_2_kg,
       additive_2_name: pastonFormula.additive_2_name || "Daraccel",
+      additive_2_pdf_url: pastonFormula.additive_2_pdf_url || null,
       water_in_tank_liters: pastonFormula.tank_capacity_liters - pastonFormula.additive_1_kg - pastonFormula.additive_2_kg,
       diluted_additive_per_paston_liters: pastonFormula.diluted_additive_per_paston_liters,
       modified_by: formulaChangedBy,
@@ -658,9 +658,37 @@ export function FormuleoRanchosContent() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-medium">Mark V</Label>
-                      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => setShowMarkVSheet(true)}>
-                        <FileText className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        {pastonFormula.additive_1_pdf_url ? (
+                          <a href={pastonFormula.additive_1_pdf_url} target="_blank" rel="noopener noreferrer">
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600">
+                              <FileText className="w-3 h-3" />
+                            </Button>
+                          </a>
+                        ) : null}
+                        <label className="cursor-pointer">
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              const formData = new FormData()
+                              formData.append("file", file)
+                              formData.append("folder", "fichas-tecnicas/aditivos")
+                              const response = await fetch("/api/upload-pdf", { method: "POST", body: formData })
+                              if (response.ok) {
+                                const { url } = await response.json()
+                                setPastonFormula(prev => ({ ...prev, additive_1_pdf_url: url }))
+                              }
+                            }}
+                          />
+                          <Button variant="ghost" size="sm" className="h-6 px-2" asChild>
+                            <span><Upload className="w-3 h-3" /></span>
+                          </Button>
+                        </label>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <Input
@@ -700,9 +728,37 @@ export function FormuleoRanchosContent() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-medium">Daraccel</Label>
-                      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => setShowDaraccelSheet(true)}>
-                        <FileText className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        {pastonFormula.additive_2_pdf_url ? (
+                          <a href={pastonFormula.additive_2_pdf_url} target="_blank" rel="noopener noreferrer">
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600">
+                              <FileText className="w-3 h-3" />
+                            </Button>
+                          </a>
+                        ) : null}
+                        <label className="cursor-pointer">
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              const formData = new FormData()
+                              formData.append("file", file)
+                              formData.append("folder", "fichas-tecnicas/aditivos")
+                              const response = await fetch("/api/upload-pdf", { method: "POST", body: formData })
+                              if (response.ok) {
+                                const { url } = await response.json()
+                                setPastonFormula(prev => ({ ...prev, additive_2_pdf_url: url }))
+                              }
+                            }}
+                          />
+                          <Button variant="ghost" size="sm" className="h-6 px-2" asChild>
+                            <span><Upload className="w-3 h-3" /></span>
+                          </Button>
+                        </label>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <Input
