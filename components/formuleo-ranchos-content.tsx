@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { FlaskConical, Grid3X3, Save, Plus, History, Loader2, FileText, Upload, AlertTriangle } from "lucide-react"
+import { FlaskConical, Grid3X3, Save, Plus, History, Loader2, FileText, Upload, AlertTriangle, Info } from "lucide-react"
 import { getSupabase } from "@/lib/supabase"
 import { usePlant } from "@/lib/plant-context"
 
@@ -601,7 +601,18 @@ export function FormuleoRanchosContent() {
 
               {/* Tanque de aditivos */}
               <div className="border rounded-lg p-4 bg-muted/30">
-                <h4 className="font-medium text-sm mb-3">Tanque de Aditivo Diluido ({pastonFormula.tank_capacity_liters}L)</h4>
+                <div className="flex items-center gap-3 mb-3">
+                  <h4 className="font-medium text-sm">Tanque de Aditivo Diluido</h4>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      value={pastonFormula.tank_capacity_liters || ""}
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, tank_capacity_liters: parseFloat(e.target.value) || 1000 }))}
+                      className="h-7 w-20 text-xs text-center"
+                    />
+                    <span className="text-xs text-muted-foreground">L</span>
+                  </div>
+                </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {/* Mark V */}
@@ -688,55 +699,50 @@ export function FormuleoRanchosContent() {
                     </p>
                   </div>
                   
-                  {/* Agua */}
+                  {/* Agua (calculada automaticamente) */}
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium">Agua</Label>
+                    <Label className="text-xs font-medium">Agua (L)</Label>
                     <Input
                       type="number"
-                      value={pastonFormula.water_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, water_liters: parseFloat(e.target.value) || 0 }))}
-                      placeholder="Litros"
-                      className="text-xs"
+                      value={(() => {
+                        const add1Liters = pastonFormula.additive_1_kg / additive1Density
+                        const add2Liters = pastonFormula.additive_2_kg / additive2Density
+                        return (pastonFormula.tank_capacity_liters - add1Liters - add2Liters).toFixed(1)
+                      })()}
+                      disabled
+                      className="bg-muted"
                     />
-                    <p className="text-[10px] text-muted-foreground">Completa tanque a {pastonFormula.tank_capacity_liters}L</p>
+                    <p className="text-[10px] text-muted-foreground">Calculado automaticamente</p>
                   </div>
                   
-                  {/* Capacidad tanque */}
+                  {/* Litros por paston */}
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium">Capacidad Tanque</Label>
+                    <Label className="text-xs font-medium">Diluido/Paston (L)</Label>
                     <Input
                       type="number"
-                      value={pastonFormula.tank_capacity_liters || ""}
-                      onChange={(e) => setPastonFormula(prev => ({ ...prev, tank_capacity_liters: parseFloat(e.target.value) || 1000 }))}
-                      placeholder="1000"
-                      className="text-xs"
+                      value={pastonFormula.diluted_additive_per_paston_liters || ""}
+                      onChange={(e) => setPastonFormula(prev => ({ ...prev, diluted_additive_per_paston_liters: parseFloat(e.target.value) || 0 }))}
+                      placeholder="0"
                     />
-                    <p className="text-[10px] text-muted-foreground">Litros totales</p>
+                    <p className="text-[10px] text-muted-foreground">Litros de mezcla por paston</p>
                   </div>
                 </div>
                 
-                {/* Diluido por paston */}
-                <div className="mt-4 pt-4 border-t">
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1 max-w-xs space-y-2">
-                      <Label className="text-xs font-medium">Diluido/Paston (L)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        value={pastonFormula.diluted_additive_per_paston_liters || ""}
-                        onChange={(e) => setPastonFormula(prev => ({ ...prev, diluted_additive_per_paston_liters: parseFloat(e.target.value) || 0 }))}
-                        placeholder="Litros de diluido por paston"
-                        className="text-xs"
-                      />
-                      <p className="text-[10px] text-muted-foreground">Cantidad de aditivo diluido que se agrega por cada paston</p>
+                {/* Resumen de dosificacion */}
+                <div className="mt-4 p-3 bg-background rounded border">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Info className="w-4 h-4 text-blue-500" />
+                    <span className="text-xs font-medium">Dosificacion de aditivos por kg de cemento:</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="flex justify-between">
+                      <span>Mark V:</span>
+                      <span className="font-mono font-medium">{markVPercentage.toFixed(3)}%</span>
                     </div>
-                    {pastonFormula.diluted_additive_per_paston_liters > 0 && pastonFormula.tank_capacity_liters > 0 && (
-                      <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
-                        <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                          Rinde: {Math.floor(pastonFormula.tank_capacity_liters / pastonFormula.diluted_additive_per_paston_liters)} pastones por tanque
-                        </p>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span>Daraccel:</span>
+                      <span className="font-mono font-medium">{daraccelPercentage.toFixed(3)}%</span>
+                    </div>
                   </div>
                 </div>
               </div>
