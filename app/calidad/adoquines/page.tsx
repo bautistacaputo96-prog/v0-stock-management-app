@@ -547,9 +547,11 @@ export default function CalidadAdoquinesPage() {
                     </TableHeader>
                     <TableBody>
                       {pendingSpecimens.map((specimen) => {
-                        const scheduledDate = new Date(specimen.scheduled_test_date)
+                        // Calculate scheduled date from sample_date + test_age_days
+                        const sampleDate = specimen.sample?.sample_date ? new Date(specimen.sample.sample_date) : null
+                        const scheduledDate = sampleDate ? new Date(sampleDate.getTime() + specimen.test_age_days * 24 * 60 * 60 * 1000) : null
                         const today = new Date()
-                        const daysOverdue = Math.floor((today.getTime() - scheduledDate.getTime()) / (1000 * 60 * 60 * 24))
+                        const daysOverdue = scheduledDate ? Math.floor((today.getTime() - scheduledDate.getTime()) / (1000 * 60 * 60 * 24)) : 0
                         
                         return (
                           <TableRow key={specimen.id}>
@@ -568,13 +570,15 @@ export default function CalidadAdoquinesPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              {new Date(specimen.scheduled_test_date).toLocaleDateString("es-AR")}
+                              {scheduledDate ? scheduledDate.toLocaleDateString("es-AR") : "-"}
                             </TableCell>
                             <TableCell>
                               {daysOverdue > 0 ? (
                                 <span className="text-red-600 font-medium">+{daysOverdue}</span>
-                              ) : (
+                              ) : daysOverdue === 0 ? (
                                 <span className="text-green-600">Hoy</span>
+                              ) : (
+                                <span className="text-muted-foreground">{daysOverdue}</span>
                               )}
                             </TableCell>
                             <TableCell className="text-right">
