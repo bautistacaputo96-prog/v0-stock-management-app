@@ -1,11 +1,13 @@
--- Paver mix designs table (similar to pipe_mix_designs but for pavers/adoquines)
-CREATE TABLE IF NOT EXISTS paver_mix_designs (
+-- Drop and recreate paver_mix_designs with correct columns
+DROP TABLE IF EXISTS paver_mix_designs CASCADE;
+
+CREATE TABLE paver_mix_designs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   plant TEXT NOT NULL DEFAULT 'ranchos',
-  adoquin_type TEXT NOT NULL, -- 'AH6', 'AH8', 'AH6-R', 'AH6-N', etc.
-  adoquin_name TEXT NOT NULL, -- Display name: 'Adoquin AH6', 'Adoquin AH8 Rojo', etc.
+  adoquin_type TEXT NOT NULL,
+  adoquin_name TEXT NOT NULL,
   height_cm INT DEFAULT 6,
-  color TEXT, -- 'rojo', 'negro', 'amarillo', etc.
+  color TEXT,
   weight_kg DECIMAL(10,2) DEFAULT 0,
   cement_kg DECIMAL(10,2) DEFAULT 0,
   sand_kg DECIMAL(10,2) DEFAULT 0,
@@ -30,19 +32,20 @@ INSERT INTO paver_mix_designs (plant, adoquin_type, adoquin_name, height_cm, col
   ('ranchos', 'AH8', 'Adoquin H8', 8, NULL, true),
   ('ranchos', 'AH8-R', 'Adoquin H8 Rojo', 8, 'rojo', true),
   ('ranchos', 'AH8-A', 'Adoquin H8 Amarillo', 8, 'amarillo', true),
-  ('ranchos', 'AH8-N', 'Adoquin H8 Negro', 8, 'negro', true)
-ON CONFLICT (plant, adoquin_type) DO NOTHING;
+  ('ranchos', 'AH8-N', 'Adoquin H8 Negro', 8, 'negro', true);
 
--- Create index for faster queries
-CREATE INDEX IF NOT EXISTS idx_paver_mix_designs_plant ON paver_mix_designs(plant);
-CREATE INDEX IF NOT EXISTS idx_paver_mix_designs_adoquin_type ON paver_mix_designs(adoquin_type);
+-- Create indexes
+CREATE INDEX idx_paver_mix_designs_plant ON paver_mix_designs(plant);
+CREATE INDEX idx_paver_mix_designs_adoquin_type ON paver_mix_designs(adoquin_type);
 
--- Table to track formula changes
-CREATE TABLE IF NOT EXISTS paver_formula_changes (
+-- Create formula changes table
+DROP TABLE IF EXISTS paver_formula_changes;
+
+CREATE TABLE paver_formula_changes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   plant TEXT NOT NULL,
-  formula_type TEXT NOT NULL, -- 'paston' or 'adoquin'
-  adoquin_type TEXT, -- NULL for paston changes
+  formula_type TEXT NOT NULL,
+  adoquin_type TEXT,
   changed_by TEXT NOT NULL,
   change_reason TEXT NOT NULL,
   previous_values JSONB,
@@ -50,5 +53,5 @@ CREATE TABLE IF NOT EXISTS paver_formula_changes (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_paver_formula_changes_plant ON paver_formula_changes(plant);
-CREATE INDEX IF NOT EXISTS idx_paver_formula_changes_date ON paver_formula_changes(created_at);
+CREATE INDEX idx_paver_formula_changes_plant ON paver_formula_changes(plant);
+CREATE INDEX idx_paver_formula_changes_date ON paver_formula_changes(created_at);
