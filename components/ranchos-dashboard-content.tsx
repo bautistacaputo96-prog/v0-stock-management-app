@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { getSupabase } from "@/lib/supabase"
-import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight } from "lucide-react"
+import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight, Package, Boxes } from "lucide-react"
 import {
   ResponsiveContainer,
   AreaChart,
@@ -14,6 +14,9 @@ import {
   ReferenceLine,
   BarChart,
   Bar,
+  Legend,
+  ComposedChart,
+  Line,
 } from "recharts"
 
 const MONTH_NAMES = [
@@ -21,12 +24,15 @@ const MONTH_NAMES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ]
 
-type PaverChartMetric = "pastones" | "cementoTotal" | "paradas"
+type PaverChartMetric = "tablas" | "m2Primera" | "m2Segunda" | "pastones" | "paradas"
 
 interface DailyData {
   date: string
   fullDate: string
+  tablas: number
   pastones: number
+  m2Primera: number
+  m2Segunda: number
   cementoTotal: number
   paradas: number
   productType: string
@@ -42,38 +48,91 @@ interface DailyData {
   stoneSupplier: string
 }
 
+interface StockItem {
+  name: string
+  stockTn: number
+  criticalLevel: number
+  warningLevel: number
+  daysOfCoverage: number
+}
+
 // ── Helper components ──────────────────────────────────────────────────────
 
-function OeeGauge({ label, value, target = 85 }: { label: string; value: number; target?: number }) {
-  const isOk = value >= target
+function KpiCard({ 
+  label, 
+  value, 
+  unit = "", 
+  prevValue, 
+  prevLabel,
+  highlight = false,
+  size = "default"
+}: { 
+  label: string
+  value: number | string
+  unit?: string
+  prevValue?: number
+  prevLabel?: string
+  highlight?: boolean
+  size?: "default" | "large"
+}) {
+  const pct = prevValue && typeof value === "number" && prevValue > 0 
+    ? ((value - prevValue) / prevValue * 100) 
+    : 0
+  const up = pct >= 0
+  
   return (
-    <div className="bg-card rounded-lg border border-border p-4">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">{label}</div>
-      <div className={`text-3xl font-bold ${isOk ? "text-emerald-500" : "text-amber-500"}`}>
-        {value}<span className="text-sm font-normal text-muted-foreground ml-0.5">%</span>
+    <div className={`rounded-lg p-4 ${highlight ? "bg-primary/5 border border-primary/15" : "bg-card border border-border shadow-sm"}`}>
+      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1 font-medium">{label}</div>
+      <div className={`font-bold text-foreground ${size === "large" ? "text-3xl" : "text-2xl"}`}>
+        {typeof value === "number" ? value.toLocaleString("es-AR") : value}
+        {unit && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
       </div>
-      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div
-          className={`h-full ${isOk ? "bg-emerald-500" : "bg-amber-500"} rounded-full`}
-          style={{ width: `${Math.min(value, 100)}%` }}
-        />
-      </div>
-      <div className="text-[10px] text-muted-foreground mt-1">Obj: {target}%</div>
+      {prevValue !== undefined && prevValue > 0 && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${up ? "text-emerald-600" : "text-red-600"}`}>
+            {up ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+            {Math.abs(pct).toFixed(1)}%
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            vs {prevLabel || "mes ant."} ({prevValue.toLocaleString("es-AR")})
+          </span>
+        </div>
+      )}
     </div>
   )
 }
 
-function MpCard({ name, stockTn }: { name: string; stockTn: number }) {
+function StockCard({ item }: { item: StockItem }) {
+  const getStatus = () => {
+    if (item.stockTn <= item.criticalLevel) return { color: "text-red-600", bg: "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900", label: "Critico" }
+    if (item.stockTn <= item.warningLevel) return { color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900", label: "Bajo" }
+    return { color: "text-emerald-600", bg: "bg-card border-border", label: "OK" }
+  }
+  const status = getStatus()
+  
   return (
-    <div className="bg-card rounded-lg border border-border p-4">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">{name}</div>
-      {stockTn > 0 ? (
-        <div className="text-xl font-bold text-foreground">
-          {stockTn.toFixed(1)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span>
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground mt-2">Sin datos de stock</div>
-      )}
+    <div className={`rounded-lg border p-4 ${status.bg}`}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">{item.name}</div>
+        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${status.color} bg-current/10`}>
+          {status.label}
+        </span>
+      </div>
+      <div className="text-xl font-bold text-foreground">
+        {item.stockTn.toFixed(1)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span>
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-1">
+        {item.daysOfCoverage > 0 ? `~${item.daysOfCoverage} dias de cobertura` : "Sin consumo registrado"}
+      </div>
+      <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${
+            item.stockTn <= item.criticalLevel ? "bg-red-500" :
+            item.stockTn <= item.warningLevel ? "bg-amber-500" : "bg-emerald-500"
+          }`}
+          style={{ width: `${Math.min((item.stockTn / (item.warningLevel * 2)) * 100, 100)}%` }}
+        />
+      </div>
     </div>
   )
 }
@@ -104,8 +163,8 @@ export function RanchosDashboardContent() {
   const [loading, setLoading] = useState(true)
   const [records, setRecords] = useState<any[]>([])
   const [prevRecords, setPrevRecords] = useState<any[]>([])
-  const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
-  const [chartMetric, setChartMetric] = useState<PaverChartMetric>("pastones")
+  const [stockData, setStockData] = useState<StockItem[]>([])
+  const [chartMetric, setChartMetric] = useState<PaverChartMetric>("tablas")
 
   useEffect(() => {
     let retries = 0
@@ -142,7 +201,7 @@ export function RanchosDashboardContent() {
         .order("production_date"),
       supabase
         .from("paver_production")
-        .select("pastones_count, production_date")
+        .select("tables_produced, pastones_count, palletized_first, palletized_second, production_date, cement_silo_1_tn, cement_silo_2_tn")
         .gte("production_date", pmStart)
         .lte("production_date", pmEnd),
     ])
@@ -151,36 +210,60 @@ export function RanchosDashboardContent() {
     setRecords(cmResult.data || [])
     setPrevRecords(pmResult.data || [])
 
-    // Independent mp_receipts fetch — graceful fallback
+    // Calculate stock from mp_receipts and consumption
     try {
-      const { data: mpResult } = await supabase
+      const { data: receipts } = await supabase
         .from("mp_receipts")
-        .select("material_name, quantity_tn, receipt_date")
-        .eq("plant", "ranchos")
+        .select("material_type, quantity_tn")
+        .eq("line_type", "adoquines")
         .gte("receipt_date", start)
         .lte("receipt_date", end)
 
-      if (mpResult && mpResult.length > 0) {
-        const MATERIALS = ["Arena", "Piedra 0/6", "Cemento", "Aditivos"]
-        const stockMap: Record<string, number> = {}
-        mpResult.forEach((r: any) => {
-          stockMap[r.material_name] = (stockMap[r.material_name] || 0) + (r.quantity_tn || 0)
-        })
-        setMpData(MATERIALS.map(name => ({ name, stockTn: stockMap[name] || 0 })))
-      } else {
-        setMpData([
-          { name: "Arena", stockTn: 0 },
-          { name: "Piedra 0/6", stockTn: 0 },
-          { name: "Cemento", stockTn: 0 },
-          { name: "Aditivos", stockTn: 0 },
-        ])
-      }
+      // Calculate daily consumption from production records
+      const totalCement = (cmResult.data || []).reduce((s: number, r: any) => 
+        s + (r.cement_silo_1_tn || 0) + (r.cement_silo_2_tn || 0), 0)
+      const prodDays = (cmResult.data || []).length || 1
+      const dailyCementConsumption = totalCement / prodDays
+
+      // Estimate other materials based on typical ratios
+      const dailySandConsumption = dailyCementConsumption * 2.5
+      const dailyStoneConsumption = dailyCementConsumption * 3
+
+      // Aggregate receipts by material
+      const stockMap: Record<string, number> = {}
+      ;(receipts || []).forEach((r: any) => {
+        const key = r.material_type || "Otro"
+        stockMap[key] = (stockMap[key] || 0) + (r.quantity_tn || 0)
+      })
+
+      setStockData([
+        { 
+          name: "Arena", 
+          stockTn: stockMap["Arena"] || 0, 
+          criticalLevel: 50, 
+          warningLevel: 100,
+          daysOfCoverage: dailySandConsumption > 0 ? Math.round((stockMap["Arena"] || 0) / dailySandConsumption) : 0
+        },
+        { 
+          name: "Piedra", 
+          stockTn: stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0, 
+          criticalLevel: 50, 
+          warningLevel: 100,
+          daysOfCoverage: dailyStoneConsumption > 0 ? Math.round((stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0) / dailyStoneConsumption) : 0
+        },
+        { 
+          name: "Cemento", 
+          stockTn: stockMap["Cemento"] || 0, 
+          criticalLevel: 20, 
+          warningLevel: 40,
+          daysOfCoverage: dailyCementConsumption > 0 ? Math.round((stockMap["Cemento"] || 0) / dailyCementConsumption) : 0
+        },
+      ])
     } catch {
-      setMpData([
-        { name: "Arena", stockTn: 0 },
-        { name: "Piedra 0/6", stockTn: 0 },
-        { name: "Cemento", stockTn: 0 },
-        { name: "Aditivos", stockTn: 0 },
+      setStockData([
+        { name: "Arena", stockTn: 0, criticalLevel: 50, warningLevel: 100, daysOfCoverage: 0 },
+        { name: "Piedra", stockTn: 0, criticalLevel: 50, warningLevel: 100, daysOfCoverage: 0 },
+        { name: "Cemento", stockTn: 0, criticalLevel: 20, warningLevel: 40, daysOfCoverage: 0 },
       ])
     }
 
@@ -206,7 +289,10 @@ export function RanchosDashboardContent() {
       return {
         date: new Date(r.production_date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
         fullDate: r.production_date,
+        tablas: r.tables_produced || 0,
         pastones: r.pastones_count || 0,
+        m2Primera: r.palletized_first || 0,
+        m2Segunda: r.palletized_second || 0,
         cementoTotal: Number(((r.cement_silo_1_tn || 0) + (r.cement_silo_2_tn || 0)).toFixed(3)),
         paradas: totalDowntime,
         productType: r.product_type_code || "",
@@ -228,13 +314,20 @@ export function RanchosDashboardContent() {
   const stats = useMemo(() => {
     if (dailyData.length === 0) return null
     const n = dailyData.length
+    const totalTablas = dailyData.reduce((s, d) => s + d.tablas, 0)
     const totalPastones = dailyData.reduce((s, d) => s + d.pastones, 0)
+    const totalM2Primera = dailyData.reduce((s, d) => s + d.m2Primera, 0)
+    const totalM2Segunda = dailyData.reduce((s, d) => s + d.m2Segunda, 0)
     const totalCemento = dailyData.reduce((s, d) => s + d.cementoTotal, 0)
     const totalParadas = dailyData.reduce((s, d) => s + d.paradas, 0)
     return {
       days: n,
+      totalTablas,
+      avgTablas: totalTablas / n,
       totalPastones,
       avgPastones: totalPastones / n,
+      totalM2Primera,
+      totalM2Segunda,
       totalCemento,
       avgCemento: totalCemento / n,
       totalParadas,
@@ -246,22 +339,22 @@ export function RanchosDashboardContent() {
   const prevStats = useMemo(() => {
     if (prevRecords.length === 0) return null
     const n = prevRecords.length
+    const totalTablas = prevRecords.reduce((s: number, r: any) => s + (r.tables_produced || 0), 0)
     const totalPastones = prevRecords.reduce((s: number, r: any) => s + (r.pastones_count || 0), 0)
-    return { days: n, avgPastones: totalPastones / n, totalPastones }
+    const totalM2Primera = prevRecords.reduce((s: number, r: any) => s + (r.palletized_first || 0), 0)
+    const totalM2Segunda = prevRecords.reduce((s: number, r: any) => s + (r.palletized_second || 0), 0)
+    return { 
+      days: n, 
+      avgTablas: totalTablas / n, 
+      totalTablas,
+      totalPastones,
+      avgPastones: totalPastones / n,
+      totalM2Primera,
+      totalM2Segunda
+    }
   }, [prevRecords])
 
-  // Filtered averages for reference lines
-  const filteredAvg = useMemo(() => {
-    if (dailyData.length === 0) return null
-    const n = dailyData.length
-    return {
-      avgPastones: dailyData.reduce((s, d) => s + d.pastones, 0) / n,
-      avgCemento: dailyData.reduce((s, d) => s + d.cementoTotal, 0) / n,
-      avgParadas: dailyData.reduce((s, d) => s + d.paradas, 0) / n,
-    }
-  }, [dailyData])
-
-  // Weekly data
+  // Weekly data for tablas
   const weeklyData = useMemo(() => {
     const weeks = [
       { label: "Sem 1", range: [1, 7] },
@@ -272,7 +365,7 @@ export function RanchosDashboardContent() {
     const getTotForRange = (range: number[]) =>
       dailyData
         .filter(d => { const day = parseInt(d.fullDate.split("-")[2]); return day >= range[0] && day <= range[1] })
-        .reduce((s, d) => s + d.pastones, 0)
+        .reduce((s, d) => s + d.tablas, 0)
 
     return weeks.map((w, i) => ({
       label: w.label,
@@ -281,32 +374,33 @@ export function RanchosDashboardContent() {
     }))
   }, [dailyData])
 
-  // OEE for adoquines
-  const oeeData = useMemo(() => {
-    const daysWithTime = dailyData.filter(d => d.productionMinutes > 0)
-    if (daysWithTime.length === 0) return null
-    const totalProd = daysWithTime.reduce((s, d) => s + d.productionMinutes, 0)
-    const totalParadas = daysWithTime.reduce((s, d) => s + d.paradas, 0)
-    const id = ((totalProd - totalParadas) / totalProd) * 100
-    const totalPastones = daysWithTime.reduce((s, d) => s + d.pastones, 0)
-    const objetivo = daysWithTime.length * 35 * 2 // 35 pastones/turno, 2 turnos
-    const ir = Math.min((totalPastones / objetivo) * 100, 100)
-    const oee = (id * ir) / 100
-    return { id: Math.round(id), ir: Math.round(ir), oee: Math.round(oee) }
+  // Quality chart data (m2 primera vs segunda)
+  const qualityChartData = useMemo(() => {
+    return dailyData.map(d => ({
+      date: d.date,
+      primera: d.m2Primera,
+      segunda: d.m2Segunda,
+    }))
   }, [dailyData])
 
   // Top 5 paradas agrupadas
   const top5Paradas = useMemo(() => {
-    const map = new Map<string, number>()
+    const map = new Map<string, { minutes: number; count: number }>()
     records.forEach(r => {
       ;(r.paver_downtime || []).forEach((dt: any) => {
         const reason = dt.custom_reason || "Sin especificar"
-        map.set(reason, (map.get(reason) || 0) + (dt.minutes || 0))
+        const existing = map.get(reason) || { minutes: 0, count: 0 }
+        map.set(reason, { minutes: existing.minutes + (dt.minutes || 0), count: existing.count + 1 })
       })
     })
-    const total = Array.from(map.values()).reduce((s, v) => s + v, 0)
+    const total = Array.from(map.values()).reduce((s, v) => s + v.minutes, 0)
     return Array.from(map.entries())
-      .map(([reason, minutes]) => ({ reason, minutes, pct: total > 0 ? Math.round((minutes / total) * 100) : 0 }))
+      .map(([reason, data]) => ({ 
+        reason, 
+        minutes: data.minutes, 
+        count: data.count,
+        pct: total > 0 ? Math.round((data.minutes / total) * 100) : 0 
+      }))
       .sort((a, b) => b.minutes - a.minutes)
       .slice(0, 5)
   }, [records])
@@ -314,21 +408,31 @@ export function RanchosDashboardContent() {
   // Alerts
   const alerts = useMemo(() => {
     const result: string[] = []
+    // Check stock alerts
+    stockData.forEach(s => {
+      if (s.stockTn > 0 && s.stockTn <= s.criticalLevel) {
+        result.push(`Stock critico de ${s.name}`)
+      }
+    })
+    // Check production alerts
     if (dailyData.length >= 2) {
-      // Check consecutive days without production
       let maxConsecutive = 0
       let current = 0
       dailyData.forEach(d => {
-        if (d.pastones === 0) { current++; maxConsecutive = Math.max(maxConsecutive, current) }
+        if (d.tablas === 0) { current++; maxConsecutive = Math.max(maxConsecutive, current) }
         else current = 0
       })
       if (maxConsecutive >= 2) result.push(`${maxConsecutive} dias consecutivos sin produccion`)
     }
     return result
-  }, [dailyData])
+  }, [dailyData, stockData])
 
   const chartLabels: Record<PaverChartMetric, string> = {
-    pastones: "Pastones", cementoTotal: "Cemento total (tn)", paradas: "Min. paradas"
+    tablas: "Tablas", 
+    m2Primera: "m2 1ra", 
+    m2Segunda: "m2 2da",
+    pastones: "Pastones", 
+    paradas: "Min. paradas"
   }
 
   const prevMonthIdx = selectedMonthIdx === 0 ? 11 : selectedMonthIdx - 1
@@ -378,7 +482,7 @@ export function RanchosDashboardContent() {
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-1">Sin datos para {MONTH_NAMES[selectedMonthIdx]}</h3>
           <p className="text-sm text-muted-foreground max-w-md">
-            No hay partes de produccion cargados para este mes. Anda a "Nueva Produccion" para cargar el primer parte de adoquines.
+            No hay partes de produccion cargados para este mes. Anda a Produccion para cargar el primer parte de adoquines.
           </p>
         </div>
       ) : (
@@ -396,7 +500,7 @@ export function RanchosDashboardContent() {
             </div>
           )}
 
-          {/* ═══ SECCION 2 — KPIs del mes ══════════════════════════════════ */}
+          {/* ═══ SECCION 2 — KPIs Header ══════════════════════════════════ */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
@@ -405,114 +509,46 @@ export function RanchosDashboardContent() {
               </h2>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              {/* Dias producidos */}
-              <div className="bg-primary/5 border border-primary/15 rounded-lg p-4">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Dias producidos</div>
-                <div className="text-2xl font-bold text-foreground">{stats?.days || 0}</div>
-                {prevStats && (
-                  <div className="text-[10px] text-muted-foreground mt-1">Mes ant.: {prevStats.days}</div>
-                )}
-              </div>
-
-              {/* Pastones del mes */}
-              <div className="bg-card rounded-lg border border-border p-4 shadow-sm">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1 font-medium">Pastones totales</div>
-                <div className="text-2xl font-bold text-foreground">{stats?.totalPastones || 0}</div>
-                {prevStats && (
-                  <div className="flex items-center gap-2 mt-1">
-                    {stats && prevStats.totalPastones > 0 ? (
-                      <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${stats.totalPastones >= prevStats.totalPastones ? "text-emerald-600" : "text-red-600"}`}>
-                        {stats.totalPastones >= prevStats.totalPastones ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                        {(((stats.totalPastones - prevStats.totalPastones) / prevStats.totalPastones) * 100).toFixed(1)}%
-                      </span>
-                    ) : null}
-                    <span className="text-[10px] text-muted-foreground">vs mes ant. ({prevStats.totalPastones})</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Promedio pastones/dia */}
-              <div className="bg-card rounded-lg border border-border p-4 shadow-sm">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1 font-medium">Prom. pastones/dia</div>
-                <div className="text-2xl font-bold text-foreground">{Math.round(stats?.avgPastones || 0)}</div>
-                {prevStats && (
-                  <div className="flex items-center gap-2 mt-1">
-                    {stats && prevStats.avgPastones > 0 ? (
-                      <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${stats.avgPastones >= prevStats.avgPastones ? "text-emerald-600" : "text-red-600"}`}>
-                        {stats.avgPastones >= prevStats.avgPastones ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                        {(((stats.avgPastones - prevStats.avgPastones) / prevStats.avgPastones) * 100).toFixed(1)}%
-                      </span>
-                    ) : null}
-                    <span className="text-[10px] text-muted-foreground">vs mes ant. ({Math.round(prevStats.avgPastones)})</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Cemento total */}
-              <div className="bg-card rounded-lg border border-border p-4 shadow-sm">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1 font-medium">Cemento total</div>
-                <div className="text-2xl font-bold text-foreground">{(stats?.totalCemento || 0).toFixed(2)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span></div>
-                <div className="text-[10px] text-muted-foreground mt-1">Prom: {(stats?.avgCemento || 0).toFixed(2)} tn/dia</div>
-              </div>
-
-              {/* Paradas total */}
-              <div className="bg-destructive/5 border border-destructive/15 rounded-lg p-4">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Min. paradas total</div>
-                <div className="text-2xl font-bold text-foreground">{stats?.totalParadas || 0}<span className="text-sm font-normal text-muted-foreground ml-1">min</span></div>
-                <div className="text-[10px] text-muted-foreground mt-1">Prom: {Math.round(stats?.avgParadas || 0)} min/dia</div>
-              </div>
+              <KpiCard 
+                label="Dias de produccion" 
+                value={stats?.days || 0} 
+                prevValue={prevStats?.days}
+                highlight
+              />
+              <KpiCard 
+                label="Prom. tablas/turno" 
+                value={Math.round(stats?.avgTablas || 0)} 
+                prevValue={prevStats ? Math.round(prevStats.avgTablas) : undefined}
+              />
+              <KpiCard 
+                label="Total tablas" 
+                value={stats?.totalTablas || 0} 
+                prevValue={prevStats?.totalTablas}
+                size="large"
+              />
+              <KpiCard 
+                label="m2 Primera calidad" 
+                value={stats?.totalM2Primera || 0} 
+                unit="m2"
+                prevValue={prevStats?.totalM2Primera}
+              />
+              <KpiCard 
+                label="m2 Segunda calidad" 
+                value={stats?.totalM2Segunda || 0} 
+                unit="m2"
+                prevValue={prevStats?.totalM2Segunda}
+              />
             </div>
           </div>
 
-          {/* ═══ SECCION 3 — Tendencia semanal ════════════════════════════ */}
-          <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Tendencia semanal — pastones</h3>
-            <div className="h-48 mb-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyData} barGap={4}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null
-                      return (
-                        <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
-                          <div className="font-semibold mb-1">{payload[0]?.payload?.label}</div>
-                          <div className="text-muted-foreground">Esta semana: <span className="font-bold text-foreground">{payload[0]?.value}</span></div>
-                          {payload[1] && <div className="text-muted-foreground">Semana ant.: <span className="font-bold text-foreground">{payload[1]?.value}</span></div>}
-                        </div>
-                      )
-                    }}
-                  />
-                  <Bar dataKey="current" name="Esta semana" fill="#1e3a5f" radius={[3, 3, 0, 0]} barSize={22} />
-                  <Bar dataKey="previous" name="Semana ant." fill="#94a3b8" radius={[3, 3, 0, 0]} barSize={22} fillOpacity={0.6} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="grid grid-cols-4 gap-2 pt-3 border-t border-border">
-              {weeklyData.map(w => (
-                <WeekTrend key={w.label} label={w.label} current={w.current} previous={w.previous} />
-              ))}
-            </div>
-          </div>
-
-          {/* ═══ SECCION 4 — OEE + Gráfico diario + Top 5 Paradas ════════ */}
-          {oeeData && (
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <OeeGauge label="ID — Disponibilidad" value={oeeData.id} target={85} />
-              <OeeGauge label="IR — Rendimiento" value={oeeData.ir} target={80} />
-              <OeeGauge label="OEE" value={oeeData.oee} target={68} />
-            </div>
-          )}
-
+          {/* ═══ SECCION 3 — Produccion: Grafico diario + Tendencia semanal ═══ */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-            {/* Gráfico de área diaria */}
+            {/* Grafico de tendencia diaria */}
             <div className="lg:col-span-2 bg-card rounded-lg border border-border p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-foreground">Tendencia diaria</h3>
-                <div className="flex gap-1">
-                  {(["pastones", "cementoTotal", "paradas"] as PaverChartMetric[]).map(m => (
+                <div className="flex gap-1 flex-wrap">
+                  {(["tablas", "m2Primera", "m2Segunda", "pastones", "paradas"] as PaverChartMetric[]).map(m => (
                     <button
                       key={m}
                       onClick={() => setChartMetric(m)}
@@ -543,60 +579,27 @@ export function RanchosDashboardContent() {
                       content={({ active, payload }) => {
                         if (!active || !payload || !payload[0]) return null
                         const d = payload[0].payload as DailyData
-                        const insights: string[] = []
-                        if (d.pastones === 0) insights.push("No hubo produccion este dia")
-                        if (filteredAvg) {
-                          if (d.pastones > 0 && d.pastones < filteredAvg.avgPastones * 0.7) insights.push("Pastones muy bajos vs promedio")
-                          if (d.paradas > filteredAvg.avgParadas * 1.5 && d.paradas > 0) insights.push(`Paradas elevadas: ${d.paradas} min (prom. ${Math.round(filteredAvg.avgParadas)})`)
-                        }
-                        if (d.topStopReason && d.topStopMinutes > 10) insights.push(`Parada ppal: ${d.topStopReason} (${d.topStopMinutes} min)`)
-                        if (d.observations) insights.push(`Obs: ${d.observations}`)
-
                         return (
-                          <div className="bg-card border border-border rounded-lg shadow-lg p-3 max-w-[300px]">
+                          <div className="bg-card border border-border rounded-lg shadow-lg p-3 max-w-[280px]">
                             <div className="flex items-center justify-between mb-1.5">
                               <span className="text-xs font-semibold text-foreground">{d.date}</span>
-                              <div className="flex items-center gap-1.5">
-                                {d.productType && <span className="text-[10px] text-muted-foreground">{d.productType}</span>}
-                                {d.supplierChanged && (
-                                  <span className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded-full font-medium">
-                                    Cambio proveedor
-                                  </span>
-                                )}
-                              </div>
+                              {d.productType && <span className="text-[10px] text-muted-foreground">{d.productType}</span>}
                             </div>
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] mb-2">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                              <span className="text-muted-foreground">Tablas:</span>
+                              <span className="font-semibold text-foreground">{d.tablas}</span>
                               <span className="text-muted-foreground">Pastones:</span>
                               <span className="font-semibold text-foreground">{d.pastones}</span>
-                              <span className="text-muted-foreground">Cemento:</span>
-                              <span className="font-semibold text-foreground">{d.cementoTotal} tn</span>
+                              <span className="text-muted-foreground">m2 1ra:</span>
+                              <span className="font-semibold text-emerald-600">{d.m2Primera}</span>
+                              <span className="text-muted-foreground">m2 2da:</span>
+                              <span className="font-semibold text-amber-600">{d.m2Segunda}</span>
                               <span className="text-muted-foreground">Paradas:</span>
                               <span className="font-semibold text-foreground">{d.paradas} min</span>
-                              <span className="text-muted-foreground">Tiempo extra:</span>
-                              <span className="font-semibold text-foreground">{d.extraMinutes} min</span>
                             </div>
-                            {(d.cementSupplier || d.sandSupplier || d.stoneSupplier) && (
-                              <div className="border-t border-border pt-1.5 mt-1 mb-1">
-                                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Proveedores</p>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
-                                  {d.cementSupplier && <><span className="text-muted-foreground">Cemento:</span><span className="font-medium text-foreground">{d.cementSupplier}</span></>}
-                                  {d.sandSupplier && <><span className="text-muted-foreground">Arena:</span><span className="font-medium text-foreground">{d.sandSupplier}</span></>}
-                                  {d.stoneSupplier && <><span className="text-muted-foreground">Piedra:</span><span className="font-medium text-foreground">{d.stoneSupplier}</span></>}
-                                </div>
-                              </div>
-                            )}
-                            {d.supplierChanged && d.supplierChangeNotes && (
-                              <div className="border-t border-amber-200 dark:border-amber-800 pt-1.5 mt-1 bg-amber-50/50 dark:bg-amber-900/10 -mx-3 px-3 pb-1 rounded-b-lg">
-                                <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
-                                  <strong>Cambio:</strong> {d.supplierChangeNotes}
-                                </p>
-                              </div>
-                            )}
-                            {insights.length > 0 && (
-                              <div className="border-t border-border pt-1.5 mt-1.5 space-y-0.5">
-                                {insights.map((insight, i) => (
-                                  <p key={i} className="text-[10px] text-muted-foreground leading-snug">{insight}</p>
-                                ))}
+                            {d.topStopReason && d.topStopMinutes > 10 && (
+                              <div className="mt-2 pt-2 border-t border-border text-[10px] text-muted-foreground">
+                                Parada ppal: {d.topStopReason} ({d.topStopMinutes} min)
                               </div>
                             )}
                           </div>
@@ -606,28 +609,105 @@ export function RanchosDashboardContent() {
                     <Area
                       type="monotone"
                       dataKey={chartMetric}
-                      stroke={chartMetric === "paradas" ? "#dc2626" : "#1e3a5f"}
+                      stroke={chartMetric === "paradas" ? "#dc2626" : chartMetric === "m2Segunda" ? "#d97706" : "#1e3a5f"}
                       strokeWidth={2}
                       fill="url(#paverFill)"
                       dot={{ r: 2.5, fill: chartMetric === "paradas" ? "#dc2626" : "#1e3a5f" }}
-                      name={chartLabels[chartMetric]}
                     />
-                    {chartMetric === "pastones" && filteredAvg && <ReferenceLine y={Math.round(filteredAvg.avgPastones)} stroke="#1e3a5f" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${Math.round(filteredAvg.avgPastones)}`, position: "insideTopRight", fontSize: 10, fill: "#1e3a5f", fontWeight: 600 }} />}
-                    {chartMetric === "cementoTotal" && filteredAvg && <ReferenceLine y={Number(filteredAvg.avgCemento.toFixed(2))} stroke="#1e3a5f" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${filteredAvg.avgCemento.toFixed(2)} tn`, position: "insideTopRight", fontSize: 10, fill: "#1e3a5f", fontWeight: 600 }} />}
-                    {chartMetric === "paradas" && filteredAvg && <ReferenceLine y={Math.round(filteredAvg.avgParadas)} stroke="#dc2626" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: `Prom: ${Math.round(filteredAvg.avgParadas)} min`, position: "insideTopRight", fontSize: 10, fill: "#dc2626", fontWeight: 600 }} />}
-                    {dailyData.filter(d => d.supplierChanged).map(d => (
-                      <ReferenceLine
-                        key={`sup-${d.date}`}
-                        x={d.date}
-                        stroke="#d97706"
-                        strokeDasharray="3 3"
-                        strokeWidth={2}
-                        strokeOpacity={0.7}
-                        label={{ value: "Cambio prov.", position: "top", fontSize: 8, fill: "#d97706", fontWeight: 600 }}
+                    {stats && chartMetric === "tablas" && (
+                      <ReferenceLine 
+                        y={Math.round(stats.avgTablas)} 
+                        stroke="#1e3a5f" 
+                        strokeDasharray="4 4" 
+                        strokeOpacity={0.6}
+                        label={{ value: `Prom: ${Math.round(stats.avgTablas)}`, position: "insideTopRight", fontSize: 10, fill: "#1e3a5f", fontWeight: 600 }}
                       />
-                    ))}
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Tendencia semanal */}
+            <div className="bg-card rounded-lg border border-border p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-foreground mb-4">Tendencia semanal — tablas</h3>
+              <div className="h-40 mb-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={weeklyData} barGap={4}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                    <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                    <Bar dataKey="current" name="Esta semana" fill="#1e3a5f" radius={[3, 3, 0, 0]} barSize={18} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="grid grid-cols-4 gap-2 pt-3 border-t border-border">
+                {weeklyData.map(w => (
+                  <WeekTrend key={w.label} label={w.label} current={w.current} previous={w.previous} />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ═══ SECCION 4 — Calidad: m2 Primera vs Segunda ══════════════════ */}
+          <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Calidad de produccion</h3>
+                <p className="text-[10px] text-muted-foreground mt-0.5">m2 primera vs segunda calidad por dia</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-emerald-500" />
+                  <span className="text-[10px] text-muted-foreground">1ra Calidad</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-amber-500" />
+                  <span className="text-[10px] text-muted-foreground">2da Calidad</span>
+                </div>
+              </div>
+            </div>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={qualityChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                  <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const total = (payload[0]?.value as number || 0) + (payload[1]?.value as number || 0)
+                      const pctPrimera = total > 0 ? ((payload[0]?.value as number || 0) / total * 100).toFixed(1) : "0"
+                      return (
+                        <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
+                          <div className="font-semibold mb-1">{payload[0]?.payload?.date}</div>
+                          <div className="text-emerald-600">1ra: {payload[0]?.value} m2 ({pctPrimera}%)</div>
+                          <div className="text-amber-600">2da: {payload[1]?.value} m2</div>
+                        </div>
+                      )
+                    }}
+                  />
+                  <Bar dataKey="primera" stackId="quality" fill="#10b981" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="segunda" stackId="quality" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* ═══ SECCION 5 — Stock + Top 5 Paradas ════════════════════════ */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            {/* Stock de materia prima */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Package className="w-3.5 h-3.5 text-muted-foreground" />
+                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
+                  Stock de materia prima
+                </h2>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {stockData.map(item => (
+                  <StockCard key={item.name} item={item} />
+                ))}
               </div>
             </div>
 
@@ -649,7 +729,7 @@ export function RanchosDashboardContent() {
                         </div>
                         <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
                           <span className="text-[11px] font-semibold text-foreground font-mono">{dt.minutes}m</span>
-                          <span className="text-[10px] text-muted-foreground">({dt.pct}%)</span>
+                          <span className="text-[10px] text-muted-foreground">({dt.count}x)</span>
                         </div>
                       </div>
                       <div className="ml-7 h-1 bg-muted rounded-full overflow-hidden">
@@ -664,7 +744,7 @@ export function RanchosDashboardContent() {
             </div>
           </div>
 
-          {/* Supplier Changes Summary */}
+          {/* ═══ SECCION 6 — Cambios de proveedor ═════════════════════════ */}
           {dailyData.some(d => d.supplierChanged) && (
             <div className="bg-card rounded-lg border border-amber-200 dark:border-amber-800 p-5 shadow-sm mb-6">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
@@ -693,16 +773,56 @@ export function RanchosDashboardContent() {
             </div>
           )}
 
-          {/* ═══ SECCION 5 — Materia prima ═════════════════════════════════ */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground" />
-              <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Materia prima — ingresos del mes</h2>
+          {/* ═══ SECCION 7 — Tendencias: Comparacion mes actual vs anterior ═══ */}
+          <div className="bg-card rounded-lg border border-border p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingUp className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Tendencias — {MONTH_NAMES[selectedMonthIdx]} vs {MONTH_NAMES[prevMonthIdx]}
+              </h3>
             </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {mpData.map(mp => (
-                <MpCard key={mp.name} name={mp.name} stockTn={mp.stockTn} />
-              ))}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-4 bg-muted/30 rounded-lg">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Tablas</div>
+                <div className="text-2xl font-bold text-foreground">{stats?.totalTablas || 0}</div>
+                {prevStats && prevStats.totalTablas > 0 && (
+                  <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
+                    (stats?.totalTablas || 0) >= prevStats.totalTablas ? "text-emerald-600" : "text-red-600"
+                  }`}>
+                    {(stats?.totalTablas || 0) >= prevStats.totalTablas ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                    {Math.abs(((stats?.totalTablas || 0) - prevStats.totalTablas) / prevStats.totalTablas * 100).toFixed(1)}%
+                  </div>
+                )}
+              </div>
+              <div className="text-center p-4 bg-muted/30 rounded-lg">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">m2 Primera</div>
+                <div className="text-2xl font-bold text-emerald-600">{stats?.totalM2Primera || 0}</div>
+                {prevStats && prevStats.totalM2Primera > 0 && (
+                  <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
+                    (stats?.totalM2Primera || 0) >= prevStats.totalM2Primera ? "text-emerald-600" : "text-red-600"
+                  }`}>
+                    {(stats?.totalM2Primera || 0) >= prevStats.totalM2Primera ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                    {Math.abs(((stats?.totalM2Primera || 0) - prevStats.totalM2Primera) / prevStats.totalM2Primera * 100).toFixed(1)}%
+                  </div>
+                )}
+              </div>
+              <div className="text-center p-4 bg-muted/30 rounded-lg">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">m2 Segunda</div>
+                <div className="text-2xl font-bold text-amber-600">{stats?.totalM2Segunda || 0}</div>
+                {prevStats && prevStats.totalM2Segunda > 0 && (
+                  <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
+                    (stats?.totalM2Segunda || 0) <= prevStats.totalM2Segunda ? "text-emerald-600" : "text-red-600"
+                  }`}>
+                    {(stats?.totalM2Segunda || 0) <= prevStats.totalM2Segunda ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                    {Math.abs(((stats?.totalM2Segunda || 0) - prevStats.totalM2Segunda) / prevStats.totalM2Segunda * 100).toFixed(1)}%
+                  </div>
+                )}
+              </div>
+              <div className="text-center p-4 bg-muted/30 rounded-lg">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Min. Paradas</div>
+                <div className="text-2xl font-bold text-foreground">{stats?.totalParadas || 0}</div>
+                <div className="text-[10px] text-muted-foreground mt-1">Prom: {Math.round(stats?.avgParadas || 0)} min/dia</div>
+              </div>
             </div>
           </div>
         </>
@@ -710,4 +830,3 @@ export function RanchosDashboardContent() {
     </main>
   )
 }
-
