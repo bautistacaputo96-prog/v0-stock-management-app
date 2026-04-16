@@ -891,11 +891,22 @@ export function FormuleoRanchosContent() {
                         modified_at: ""
                       }
                       
-                      // Calculate percentages
-                      const totalWeight = formula.cement_kg + formula.sand_kg + formula.stone_kg
-                      const cementPct = totalWeight > 0 ? (formula.cement_kg / totalWeight * 100) : 0
-                      const sandPct = totalWeight > 0 ? (formula.sand_kg / totalWeight * 100) : 0
-                      const stonePct = totalWeight > 0 ? (formula.stone_kg / totalWeight * 100) : 0
+                      // Calculate aggregates from paston formula based on adoquin weight
+                      // Total weight of aggregates in 1 paston
+                      const pastonTotalAggregates = pastonFormula.cement_kg + pastonFormula.sand_kg + pastonFormula.stone_kg
+                      
+                      // If we have paston formula, calculate proportions for this adoquin
+                      const adoquinWeight = formula.weight_kg || 0
+                      
+                      // Percentages from paston formula
+                      const cementPct = pastonTotalAggregates > 0 ? (pastonFormula.cement_kg / pastonTotalAggregates * 100) : 0
+                      const sandPct = pastonTotalAggregates > 0 ? (pastonFormula.sand_kg / pastonTotalAggregates * 100) : 0
+                      const stonePct = pastonTotalAggregates > 0 ? (pastonFormula.stone_kg / pastonTotalAggregates * 100) : 0
+                      
+                      // Calculate kg per adoquin based on weight and percentages
+                      const cementKgPerAdoquin = adoquinWeight * (cementPct / 100)
+                      const sandKgPerAdoquin = adoquinWeight * (sandPct / 100)
+                      const stoneKgPerAdoquin = adoquinWeight * (stonePct / 100)
                       
                       return (
                         <React.Fragment key={adoquin.code}>
@@ -957,7 +968,7 @@ export function FormuleoRanchosContent() {
                                   <div className="text-[10px] text-muted-foreground truncate">
                                     {pastonFormula.cement_supplier || "Sin especificar"}
                                   </div>
-                                  <div className="font-mono font-bold">{formula.cement_kg.toFixed(1)} kg</div>
+                                  <div className="font-mono font-bold">{cementKgPerAdoquin.toFixed(2)} kg</div>
                                   <div className="text-muted-foreground">{cementPct.toFixed(1)}%</div>
                                 </div>
                                 {/* Arena */}
@@ -966,7 +977,7 @@ export function FormuleoRanchosContent() {
                                   <div className="text-[10px] text-muted-foreground truncate">
                                     {pastonFormula.sand_supplier || "Sin especificar"}
                                   </div>
-                                  <div className="font-mono font-bold">{formula.sand_kg.toFixed(1)} kg</div>
+                                  <div className="font-mono font-bold">{sandKgPerAdoquin.toFixed(2)} kg</div>
                                   <div className="text-muted-foreground">{sandPct.toFixed(1)}%</div>
                                 </div>
                                 {/* Piedra */}
@@ -975,7 +986,7 @@ export function FormuleoRanchosContent() {
                                   <div className="text-[10px] text-muted-foreground truncate">
                                     {pastonFormula.stone_supplier || "Sin especificar"}
                                   </div>
-                                  <div className="font-mono font-bold">{formula.stone_kg.toFixed(1)} kg</div>
+                                  <div className="font-mono font-bold">{stoneKgPerAdoquin.toFixed(2)} kg</div>
                                   <div className="text-muted-foreground">{stonePct.toFixed(1)}%</div>
                                 </div>
                                 {/* Pigmento (solo para colores) */}
