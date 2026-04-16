@@ -11,28 +11,31 @@ import {
   Settings, 
   BarChart3,
   Cylinder,
-  ArrowRight
+  ArrowRight,
+  Grid3X3
 } from "lucide-react"
 import Link from "next/link"
+import { usePlant } from "@/lib/plant-context"
 
-const QUALITY_MODULES = [
+// Modules for Mercedes (canos)
+const MERCEDES_MODULES = [
   {
-    title: "Control de Caños",
-    description: "Registro de calidad en producción de caños",
+    title: "Control de Canos",
+    description: "Registro de calidad en produccion de canos",
     href: "/calidad/canos",
     icon: Cylinder,
     color: "bg-blue-500",
   },
   {
     title: "Dosificaciones",
-    description: "Fórmulas de mezcla por diámetro",
+    description: "Formulas de mezcla por diametro",
     href: "/calidad/dosificaciones",
     icon: Beaker,
     color: "bg-purple-500",
   },
   {
-    title: "Granulometría",
-    description: "Control granulométrico de áridos",
+    title: "Granulometria",
+    description: "Control granulometrico de aridos",
     href: "/calidad/granulometria",
     icon: FlaskConical,
     color: "bg-amber-500",
@@ -46,14 +49,53 @@ const QUALITY_MODULES = [
   },
   {
     title: "Ensayos",
-    description: "Absorción, flexión y otros ensayos",
+    description: "Absorcion, flexion y otros ensayos",
     href: "/calidad/ensayos",
     icon: TestTube2,
     color: "bg-green-500",
   },
   {
-    title: "Parámetros",
-    description: "Configuración de límites y alertas",
+    title: "Parametros",
+    description: "Configuracion de limites y alertas",
+    href: "/calidad/parametros",
+    icon: Settings,
+    color: "bg-slate-500",
+  },
+]
+
+// Modules for Ranchos (adoquines)
+const RANCHOS_MODULES = [
+  {
+    title: "Control de Adoquines",
+    description: "Registro de calidad en produccion de adoquines",
+    href: "/calidad/adoquines",
+    icon: Grid3X3,
+    color: "bg-orange-500",
+  },
+  {
+    title: "Granulometria",
+    description: "Control granulometrico de aridos",
+    href: "/calidad/granulometria",
+    icon: FlaskConical,
+    color: "bg-amber-500",
+  },
+  {
+    title: "Humedad",
+    description: "Seguimiento de humedad en materiales",
+    href: "/calidad/humedad",
+    icon: Droplets,
+    color: "bg-cyan-500",
+  },
+  {
+    title: "Ensayos",
+    description: "Absorcion, compresion y otros ensayos",
+    href: "/calidad/ensayos",
+    icon: TestTube2,
+    color: "bg-green-500",
+  },
+  {
+    title: "Parametros",
+    description: "Configuracion de limites y alertas",
     href: "/calidad/parametros",
     icon: Settings,
     color: "bg-slate-500",
@@ -111,6 +153,13 @@ const PROCEDURES = [
 ]
 
 export default function CalidadPage() {
+  const { selectedPlant } = usePlant()
+  
+  // Select modules based on plant
+  const QUALITY_MODULES = selectedPlant === "ranchos" ? RANCHOS_MODULES : MERCEDES_MODULES
+  const plantName = selectedPlant === "ranchos" ? "Ranchos" : "Mercedes"
+  const productType = selectedPlant === "ranchos" ? "adoquines" : "canos"
+  
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
@@ -120,8 +169,8 @@ export default function CalidadPage() {
               <Beaker className="h-6 w-6 text-green-600" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">Control de Calidad</h1>
-              <p className="text-muted-foreground">Gestión integral de calidad de materiales y productos</p>
+              <h1 className="text-2xl font-bold">Control de Calidad - {plantName}</h1>
+              <p className="text-muted-foreground">Gestion integral de calidad de materiales y {productType}</p>
             </div>
           </div>
         </div>
@@ -130,7 +179,7 @@ export default function CalidadPage() {
       <main className="container mx-auto px-4 py-6 space-y-8">
         {/* Quick Access Modules */}
         <section>
-          <h2 className="text-lg font-semibold mb-4">Módulos de Control</h2>
+          <h2 className="text-lg font-semibold mb-4">Modulos de Control</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {QUALITY_MODULES.map((module) => (
               <Link key={module.href} href={module.href}>

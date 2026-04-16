@@ -136,15 +136,15 @@ function MateriaPrimaContent() {
     aditivo: true,
   })
 
-  // Load suppliers
+  // Load suppliers when plant changes
   useEffect(() => {
     loadSuppliers()
-  }, [])
+  }, [selectedPlant])
 
-  // Load carriers
+  // Load carriers when plant changes
   useEffect(() => {
     loadCarriers()
-  }, [])
+  }, [selectedPlant])
   
   // Load stock data
   useEffect(() => {
@@ -166,11 +166,13 @@ function MateriaPrimaContent() {
   }
 
   const loadSuppliers = async () => {
+    if (!selectedPlant) return
     setLoadingSuppliers(true)
     const supabase = getSupabase()
     const { data } = await supabase
       .from("suppliers")
       .select("*")
+      .eq("plant", selectedPlant)
       .order("name")
     
     if (data) {
@@ -180,11 +182,13 @@ function MateriaPrimaContent() {
   }
 
   const loadCarriers = async () => {
+    if (!selectedPlant) return
     setLoadingCarriers(true)
     const supabase = getSupabase()
     const { data } = await supabase
       .from("carriers")
       .select("*")
+      .eq("plant", selectedPlant)
       .order("name")
     
     if (data) {
@@ -203,7 +207,8 @@ function MateriaPrimaContent() {
       line_type: supplierForm.line_type,
       is_active: true,
       density: supplierForm.density ? parseFloat(supplierForm.density) : null,
-      unit: supplierForm.unit || "kg"
+      unit: supplierForm.unit || "kg",
+      plant: selectedPlant
     }
     
     if (editingSupplier) {
@@ -240,7 +245,8 @@ function MateriaPrimaContent() {
       phone: carrierForm.phone || null,
       license_plate: carrierForm.license_plate || null,
       company: carrierForm.company || null,
-      is_active: true
+      is_active: true,
+      plant: selectedPlant
     }
     
     if (editingCarrier) {
