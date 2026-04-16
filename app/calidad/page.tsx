@@ -153,12 +153,15 @@ const PROCEDURES = [
 ]
 
 export default function CalidadPage() {
-  const { selectedPlant } = usePlant()
+  const { selectedPlant, plantInfo } = usePlant()
   
-  // Select modules based on plant
-  const QUALITY_MODULES = selectedPlant === "ranchos" ? RANCHOS_MODULES : MERCEDES_MODULES
-  const plantName = selectedPlant === "ranchos" ? "Ranchos" : "Mercedes"
-  const productType = selectedPlant === "ranchos" ? "adoquines" : "canos"
+  // Select modules based on plant - Ranchos produces adoquines, others produce canos
+  const isPaverPlant = selectedPlant === "ranchos"
+  const QUALITY_MODULES = isPaverPlant ? RANCHOS_MODULES : MERCEDES_MODULES
+  const plantName = plantInfo.name
+  const productType = isPaverPlant ? "adoquines" : "canos"
+  
+  console.log("[v0] CalidadPage - selectedPlant:", selectedPlant, "isPaverPlant:", isPaverPlant)
   
   return (
     <div className="min-h-screen bg-background">
