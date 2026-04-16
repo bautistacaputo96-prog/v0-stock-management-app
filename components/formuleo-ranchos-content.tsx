@@ -659,13 +659,14 @@ export function FormuleoRanchosContent() {
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-medium">Mark V</Label>
                       <div className="flex items-center gap-1">
-                        {pastonFormula.additive_1_pdf_url ? (
+                        {pastonFormula.additive_1_pdf_url && (
                           <a href={pastonFormula.additive_1_pdf_url} target="_blank" rel="noopener noreferrer">
-                            <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600">
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-blue-600 gap-1">
                               <FileText className="w-3 h-3" />
+                              <span className="text-[10px]">Ver ficha</span>
                             </Button>
                           </a>
-                        ) : null}
+                        )}
                         <label className="cursor-pointer">
                           <input
                             type="file"
@@ -684,8 +685,11 @@ export function FormuleoRanchosContent() {
                               }
                             }}
                           />
-                          <Button variant="ghost" size="sm" className="h-6 px-2" asChild>
-                            <span><Upload className="w-3 h-3" /></span>
+                          <Button variant="ghost" size="sm" className="h-6 px-2 gap-1" asChild>
+                            <span>
+                              <Upload className="w-3 h-3" />
+                              <span className="text-[10px]">{pastonFormula.additive_1_pdf_url ? "Cambiar" : "Subir"}</span>
+                            </span>
                           </Button>
                         </label>
                       </div>
@@ -729,13 +733,14 @@ export function FormuleoRanchosContent() {
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-medium">Daraccel</Label>
                       <div className="flex items-center gap-1">
-                        {pastonFormula.additive_2_pdf_url ? (
+                        {pastonFormula.additive_2_pdf_url && (
                           <a href={pastonFormula.additive_2_pdf_url} target="_blank" rel="noopener noreferrer">
-                            <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600">
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-blue-600 gap-1">
                               <FileText className="w-3 h-3" />
+                              <span className="text-[10px]">Ver ficha</span>
                             </Button>
                           </a>
-                        ) : null}
+                        )}
                         <label className="cursor-pointer">
                           <input
                             type="file"
@@ -754,8 +759,11 @@ export function FormuleoRanchosContent() {
                               }
                             }}
                           />
-                          <Button variant="ghost" size="sm" className="h-6 px-2" asChild>
-                            <span><Upload className="w-3 h-3" /></span>
+                          <Button variant="ghost" size="sm" className="h-6 px-2 gap-1" asChild>
+                            <span>
+                              <Upload className="w-3 h-3" />
+                              <span className="text-[10px]">{pastonFormula.additive_2_pdf_url ? "Cambiar" : "Subir"}</span>
+                            </span>
                           </Button>
                         </label>
                       </div>
