@@ -771,7 +771,6 @@ export function FormuleoRanchosContent() {
                     <tr className="border-b bg-muted/50">
                       <th className="text-left py-2 px-2 font-medium">Tipo</th>
                       <th className="text-center py-2 px-2 font-medium">Peso (kg)</th>
-                      <th className="text-center py-2 px-2 font-medium">Piezas/Batch</th>
                       <th className="text-center py-2 px-2 font-medium">Min/Ciclo</th>
                       <th className="text-center py-2 px-2 font-medium">Ficha</th>
                       <th className="text-center py-2 px-2 font-medium">Modificado</th>
@@ -831,15 +830,6 @@ export function FormuleoRanchosContent() {
                                 value={formula.weight_kg || ""}
                                 onChange={(e) => updateAdoquinFormula(adoquin.code, "weight_kg", parseFloat(e.target.value) || 0)}
                                 className="h-8 w-20 text-center text-xs"
-                                placeholder="0"
-                              />
-                            </td>
-                            <td className="py-1 px-1" rowSpan={2}>
-                              <Input
-                                type="number"
-                                value={formula.pieces_per_batch || ""}
-                                onChange={(e) => updateAdoquinFormula(adoquin.code, "pieces_per_batch", parseInt(e.target.value) || 0)}
-                                className="h-8 w-16 text-center text-xs"
                                 placeholder="0"
                               />
                             </td>
