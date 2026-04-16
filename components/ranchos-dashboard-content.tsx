@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { getSupabase } from "@/lib/supabase"
-import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight, Package, Boxes } from "lucide-react"
+import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight, Package, Boxes, FlaskConical, Target } from "lucide-react"
 import {
   ResponsiveContainer,
   AreaChart,
@@ -14,9 +14,6 @@ import {
   ReferenceLine,
   BarChart,
   Bar,
-  Legend,
-  ComposedChart,
-  Line,
 } from "recharts"
 
 const MONTH_NAMES = [
@@ -24,15 +21,24 @@ const MONTH_NAMES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ]
 
-type PaverChartMetric = "tablas" | "m2Primera" | "m2Segunda" | "pastones" | "paradas"
+// Constantes de produccion
+const M2_PER_PIECE = 0.02 // 20cm x 10cm = 0.02 m2 por pieza
+const DAILY_TARGET_TABLES = 1500 // Objetivo diario de bandejas/tablas
+
+type PaverChartMetric = "tablas" | "m2Primera" | "pctSegunda" | "pastones" | "paradas"
 
 interface DailyData {
   date: string
   fullDate: string
   tablas: number
   pastones: number
+  piezasPrimera: number
+  piezasSegunda: number
   m2Primera: number
   m2Segunda: number
+  pctSegunda: number
+  cementoSilo1: number
+  cementoSilo2: number
   cementoTotal: number
   paradas: number
   productType: string
@@ -46,6 +52,9 @@ interface DailyData {
   cementSupplier: string
   sandSupplier: string
   stoneSupplier: string
+  // For analysis
+  vsAvg: number // % vs promedio
+  vsTarget: number // % vs objetivo
 }
 
 interface StockItem {
@@ -54,6 +63,24 @@ interface StockItem {
   criticalLevel: number
   warningLevel: number
   daysOfCoverage: number
+  subItems?: { name: string; stockTn: number }[]
+}
+
+interface QualityMetric {
+  material: string
+  mf: number
+  minAcceptable: number
+  maxAcceptable: number
+  status: "ok" | "warning" | "critical"
+  lastTests: number[]
+}
+
+interface FlexionMetric {
+  avgMpa: number
+  minIndividual: number
+  minGroupal: number
+  status: "ok" | "warning" | "critical"
+  lastResults: number[]
 }
 
 // ── Helper components ──────────────────────────────────────────────────────
@@ -65,7 +92,11 @@ function KpiCard({
   prevValue, 
   prevLabel,
   highlight = false,
-  size = "default"
+  size = "default",
+  target,
+  showAsPercentage = false,
+  subValue,
+  subUnit
 }: { 
   label: string
   value: number | string
@@ -74,19 +105,39 @@ function KpiCard({
   prevLabel?: string
   highlight?: boolean
   size?: "default" | "large"
+  target?: number
+  showAsPercentage?: boolean
+  subValue?: number
+  subUnit?: string
 }) {
-  const pct = prevValue && typeof value === "number" && prevValue > 0 
+  const pct = prevValue !== undefined && typeof value === "number" && prevValue > 0 
     ? ((value - prevValue) / prevValue * 100) 
     : 0
   const up = pct >= 0
+  const atTarget = target !== undefined && typeof value === "number" && value >= target
   
   return (
     <div className={`rounded-lg p-4 ${highlight ? "bg-primary/5 border border-primary/15" : "bg-card border border-border shadow-sm"}`}>
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1 font-medium">{label}</div>
-      <div className={`font-bold text-foreground ${size === "large" ? "text-3xl" : "text-2xl"}`}>
-        {typeof value === "number" ? value.toLocaleString("es-AR") : value}
-        {unit && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">{label}</div>
+        {target !== undefined && (
+          <div className={`flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+            atTarget ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+          }`}>
+            <Target className="w-2.5 h-2.5" />
+            {target.toLocaleString("es-AR")}
+          </div>
+        )}
       </div>
+      <div className={`font-bold text-foreground ${size === "large" ? "text-3xl" : "text-2xl"}`}>
+        {typeof value === "number" ? (showAsPercentage ? `${value.toFixed(1)}%` : value.toLocaleString("es-AR")) : value}
+        {unit && !showAsPercentage && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
+      </div>
+      {subValue !== undefined && (
+        <div className="text-xs text-muted-foreground mt-0.5">
+          {subValue.toLocaleString("es-AR")} {subUnit}
+        </div>
+      )}
       {prevValue !== undefined && prevValue > 0 && (
         <div className="flex items-center gap-2 mt-1">
           <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${up ? "text-emerald-600" : "text-red-600"}`}>
@@ -121,6 +172,16 @@ function StockCard({ item }: { item: StockItem }) {
       <div className="text-xl font-bold text-foreground">
         {item.stockTn.toFixed(1)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span>
       </div>
+      {item.subItems && item.subItems.length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          {item.subItems.map((sub, i) => (
+            <div key={i} className="flex justify-between text-[10px] text-muted-foreground">
+              <span>{sub.name}:</span>
+              <span className="font-mono">{sub.stockTn.toFixed(2)} tn</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="text-[10px] text-muted-foreground mt-1">
         {item.daysOfCoverage > 0 ? `~${item.daysOfCoverage} dias de cobertura` : "Sin consumo registrado"}
       </div>
@@ -133,6 +194,79 @@ function StockCard({ item }: { item: StockItem }) {
           style={{ width: `${Math.min((item.stockTn / (item.warningLevel * 2)) * 100, 100)}%` }}
         />
       </div>
+    </div>
+  )
+}
+
+function QualityCard({ metric }: { metric: QualityMetric }) {
+  const statusColors = {
+    ok: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400",
+    warning: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-400",
+    critical: "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900 text-red-700 dark:text-red-400"
+  }
+  const statusLabels = { ok: "OK", warning: "Alerta", critical: "Fuera" }
+  
+  return (
+    <div className={`rounded-lg border p-3 ${statusColors[metric.status]}`}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-widest font-medium opacity-70">{metric.material}</div>
+        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-current/10">
+          {statusLabels[metric.status]}
+        </span>
+      </div>
+      <div className="text-2xl font-bold">MF {metric.mf.toFixed(2)}</div>
+      <div className="text-[10px] opacity-70 mt-1">
+        Limites: {metric.minAcceptable.toFixed(2)} - {metric.maxAcceptable.toFixed(2)}
+      </div>
+      {metric.lastTests.length > 0 && (
+        <div className="flex gap-1 mt-2">
+          {metric.lastTests.slice(-5).map((v, i) => (
+            <div 
+              key={i} 
+              className={`flex-1 h-1 rounded-full ${
+                v >= metric.minAcceptable && v <= metric.maxAcceptable ? "bg-emerald-500" : "bg-red-500"
+              }`}
+              title={`MF: ${v.toFixed(2)}`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FlexionCard({ metric }: { metric: FlexionMetric }) {
+  const statusColors = {
+    ok: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900",
+    warning: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900",
+    critical: "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900"
+  }
+  const statusLabels = { ok: "OK", warning: "Alerta", critical: "Fuera" }
+  const statusTextColors = { ok: "text-emerald-700 dark:text-emerald-400", warning: "text-amber-700 dark:text-amber-400", critical: "text-red-700 dark:text-red-400" }
+  
+  return (
+    <div className={`rounded-lg border p-3 ${statusColors[metric.status]}`}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Flexion (28 dias)</div>
+        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded bg-current/10 ${statusTextColors[metric.status]}`}>
+          {statusLabels[metric.status]}
+        </span>
+      </div>
+      <div className={`text-2xl font-bold ${statusTextColors[metric.status]}`}>{metric.avgMpa.toFixed(2)} MPa</div>
+      <div className="text-[10px] text-muted-foreground mt-1">
+        Min individual: {metric.minIndividual} MPa | Min grupal: {metric.minGroupal} MPa
+      </div>
+      {metric.lastResults.length > 0 && (
+        <div className="flex gap-1 mt-2">
+          {metric.lastResults.slice(-5).map((v, i) => (
+            <div 
+              key={i} 
+              className={`flex-1 h-1 rounded-full ${v >= metric.minIndividual ? "bg-emerald-500" : "bg-red-500"}`}
+              title={`${v.toFixed(2)} MPa`}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -166,6 +300,9 @@ export function RanchosDashboardContent() {
   const [prevRecords, setPrevRecords] = useState<any[]>([])
   const [stockData, setStockData] = useState<StockItem[]>([])
   const [chartMetric, setChartMetric] = useState<PaverChartMetric>("tablas")
+  const [granulometryData, setGranulometryData] = useState<QualityMetric[]>([])
+  const [flexionData, setFlexionData] = useState<FlexionMetric | null>(null)
+  const [pastonFormula, setPastonFormula] = useState<any>(null)
 
   useEffect(() => {
     let retries = 0
@@ -193,7 +330,7 @@ export function RanchosDashboardContent() {
     const pmStart = `${pmYear}-${String(pmIdx + 1).padStart(2, "0")}-01`
     const pmEnd = `${pmYear}-${String(pmIdx + 1).padStart(2, "0")}-${String(pmLastDay).padStart(2, "0")}`
 
-    const [cmResult, pmResult] = await Promise.all([
+    const [cmResult, pmResult, formulaResult] = await Promise.all([
       supabase
         .from("paver_production")
         .select("*, paver_downtime(*)")
@@ -205,59 +342,79 @@ export function RanchosDashboardContent() {
         .select("tables_produced, pastones_count, palletized_first, palletized_second, production_date, cement_silo_1_tn, cement_silo_2_tn")
         .gte("production_date", pmStart)
         .lte("production_date", pmEnd),
+      supabase
+        .from("paston_formulas")
+        .select("*")
+        .eq("plant", "ranchos")
+        .eq("is_active", true)
+        .single()
     ])
 
     if (cmResult.error) { setLoading(false); return }
     setRecords(cmResult.data || [])
     setPrevRecords(pmResult.data || [])
+    if (formulaResult.data) setPastonFormula(formulaResult.data)
 
-    // Calculate stock from mp_receipts and consumption
+    // Calculate stock from mp_receipts and consumption based on pastones
     try {
+      const formula = formulaResult.data
+      const totalPastones = (cmResult.data || []).reduce((s: number, r: any) => s + (r.pastones_count || 0), 0)
+      
+      // Consumo basado en pastones x formula
+      const cementConsumption = formula ? (totalPastones * (formula.cement_kg || 0) / 1000) : 0 // tn
+      const sandConsumption = formula ? (totalPastones * (formula.sand_kg || 0) / 1000) : 0
+      const stoneConsumption = formula ? (totalPastones * (formula.stone_kg || 0) / 1000) : 0
+      
+      const prodDays = (cmResult.data || []).length || 1
+      const dailyCementConsumption = cementConsumption / prodDays
+      const dailySandConsumption = sandConsumption / prodDays
+      const dailyStoneConsumption = stoneConsumption / prodDays
+
+      // Get receipts for stock calculation
       const { data: receipts } = await supabase
         .from("mp_receipts")
         .select("material_type, quantity_tn")
-        .eq("line_type", "adoquines")
+        .eq("plant", "ranchos")
         .gte("receipt_date", start)
         .lte("receipt_date", end)
 
-      // Calculate daily consumption from production records
-      const totalCement = (cmResult.data || []).reduce((s: number, r: any) => 
-        s + (r.cement_silo_1_tn || 0) + (r.cement_silo_2_tn || 0), 0)
-      const prodDays = (cmResult.data || []).length || 1
-      const dailyCementConsumption = totalCement / prodDays
-
-      // Estimate other materials based on typical ratios
-      const dailySandConsumption = dailyCementConsumption * 2.5
-      const dailyStoneConsumption = dailyCementConsumption * 3
-
-      // Aggregate receipts by material
       const stockMap: Record<string, number> = {}
       ;(receipts || []).forEach((r: any) => {
         const key = r.material_type || "Otro"
         stockMap[key] = (stockMap[key] || 0) + (r.quantity_tn || 0)
       })
 
+      // Cemento discriminado por silo
+      const totalCementoSilo1 = (cmResult.data || []).reduce((s: number, r: any) => s + (r.cement_silo_1_tn || 0), 0)
+      const totalCementoSilo2 = (cmResult.data || []).reduce((s: number, r: any) => s + (r.cement_silo_2_tn || 0), 0)
+      const cementoIngresado = stockMap["Cemento"] || 0
+      const cementoStock = cementoIngresado - (totalCementoSilo1 + totalCementoSilo2)
+
       setStockData([
         { 
           name: "Arena", 
-          stockTn: stockMap["Arena"] || 0, 
+          stockTn: Math.max(0, (stockMap["Arena"] || 0) - sandConsumption), 
           criticalLevel: 50, 
           warningLevel: 100,
-          daysOfCoverage: dailySandConsumption > 0 ? Math.round((stockMap["Arena"] || 0) / dailySandConsumption) : 0
+          daysOfCoverage: dailySandConsumption > 0 ? Math.round(Math.max(0, (stockMap["Arena"] || 0) - sandConsumption) / dailySandConsumption) : 0
         },
         { 
           name: "Piedra", 
-          stockTn: stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0, 
+          stockTn: Math.max(0, (stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0) - stoneConsumption), 
           criticalLevel: 50, 
           warningLevel: 100,
-          daysOfCoverage: dailyStoneConsumption > 0 ? Math.round((stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0) / dailyStoneConsumption) : 0
+          daysOfCoverage: dailyStoneConsumption > 0 ? Math.round(Math.max(0, (stockMap["Piedra"] || stockMap["Piedra 0/6"] || 0) - stoneConsumption) / dailyStoneConsumption) : 0
         },
         { 
           name: "Cemento", 
-          stockTn: stockMap["Cemento"] || 0, 
+          stockTn: Math.max(0, cementoStock), 
           criticalLevel: 20, 
           warningLevel: 40,
-          daysOfCoverage: dailyCementConsumption > 0 ? Math.round((stockMap["Cemento"] || 0) / dailyCementConsumption) : 0
+          daysOfCoverage: dailyCementConsumption > 0 ? Math.round(Math.max(0, cementoStock) / dailyCementConsumption) : 0,
+          subItems: [
+            { name: "Silo 1", stockTn: totalCementoSilo1 },
+            { name: "Silo 2", stockTn: totalCementoSilo2 }
+          ]
         },
       ])
     } catch {
@@ -268,11 +425,84 @@ export function RanchosDashboardContent() {
       ])
     }
 
+    // Load quality data - Granulometry
+    try {
+      const { data: granTests } = await supabase
+        .from("granulometry_tests")
+        .select("material_type, fineness_modulus")
+        .eq("plant", "ranchos")
+        .order("test_date", { ascending: false })
+        .limit(20)
+
+      const materials = ["Arena", "Piedra"]
+      const granMetrics: QualityMetric[] = materials.map(mat => {
+        const tests = (granTests || []).filter((t: any) => t.material_type === mat)
+        const mfValues = tests.map((t: any) => t.fineness_modulus || 0).filter((v: number) => v > 0)
+        const avgMf = mfValues.length > 0 ? mfValues.reduce((a: number, b: number) => a + b, 0) / mfValues.length : 0
+        
+        // Limites IRAM tipicos
+        const limits = mat === "Arena" 
+          ? { min: 2.3, max: 3.1 } // Arena fina a media
+          : { min: 5.5, max: 7.5 } // Piedra
+        
+        const status = avgMf === 0 ? "warning" as const : 
+          (avgMf >= limits.min && avgMf <= limits.max) ? "ok" as const : "critical" as const
+        
+        return {
+          material: mat,
+          mf: avgMf,
+          minAcceptable: limits.min,
+          maxAcceptable: limits.max,
+          status,
+          lastTests: mfValues.slice(0, 5)
+        }
+      })
+      setGranulometryData(granMetrics)
+    } catch {
+      setGranulometryData([])
+    }
+
+    // Load flexion data
+    try {
+      const { data: flexTests } = await supabase
+        .from("quality_flexion_specimens")
+        .select("result_mpa, test_age_days")
+        .eq("status", "completed")
+        .order("tested_at", { ascending: false })
+        .limit(10)
+
+      const results28 = (flexTests || [])
+        .filter((t: any) => t.test_age_days === 28 && t.result_mpa > 0)
+        .map((t: any) => t.result_mpa)
+
+      if (results28.length > 0) {
+        const avgMpa = results28.reduce((a: number, b: number) => a + b, 0) / results28.length
+        const minInd = 3.8
+        const minGroup = 4.2
+        const status = avgMpa >= minGroup ? "ok" as const : 
+          avgMpa >= minInd ? "warning" as const : "critical" as const
+        
+        setFlexionData({
+          avgMpa,
+          minIndividual: minInd,
+          minGroupal: minGroup,
+          status,
+          lastResults: results28.slice(0, 5)
+        })
+      }
+    } catch {
+      setFlexionData(null)
+    }
+
     setLoading(false)
   }
 
-  // Process daily data
+  // Process daily data - convert pieces to m2
   const dailyData = useMemo<DailyData[]>(() => {
+    const avgTablas = records.length > 0 
+      ? records.reduce((s: number, r: any) => s + (r.tables_produced || 0), 0) / records.length 
+      : 0
+
     return records.map(r => {
       const downtimes = (r.paver_downtime || []) as { custom_reason?: string; minutes?: number; comments?: string }[]
       const totalDowntime = downtimes.reduce((s: number, d: any) => s + (d.minutes || 0), 0)
@@ -287,13 +517,26 @@ export function RanchosDashboardContent() {
         prodMin = Math.round(diff)
       }
 
+      const piezasPrimera = r.palletized_first || 0
+      const piezasSegunda = r.palletized_second || 0
+      const m2Primera = piezasPrimera * M2_PER_PIECE
+      const m2Segunda = piezasSegunda * M2_PER_PIECE
+      const totalPiezas = piezasPrimera + piezasSegunda
+      const pctSegunda = totalPiezas > 0 ? (piezasSegunda / totalPiezas) * 100 : 0
+      const tablas = r.tables_produced || 0
+
       return {
         date: new Date(r.production_date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
         fullDate: r.production_date,
-        tablas: r.tables_produced || 0,
+        tablas,
         pastones: r.pastones_count || 0,
-        m2Primera: r.palletized_first || 0,
-        m2Segunda: r.palletized_second || 0,
+        piezasPrimera,
+        piezasSegunda,
+        m2Primera,
+        m2Segunda,
+        pctSegunda,
+        cementoSilo1: r.cement_silo_1_tn || 0,
+        cementoSilo2: r.cement_silo_2_tn || 0,
         cementoTotal: Number(((r.cement_silo_1_tn || 0) + (r.cement_silo_2_tn || 0)).toFixed(3)),
         paradas: totalDowntime,
         productType: r.product_type_code || "",
@@ -307,6 +550,8 @@ export function RanchosDashboardContent() {
         cementSupplier: r.cement_supplier || "",
         sandSupplier: r.sand_supplier || "",
         stoneSupplier: r.stone_supplier || "",
+        vsAvg: avgTablas > 0 ? ((tablas - avgTablas) / avgTablas) * 100 : 0,
+        vsTarget: ((tablas - DAILY_TARGET_TABLES) / DAILY_TARGET_TABLES) * 100,
       }
     })
   }, [records])
@@ -317,18 +562,26 @@ export function RanchosDashboardContent() {
     const n = dailyData.length
     const totalTablas = dailyData.reduce((s, d) => s + d.tablas, 0)
     const totalPastones = dailyData.reduce((s, d) => s + d.pastones, 0)
+    const totalPiezasPrimera = dailyData.reduce((s, d) => s + d.piezasPrimera, 0)
+    const totalPiezasSegunda = dailyData.reduce((s, d) => s + d.piezasSegunda, 0)
     const totalM2Primera = dailyData.reduce((s, d) => s + d.m2Primera, 0)
     const totalM2Segunda = dailyData.reduce((s, d) => s + d.m2Segunda, 0)
     const totalCemento = dailyData.reduce((s, d) => s + d.cementoTotal, 0)
     const totalParadas = dailyData.reduce((s, d) => s + d.paradas, 0)
+    const totalPiezas = totalPiezasPrimera + totalPiezasSegunda
+    const pctSegunda = totalPiezas > 0 ? (totalPiezasSegunda / totalPiezas) * 100 : 0
+    
     return {
       days: n,
       totalTablas,
       avgTablas: totalTablas / n,
       totalPastones,
       avgPastones: totalPastones / n,
+      totalPiezasPrimera,
+      totalPiezasSegunda,
       totalM2Primera,
       totalM2Segunda,
+      pctSegunda,
       totalCemento,
       avgCemento: totalCemento / n,
       totalParadas,
@@ -342,8 +595,13 @@ export function RanchosDashboardContent() {
     const n = prevRecords.length
     const totalTablas = prevRecords.reduce((s: number, r: any) => s + (r.tables_produced || 0), 0)
     const totalPastones = prevRecords.reduce((s: number, r: any) => s + (r.pastones_count || 0), 0)
-    const totalM2Primera = prevRecords.reduce((s: number, r: any) => s + (r.palletized_first || 0), 0)
-    const totalM2Segunda = prevRecords.reduce((s: number, r: any) => s + (r.palletized_second || 0), 0)
+    const totalPiezasPrimera = prevRecords.reduce((s: number, r: any) => s + (r.palletized_first || 0), 0)
+    const totalPiezasSegunda = prevRecords.reduce((s: number, r: any) => s + (r.palletized_second || 0), 0)
+    const totalM2Primera = totalPiezasPrimera * M2_PER_PIECE
+    const totalM2Segunda = totalPiezasSegunda * M2_PER_PIECE
+    const totalPiezas = totalPiezasPrimera + totalPiezasSegunda
+    const pctSegunda = totalPiezas > 0 ? (totalPiezasSegunda / totalPiezas) * 100 : 0
+    
     return { 
       days: n, 
       avgTablas: totalTablas / n, 
@@ -351,7 +609,8 @@ export function RanchosDashboardContent() {
       totalPastones,
       avgPastones: totalPastones / n,
       totalM2Primera,
-      totalM2Segunda
+      totalM2Segunda,
+      pctSegunda
     }
   }, [prevRecords])
 
@@ -372,15 +631,6 @@ export function RanchosDashboardContent() {
       label: w.label,
       current: getTotForRange(w.range),
       previous: i > 0 ? getTotForRange(weeks[i - 1].range) : 0,
-    }))
-  }, [dailyData])
-
-  // Quality chart data (m2 primera vs segunda)
-  const qualityChartData = useMemo(() => {
-    return dailyData.map(d => ({
-      date: d.date,
-      primera: d.m2Primera,
-      segunda: d.m2Segunda,
     }))
   }, [dailyData])
 
@@ -409,13 +659,11 @@ export function RanchosDashboardContent() {
   // Alerts
   const alerts = useMemo(() => {
     const result: string[] = []
-    // Check stock alerts
     stockData.forEach(s => {
       if (s.stockTn > 0 && s.stockTn <= s.criticalLevel) {
         result.push(`Stock critico de ${s.name}`)
       }
     })
-    // Check production alerts
     if (dailyData.length >= 2) {
       let maxConsecutive = 0
       let current = 0
@@ -431,7 +679,7 @@ export function RanchosDashboardContent() {
   const chartLabels: Record<PaverChartMetric, string> = {
     tablas: "Tablas", 
     m2Primera: "m2 1ra", 
-    m2Segunda: "m2 2da",
+    pctSegunda: "% 2da",
     pastones: "Pastones", 
     paradas: "Min. paradas"
   }
@@ -445,6 +693,37 @@ export function RanchosDashboardContent() {
   function nextMonth() {
     if (selectedMonthIdx === 11) { setSelectedMonthIdx(0); setSelectedYear(y => y + 1) }
     else setSelectedMonthIdx(m => m + 1)
+  }
+
+  // Generate analysis comment for tooltip
+  const getAnalysisComment = (d: DailyData): string => {
+    const comments: string[] = []
+    
+    if (d.vsTarget >= 0) {
+      comments.push(`Produccion por encima del objetivo (+${d.vsTarget.toFixed(0)}%)`)
+    } else if (d.vsTarget < -20) {
+      comments.push(`Produccion muy por debajo del objetivo (${d.vsTarget.toFixed(0)}%)`)
+    }
+    
+    if (d.vsAvg > 10) {
+      comments.push(`Por encima del promedio del mes (+${d.vsAvg.toFixed(0)}%)`)
+    } else if (d.vsAvg < -10) {
+      comments.push(`Por debajo del promedio del mes (${d.vsAvg.toFixed(0)}%)`)
+    }
+    
+    if (d.extraMinutes > 30) {
+      comments.push(`Se hicieron ${d.extraMinutes} min extra para llegar al objetivo`)
+    }
+    
+    if (d.topStopMinutes > 30 && d.topStopReason) {
+      comments.push(`Parada principal: ${d.topStopReason} (${d.topStopMinutes} min)`)
+    }
+    
+    if (d.pctSegunda > 5) {
+      comments.push(`Alta produccion de segunda calidad (${d.pctSegunda.toFixed(1)}%)`)
+    }
+    
+    return comments.length > 0 ? comments[0] : "Dia de produccion normal"
   }
 
   if (loading) {
@@ -520,6 +799,7 @@ export function RanchosDashboardContent() {
                 label="Prom. tablas/turno" 
                 value={Math.round(stats?.avgTablas || 0)} 
                 prevValue={prevStats ? Math.round(prevStats.avgTablas) : undefined}
+                target={DAILY_TARGET_TABLES}
               />
               <KpiCard 
                 label="Total tablas" 
@@ -529,15 +809,17 @@ export function RanchosDashboardContent() {
               />
               <KpiCard 
                 label="m2 Primera calidad" 
-                value={stats?.totalM2Primera || 0} 
+                value={Math.round(stats?.totalM2Primera || 0)} 
                 unit="m2"
-                prevValue={prevStats?.totalM2Primera}
+                prevValue={prevStats ? Math.round(prevStats.totalM2Primera) : undefined}
               />
               <KpiCard 
-                label="m2 Segunda calidad" 
-                value={stats?.totalM2Segunda || 0} 
-                unit="m2"
-                prevValue={prevStats?.totalM2Segunda}
+                label="% Segunda calidad" 
+                value={stats?.pctSegunda || 0}
+                showAsPercentage
+                prevValue={prevStats?.pctSegunda}
+                subValue={Math.round(stats?.totalM2Segunda || 0)}
+                subUnit="m2"
               />
             </div>
           </div>
@@ -547,9 +829,12 @@ export function RanchosDashboardContent() {
             {/* Grafico de tendencia diaria */}
             <div className="lg:col-span-2 bg-card rounded-lg border border-border p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-foreground">Tendencia diaria</h3>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Tendencia diaria</h3>
+                  <p className="text-[10px] text-muted-foreground">Objetivo diario: {DAILY_TARGET_TABLES.toLocaleString("es-AR")} tablas</p>
+                </div>
                 <div className="flex gap-1 flex-wrap">
-                  {(["tablas", "m2Primera", "m2Segunda", "pastones", "paradas"] as PaverChartMetric[]).map(m => (
+                  {(["tablas", "m2Primera", "pctSegunda", "pastones", "paradas"] as PaverChartMetric[]).map(m => (
                     <button
                       key={m}
                       onClick={() => setChartMetric(m)}
@@ -580,29 +865,31 @@ export function RanchosDashboardContent() {
                       content={({ active, payload }) => {
                         if (!active || !payload || !payload[0]) return null
                         const d = payload[0].payload as DailyData
+                        const analysisComment = getAnalysisComment(d)
                         return (
-                          <div className="bg-card border border-border rounded-lg shadow-lg p-3 max-w-[280px]">
+                          <div className="bg-card border border-border rounded-lg shadow-lg p-3 max-w-[320px]">
                             <div className="flex items-center justify-between mb-1.5">
                               <span className="text-xs font-semibold text-foreground">{d.date}</span>
                               {d.productType && <span className="text-[10px] text-muted-foreground">{d.productType}</span>}
                             </div>
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                               <span className="text-muted-foreground">Tablas:</span>
-                              <span className="font-semibold text-foreground">{d.tablas}</span>
+                              <span className="font-semibold text-foreground">{d.tablas.toLocaleString("es-AR")}</span>
                               <span className="text-muted-foreground">Pastones:</span>
                               <span className="font-semibold text-foreground">{d.pastones}</span>
                               <span className="text-muted-foreground">m2 1ra:</span>
-                              <span className="font-semibold text-emerald-600">{d.m2Primera}</span>
+                              <span className="font-semibold text-emerald-600">{d.m2Primera.toFixed(1)}</span>
                               <span className="text-muted-foreground">m2 2da:</span>
-                              <span className="font-semibold text-amber-600">{d.m2Segunda}</span>
+                              <span className="font-semibold text-amber-600">{d.m2Segunda.toFixed(1)} ({d.pctSegunda.toFixed(1)}%)</span>
                               <span className="text-muted-foreground">Paradas:</span>
                               <span className="font-semibold text-foreground">{d.paradas} min</span>
                             </div>
-                            {d.topStopReason && d.topStopMinutes > 10 && (
-                              <div className="mt-2 pt-2 border-t border-border text-[10px] text-muted-foreground">
-                                Parada ppal: {d.topStopReason} ({d.topStopMinutes} min)
-                              </div>
-                            )}
+                            {/* Analysis comment */}
+                            <div className="mt-2 pt-2 border-t border-border">
+                              <p className="text-[10px] text-primary font-medium italic">
+                                {analysisComment}
+                              </p>
+                            </div>
                           </div>
                         )
                       }}
@@ -610,19 +897,30 @@ export function RanchosDashboardContent() {
                     <Area
                       type="monotone"
                       dataKey={chartMetric}
-                      stroke={chartMetric === "paradas" ? "#dc2626" : chartMetric === "m2Segunda" ? "#d97706" : "#1e3a5f"}
+                      stroke={chartMetric === "paradas" ? "#dc2626" : chartMetric === "pctSegunda" ? "#d97706" : "#1e3a5f"}
                       strokeWidth={2}
                       fill="url(#paverFill)"
                       dot={{ r: 2.5, fill: chartMetric === "paradas" ? "#dc2626" : "#1e3a5f" }}
                     />
-                    {stats && chartMetric === "tablas" && (
-                      <ReferenceLine 
-                        y={Math.round(stats.avgTablas)} 
-                        stroke="#1e3a5f" 
-                        strokeDasharray="4 4" 
-                        strokeOpacity={0.6}
-                        label={{ value: `Prom: ${Math.round(stats.avgTablas)}`, position: "insideTopRight", fontSize: 10, fill: "#1e3a5f", fontWeight: 600 }}
-                      />
+                    {chartMetric === "tablas" && (
+                      <>
+                        <ReferenceLine 
+                          y={DAILY_TARGET_TABLES} 
+                          stroke="#10b981" 
+                          strokeDasharray="4 4" 
+                          strokeWidth={2}
+                          label={{ value: `Objetivo: ${DAILY_TARGET_TABLES}`, position: "insideTopRight", fontSize: 10, fill: "#10b981", fontWeight: 600 }}
+                        />
+                        {stats && (
+                          <ReferenceLine 
+                            y={Math.round(stats.avgTablas)} 
+                            stroke="#1e3a5f" 
+                            strokeDasharray="2 2" 
+                            strokeOpacity={0.6}
+                            label={{ value: `Prom: ${Math.round(stats.avgTablas)}`, position: "insideBottomRight", fontSize: 9, fill: "#1e3a5f" }}
+                          />
+                        )}
+                      </>
                     )}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -650,48 +948,26 @@ export function RanchosDashboardContent() {
             </div>
           </div>
 
-          {/* ═══ SECCION 4 — Calidad: m2 Primera vs Segunda ══════════════════ */}
-          <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Calidad de produccion</h3>
-                <p className="text-[10px] text-muted-foreground mt-0.5">m2 primera vs segunda calidad por dia</p>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-emerald-500" />
-                  <span className="text-[10px] text-muted-foreground">1ra Calidad</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-amber-500" />
-                  <span className="text-[10px] text-muted-foreground">2da Calidad</span>
-                </div>
-              </div>
+          {/* ═══ SECCION 4 — Metricas de Calidad ══════════════════════════════ */}
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
+              <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
+                Metricas de Calidad — Ultimos ensayos
+              </h2>
             </div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={qualityChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null
-                      const total = (payload[0]?.value as number || 0) + (payload[1]?.value as number || 0)
-                      const pctPrimera = total > 0 ? ((payload[0]?.value as number || 0) / total * 100).toFixed(1) : "0"
-                      return (
-                        <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
-                          <div className="font-semibold mb-1">{payload[0]?.payload?.date}</div>
-                          <div className="text-emerald-600">1ra: {payload[0]?.value} m2 ({pctPrimera}%)</div>
-                          <div className="text-amber-600">2da: {payload[1]?.value} m2</div>
-                        </div>
-                      )
-                    }}
-                  />
-                  <Bar dataKey="primera" stackId="quality" fill="#10b981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="segunda" stackId="quality" fill="#f59e0b" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {granulometryData.map(metric => (
+                <QualityCard key={metric.material} metric={metric} />
+              ))}
+              {flexionData && (
+                <FlexionCard metric={flexionData} />
+              )}
+              {!flexionData && granulometryData.length < 3 && (
+                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-3 flex items-center justify-center text-muted-foreground text-xs">
+                  Sin ensayos de flexion registrados
+                </div>
+              )}
             </div>
           </div>
 
@@ -785,7 +1061,7 @@ export function RanchosDashboardContent() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center p-4 bg-muted/30 rounded-lg">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Tablas</div>
-                <div className="text-2xl font-bold text-foreground">{stats?.totalTablas || 0}</div>
+                <div className="text-2xl font-bold text-foreground">{(stats?.totalTablas || 0).toLocaleString("es-AR")}</div>
                 {prevStats && prevStats.totalTablas > 0 && (
                   <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
                     (stats?.totalTablas || 0) >= prevStats.totalTablas ? "text-emerald-600" : "text-red-600"
@@ -797,7 +1073,7 @@ export function RanchosDashboardContent() {
               </div>
               <div className="text-center p-4 bg-muted/30 rounded-lg">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">m2 Primera</div>
-                <div className="text-2xl font-bold text-emerald-600">{stats?.totalM2Primera || 0}</div>
+                <div className="text-2xl font-bold text-emerald-600">{Math.round(stats?.totalM2Primera || 0).toLocaleString("es-AR")}</div>
                 {prevStats && prevStats.totalM2Primera > 0 && (
                   <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
                     (stats?.totalM2Primera || 0) >= prevStats.totalM2Primera ? "text-emerald-600" : "text-red-600"
@@ -808,14 +1084,15 @@ export function RanchosDashboardContent() {
                 )}
               </div>
               <div className="text-center p-4 bg-muted/30 rounded-lg">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">m2 Segunda</div>
-                <div className="text-2xl font-bold text-amber-600">{stats?.totalM2Segunda || 0}</div>
-                {prevStats && prevStats.totalM2Segunda > 0 && (
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">% Segunda</div>
+                <div className="text-2xl font-bold text-amber-600">{(stats?.pctSegunda || 0).toFixed(1)}%</div>
+                <div className="text-[10px] text-muted-foreground">{Math.round(stats?.totalM2Segunda || 0)} m2</div>
+                {prevStats && prevStats.pctSegunda > 0 && (
                   <div className={`text-sm font-semibold flex items-center justify-center gap-1 mt-1 ${
-                    (stats?.totalM2Segunda || 0) <= prevStats.totalM2Segunda ? "text-emerald-600" : "text-red-600"
+                    (stats?.pctSegunda || 0) <= prevStats.pctSegunda ? "text-emerald-600" : "text-red-600"
                   }`}>
-                    {(stats?.totalM2Segunda || 0) <= prevStats.totalM2Segunda ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
-                    {Math.abs(((stats?.totalM2Segunda || 0) - prevStats.totalM2Segunda) / prevStats.totalM2Segunda * 100).toFixed(1)}%
+                    {(stats?.pctSegunda || 0) <= prevStats.pctSegunda ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                    {Math.abs((stats?.pctSegunda || 0) - prevStats.pctSegunda).toFixed(1)}pp
                   </div>
                 )}
               </div>
