@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Droplets, TrendingUp, TrendingDown } from "lucide-react"
+import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Droplets, TrendingUp, TrendingDown, Pencil, Trash2 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -41,6 +41,7 @@ export default function HumedadPage() {
   const [loading, setLoading] = useState(true)
   const [selectedMaterial, setSelectedMaterial] = useState<string>("all")
   const [showDialog, setShowDialog] = useState(false)
+  const [editingTest, setEditingTest] = useState<HumidityTest | null>(null)
   const [dateRange, setDateRange] = useState({ start: "", end: "" })
 
   const [formData, setFormData] = useState({
@@ -100,7 +101,7 @@ export default function HumedadPage() {
     const humidity = calculateHumidity(formData.wet_weight_g, formData.dry_weight_g)
     const isWithinSpec = checkWithinSpec(humidity, formData.material_type)
 
-    const { error } = await supabase.from("humidity_tests").insert({
+    const dataToSave = {
       test_date: formData.test_date,
       material_type: formData.material_type,
       wet_weight_g: formData.wet_weight_g,
@@ -110,17 +111,53 @@ export default function HumedadPage() {
       lot_number: formData.lot_number || null,
       observations: formData.observations || null,
       is_within_spec: isWithinSpec,
-    })
+    }
+
+    let error
+    if (editingTest) {
+      const result = await supabase.from("humidity_tests").update(dataToSave).eq("id", editingTest.id)
+      error = result.error
+    } else {
+      const result = await supabase.from("humidity_tests").insert(dataToSave)
+      error = result.error
+    }
 
     if (error) {
       toast.error("Error al guardar ensayo")
       return
     }
 
-    toast.success("Ensayo de humedad guardado")
+    toast.success(editingTest ? "Ensayo actualizado" : "Ensayo de humedad guardado")
     setShowDialog(false)
+    setEditingTest(null)
     resetForm()
     loadTests()
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("¿Está seguro de eliminar este ensayo?")) return
+    
+    const { error } = await supabase.from("humidity_tests").delete().eq("id", id)
+    if (error) {
+      toast.error("Error al eliminar ensayo")
+      return
+    }
+    toast.success("Ensayo eliminado")
+    loadTests()
+  }
+
+  function openEdit(test: HumidityTest) {
+    setEditingTest(test)
+    setFormData({
+      test_date: test.test_date,
+      material_type: test.material_type,
+      wet_weight_g: test.wet_weight_g,
+      dry_weight_g: test.dry_weight_g,
+      supplier: test.supplier || "",
+      lot_number: test.lot_number || "",
+      observations: test.observations || "",
+    })
+    setShowDialog(true)
   }
 
   function resetForm() {
@@ -133,6 +170,7 @@ export default function HumedadPage() {
       lot_number: "",
       observations: "",
     })
+    setEditingTest(null)
   }
 
   const filteredTests = selectedMaterial === "all"
@@ -434,6 +472,7 @@ export default function HumedadPage() {
                     <TableHead className="text-right">Humedad %</TableHead>
                     <TableHead>Proveedor</TableHead>
                     <TableHead className="text-center">Estado</TableHead>
+                    <TableHead className="text-center">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -461,6 +500,16 @@ export default function HumedadPage() {
                             Fuera
                           </Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(test)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(test.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

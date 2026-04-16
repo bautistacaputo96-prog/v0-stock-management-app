@@ -23,7 +23,9 @@ import {
   FileText,
   Calendar,
   Loader2,
-  ArrowLeft
+  ArrowLeft,
+  Pencil,
+  Trash2
 } from "lucide-react"
 import Link from "next/link"
 import { usePlant } from "@/lib/plant-context"
@@ -248,6 +250,25 @@ export default function CalidadAdoquinesPage() {
       console.error("Error saving sample:", error)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Delete sample
+  const deleteSample = async (sampleId: string) => {
+    if (!confirm("¿Está seguro de eliminar esta muestra? Se eliminarán también todos los especímenes asociados.")) return
+    
+    try {
+      const supabase = getSupabase()
+      // First delete specimens
+      await supabase.from("quality_flexion_specimens").delete().eq("sample_id", sampleId)
+      // Then delete sample
+      const { error } = await supabase.from("quality_flexion_samples").delete().eq("id", sampleId)
+      
+      if (error) throw error
+      fetchData()
+    } catch (error) {
+      console.error("Error deleting sample:", error)
+      alert("Error al eliminar la muestra")
     }
   }
 
@@ -675,18 +696,19 @@ export default function CalidadAdoquinesPage() {
                       <TableHead>Especimen 2 (28d)</TableHead>
                       <TableHead>Especimen 3 (28d)</TableHead>
                       <TableHead>Promedio 28d</TableHead>
+                      <TableHead className="text-center">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                         </TableCell>
                       </TableRow>
                     ) : flexionSamples.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                           No hay muestras registradas
                         </TableCell>
                       </TableRow>
@@ -731,6 +753,16 @@ export default function CalidadAdoquinesPage() {
                               ) : (
                                 <span className="text-muted-foreground">-</span>
                               )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7 text-destructive hover:text-destructive" 
+                                onClick={() => deleteSample(sample.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         )

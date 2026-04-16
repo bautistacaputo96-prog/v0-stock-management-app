@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download } from "lucide-react"
+import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Pencil, Trash2 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -76,6 +76,7 @@ export default function GranulometriaPage() {
   const [showDialog, setShowDialog] = useState(false)
   const [showBandsDialog, setShowBandsDialog] = useState(false)
   const [selectedTest, setSelectedTest] = useState<GranulometryTest | null>(null)
+  const [editingTest, setEditingTest] = useState<GranulometryTest | null>(null)
 
   const [formData, setFormData] = useState({
     test_date: new Date().toISOString().split("T")[0],
@@ -151,7 +152,7 @@ export default function GranulometriaPage() {
     const finenessModulus = formData.material_type === "arena" ? calculateFinenessModulus(passingPercentages) : null
     const isWithinSpec = checkWithinSpec(passingPercentages, formData.material_type)
 
-    const { error } = await supabase.from("granulometry_tests").insert({
+    const dataToSave = {
       test_date: formData.test_date,
       material_type: formData.material_type,
       supplier: formData.supplier || null,
@@ -162,17 +163,53 @@ export default function GranulometriaPage() {
       fineness_modulus: finenessModulus,
       observations: formData.observations || null,
       is_within_spec: isWithinSpec,
-    })
+    }
+
+    let error
+    if (editingTest) {
+      const result = await supabase.from("granulometry_tests").update(dataToSave).eq("id", editingTest.id)
+      error = result.error
+    } else {
+      const result = await supabase.from("granulometry_tests").insert(dataToSave)
+      error = result.error
+    }
 
     if (error) {
       toast.error("Error al guardar ensayo")
       return
     }
 
-    toast.success("Ensayo de granulometría guardado")
+    toast.success(editingTest ? "Ensayo actualizado" : "Ensayo de granulometría guardado")
     setShowDialog(false)
+    setEditingTest(null)
     resetForm()
     loadTests()
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("¿Está seguro de eliminar este ensayo?")) return
+    
+    const { error } = await supabase.from("granulometry_tests").delete().eq("id", id)
+    if (error) {
+      toast.error("Error al eliminar ensayo")
+      return
+    }
+    toast.success("Ensayo eliminado")
+    loadTests()
+  }
+
+  function openEditGranu(test: GranulometryTest) {
+    setEditingTest(test)
+    setFormData({
+      test_date: test.test_date,
+      material_type: test.material_type,
+      supplier: test.supplier || "",
+      lot_number: test.lot_number || "",
+      sample_weight_g: test.sample_weight_g,
+      sieve_results: test.sieve_results || {},
+      observations: test.observations || "",
+    })
+    setShowDialog(true)
   }
 
   function resetForm() {
@@ -185,6 +222,7 @@ export default function GranulometriaPage() {
       sieve_results: {},
       observations: "",
     })
+    setEditingTest(null)
   }
 
   function getChartData(test: GranulometryTest) {
@@ -392,6 +430,7 @@ export default function GranulometriaPage() {
                     <TableHead className="text-right">MF</TableHead>
                     <TableHead className="text-center">Estado</TableHead>
                     <TableHead className="text-center">Curva</TableHead>
+                    <TableHead className="text-center">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -425,6 +464,16 @@ export default function GranulometriaPage() {
                         <Button variant="ghost" size="sm" onClick={() => setSelectedTest(test)}>
                           Ver
                         </Button>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditGranu(test)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(test.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
