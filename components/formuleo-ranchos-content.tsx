@@ -134,15 +134,19 @@ export function FormuleoRanchosContent() {
   const [pendingFormulaSave, setPendingFormulaSave] = useState<"paston" | "adoquin" | null>(null)
   const [pendingAdoquinType, setPendingAdoquinType] = useState<string | null>(null)
   
-  // Calculate Mark V percentage
-  const markVPercentage = pastonFormula.cement_kg > 0 
-    ? (pastonFormula.additive_1_kg / pastonFormula.cement_kg) * 100 
-    : 0
+  // Calculate additive percentage per kg of cement (same formula as Silke)
+  const calculateAdditivePercentage = (additiveKg: number) => {
+    if (pastonFormula.cement_kg <= 0 || pastonFormula.tank_capacity_liters <= 0 || pastonFormula.diluted_additive_per_paston_liters <= 0) return 0
+    // Proporcion de aditivo en el tanque
+    const additiveRatio = additiveKg / pastonFormula.tank_capacity_liters
+    // Litros de este aditivo por paston
+    const additivePerPaston = additiveRatio * pastonFormula.diluted_additive_per_paston_liters
+    // Porcentaje sobre kg de cemento
+    return (additivePerPaston / pastonFormula.cement_kg) * 100
+  }
   
-  // Calculate Daraccel percentage  
-  const daraccelPercentage = pastonFormula.cement_kg > 0
-    ? (pastonFormula.additive_2_kg / pastonFormula.cement_kg) * 100
-    : 0
+  const markVPercentage = calculateAdditivePercentage(pastonFormula.additive_1_kg)
+  const daraccelPercentage = calculateAdditivePercentage(pastonFormula.additive_2_kg)
 
   // Load data
   useEffect(() => {
@@ -213,27 +217,56 @@ export function FormuleoRanchosContent() {
     const supabase = getSupabase()
     
     const dataToSave = {
-      ...pastonFormula,
       plant: plantValue,
-      modified_by: formulaChangedBy || selectedOperator,
-      modified_at: new Date().toISOString()
+      sand_kg: pastonFormula.sand_kg,
+      sand_supplier: pastonFormula.sand_supplier,
+      stone_kg: pastonFormula.stone_kg,
+      stone_supplier: pastonFormula.stone_supplier,
+      cement_kg: pastonFormula.cement_kg,
+      cement_supplier: pastonFormula.cement_supplier,
+      tank_capacity_liters: pastonFormula.tank_capacity_liters,
+      additive_1_kg: pastonFormula.additive_1_kg,
+      additive_1_name: pastonFormula.additive_1_name || "Mark V",
+      additive_2_kg: pastonFormula.additive_2_kg,
+      additive_2_name: pastonFormula.additive_2_name || "Daraccel",
+      water_in_tank_liters: pastonFormula.tank_capacity_liters - pastonFormula.additive_1_kg - pastonFormula.additive_2_kg,
+      diluted_additive_per_paston_liters: pastonFormula.diluted_additive_per_paston_liters,
+      modified_by: formulaChangedBy,
+      modified_at: new Date().toISOString(),
+      is_active: true
     }
     
+    let savedData = null
+    
     if (pastonFormula.id) {
-      await supabase
+      const { data, error } = await supabase
         .from("paston_formulas")
         .update(dataToSave)
         .eq("id", pastonFormula.id)
+        .select()
+        .single()
+      
+      if (error) {
+        console.error("[v0] Error updating paston formula:", error)
+      } else {
+        savedData = data
+      }
     } else {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("paston_formulas")
         .insert(dataToSave)
         .select()
         .single()
       
-      if (data) {
-        setPastonFormula(data)
+      if (error) {
+        console.error("[v0] Error inserting paston formula:", error)
+      } else {
+        savedData = data
       }
+    }
+    
+    if (savedData) {
+      setPastonFormula(savedData)
     }
     
     // Log formula change (always log when saving)
