@@ -6,8 +6,19 @@ import { usePlant } from "@/lib/plant-context"
 import { calculateReportMetrics, calculatePipeMetrics, TARGETS, type ReportMetrics, type PipeReportMetrics } from "@/lib/report-utils"
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart,
+  BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart, ComposedChart,
 } from "recharts"
+
+// Sieve sizes for granulometry chart
+const SIEVE_SIZES = [
+  { size: 9.5, label: "9.5mm" },
+  { size: 4.75, label: "4.75mm" },
+  { size: 2.36, label: "2.36mm" },
+  { size: 1.18, label: "1.18mm" },
+  { size: 0.60, label: "0.60mm" },
+  { size: 0.30, label: "0.30mm" },
+  { size: 0.15, label: "0.15mm" },
+]
 import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2, AlertTriangle, LayoutGrid, FlaskConical } from "lucide-react"
 import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -507,11 +518,13 @@ export function DashboardContent() {
         
         setStockpileData({
           arena: arenaTest ? {
+            ...arenaTest, // Include full test data with passing_percentages
             mf: arenaTest.modulo_finura,
             tested_by: arenaTest.tested_by,
             test_date: arenaTest.test_date,
           } : null,
           piedra: piedraTest ? {
+            ...piedraTest, // Include full test data with passing_percentages
             mf: piedraTest.modulo_finura,
             tested_by: piedraTest.tested_by,
             test_date: piedraTest.test_date,
@@ -1996,7 +2009,7 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
 
       {/* Modal de Detalle de Granulometría */}
       <Dialog open={!!selectedStockpileDetail} onOpenChange={(open) => !open && setSelectedStockpileDetail(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FlaskConical className="w-5 h-5" />
@@ -2084,17 +2097,82 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                   </a>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <span className="text-sm text-muted-foreground">Fecha del ensayo</span>
-                    <p className="font-medium">{selectedStockpileDetail.test_date && new Date(selectedStockpileDetail.test_date).toLocaleDateString("es-AR", { 
-                      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-                    })}</p>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-sm text-muted-foreground">Fecha del ensayo</span>
+                      <p className="font-medium">{selectedStockpileDetail.test_date && new Date(selectedStockpileDetail.test_date).toLocaleDateString("es-AR", { 
+                        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+                      })}</p>
+                    </div>
+                    <div>
+                      <span className="text-sm text-muted-foreground">Responsable</span>
+                      <p className="font-medium">{selectedStockpileDetail.tested_by}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">Responsable</span>
-                    <p className="font-medium">{selectedStockpileDetail.tested_by}</p>
-                  </div>
+                  
+                  {/* Curva Granulométrica */}
+                  {selectedStockpileDetail.passing_percentages && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium">Curva Granulométrica</h4>
+                      <div className="h-48 bg-muted/30 rounded-lg p-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart
+                            data={SIEVE_SIZES.map((sieve) => ({
+                              sieve: sieve.label,
+                              passing: selectedStockpileDetail.passing_percentages?.[sieve.label] ?? 0,
+                            })).reverse()}
+                            margin={{ top: 5, right: 10, left: -10, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                            <XAxis 
+                              dataKey="sieve" 
+                              tick={{ fontSize: 10 }} 
+                              interval={0}
+                              angle={-45}
+                              textAnchor="end"
+                              height={50}
+                            />
+                            <YAxis 
+                              domain={[0, 100]} 
+                              tick={{ fontSize: 10 }}
+                              tickFormatter={(v) => `${v}%`}
+                            />
+                            <Tooltip 
+                              formatter={(value: number) => [`${value.toFixed(1)}%`, "Pasante"]}
+                              labelFormatter={(label) => `Tamiz: ${label}`}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="passing" 
+                              stroke="#3b82f6" 
+                              strokeWidth={2}
+                              dot={{ fill: "#3b82f6", r: 4 }}
+                              name="% Pasante"
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      
+                      {/* Tabla de valores */}
+                      <div className="grid grid-cols-7 gap-1 text-xs">
+                        {SIEVE_SIZES.slice().reverse().map((sieve) => (
+                          <div key={sieve.label} className="text-center bg-muted/50 rounded p-1">
+                            <div className="font-medium text-muted-foreground">{sieve.label}</div>
+                            <div className="font-bold">{selectedStockpileDetail.passing_percentages?.[sieve.label]?.toFixed(1) ?? "-"}%</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <a 
+                    href="/calidad/granulometria" 
+                    className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    <FlaskConical className="h-4 w-4" />
+                    Ver historial de ensayos
+                  </a>
                 </div>
               )}
             </div>
