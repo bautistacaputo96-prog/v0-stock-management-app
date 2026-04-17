@@ -216,25 +216,58 @@ export default function MezclasGranulometriaPage() {
     setLoading(true)
     const { data, error } = await supabase
       .from("granulometry_tests")
-      .select("*")
+      .select(`
+        *,
+        mp_receipts!left(supplier_id, suppliers!left(name))
+      `)
       .order("test_date", { ascending: false })
       .limit(50)
     
     if (!error && data) {
-      setTests(data)
+      // Transform data to include supplier_name
+      const transformedData = data.map((test: any) => ({
+        ...test,
+        supplier: test.mp_receipts?.suppliers?.name || test.origin || test.supplier_name || null,
+      }))
+      setTests(transformedData)
     }
     setLoading(false)
   }
   
+  // Helper function to extract passing percentages from test data
+  function getPassingFromTest(test: any): number[] {
+    // Map sieve sizes to database column names
+    const sieveColumnMapping: Record<number, string> = {
+      9.5: "sieve_9500",
+      4.75: "sieve_4750",
+      2.36: "sieve_2360",
+      1.18: "sieve_1180",
+      0.60: "sieve_600",
+      0.30: "sieve_300",
+      0.15: "sieve_150",
+    }
+    
+    const totalWeight = parseFloat(test.total_sample_weight_g) || parseFloat(test.sample_weight_g) || 500
+    let cumulativeRetained = 0
+    const passing: number[] = []
+    
+    for (const size of SIEVE_SIZES_MM) {
+      const colName = sieveColumnMapping[size]
+      const retained = colName ? (parseFloat(test[colName]) || 0) : 0
+      cumulativeRetained += retained
+      const passingPct = ((totalWeight - cumulativeRetained) / totalWeight) * 100
+      passing.push(Math.max(0, Math.min(100, passingPct)))
+    }
+    
+    return passing
+  }
+
   // Calcular curvas
   const sandPassing = useMemo(() => {
     if (useExistingTests && selectedSandTest) {
       const test = tests.find(t => t.id === selectedSandTest)
-      if (test?.passing_percentages) {
-        return SIEVE_SIZES_MM.map((size, i) => {
-          const label = SIEVE_LABELS[i]
-          return test.passing_percentages[label] || test.passing_percentages[`${size}mm`] || 100
-        })
+      if (test) {
+        return getPassingFromTest(test)
       }
     }
     return calculatePassingFromRetained(sandRetained, sandWeight)
@@ -243,11 +276,8 @@ export default function MezclasGranulometriaPage() {
   const stonePassing = useMemo(() => {
     if (useExistingTests && selectedStoneTest) {
       const test = tests.find(t => t.id === selectedStoneTest)
-      if (test?.passing_percentages) {
-        return SIEVE_SIZES_MM.map((size, i) => {
-          const label = SIEVE_LABELS[i]
-          return test.passing_percentages[label] || test.passing_percentages[`${size}mm`] || 100
-        })
+      if (test) {
+        return getPassingFromTest(test)
       }
     }
     return calculatePassingFromRetained(stoneRetained, stoneWeight)
@@ -326,10 +356,12 @@ export default function MezclasGranulometriaPage() {
   const rmsStatus = getRMSStatus(currentRMS)
   const mfInRange = blendMF >= currentLine.mfMin && blendMF <= currentLine.mfMax
   
-  // Filtrar ensayos por tipo de material
-  const sandTests = tests.filter(t => t.material_type === "arena")
+  // Filtrar ensayos por tipo de material (case-insensitive)
+  const sandTests = tests.filter(t => 
+    t.material_type?.toLowerCase().includes("arena")
+  )
   const stoneTests = tests.filter(t => 
-    currentLine.materials.includes(t.material_type) && t.material_type !== "arena"
+    t.material_type?.toLowerCase().includes("piedra")
   )
   
   return (
