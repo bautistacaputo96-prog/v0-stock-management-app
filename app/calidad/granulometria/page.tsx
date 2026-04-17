@@ -566,7 +566,6 @@ export default function GranulometriaPage() {
             </CardContent>
           </Card>
         )}
-      </div>
 
       {/* Bands Configuration Dialog */}
       <Dialog open={showBandsDialog} onOpenChange={setShowBandsDialog}>

@@ -527,7 +527,6 @@ export default function DosificacionesPage() {
             )
           })}
         </div>
-      </div>
 
       {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>

@@ -515,7 +515,6 @@ export default function HumedadPage() {
             )}
           </CardContent>
         </Card>
-      </div>
     </div>
   )
 }
