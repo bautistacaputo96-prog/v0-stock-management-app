@@ -15,6 +15,7 @@ import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Penci
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
+import { usePlant } from "@/lib/plant-context"
 
 // Standard sieve sizes in mm
 const SIEVE_SIZES = [
@@ -37,6 +38,15 @@ const MATERIAL_TYPES = [
   { value: "piedra_0_10", label: "Piedra 0/10" },
   { value: "piedra_0_20", label: "Piedra 0/20" },
 ]
+
+// MF limits by material type (corrected ranges)
+const MF_LIMITS: Record<string, { min: number; max: number }> = {
+  arena: { min: 2.3, max: 3.1 },        // IRAM zona II/III
+  piedra_0_6: { min: 3.2, max: 4.2 },   // Ranchos - piedra 0/6
+  piedra_0_10: { min: 4.0, max: 5.0 },  // Mercedes - piedra 0/10
+  piedra_0_20: { min: 5.0, max: 6.5 },  // Piedra más gruesa
+  piedra: { min: 3.2, max: 5.0 },       // Genérico para piedra
+}
 
 // IRAM 1627 specification bands by material type
 // Index matches SIEVE_SIZES: [1", 3/4", 1/2", 3/8", N°4, N°8, N°16, N°30, N°50, N°100, N°200]
@@ -125,6 +135,7 @@ interface GranulometryTest {
 
 export default function GranulometriaPage() {
   const supabase = createClient()
+  const { selectedPlant } = usePlant()
   const [tests, setTests] = useState<GranulometryTest[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedMaterial, setSelectedMaterial] = useState<string>("all")
@@ -265,24 +276,42 @@ export default function GranulometriaPage() {
     return sumRetained / 100
   }
 
-  function checkWithinSpec(passingPercentages: Record<string, number>, materialType: string) {
-    const bands = DEFAULT_BANDS[materialType]
-    if (!bands) return true
-
-    for (let i = 0; i < SIEVE_SIZES.length; i++) {
-      const sieve = SIEVE_SIZES[i]
-      const passing = passingPercentages[sieve.label] || 0
-      if (passing < bands.min[i] || passing > bands.max[i]) {
+  function checkWithinSpec(passingPercentages: Record<string, number>, materialType: string, mf?: number | null) {
+    // Check sieve bands
+    const bands = DEFAULT_BANDS[materialType] || DEFAULT_BANDS[materialType.toLowerCase()]
+    if (bands) {
+      for (let i = 0; i < SIEVE_SIZES.length; i++) {
+        const sieve = SIEVE_SIZES[i]
+        const passing = passingPercentages[sieve.label] || 0
+        if (passing < bands.min[i] || passing > bands.max[i]) {
+          return false
+        }
+      }
+    }
+    
+    // Check MF limits if provided
+    if (mf !== undefined && mf !== null) {
+      const mfLimits = MF_LIMITS[materialType] || MF_LIMITS[materialType.toLowerCase()] || 
+                       (materialType.toLowerCase().includes("piedra") ? MF_LIMITS.piedra : MF_LIMITS.arena)
+      if (mf < mfLimits.min || mf > mfLimits.max) {
         return false
       }
     }
+    
     return true
+  }
+
+  // Get MF limits for a material type
+  function getMFLimits(materialType: string) {
+    return MF_LIMITS[materialType] || MF_LIMITS[materialType.toLowerCase()] || 
+           (materialType.toLowerCase().includes("piedra") ? MF_LIMITS.piedra : MF_LIMITS.arena)
   }
 
   async function handleSubmit() {
     const passingPercentages = calculatePassingPercentages(formData.sieve_results, formData.sample_weight_g)
-    const finenessModulus = formData.material_type === "arena" ? calculateFinenessModulus(passingPercentages) : null
-    const isWithinSpec = checkWithinSpec(passingPercentages, formData.material_type)
+    // Calculate MF for all material types (not just arena)
+    const finenessModulus = calculateFinenessModulus(passingPercentages)
+    const isWithinSpec = checkWithinSpec(passingPercentages, formData.material_type, finenessModulus)
 
     const dataToSave = {
       test_date: formData.test_date,
@@ -365,10 +394,9 @@ export default function GranulometriaPage() {
     }
     
     const passingPercentages = calculatePassingPercentages(stockpileFormData.sieve_results, stockpileFormData.total_sample_weight_g)
-    const finenessModulus = stockpileFormData.material_type.toLowerCase().includes("arena") 
-      ? calculateFinenessModulus(passingPercentages) 
-      : null
-    const isWithinSpec = checkWithinSpec(passingPercentages, stockpileFormData.material_type)
+    // Calculate MF for all material types
+    const finenessModulus = calculateFinenessModulus(passingPercentages)
+    const isWithinSpec = checkWithinSpec(passingPercentages, stockpileFormData.material_type, finenessModulus)
 
     // Map sieve results to database columns
     const sieveData: Record<string, number> = {}
@@ -396,7 +424,7 @@ export default function GranulometriaPage() {
     const { error } = await supabase
       .from("stockpile_granulometry")
       .insert({
-        plant: "mercedes", // TODO: Get from context
+        plant: selectedPlant || "mercedes",
         material_type: stockpileFormData.material_type,
         tested_by: stockpileFormData.tested_by,
         total_sample_weight_g: stockpileFormData.total_sample_weight_g,
