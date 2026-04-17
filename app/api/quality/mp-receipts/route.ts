@@ -1,7 +1,16 @@
 import { createClient } from "@/lib/supabase"
 import { NextResponse } from "next/server"
 
-const LAB_SAMPLE_MATERIALS = ["arena_especial", "piedra_0_10"]
+// Check if material type requires lab sample (case-insensitive)
+function isLabSampleMaterial(materialType: string): boolean {
+  const normalized = materialType.toLowerCase().trim()
+  return normalized.includes("arena") || normalized.includes("piedra")
+}
+
+// Check if material is arena type (for humidity tests)
+function isArenaMaterial(materialType: string): boolean {
+  return materialType.toLowerCase().trim().includes("arena")
+}
 
 export async function GET(request: Request) {
   try {
@@ -86,11 +95,11 @@ export async function POST(request: Request) {
     }
 
     // Create pending quality tests if lab sample was taken
-    if (body.lab_sample_taken && LAB_SAMPLE_MATERIALS.includes(body.material_type)) {
+    if (body.lab_sample_taken && isLabSampleMaterial(body.material_type)) {
       const pendingTests = []
       
-      // Humidity test pending (for arena)
-      if (body.material_type === "arena_especial") {
+      // Humidity test pending (for arena types)
+      if (isArenaMaterial(body.material_type)) {
         pendingTests.push({
           mp_receipt_id: receipt.id,
           test_type: "humedad",
