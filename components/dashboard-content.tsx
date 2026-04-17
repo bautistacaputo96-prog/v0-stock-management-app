@@ -8,7 +8,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, Legend, ReferenceLine, Area, AreaChart,
 } from "recharts"
-import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2, AlertTriangle, LayoutGrid } from "lucide-react"
+import { ArrowUpRight, ArrowDownRight, Calendar, Clock, Factory, Cylinder, TrendingUp, Minus, ChevronLeft, ChevronRight, X, CheckCircle2, XCircle, CalendarDays, Tv2, AlertTriangle, LayoutGrid, FlaskConical } from "lucide-react"
 import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -137,7 +137,7 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
   )
 }
 
-// ── Main Component ─────────────────────────────���─────��─────────────────────
+// ── Main Component ─────────────────────────────����─────��─────────────────────
 
 export function DashboardContent() {
   const { selectedPlant, plantName, isPlantLoaded } = usePlant()
@@ -165,6 +165,22 @@ export function DashboardContent() {
     byDate: Record<string, number>
     byDateShift: Record<string, Record<number, number>>
   } | null>(null)
+  
+  // Stockpile granulometry KPIs
+  const [stockpileData, setStockpileData] = useState<{
+    arena: { mf: number; tested_by: string; test_date: string } | null
+    piedra: { mf: number; tested_by: string; test_date: string; label: string } | null
+    mezcla: { mf: number; arenaMf: number; piedraMf: number; arenaPct: number; piedraPct: number } | null
+  }>({ arena: null, piedra: null, mezcla: null })
+  const [selectedStockpileDetail, setSelectedStockpileDetail] = useState<any | null>(null)
+  
+  // MF limits
+  const MF_LIMITS = {
+    arena: { min: 2.3, max: 3.1 },
+    piedra_06: { min: 3.2, max: 4.2 },
+    piedra_010: { min: 4.0, max: 5.0 },
+    mezcla: { min: 2.8, max: 3.2 },
+  }
   
   // Determinar lineas disponibles segun planta:
   // Villa Rosa y Silke: solo canos | Ranchos: usa otro dashboard
@@ -454,6 +470,60 @@ export function DashboardContent() {
       }
     } catch {
       setScrapData(null)
+    }
+
+    // Fetch stockpile granulometry data
+    try {
+      const { data: stockpileTests } = await supabase
+        .from("stockpile_granulometry")
+        .select("*")
+        .eq("plant", plantValue)
+        .order("test_date", { ascending: false })
+      
+      if (stockpileTests && stockpileTests.length > 0) {
+        const arenaTest = stockpileTests.find((t: any) => t.material_type.toLowerCase().includes("arena"))
+        const piedraTest = stockpileTests.find((t: any) => t.material_type.toLowerCase().includes("piedra"))
+        
+        // Determine piedra label based on plant
+        const piedraLabel = selectedPlant === "ranchos" ? "Piedra 0/6" : "Piedra 0/10"
+        
+        // Default dosification by plant
+        const dosif = selectedPlant === "ranchos" 
+          ? { arena: 55, piedra: 45 }
+          : { arena: 50, piedra: 50 }
+        
+        let mezclaData = null
+        if (arenaTest?.modulo_finura && piedraTest?.modulo_finura) {
+          const mfMezcla = (arenaTest.modulo_finura * dosif.arena / 100) + 
+                          (piedraTest.modulo_finura * dosif.piedra / 100)
+          mezclaData = {
+            mf: mfMezcla,
+            arenaMf: arenaTest.modulo_finura,
+            piedraMf: piedraTest.modulo_finura,
+            arenaPct: dosif.arena,
+            piedraPct: dosif.piedra,
+          }
+        }
+        
+        setStockpileData({
+          arena: arenaTest ? {
+            mf: arenaTest.modulo_finura,
+            tested_by: arenaTest.tested_by,
+            test_date: arenaTest.test_date,
+          } : null,
+          piedra: piedraTest ? {
+            mf: piedraTest.modulo_finura,
+            tested_by: piedraTest.tested_by,
+            test_date: piedraTest.test_date,
+            label: piedraLabel,
+          } : null,
+          mezcla: mezclaData,
+        })
+      } else {
+        setStockpileData({ arena: null, piedra: null, mezcla: null })
+      }
+    } catch {
+      setStockpileData({ arena: null, piedra: null, mezcla: null })
     }
 
     setLoading(false)
@@ -1786,15 +1856,244 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                     ))}
                   </>
                 )}
+            </div>
+            </div>
+
+            {/* ── Seccion 7: Granulometría de Acopios ── */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
+                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Granulometría de Acopios</h2>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {/* Arena MF */}
+                <div 
+                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
+                    stockpileData.arena 
+                      ? (stockpileData.arena.mf >= MF_LIMITS.arena.min && stockpileData.arena.mf <= MF_LIMITS.arena.max)
+                        ? "border-green-200 bg-green-50/50" 
+                        : "border-yellow-200 bg-yellow-50/50"
+                      : "border-border"
+                  }`}
+                  onClick={() => stockpileData.arena && setSelectedStockpileDetail({ 
+                    type: "arena", 
+                    label: "Arena",
+                    ...stockpileData.arena,
+                    limits: MF_LIMITS.arena
+                  })}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">Arena</div>
+                    {stockpileData.arena && (
+                      stockpileData.arena.mf >= MF_LIMITS.arena.min && stockpileData.arena.mf <= MF_LIMITS.arena.max
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                    )}
+                  </div>
+                  <div className="text-2xl font-bold text-foreground">
+                    MF: {stockpileData.arena?.mf?.toFixed(2) || "-"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Rango: {MF_LIMITS.arena.min} - {MF_LIMITS.arena.max}
+                  </div>
+                  {stockpileData.arena && (
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} • {stockpileData.arena.tested_by}
+                    </div>
+                  )}
+                </div>
+
+                {/* Piedra MF */}
+                <div 
+                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
+                    stockpileData.piedra 
+                      ? (() => {
+                          const limits = selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
+                          return (stockpileData.piedra.mf >= limits.min && stockpileData.piedra.mf <= limits.max)
+                            ? "border-green-200 bg-green-50/50" 
+                            : "border-yellow-200 bg-yellow-50/50"
+                        })()
+                      : "border-border"
+                  }`}
+                  onClick={() => stockpileData.piedra && setSelectedStockpileDetail({ 
+                    type: "piedra", 
+                    label: stockpileData.piedra.label,
+                    ...stockpileData.piedra,
+                    limits: selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
+                  })}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
+                      {selectedPlant === "ranchos" ? "Piedra 0/6" : "Piedra 0/10"}
+                    </div>
+                    {stockpileData.piedra && (() => {
+                      const limits = selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
+                      return stockpileData.piedra.mf >= limits.min && stockpileData.piedra.mf <= limits.max
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                    })()}
+                  </div>
+                  <div className="text-2xl font-bold text-foreground">
+                    MF: {stockpileData.piedra?.mf?.toFixed(2) || "-"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Rango: {selectedPlant === "ranchos" ? `${MF_LIMITS.piedra_06.min} - ${MF_LIMITS.piedra_06.max}` : `${MF_LIMITS.piedra_010.min} - ${MF_LIMITS.piedra_010.max}`}
+                  </div>
+                  {stockpileData.piedra && (
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} • {stockpileData.piedra.tested_by}
+                    </div>
+                  )}
+                </div>
+
+                {/* Mezcla MF */}
+                <div 
+                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
+                    stockpileData.mezcla 
+                      ? (stockpileData.mezcla.mf >= MF_LIMITS.mezcla.min && stockpileData.mezcla.mf <= MF_LIMITS.mezcla.max)
+                        ? "border-green-200 bg-green-50/50" 
+                        : "border-yellow-200 bg-yellow-50/50"
+                      : "border-border"
+                  }`}
+                  onClick={() => stockpileData.mezcla && setSelectedStockpileDetail({ 
+                    type: "mezcla", 
+                    label: "Mezcla del Pastón",
+                    ...stockpileData.mezcla,
+                    limits: MF_LIMITS.mezcla,
+                    arenaData: stockpileData.arena,
+                    piedraData: stockpileData.piedra
+                  })}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">MF Mezcla</div>
+                    {stockpileData.mezcla && (
+                      stockpileData.mezcla.mf >= MF_LIMITS.mezcla.min && stockpileData.mezcla.mf <= MF_LIMITS.mezcla.max
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                    )}
+                  </div>
+                  <div className="text-2xl font-bold text-foreground">
+                    MF: {stockpileData.mezcla?.mf?.toFixed(2) || "-"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Rango: {MF_LIMITS.mezcla.min} - {MF_LIMITS.mezcla.max}
+                  </div>
+                  {stockpileData.mezcla && (
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      Dosif: {stockpileData.mezcla.arenaPct}% arena / {stockpileData.mezcla.piedraPct}% piedra
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </>
-        )}
-
-        {/* ═══ PRODUCCIÓN DIARIA ══════════════════════════════════════════ */}
+            </>
+            )}
+            
+            {/* ═══ PRODUCCIÓN DIARIA ═════════════���════════════════════════════ */}
         {activeLine === "produccion-diaria" && <DailyProductionModal />}
 
       </div>
+
+      {/* Modal de Detalle de Granulometría */}
+      <Dialog open={!!selectedStockpileDetail} onOpenChange={(open) => !open && setSelectedStockpileDetail(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="w-5 h-5" />
+              {selectedStockpileDetail?.label}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {selectedStockpileDetail && (
+            <div className="space-y-4">
+              {/* MF y Estado */}
+              <div className={`p-4 rounded-lg ${
+                selectedStockpileDetail.limits && 
+                selectedStockpileDetail.mf >= selectedStockpileDetail.limits.min && 
+                selectedStockpileDetail.mf <= selectedStockpileDetail.limits.max
+                  ? "bg-green-50 border border-green-200"
+                  : "bg-yellow-50 border border-yellow-200"
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm text-muted-foreground">Módulo de Finura</span>
+                    <p className="text-3xl font-bold">{selectedStockpileDetail.mf?.toFixed(2)}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-muted-foreground">Rango aceptable</span>
+                    <p className="font-medium">{selectedStockpileDetail.limits?.min} - {selectedStockpileDetail.limits?.max}</p>
+                  </div>
+                </div>
+                <div className={`mt-2 text-sm font-medium ${
+                  selectedStockpileDetail.limits && 
+                  selectedStockpileDetail.mf >= selectedStockpileDetail.limits.min && 
+                  selectedStockpileDetail.mf <= selectedStockpileDetail.limits.max
+                    ? "text-green-700"
+                    : "text-yellow-700"
+                }`}>
+                  {selectedStockpileDetail.limits && 
+                   selectedStockpileDetail.mf >= selectedStockpileDetail.limits.min && 
+                   selectedStockpileDetail.mf <= selectedStockpileDetail.limits.max
+                    ? <><CheckCircle2 className="h-4 w-4 inline mr-1" /> Dentro de especificación</>
+                    : <><AlertTriangle className="h-4 w-4 inline mr-1" /> Fuera de rango</>}
+                </div>
+              </div>
+
+              {/* Detalles del ensayo o cálculo */}
+              {selectedStockpileDetail.type === "mezcla" ? (
+                <div className="space-y-3">
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Dosificación:</span>
+                    <span className="font-medium ml-2">{selectedStockpileDetail.arenaPct}% Arena / {selectedStockpileDetail.piedraPct}% Piedra</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                    <div>
+                      <span className="text-xs text-muted-foreground">Arena</span>
+                      <p className="font-medium">MF: {selectedStockpileDetail.arenaMf?.toFixed(2)}</p>
+                      {selectedStockpileDetail.arenaData && (
+                        <>
+                          <p className="text-xs text-muted-foreground">{selectedStockpileDetail.arenaData.tested_by}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(selectedStockpileDetail.arenaData.test_date).toLocaleDateString("es-AR")}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">{selectedPlant === "ranchos" ? "Piedra 0/6" : "Piedra 0/10"}</span>
+                      <p className="font-medium">MF: {selectedStockpileDetail.piedraMf?.toFixed(2)}</p>
+                      {selectedStockpileDetail.piedraData && (
+                        <>
+                          <p className="text-xs text-muted-foreground">{selectedStockpileDetail.piedraData.tested_by}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(selectedStockpileDetail.piedraData.test_date).toLocaleDateString("es-AR")}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    MF Mezcla = (MF Arena × {selectedStockpileDetail.arenaPct}%) + (MF Piedra × {selectedStockpileDetail.piedraPct}%)
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-sm text-muted-foreground">Fecha del ensayo</span>
+                    <p className="font-medium">{selectedStockpileDetail.test_date && new Date(selectedStockpileDetail.test_date).toLocaleDateString("es-AR", { 
+                      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+                    })}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-muted-foreground">Responsable</span>
+                    <p className="font-medium">{selectedStockpileDetail.tested_by}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Detalle de Cumplimiento */}
       <Dialog open={showCumplimientoDetail} onOpenChange={setShowCumplimientoDetail}>
