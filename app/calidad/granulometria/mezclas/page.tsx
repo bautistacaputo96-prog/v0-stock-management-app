@@ -146,7 +146,7 @@ function checkSieveAlerts(blendPassing: number[]): Array<{ sieve: string; value:
   return alerts
 }
 
-// Generar recomendación
+// Generar recomendación según patrones de desviación IRAM 1627
 function generateRecommendation(
   currentProportion: number,
   optimalProportion: number,
@@ -166,23 +166,59 @@ function generateRecommendation(
     parts.push(`Ajustando a ${optimalProportion}% arena / ${100 - optimalProportion}% piedra se reduce la desviación a ${optimalRMS.toFixed(1)}.`)
   }
   
-  // Análisis de finos y gruesos
-  const finesIndex = SIEVE_SIZES_MM.findIndex(s => s === 0.15)
-  const coarseIndex = SIEVE_SIZES_MM.findIndex(s => s === 4.75)
-  
-  if (finesIndex >= 0 && blendPassing[finesIndex] > IRAM_1627_ZONA_II.max[finesIndex]) {
-    parts.push("La mezcla presenta exceso de finos, lo que puede aumentar la demanda de agua y cemento.")
+  // Verificar si todos los tamices están dentro del rango IRAM
+  let allWithinRange = true
+  for (let i = 0; i < SIEVE_SIZES_MM.length; i++) {
+    if (blendPassing[i] < IRAM_1627_ZONA_II.min[i] || blendPassing[i] > IRAM_1627_ZONA_II.max[i]) {
+      allWithinRange = false
+      break
+    }
   }
   
-  if (coarseIndex >= 0 && blendPassing[coarseIndex] < IRAM_1627_ZONA_II.min[coarseIndex]) {
-    parts.push("Hay déficit de fracción gruesa, lo que puede reducir la resistencia al desgaste superficial.")
+  // Índices de tamices para análisis de patrones
+  const fines030Index = SIEVE_SIZES_MM.findIndex(s => s === 0.30)  // N°50
+  const fines015Index = SIEVE_SIZES_MM.findIndex(s => s === 0.15)  // N°100
+  const medium060Index = SIEVE_SIZES_MM.findIndex(s => s === 0.60) // N°30
+  const medium118Index = SIEVE_SIZES_MM.findIndex(s => s === 1.18) // N°16
+  const coarse236Index = SIEVE_SIZES_MM.findIndex(s => s === 2.36) // N°8
+  const coarse475Index = SIEVE_SIZES_MM.findIndex(s => s === 4.75) // N°4
+  
+  // Patrón 1: Exceso de pasante en tamices ≤ 0.30mm (finos)
+  const excessFines = (fines030Index >= 0 && blendPassing[fines030Index] > IRAM_1627_ZONA_II.max[fines030Index]) ||
+                      (fines015Index >= 0 && blendPassing[fines015Index] > IRAM_1627_ZONA_II.max[fines015Index])
+  if (excessFines) {
+    parts.push("Exceso de finos. Riesgo de mayor demanda de agua y cemento. Reducir proporción de arena o solicitar arena con menor contenido de polvo.")
   }
   
-  // MF
+  // Patrón 2: Déficit de pasante en tamices ≥ 2.36mm (gruesos)
+  const deficitCoarse = (coarse236Index >= 0 && blendPassing[coarse236Index] < IRAM_1627_ZONA_II.min[coarse236Index]) ||
+                        (coarse475Index >= 0 && blendPassing[coarse475Index] < IRAM_1627_ZONA_II.min[coarse475Index])
+  if (deficitCoarse) {
+    parts.push("Déficit de fracción gruesa. Riesgo de menor resistencia al desgaste superficial. Aumentar proporción de piedra.")
+  }
+  
+  // Patrón 3: Exceso de pasante en tamices intermedios (0.60-1.18mm)
+  const excessMedium = (medium060Index >= 0 && blendPassing[medium060Index] > IRAM_1627_ZONA_II.max[medium060Index]) ||
+                       (medium118Index >= 0 && blendPassing[medium118Index] > IRAM_1627_ZONA_II.max[medium118Index])
+  if (excessMedium && !excessFines) {
+    parts.push("Curva cargada en fracción media. Verificar MF y considerar ajuste de proporción.")
+  }
+  
+  // Patrón 4: Curva dentro de rango pero RMS > 5
+  if (allWithinRange && currentRMS > 5) {
+    parts.push("Curva dentro de límites IRAM pero alejada de Fuller. El formuleo es aceptable pero puede optimizarse ajustando la proporción.")
+  }
+  
+  // MF fuera de rango
   if (mf < mfMin) {
     parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por debajo del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de piedra.`)
   } else if (mf > mfMax) {
     parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por encima del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de arena.`)
+  }
+  
+  // Si todo está bien
+  if (parts.length === 1 && allWithinRange && currentRMS <= 5 && mf >= mfMin && mf <= mfMax) {
+    parts.push("La mezcla está dentro de especificación IRAM 1627 y próxima a la curva Fuller. Formuleo óptimo.")
   }
   
   return parts.join(" ")

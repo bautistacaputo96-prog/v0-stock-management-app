@@ -38,24 +38,74 @@ const MATERIAL_TYPES = [
   { value: "piedra_0_20", label: "Piedra 0/20" },
 ]
 
-// Default specification bands (can be customized)
+// IRAM 1627 specification bands by material type
+// Index matches SIEVE_SIZES: [1", 3/4", 1/2", 3/8", N°4, N°8, N°16, N°30, N°50, N°100, N°200]
 const DEFAULT_BANDS: Record<string, { min: number[]; max: number[] }> = {
+  // Arena (árido fino - zona II/III IRAM 1627)
+  // Tamices relevantes: N°4(4.75mm), N°8(2.36mm), N°16(1.18mm), N°30(0.60mm), N°50(0.30mm), N°100(0.15mm)
   arena: {
-    min: [100, 100, 100, 100, 95, 80, 50, 25, 10, 2, 0],
-    max: [100, 100, 100, 100, 100, 100, 85, 60, 30, 10, 3],
+    min: [100, 100, 100, 100, 95, 75, 55, 35, 15, 5, 0],
+    max: [100, 100, 100, 100, 100, 100, 90, 70, 34, 15, 3],
   },
+  // Piedra 0/6 (árido grueso fino - TMA 6.3mm IRAM 1627)
+  // Tamices relevantes: 3/8"(9.5mm), N°4(4.75mm), N°8(2.36mm), N°16(1.18mm), N°30(0.60mm), N°50(0.30mm)
   piedra_0_6: {
-    min: [100, 100, 100, 90, 20, 5, 0, 0, 0, 0, 0],
-    max: [100, 100, 100, 100, 50, 15, 5, 0, 0, 0, 0],
+    min: [100, 100, 100, 100, 85, 0, 0, 0, 0, 0, 0],
+    max: [100, 100, 100, 100, 100, 25, 10, 5, 3, 3, 0],
   },
+  // Piedra 0/10 (árido grueso - TMA 9.5mm)
   piedra_0_10: {
     min: [100, 100, 100, 85, 10, 0, 0, 0, 0, 0, 0],
     max: [100, 100, 100, 100, 30, 5, 0, 0, 0, 0, 0],
   },
+  // Piedra 0/20 (árido grueso - TMA 19mm)
   piedra_0_20: {
     min: [100, 90, 20, 0, 0, 0, 0, 0, 0, 0, 0],
     max: [100, 100, 55, 15, 5, 0, 0, 0, 0, 0, 0],
   },
+}
+
+// Lot validation status
+type LotStatus = "approved" | "warning" | "rejected"
+
+interface LotValidation {
+  status: LotStatus
+  outOfRangeSieves: { label: string; value: number; min: number; max: number; deviation: number }[]
+  message: string
+}
+
+// Validate a single aggregate lot against IRAM 1627 limits
+function validateLot(passingPercentages: Record<string, number>, materialType: string): LotValidation {
+  const bands = DEFAULT_BANDS[materialType.toLowerCase()] || DEFAULT_BANDS.arena
+  const outOfRange: LotValidation["outOfRangeSieves"] = []
+  
+  SIEVE_SIZES.forEach((sieve, i) => {
+    const value = passingPercentages[sieve.label] ?? 100
+    const min = bands.min[i]
+    const max = bands.max[i]
+    
+    if (value < min || value > max) {
+      const deviation = value < min ? min - value : value - max
+      outOfRange.push({ label: sieve.label, value, min, max, deviation })
+    }
+  })
+  
+  if (outOfRange.length === 0) {
+    return { status: "approved", outOfRangeSieves: [], message: "Lote aprobado - Todos los tamices dentro del rango IRAM 1627" }
+  } else if (outOfRange.length === 1) {
+    const s = outOfRange[0]
+    return { 
+      status: "warning", 
+      outOfRangeSieves: outOfRange, 
+      message: `Atención - Tamiz ${s.label} fuera de rango (${s.value.toFixed(1)}%, rango: ${s.min}-${s.max}%). Revisar lote.` 
+    }
+  } else {
+    return { 
+      status: "rejected", 
+      outOfRangeSieves: outOfRange, 
+      message: `Lote rechazado - ${outOfRange.length} tamices fuera de rango. Llamar a calidad.` 
+    }
+  }
 }
 
 interface GranulometryTest {
@@ -499,17 +549,31 @@ export default function GranulometriaPage() {
                         {test.fineness_modulus?.toFixed(2) || "-"}
                       </TableCell>
                       <TableCell className="text-center">
-                        {test.is_within_spec ? (
-                          <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />
-                            OK
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
-                            <AlertTriangle className="h-3 w-3 mr-1" />
-                            Fuera
-                          </Badge>
-                        )}
+                        {(() => {
+                          const validation = validateLot(test.passing_percentages || {}, test.material_type)
+                          if (validation.status === "approved") {
+                            return (
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                Aprobado
+                              </Badge>
+                            )
+                          } else if (validation.status === "warning") {
+                            return (
+                              <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100" title={validation.message}>
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                Atención
+                              </Badge>
+                            )
+                          } else {
+                            return (
+                              <Badge className="bg-red-100 text-red-700 hover:bg-red-100" title={validation.message}>
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                Rechazado
+                              </Badge>
+                            )
+                          }
+                        })()}
                       </TableCell>
                       <TableCell className="text-center">
                         <Button variant="ghost" size="sm" onClick={() => setSelectedTest(test)}>
@@ -550,6 +614,35 @@ export default function GranulometriaPage() {
                   Cerrar
                 </Button>
               </div>
+              {/* Lot Validation Alert */}
+              {(() => {
+                const validation = validateLot(selectedTest.passing_percentages || {}, selectedTest.material_type)
+                const bgColor = validation.status === "approved" ? "bg-green-50 border-green-200" :
+                               validation.status === "warning" ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200"
+                const textColor = validation.status === "approved" ? "text-green-800" :
+                                 validation.status === "warning" ? "text-yellow-800" : "text-red-800"
+                return (
+                  <div className={`mt-4 p-4 rounded-lg border ${bgColor}`}>
+                    <div className={`font-semibold ${textColor}`}>
+                      {validation.status === "approved" && <CheckCircle2 className="h-4 w-4 inline mr-2" />}
+                      {validation.status !== "approved" && <AlertTriangle className="h-4 w-4 inline mr-2" />}
+                      {validation.message}
+                    </div>
+                    {validation.outOfRangeSieves.length > 0 && (
+                      <div className="mt-2 text-sm">
+                        <span className="font-medium">Tamices fuera de rango:</span>
+                        <ul className="mt-1 space-y-1">
+                          {validation.outOfRangeSieves.map(s => (
+                            <li key={s.label}>
+                              <span className="font-mono">{s.label}</span>: {s.value.toFixed(1)}% (rango: {s.min}-{s.max}%, desviación: {s.deviation.toFixed(1)}%)
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </CardHeader>
             <CardContent>
               <div className="h-80">
