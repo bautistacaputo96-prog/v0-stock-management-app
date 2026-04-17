@@ -273,10 +273,11 @@ export default function GranulometriaPage() {
 
   function getChartData(test: GranulometryTest) {
     const bands = DEFAULT_BANDS[test.material_type] || { min: [], max: [] }
+    const passingPercentages = test.passing_percentages || calculatePassingFromSieveColumns(test)
     return SIEVE_SIZES.map((sieve, i) => ({
       sieve: sieve.label,
       size: sieve.size,
-      passing: test.passing_percentages[sieve.label] || 0,
+      passing: passingPercentages[sieve.label] ?? 0,
       min: bands.min[i] || 0,
       max: bands.max[i] || 100,
     }))
