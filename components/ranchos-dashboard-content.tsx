@@ -380,8 +380,10 @@ export function RanchosDashboardContent() {
 
       const stockMap: Record<string, number> = {}
       ;(receipts || []).forEach((r: any) => {
-        const key = r.material_type || "Otro"
-        stockMap[key] = (stockMap[key] || 0) + (r.quantity_tn || 0)
+        // Normalize material type to handle case differences
+        const rawKey = r.material_type || "Otro"
+        const key = rawKey.charAt(0).toUpperCase() + rawKey.slice(1).toLowerCase()
+        stockMap[key] = (stockMap[key] || 0) + (parseFloat(r.quantity_tn) || 0)
       })
 
       // Cemento discriminado por silo

@@ -175,6 +175,8 @@ export default function IngresoMPPage() {
   // Humidity
   const [showHumidity, setShowHumidity] = useState(false)
   const [humidityPercentage, setHumidityPercentage] = useState("")
+  const [wetWeightG, setWetWeightG] = useState("500")
+  const [dryWeightG, setDryWeightG] = useState("")
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const selectedSupplier = suppliers.find((s) => s.id.toString() === selectedSupplierId)
@@ -203,7 +205,11 @@ export default function IngresoMPPage() {
     ? calculateFinenessModulus(sieveValues, drySampleVal)
     : 0
 
-  const humidityVal = parseFloat(humidityPercentage) || 0
+  // Calculate humidity from wet/dry weights if available
+  const wetWeight = parseFloat(wetWeightG) || 0
+  const dryWeight = parseFloat(dryWeightG) || 0
+  const calculatedHumidity = dryWeight > 0 ? ((wetWeight - dryWeight) / dryWeight) * 100 : 0
+  const humidityVal = dryWeight > 0 ? calculatedHumidity : (parseFloat(humidityPercentage) || 0)
   const excessPercentage = Math.max(0, humidityVal - HUMIDITY_TOLERANCE)
   const quantityTn = (parseFloat(quantityKg) || 0) / 1000
   const creditTn = quantityTn * (excessPercentage / 100)
@@ -326,6 +332,8 @@ export default function IngresoMPPage() {
     setSieveValues({})
     setDrySample("")
     setHumidityPercentage("")
+    setWetWeightG("500")
+    setDryWeightG("")
   }
 
   const handleMaterialChange = (materialId: string) => {
@@ -341,6 +349,8 @@ export default function IngresoMPPage() {
     setSieveValues({})
     setDrySample("")
     setHumidityPercentage("")
+    setWetWeightG("500")
+    setDryWeightG("")
   }
 
   const resetForm = () => {
@@ -365,6 +375,8 @@ export default function IngresoMPPage() {
     setGranObs("")
     setShowHumidity(false)
     setHumidityPercentage("")
+    setWetWeightG("500")
+    setDryWeightG("")
   }
 
   const handleEditReceipt = (receipt: any) => {
@@ -949,18 +961,43 @@ export default function IngresoMPPage() {
               {showHumidity && isArena && (
                 <div className="border border-border rounded-lg p-4 space-y-4 bg-muted/30">
                   <h3 className="text-sm font-medium">Ensayo de Humedad — Arena</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Humedad Medida (%)</Label>
+                      <Label className="text-xs">Peso Muestra Húmeda (g)</Label>
                       <Input
                         type="number"
                         step="0.1"
-                        value={humidityPercentage}
-                        onChange={(e) => setHumidityPercentage(e.target.value)}
-                        placeholder="6.0"
+                        value={wetWeightG}
+                        onChange={(e) => setWetWeightG(e.target.value)}
+                        placeholder="500"
                         className="text-sm"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Peso Muestra Seca (g)</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={dryWeightG}
+                        onChange={(e) => setDryWeightG(e.target.value)}
+                        placeholder="470"
+                        className="text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Humedad Calculada (%)</Label>
+                      <div
+                        className={`flex items-center h-9 px-3 rounded-md border text-sm font-bold ${
+                          humidityVal > 0
+                            ? "border-primary/50 bg-primary/5 text-primary"
+                            : "border-border bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {humidityVal.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="space-y-1.5">
                       <Label className="text-xs">Tolerancia (%)</Label>
                       <Input
