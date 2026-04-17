@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Pencil, Trash2 } from "lucide-react"
+import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Pencil, Trash2, BarChart3 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -33,8 +33,9 @@ const SIEVE_SIZES = [
 
 const MATERIAL_TYPES = [
   { value: "arena", label: "Arena" },
-  { value: "piedra_0_10", label: "Piedra 0-10" },
-  { value: "piedra_0_20", label: "Piedra 0-20" },
+  { value: "piedra_0_6", label: "Piedra 0/6" },
+  { value: "piedra_0_10", label: "Piedra 0/10" },
+  { value: "piedra_0_20", label: "Piedra 0/20" },
 ]
 
 // Default specification bands (can be customized)
@@ -42,6 +43,10 @@ const DEFAULT_BANDS: Record<string, { min: number[]; max: number[] }> = {
   arena: {
     min: [100, 100, 100, 100, 95, 80, 50, 25, 10, 2, 0],
     max: [100, 100, 100, 100, 100, 100, 85, 60, 30, 10, 3],
+  },
+  piedra_0_6: {
+    min: [100, 100, 100, 90, 20, 5, 0, 0, 0, 0, 0],
+    max: [100, 100, 100, 100, 50, 15, 5, 0, 0, 0, 0],
   },
   piedra_0_10: {
     min: [100, 100, 100, 85, 10, 0, 0, 0, 0, 0, 0],
@@ -255,6 +260,12 @@ export default function GranulometriaPage() {
               </div>
             </div>
             <div className="flex gap-2">
+              <Link href="/calidad/granulometria/mezclas">
+                <Button variant="outline" className="gap-2">
+                  <BarChart3 className="h-4 w-4" />
+                  Análisis de Mezclas
+                </Button>
+              </Link>
               <Button variant="outline" onClick={() => setShowBandsDialog(true)} className="gap-2">
                 <Settings className="h-4 w-4" />
                 Bandas
