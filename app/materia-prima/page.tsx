@@ -365,7 +365,7 @@ function MateriaPrimaContent() {
             ) : stockData ? (
               <>
             <Card>
-              <CardHeader>
+              <CardHeader className="space-y-4">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium">Evolución de Stock</CardTitle>
                   <div className="flex gap-2">
@@ -393,7 +393,7 @@ function MateriaPrimaContent() {
                   </div>
                 </div>
                 {/* Filtros de material */}
-                <div className="flex flex-wrap gap-2 mt-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     variant={visibleMaterials.arena ? "default" : "outline"}
                     size="sm"
