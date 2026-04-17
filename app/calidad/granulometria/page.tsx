@@ -391,8 +391,7 @@ export default function GranulometriaPage() {
                 </DialogContent>
               </Dialog>
             </div>
-          </div>
-        </div>
+      </div>
 
         {/* Filter */}
         <Card>

@@ -408,8 +408,7 @@ export default function DosificacionesPage() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-          </div>
-        </div>
+      </div>
 
         {/* Filter */}
         <Card>
