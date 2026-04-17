@@ -368,7 +368,7 @@ export default function MezclasGranulometriaPage() {
     [sandProportion, optimalResult, currentRMS, blendPassing, blendMF, currentLine]
   )
   
-  // Datos para el gráfico
+  // Datos para el gráfico (reversed for ascending curve - small sieves on left)
   const chartData = useMemo(() => {
     return SIEVE_SIZES_MM.map((size, i) => ({
       sieve: `${size}mm`,
@@ -379,7 +379,7 @@ export default function MezclasGranulometriaPage() {
       fuller: fullerCurve[i],
       iramMin: IRAM_1627_ZONA_II.min[i],
       iramMax: IRAM_1627_ZONA_II.max[i],
-    }))
+    })).reverse()
   }, [sandPassing, stonePassing, blendPassing, fullerCurve])
   
   // Clasificación del RMS

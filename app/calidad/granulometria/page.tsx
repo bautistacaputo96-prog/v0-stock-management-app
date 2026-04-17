@@ -500,16 +500,17 @@ export default function GranulometriaPage() {
     }
   }
 
-  function getChartData(test: GranulometryTest) {
+function getChartData(test: GranulometryTest) {
     const bands = DEFAULT_BANDS[test.material_type] || { min: [], max: [] }
     const passingPercentages = test.passing_percentages || calculatePassingFromSieveColumns(test)
+    // Reverse order so chart shows smallest sieve on left (ascending curve from left to right)
     return SIEVE_SIZES.map((sieve, i) => ({
       sieve: sieve.label,
       size: sieve.size,
       passing: passingPercentages[sieve.label] ?? 0,
       min: bands.min[i] || 0,
       max: bands.max[i] || 100,
-    }))
+    })).reverse()
   }
 
   const filteredTests = selectedMaterial === "all" 
@@ -905,12 +906,13 @@ export default function GranulometriaPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={(() => {
                       const bands = DEFAULT_BANDS[selectedStockpile.material_type] || { min: [], max: [] }
+                      // Reverse order for ascending curve (small sieves on left)
                       return SIEVE_SIZES.map((sieve, i) => ({
                         sieve: sieve.label,
                         passing: selectedStockpile.passing_percentages?.[sieve.label] ?? 0,
                         min: bands.min[i] || 0,
                         max: bands.max[i] || 100,
-                      }))
+                      })).reverse()
                     })()}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="sieve" tick={{ fontSize: 10 }} />
