@@ -1,7 +1,9 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { 
   Beaker, 
   FlaskConical, 
@@ -13,10 +15,13 @@ import {
   Cylinder,
   ArrowRight,
   Grid3X3,
-  Clock
+  Clock,
+  CheckCircle2,
+  AlertTriangle
 } from "lucide-react"
 import Link from "next/link"
 import { usePlant } from "@/lib/plant-context"
+import { createClient } from "@/lib/supabase/client"
 
 // Modules for Mercedes (canos)
 const MERCEDES_MODULES = [
@@ -171,6 +176,34 @@ const PROCEDURES = [
 
 export default function CalidadPage() {
   const { selectedPlant, plantInfo } = usePlant()
+  const supabase = createClient()
+  
+  const [stockpileTests, setStockpileTests] = useState<any[]>([])
+  const [selectedStockpile, setSelectedStockpile] = useState<any | null>(null)
+  
+  useEffect(() => {
+    loadStockpileTests()
+  }, [selectedPlant])
+  
+  async function loadStockpileTests() {
+    const { data, error } = await supabase
+      .from("stockpile_granulometry")
+      .select("*")
+      .eq("plant", selectedPlant || "mercedes")
+      .order("test_date", { ascending: false })
+    
+    if (!error && data) {
+      // Get latest test for each material type
+      const latestByMaterial: Record<string, any> = {}
+      data.forEach((test: any) => {
+        const key = test.material_type.toLowerCase()
+        if (!latestByMaterial[key]) {
+          latestByMaterial[key] = test
+        }
+      })
+      setStockpileTests(Object.values(latestByMaterial))
+    }
+  }
   
   // Select modules based on plant - Ranchos produces adoquines, others produce canos
   const isPaverPlant = selectedPlant === "ranchos"
@@ -192,6 +225,98 @@ export default function CalidadPage() {
       </div>
 
       <div className="space-y-8">
+        {/* Stockpile KPIs */}
+        {stockpileTests.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <FlaskConical className="h-5 w-5" />
+              Estado de Acopios
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {stockpileTests.map((test) => {
+                const isWithinSpec = test.is_within_spec
+                return (
+                  <Card 
+                    key={test.id}
+                    className={`cursor-pointer hover:shadow-md transition-shadow ${
+                      isWithinSpec ? "border-green-200 bg-green-50/50" : "border-yellow-200 bg-yellow-50/50"
+                    }`}
+                    onClick={() => setSelectedStockpile(test)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-sm capitalize">{test.material_type}</span>
+                        {isWithinSpec ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                        )}
+                      </div>
+                      <div className="text-2xl font-bold">
+                        MF: {test.modulo_finura?.toFixed(2) || "-"}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {new Date(test.test_date).toLocaleDateString("es-AR")}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {test.tested_by}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
+        )}
+        
+        {/* Stockpile Detail Dialog */}
+        <Dialog open={!!selectedStockpile} onOpenChange={(open) => !open && setSelectedStockpile(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="capitalize">
+                Acopio de {selectedStockpile?.material_type}
+              </DialogTitle>
+            </DialogHeader>
+            {selectedStockpile && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-sm text-muted-foreground">Fecha del ensayo</span>
+                    <p className="font-medium">{new Date(selectedStockpile.test_date).toLocaleDateString("es-AR", { 
+                      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+                    })}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-muted-foreground">Responsable</span>
+                    <p className="font-medium">{selectedStockpile.tested_by}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-muted-foreground">Módulo de Finura</span>
+                    <p className="text-2xl font-bold">{selectedStockpile.modulo_finura?.toFixed(2) || "-"}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-muted-foreground">Estado</span>
+                    <p className={`font-medium ${selectedStockpile.is_within_spec ? "text-green-600" : "text-yellow-600"}`}>
+                      {selectedStockpile.is_within_spec ? "Dentro de especificación" : "Revisar curva"}
+                    </p>
+                  </div>
+                </div>
+                {selectedStockpile.notes && (
+                  <div>
+                    <span className="text-sm text-muted-foreground">Observaciones</span>
+                    <p>{selectedStockpile.notes}</p>
+                  </div>
+                )}
+                <div className="pt-2">
+                  <Link href="/calidad/granulometria" className="text-sm text-blue-600 hover:underline">
+                    Ver curva granulométrica completa →
+                  </Link>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* Quick Access Modules */}
         <section>
           <h2 className="text-lg font-semibold mb-4">Modulos de Control</h2>

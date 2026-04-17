@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Pencil, Trash2, BarChart3 } from "lucide-react"
+import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Settings, Download, Pencil, Trash2, BarChart3, User } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -132,6 +132,18 @@ export default function GranulometriaPage() {
   const [showBandsDialog, setShowBandsDialog] = useState(false)
   const [selectedTest, setSelectedTest] = useState<GranulometryTest | null>(null)
   const [editingTest, setEditingTest] = useState<GranulometryTest | null>(null)
+  
+  // Stockpile (acopio) state
+  const [stockpileTests, setStockpileTests] = useState<any[]>([])
+  const [showStockpileDialog, setShowStockpileDialog] = useState(false)
+  const [selectedStockpile, setSelectedStockpile] = useState<any | null>(null)
+  const [stockpileFormData, setStockpileFormData] = useState({
+    material_type: "arena",
+    tested_by: "",
+    total_sample_weight_g: 500,
+    sieve_results: {} as Record<string, number>,
+    notes: "",
+  })
 
   const [formData, setFormData] = useState({
     test_date: new Date().toISOString().split("T")[0],
@@ -145,7 +157,31 @@ export default function GranulometriaPage() {
 
   useEffect(() => {
     loadTests()
+    loadStockpileTests()
   }, [])
+
+  // Load latest stockpile tests for each material type
+  async function loadStockpileTests() {
+    const { data, error } = await supabase
+      .from("stockpile_granulometry")
+      .select("*")
+      .order("test_date", { ascending: false })
+    
+    if (!error && data) {
+      // Get latest test for each material type
+      const latestByMaterial: Record<string, any> = {}
+      data.forEach((test: any) => {
+        const key = test.material_type.toLowerCase()
+        if (!latestByMaterial[key]) {
+          latestByMaterial[key] = {
+            ...test,
+            passing_percentages: calculatePassingFromSieveColumns(test),
+          }
+        }
+      })
+      setStockpileTests(Object.values(latestByMaterial))
+    }
+  }
 
   async function loadTests() {
     setLoading(true)
@@ -321,6 +357,121 @@ export default function GranulometriaPage() {
     setEditingTest(null)
   }
 
+  // Handle stockpile test submission
+  async function handleStockpileSubmit() {
+    if (!stockpileFormData.tested_by.trim()) {
+      toast.error("Ingrese el nombre del responsable del ensayo")
+      return
+    }
+    
+    const passingPercentages = calculatePassingPercentages(stockpileFormData.sieve_results, stockpileFormData.total_sample_weight_g)
+    const finenessModulus = stockpileFormData.material_type.toLowerCase().includes("arena") 
+      ? calculateFinenessModulus(passingPercentages) 
+      : null
+    const isWithinSpec = checkWithinSpec(passingPercentages, stockpileFormData.material_type)
+
+    // Map sieve results to database columns
+    const sieveData: Record<string, number> = {}
+    const sieveMapping: Record<string, string> = {
+      "1\"": "sieve_25000",
+      "3/4\"": "sieve_19000", 
+      "1/2\"": "sieve_12500",
+      "3/8\"": "sieve_9500",
+      "N°4": "sieve_4750",
+      "N°8": "sieve_2360",
+      "N°16": "sieve_1180",
+      "N°30": "sieve_600",
+      "N°50": "sieve_300",
+      "N°100": "sieve_150",
+      "N°200": "sieve_pan",
+    }
+    
+    for (const [label, value] of Object.entries(stockpileFormData.sieve_results)) {
+      const colName = sieveMapping[label]
+      if (colName) {
+        sieveData[colName] = value
+      }
+    }
+
+    const { error } = await supabase
+      .from("stockpile_granulometry")
+      .insert({
+        plant: "mercedes", // TODO: Get from context
+        material_type: stockpileFormData.material_type,
+        tested_by: stockpileFormData.tested_by,
+        total_sample_weight_g: stockpileFormData.total_sample_weight_g,
+        ...sieveData,
+        modulo_finura: finenessModulus,
+        is_within_spec: isWithinSpec,
+        notes: stockpileFormData.notes,
+      })
+
+    if (error) {
+      toast.error("Error al guardar: " + error.message)
+      return
+    }
+
+    toast.success("Ensayo de acopio registrado")
+    setShowStockpileDialog(false)
+    setStockpileFormData({
+      material_type: "arena",
+      tested_by: "",
+      total_sample_weight_g: 500,
+      sieve_results: {},
+      notes: "",
+    })
+    loadStockpileTests()
+  }
+
+  // Calculate optimal dosification based on stockpile tests
+  function calculateOptimalDosification() {
+    const arenaTest = stockpileTests.find(t => t.material_type.toLowerCase().includes("arena"))
+    const piedraTest = stockpileTests.find(t => t.material_type.toLowerCase().includes("piedra"))
+    
+    if (!arenaTest || !piedraTest) return null
+    
+    const arenaPassing = arenaTest.passing_percentages
+    const piedraPassing = piedraTest.passing_percentages
+    
+    // Calculate Fuller curve for TMA 9.5mm (typical for pipes)
+    const TMA = 9.5
+    const fullerCurve = SIEVE_SIZES.map(s => (Math.sqrt(s.size / TMA) * 100))
+    
+    // Find optimal proportion by minimizing RMS deviation from Fuller
+    let bestProportion = 50
+    let bestRMS = Infinity
+    
+    for (let prop = 30; prop <= 70; prop += 1) {
+      const sandRatio = prop / 100
+      const stoneRatio = 1 - sandRatio
+      
+      let sumSquaredDiff = 0
+      let count = 0
+      
+      SIEVE_SIZES.forEach((sieve, i) => {
+        const blendPassing = (arenaPassing[sieve.label] || 100) * sandRatio + 
+                            (piedraPassing[sieve.label] || 100) * stoneRatio
+        const diff = blendPassing - fullerCurve[i]
+        sumSquaredDiff += diff * diff
+        count++
+      })
+      
+      const rms = Math.sqrt(sumSquaredDiff / count)
+      if (rms < bestRMS) {
+        bestRMS = rms
+        bestProportion = prop
+      }
+    }
+    
+    return {
+      arenaProportion: bestProportion,
+      piedraProportion: 100 - bestProportion,
+      rms: bestRMS,
+      arenaMF: arenaTest.modulo_finura,
+      piedraMF: piedraTest.modulo_finura,
+    }
+  }
+
   function getChartData(test: GranulometryTest) {
     const bands = DEFAULT_BANDS[test.material_type] || { min: [], max: [] }
     const passingPercentages = test.passing_percentages || calculatePassingFromSieveColumns(test)
@@ -484,6 +635,279 @@ export default function GranulometriaPage() {
               </Dialog>
             </div>
       </div>
+
+        {/* Stockpile (Acopio) Section */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Granulometría de Acopios</CardTitle>
+                <CardDescription>Control granulométrico de los acopios de arena y piedra de la planta</CardDescription>
+              </div>
+              <Dialog open={showStockpileDialog} onOpenChange={setShowStockpileDialog}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    Nuevo Ensayo de Acopio
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Registrar Ensayo de Acopio</DialogTitle>
+                    <DialogDescription>Registre los resultados del ensayo granulométrico del acopio</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Material</Label>
+                        <Select
+                          value={stockpileFormData.material_type}
+                          onValueChange={(v) => setStockpileFormData({ ...stockpileFormData, material_type: v })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MATERIAL_TYPES.map(m => (
+                              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Responsable del ensayo *</Label>
+                        <Input
+                          placeholder="Nombre y apellido"
+                          value={stockpileFormData.tested_by}
+                          onChange={(e) => setStockpileFormData({ ...stockpileFormData, tested_by: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Peso muestra (g)</Label>
+                        <Input
+                          type="number"
+                          value={stockpileFormData.total_sample_weight_g || ""}
+                          onChange={(e) => setStockpileFormData({ ...stockpileFormData, total_sample_weight_g: Number(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="border rounded-lg p-4">
+                      <h4 className="font-medium mb-3">Resultados del Tamizado (g retenidos)</h4>
+                      <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
+                        {SIEVE_SIZES.map((sieve) => (
+                          <div key={sieve.label} className="space-y-1">
+                            <Label className="text-xs">{sieve.label}</Label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              className="h-8 text-sm"
+                              placeholder="0"
+                              value={stockpileFormData.sieve_results[sieve.label] || ""}
+                              onChange={(e) => setStockpileFormData({
+                                ...stockpileFormData,
+                                sieve_results: {
+                                  ...stockpileFormData.sieve_results,
+                                  [sieve.label]: Number(e.target.value)
+                                }
+                              })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>Observaciones</Label>
+                      <Input
+                        placeholder="Notas adicionales"
+                        value={stockpileFormData.notes}
+                        onChange={(e) => setStockpileFormData({ ...stockpileFormData, notes: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setShowStockpileDialog(false)}>Cancelar</Button>
+                    <Button onClick={handleStockpileSubmit}>Guardar Ensayo</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {stockpileTests.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No hay ensayos de acopio registrados. Registre el primer ensayo.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Stockpile KPI Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {stockpileTests.map((test) => {
+                    const validation = validateLot(test.passing_percentages || {}, test.material_type)
+                    const bgColor = validation.status === "approved" ? "bg-green-50 border-green-200 hover:bg-green-100" :
+                                   validation.status === "warning" ? "bg-yellow-50 border-yellow-200 hover:bg-yellow-100" : 
+                                   "bg-red-50 border-red-200 hover:bg-red-100"
+                    const textColor = validation.status === "approved" ? "text-green-700" :
+                                     validation.status === "warning" ? "text-yellow-700" : "text-red-700"
+                    return (
+                      <div 
+                        key={test.id}
+                        className={`p-4 rounded-lg border cursor-pointer transition-colors ${bgColor}`}
+                        onClick={() => setSelectedStockpile(test)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-semibold">{MATERIAL_TYPES.find(m => m.value === test.material_type)?.label || test.material_type}</span>
+                          {validation.status === "approved" ? (
+                            <CheckCircle2 className={`h-5 w-5 ${textColor}`} />
+                          ) : (
+                            <AlertTriangle className={`h-5 w-5 ${textColor}`} />
+                          )}
+                        </div>
+                        <div className="text-2xl font-bold">
+                          MF: {test.modulo_finura?.toFixed(2) || "-"}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {new Date(test.test_date).toLocaleDateString("es-AR")} - {test.tested_by}
+                        </div>
+                        <div className={`text-xs mt-1 ${textColor}`}>
+                          {validation.status === "approved" ? "Dentro de especificación" : 
+                           validation.status === "warning" ? "Atención: 1 tamiz fuera" : "Fuera de especificación"}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Dosification Recommendation */}
+                {(() => {
+                  const dosif = calculateOptimalDosification()
+                  if (!dosif) return null
+                  return (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <h4 className="font-semibold text-blue-800 mb-2">Sugerencia de Dosificación (según acopios actuales)</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Arena:</span>
+                          <span className="font-bold ml-2">{dosif.arenaProportion}%</span>
+                          <span className="text-xs text-muted-foreground ml-1">(MF: {dosif.arenaMF?.toFixed(2) || "-"})</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Piedra:</span>
+                          <span className="font-bold ml-2">{dosif.piedraProportion}%</span>
+                          <span className="text-xs text-muted-foreground ml-1">(MF: {dosif.piedraMF?.toFixed(2) || "-"})</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Desviación Fuller:</span>
+                          <span className={`font-bold ml-2 ${dosif.rms <= 5 ? "text-green-600" : dosif.rms <= 8 ? "text-yellow-600" : "text-red-600"}`}>
+                            {dosif.rms.toFixed(1)}
+                          </span>
+                        </div>
+                        <div>
+                          <Link href="/calidad/granulometria/mezclas">
+                            <Button variant="outline" size="sm" className="gap-1">
+                              <BarChart3 className="h-4 w-4" />
+                              Ver análisis detallado
+                            </Button>
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Stockpile Detail Dialog */}
+        <Dialog open={!!selectedStockpile} onOpenChange={(open) => !open && setSelectedStockpile(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>
+                Detalle de Acopio - {selectedStockpile && (MATERIAL_TYPES.find(m => m.value === selectedStockpile.material_type)?.label || selectedStockpile.material_type)}
+              </DialogTitle>
+            </DialogHeader>
+            {selectedStockpile && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Fecha:</span>
+                    <span className="font-medium ml-2">{new Date(selectedStockpile.test_date).toLocaleDateString("es-AR")}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Responsable:</span>
+                    <span className="font-medium ml-2">{selectedStockpile.tested_by}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">MF:</span>
+                    <span className="font-bold ml-2">{selectedStockpile.modulo_finura?.toFixed(2) || "-"}</span>
+                  </div>
+                </div>
+                
+                {/* Validation Alert */}
+                {(() => {
+                  const validation = validateLot(selectedStockpile.passing_percentages || {}, selectedStockpile.material_type)
+                  const bgColor = validation.status === "approved" ? "bg-green-50 border-green-200" :
+                                 validation.status === "warning" ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200"
+                  const textColor = validation.status === "approved" ? "text-green-800" :
+                                   validation.status === "warning" ? "text-yellow-800" : "text-red-800"
+                  return (
+                    <div className={`p-3 rounded-lg border ${bgColor}`}>
+                      <div className={`font-semibold ${textColor}`}>
+                        {validation.status === "approved" && <CheckCircle2 className="h-4 w-4 inline mr-2" />}
+                        {validation.status !== "approved" && <AlertTriangle className="h-4 w-4 inline mr-2" />}
+                        {validation.message}
+                      </div>
+                      {validation.outOfRangeSieves.length > 0 && (
+                        <div className="mt-2 text-sm">
+                          {validation.outOfRangeSieves.map(s => (
+                            <div key={s.label}>
+                              <span className="font-mono">{s.label}</span>: {s.value.toFixed(1)}% (rango: {s.min}-{s.max}%)
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+                
+                {/* Chart */}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={(() => {
+                      const bands = DEFAULT_BANDS[selectedStockpile.material_type] || { min: [], max: [] }
+                      return SIEVE_SIZES.map((sieve, i) => ({
+                        sieve: sieve.label,
+                        passing: selectedStockpile.passing_percentages?.[sieve.label] ?? 0,
+                        min: bands.min[i] || 0,
+                        max: bands.max[i] || 100,
+                      }))
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="sieve" tick={{ fontSize: 10 }} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Legend />
+                      <Area type="monotone" dataKey="max" fill="#dcfce7" stroke="none" name="Máximo" />
+                      <Area type="monotone" dataKey="min" fill="#ffffff" stroke="none" name="Mínimo" />
+                      <Line type="monotone" dataKey="min" stroke="#22c55e" strokeDasharray="5 5" dot={false} />
+                      <Line type="monotone" dataKey="max" stroke="#22c55e" strokeDasharray="5 5" dot={false} />
+                      <Line type="monotone" dataKey="passing" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name="Pasante %" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                
+                {selectedStockpile.notes && (
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Observaciones:</span>
+                    <span className="ml-2">{selectedStockpile.notes}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Filter */}
         <Card>
