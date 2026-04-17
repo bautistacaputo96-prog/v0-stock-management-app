@@ -85,8 +85,49 @@ export async function POST(request: Request) {
       if (humError) throw humError
     }
 
-    // Note: quality_pending_tests table may not exist - skipping for now
-    // Lab sample tracking can be added later if needed
+    // Create pending quality tests if lab sample was taken
+    if (body.lab_sample_taken && LAB_SAMPLE_MATERIALS.includes(body.material_type)) {
+      const pendingTests = []
+      
+      // Humidity test pending (for arena)
+      if (body.material_type === "arena_especial") {
+        pendingTests.push({
+          mp_receipt_id: receipt.id,
+          test_type: "humedad",
+          material_type: body.material_type,
+          plant: body.plant || "mercedes",
+          remito_number: body.remito_number,
+          supplier_id: body.supplier_id,
+          supplier_name: receipt.supplier?.name || null,
+          sample_date: body.date,
+          status: "pending",
+        })
+      }
+      
+      // Granulometry test pending (for both arena and piedra)
+      pendingTests.push({
+        mp_receipt_id: receipt.id,
+        test_type: "granulometria",
+        material_type: body.material_type,
+        plant: body.plant || "mercedes",
+        remito_number: body.remito_number,
+        supplier_id: body.supplier_id,
+        supplier_name: receipt.supplier?.name || null,
+        sample_date: body.date,
+        status: "pending",
+      })
+
+      if (pendingTests.length > 0) {
+        const { error: pendingError } = await supabase
+          .from("quality_pending_tests")
+          .insert(pendingTests)
+        
+        if (pendingError) {
+          console.error("[v0] Error creating pending tests:", pendingError)
+          // Don't throw - receipt was created successfully
+        }
+      }
+    }
 
     return NextResponse.json(receipt)
   } catch (e: unknown) {

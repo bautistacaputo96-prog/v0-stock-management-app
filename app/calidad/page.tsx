@@ -12,13 +12,22 @@ import {
   BarChart3,
   Cylinder,
   ArrowRight,
-  Grid3X3
+  Grid3X3,
+  Clock
 } from "lucide-react"
 import Link from "next/link"
 import { usePlant } from "@/lib/plant-context"
 
 // Modules for Mercedes (canos)
 const MERCEDES_MODULES = [
+  {
+    title: "Ensayos Pendientes",
+    description: "Muestras de laboratorio por analizar",
+    href: "/calidad/pendientes",
+    icon: Clock,
+    color: "bg-yellow-500",
+    highlight: true,
+  },
   {
     title: "Control de Canos",
     description: "Registro de calidad en produccion de canos",
@@ -65,6 +74,14 @@ const MERCEDES_MODULES = [
 
 // Modules for Ranchos (adoquines)
 const RANCHOS_MODULES = [
+  {
+    title: "Ensayos Pendientes",
+    description: "Muestras de laboratorio por analizar",
+    href: "/calidad/pendientes",
+    icon: Clock,
+    color: "bg-yellow-500",
+    highlight: true,
+  },
   {
     title: "Control de Adoquines",
     description: "Registro de calidad en produccion de adoquines",
