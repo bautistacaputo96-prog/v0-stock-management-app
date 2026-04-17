@@ -1858,6 +1858,8 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                 )}
             </div>
             </div>
+            </>
+            )}
 
             {/* ── Seccion 7: Granulometría de Acopios ── */}
             <div className="mb-6">
@@ -1986,8 +1988,6 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                 </div>
               </div>
             </div>
-            </>
-            )}
             
             {/* ═══ PRODUCCIÓN DIARIA ═════════════���════════════════════════════ */}
         {activeLine === "produccion-diaria" && <DailyProductionModal />}
