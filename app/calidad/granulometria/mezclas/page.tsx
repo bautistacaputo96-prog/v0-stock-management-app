@@ -11,7 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
-import { ArrowLeft, AlertTriangle, CheckCircle2, TrendingUp, Lightbulb, Calculator, BarChart3 } from "lucide-react"
+import { ArrowLeft, AlertTriangle, CheckCircle2, TrendingUp, Lightbulb, Calculator, BarChart3, RefreshCw, FlaskConical, FileText } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { usePlant } from "@/lib/plant-context"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart, ReferenceLine } from "recharts"
 import Link from "next/link"
 
@@ -226,6 +228,7 @@ function generateRecommendation(
 
 export default function MezclasGranulometriaPage() {
   const supabase = createClient()
+  const { selectedPlant } = usePlant()
   const [selectedLine, setSelectedLine] = useState(PRODUCTION_LINES[0].id)
   const [tests, setTests] = useState<GranulometryTest[]>([])
   const [loading, setLoading] = useState(true)
@@ -242,11 +245,134 @@ export default function MezclasGranulometriaPage() {
   const [selectedStoneTest, setSelectedStoneTest] = useState<string>("")
   const [useExistingTests, setUseExistingTests] = useState(false)
   
+  // Stockpile (acopios) data
+  const [stockpileData, setStockpileData] = useState<{
+    arena: any | null
+    piedra: any | null
+    loaded: boolean
+  }>({ arena: null, piedra: null, loaded: false })
+  
+  // Formuleo integration
+  const [currentPastonFormula, setCurrentPastonFormula] = useState<any | null>(null)
+  const [showFormulaSuggestionDialog, setShowFormulaSuggestionDialog] = useState(false)
+  const [suggestedFormula, setSuggestedFormula] = useState<{
+    sand_kg: number
+    stone_kg: number
+    sandPct: number
+    stonePct: number
+    mfMezcla: number
+    rms: number
+  } | null>(null)
+  
   const currentLine = PRODUCTION_LINES.find(l => l.id === selectedLine) || PRODUCTION_LINES[0]
   
   useEffect(() => {
     loadTests()
-  }, [])
+    loadStockpileData()
+    loadPastonFormula()
+  }, [selectedPlant])
+  
+  // Load current stockpile granulometry data
+  async function loadStockpileData() {
+    const { data, error } = await supabase
+      .from("stockpile_granulometry")
+      .select("*")
+      .eq("plant", selectedPlant || "mercedes")
+      .order("test_date", { ascending: false })
+    
+    if (!error && data) {
+      const arenaTest = data.find((t: any) => t.material_type.toLowerCase().includes("arena"))
+      const piedraTest = data.find((t: any) => t.material_type.toLowerCase().includes("piedra"))
+      
+      setStockpileData({
+        arena: arenaTest ? { ...arenaTest, passing: getPassingFromStockpile(arenaTest) } : null,
+        piedra: piedraTest ? { ...piedraTest, passing: getPassingFromStockpile(piedraTest) } : null,
+        loaded: true,
+      })
+    }
+  }
+  
+  // Load current paston formula
+  async function loadPastonFormula() {
+    const { data, error } = await supabase
+      .from("paston_formulas")
+      .select("*")
+      .eq("plant", selectedPlant || "mercedes")
+      .eq("is_active", true)
+      .single()
+    
+    if (!error && data) {
+      setCurrentPastonFormula(data)
+      // Set initial proportion from current formula
+      const totalAggregates = (data.sand_kg || 0) + (data.stone_kg || 0)
+      if (totalAggregates > 0) {
+        setSandProportion(Math.round((data.sand_kg / totalAggregates) * 100))
+      }
+    }
+  }
+  
+  // Extract passing percentages from stockpile test
+  function getPassingFromStockpile(test: any): number[] {
+    const sieveColumnMapping: Record<number, string> = {
+      9.5: "sieve_9500",
+      4.75: "sieve_4750",
+      2.36: "sieve_2360",
+      1.18: "sieve_1180",
+      0.60: "sieve_600",
+      0.30: "sieve_300",
+      0.15: "sieve_150",
+    }
+    
+    const totalWeight = parseFloat(test.total_sample_weight_g) || 500
+    let cumulativeRetained = 0
+    const passing: number[] = []
+    
+    for (const size of SIEVE_SIZES_MM) {
+      const colName = sieveColumnMapping[size]
+      const retained = colName ? (parseFloat(test[colName]) || 0) : 0
+      cumulativeRetained += retained
+      const passingPct = ((totalWeight - cumulativeRetained) / totalWeight) * 100
+      passing.push(Math.max(0, Math.min(100, passingPct)))
+    }
+    
+    return passing
+  }
+  
+  // Load stockpile data into the analysis
+  function loadStockpileIntoAnalysis() {
+    if (stockpileData.arena && stockpileData.piedra) {
+      setUseExistingTests(false) // Use direct data, not existing tests
+      // Update the sandPassing and stonePassing via the retained values
+      // Since we have passing percentages, we need to work backwards or use them directly
+      // For simplicity, we'll set a flag and use the stockpile data directly
+      setStockpileData({ ...stockpileData, loaded: true })
+    }
+  }
+  
+  // Calculate suggested formula based on optimal proportions
+  function calculateSuggestedFormula(optimalSandPct: number) {
+    if (!currentPastonFormula) return null
+    
+    const currentTotal = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
+    const newSandKg = Math.round((optimalSandPct / 100) * currentTotal)
+    const newStoneKg = currentTotal - newSandKg
+    
+    // Calculate MF of the suggested mix
+    let mfMezcla = 0
+    if (stockpileData.arena?.modulo_finura && stockpileData.piedra?.modulo_finura) {
+      mfMezcla = (stockpileData.arena.modulo_finura * optimalSandPct / 100) + 
+                 (stockpileData.piedra.modulo_finura * (100 - optimalSandPct) / 100)
+    }
+    
+    return {
+      sand_kg: newSandKg,
+      stone_kg: newStoneKg,
+      sandPct: optimalSandPct,
+      stonePct: 100 - optimalSandPct,
+      mfMezcla,
+      rms: 0, // Will be calculated
+    }
+  }
   
   async function loadTests() {
     setLoading(true)
@@ -298,8 +424,15 @@ export default function MezclasGranulometriaPage() {
     return passing
   }
 
+  // Flag to use stockpile data
+  const [useStockpileData, setUseStockpileData] = useState(false)
+  
   // Calcular curvas
   const sandPassing = useMemo(() => {
+    // Priority: 1) Stockpile data, 2) Existing tests, 3) Manual entry
+    if (useStockpileData && stockpileData.arena?.passing) {
+      return stockpileData.arena.passing
+    }
     if (useExistingTests && selectedSandTest) {
       const test = tests.find(t => t.id === selectedSandTest)
       if (test) {
@@ -307,9 +440,13 @@ export default function MezclasGranulometriaPage() {
       }
     }
     return calculatePassingFromRetained(sandRetained, sandWeight)
-  }, [useExistingTests, selectedSandTest, tests, sandRetained, sandWeight])
+  }, [useStockpileData, stockpileData.arena, useExistingTests, selectedSandTest, tests, sandRetained, sandWeight])
   
   const stonePassing = useMemo(() => {
+    // Priority: 1) Stockpile data, 2) Existing tests, 3) Manual entry
+    if (useStockpileData && stockpileData.piedra?.passing) {
+      return stockpileData.piedra.passing
+    }
     if (useExistingTests && selectedStoneTest) {
       const test = tests.find(t => t.id === selectedStoneTest)
       if (test) {
@@ -317,7 +454,7 @@ export default function MezclasGranulometriaPage() {
       }
     }
     return calculatePassingFromRetained(stoneRetained, stoneWeight)
-  }, [useExistingTests, selectedStoneTest, tests, stoneRetained, stoneWeight])
+  }, [useStockpileData, stockpileData.piedra, useExistingTests, selectedStoneTest, tests, stoneRetained, stoneWeight])
   
   const blendPassing = useMemo(() => 
     calculateBlendCurve(sandPassing, stonePassing, sandProportion),
@@ -348,6 +485,9 @@ export default function MezclasGranulometriaPage() {
     findOptimalProportion(sandPassing, stonePassing, currentLine.tma),
     [sandPassing, stonePassing, currentLine.tma]
   )
+  
+  // Alias for clearer naming in formula suggestion section
+  const optimalProportion = optimalResult
   
   const sieveAlerts = useMemo(() => 
     checkSieveAlerts(blendPassing),
@@ -448,12 +588,121 @@ export default function MezclasGranulometriaPage() {
               <CardDescription>Ingrese los datos de los áridos o seleccione ensayos existentes</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Toggle entre manual y existentes */}
-              <Tabs value={useExistingTests ? "existing" : "manual"} onValueChange={(v) => setUseExistingTests(v === "existing")}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="manual">Ingreso Manual</TabsTrigger>
-                  <TabsTrigger value="existing">Ensayos Existentes</TabsTrigger>
+              {/* Toggle entre manual, existentes y acopios */}
+              <Tabs 
+                value={useStockpileData ? "stockpile" : (useExistingTests ? "existing" : "manual")} 
+                onValueChange={(v) => {
+                  setUseStockpileData(v === "stockpile")
+                  setUseExistingTests(v === "existing")
+                }}
+              >
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="stockpile">
+                    <FlaskConical className="h-3.5 w-3.5 mr-1.5" />
+                    Acopios Actuales
+                  </TabsTrigger>
+                  <TabsTrigger value="manual">
+                    Ingreso Manual
+                  </TabsTrigger>
+                  <TabsTrigger value="existing">
+                    Ensayos Existentes
+                  </TabsTrigger>
                 </TabsList>
+                
+                {/* Stockpile Tab - Load current stockpile data */}
+                <TabsContent value="stockpile" className="space-y-4 mt-4">
+                  {!stockpileData.arena && !stockpileData.piedra ? (
+                    <div className="text-center py-8 text-muted-foreground border rounded-lg">
+                      <FlaskConical className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p>No hay ensayos de acopios registrados para esta planta.</p>
+                      <Link href="/calidad/granulometria" className="text-blue-600 hover:underline text-sm">
+                        Ir a registrar ensayos de acopio
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Arena Stockpile */}
+                      <div className={`border rounded-lg p-4 ${stockpileData.arena ? "bg-green-50/50 border-green-200" : "bg-yellow-50/50 border-yellow-200"}`}>
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <h4 className="font-medium flex items-center gap-2">
+                              Arena
+                              {stockpileData.arena ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                              )}
+                            </h4>
+                            {stockpileData.arena && (
+                              <p className="text-xs text-muted-foreground">
+                                MF: {stockpileData.arena.modulo_finura?.toFixed(2)} | 
+                                Ensayado: {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} por {stockpileData.arena.tested_by}
+                              </p>
+                            )}
+                          </div>
+                          {!stockpileData.arena && (
+                            <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
+                          )}
+                        </div>
+                        {stockpileData.arena?.passing && (
+                          <div className="grid grid-cols-7 gap-1 text-xs">
+                            {SIEVE_SIZES_MM.map((size, i) => (
+                              <div key={size} className="text-center bg-white/50 rounded p-1">
+                                <div className="font-medium">{size}mm</div>
+                                <div>{stockpileData.arena.passing[i]?.toFixed(1)}%</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Piedra Stockpile */}
+                      <div className={`border rounded-lg p-4 ${stockpileData.piedra ? "bg-green-50/50 border-green-200" : "bg-yellow-50/50 border-yellow-200"}`}>
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <h4 className="font-medium flex items-center gap-2">
+                              Piedra {selectedPlant === "ranchos" ? "0/6" : "0/10"}
+                              {stockpileData.piedra ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                              )}
+                            </h4>
+                            {stockpileData.piedra && (
+                              <p className="text-xs text-muted-foreground">
+                                MF: {stockpileData.piedra.modulo_finura?.toFixed(2)} | 
+                                Ensayado: {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} por {stockpileData.piedra.tested_by}
+                              </p>
+                            )}
+                          </div>
+                          {!stockpileData.piedra && (
+                            <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
+                          )}
+                        </div>
+                        {stockpileData.piedra?.passing && (
+                          <div className="grid grid-cols-7 gap-1 text-xs">
+                            {SIEVE_SIZES_MM.map((size, i) => (
+                              <div key={size} className="text-center bg-white/50 rounded p-1">
+                                <div className="font-medium">{size}mm</div>
+                                <div>{stockpileData.piedra.passing[i]?.toFixed(1)}%</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="w-full gap-2"
+                        onClick={() => loadStockpileData()}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Actualizar datos de acopios
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
                 
                 <TabsContent value="manual" className="space-y-4 mt-4">
                   {/* Arena */}
@@ -869,7 +1118,258 @@ export default function MezclasGranulometriaPage() {
             <p className="text-sm leading-relaxed">{recommendation}</p>
           </CardContent>
         </Card>
+        
+        {/* Sugerencia de Fórmula de Pastón */}
+        {useStockpileData && stockpileData.arena && stockpileData.piedra && currentPastonFormula && (
+          <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-transparent">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" />
+                Sugerencia de Fórmula de Pastón
+              </CardTitle>
+              <CardDescription>
+                Basada en los acopios actuales y la dosificación óptima calculada
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Current vs Suggested */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Current Formula */}
+                <div className="border rounded-lg p-4 bg-white">
+                  <h4 className="font-medium text-sm mb-3 text-muted-foreground">Fórmula Actual</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Arena:</span>
+                      <span className="font-medium">{currentPastonFormula.sand_kg} kg</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Piedra:</span>
+                      <span className="font-medium">{currentPastonFormula.stone_kg} kg</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-2 mt-2">
+                      <span>Proporción:</span>
+                      <span className="font-medium">
+                        {Math.round((currentPastonFormula.sand_kg / (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) * 100)}% / 
+                        {Math.round((currentPastonFormula.stone_kg / (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>MF Mezcla:</span>
+                      <span className="font-medium">
+                        {(() => {
+                          const currentSandPct = (currentPastonFormula.sand_kg / (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) * 100
+                          const currentStonePct = 100 - currentSandPct
+                          const mf = (stockpileData.arena?.modulo_finura * currentSandPct / 100) + 
+                                    (stockpileData.piedra?.modulo_finura * currentStonePct / 100)
+                          return mf.toFixed(2)
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Suggested Formula */}
+                <div className="border-2 border-blue-300 rounded-lg p-4 bg-blue-50/50">
+                  <h4 className="font-medium text-sm mb-3 text-blue-700 flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4" />
+                    Fórmula Sugerida (Óptima)
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Arena:</span>
+                      <span className="font-bold text-blue-700">
+                        {Math.round((optimalProportion.proportion / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg))} kg
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Piedra:</span>
+                      <span className="font-bold text-blue-700">
+                        {Math.round(((100 - optimalProportion.proportion) / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg))} kg
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t pt-2 mt-2">
+                      <span>Proporción:</span>
+                      <span className="font-bold text-blue-700">
+                        {optimalProportion.proportion}% / {100 - optimalProportion.proportion}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>MF Mezcla:</span>
+                      <span className="font-bold text-blue-700">
+                        {(() => {
+                          const mf = (stockpileData.arena?.modulo_finura * optimalProportion.proportion / 100) + 
+                                    (stockpileData.piedra?.modulo_finura * (100 - optimalProportion.proportion) / 100)
+                          return mf.toFixed(2)
+                        })()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>RMS vs Fuller:</span>
+                      <span>{optimalProportion.rms.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Difference Summary */}
+              <div className="bg-white border rounded-lg p-3">
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="flex-1">
+                    <span className="text-muted-foreground">Cambio en Arena:</span>
+                    <span className={`ml-2 font-medium ${
+                      Math.round((optimalProportion.proportion / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.sand_kg > 0 
+                        ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {Math.round((optimalProportion.proportion / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.sand_kg > 0 ? "+" : ""}
+                      {Math.round((optimalProportion.proportion / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.sand_kg} kg
+                    </span>
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-muted-foreground">Cambio en Piedra:</span>
+                    <span className={`ml-2 font-medium ${
+                      Math.round(((100 - optimalProportion.proportion) / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.stone_kg > 0 
+                        ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {Math.round(((100 - optimalProportion.proportion) / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.stone_kg > 0 ? "+" : ""}
+                      {Math.round(((100 - optimalProportion.proportion) / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg)) - currentPastonFormula.stone_kg} kg
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <Button 
+                  className="flex-1 gap-2"
+                  onClick={() => {
+                    const newSandKg = Math.round((optimalProportion.proportion / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg))
+                    const newStoneKg = Math.round(((100 - optimalProportion.proportion) / 100) * (currentPastonFormula.sand_kg + currentPastonFormula.stone_kg))
+                    const mfMezcla = (stockpileData.arena?.modulo_finura * optimalProportion.proportion / 100) + 
+                                    (stockpileData.piedra?.modulo_finura * (100 - optimalProportion.proportion) / 100)
+                    setSuggestedFormula({
+                      sand_kg: newSandKg,
+                      stone_kg: newStoneKg,
+                      sandPct: optimalProportion.proportion,
+                      stonePct: 100 - optimalProportion.proportion,
+                      mfMezcla,
+                      rms: optimalProportion.rms
+                    })
+                    setShowFormulaSuggestionDialog(true)
+                  }}
+                >
+                  <Calculator className="h-4 w-4" />
+                  Aplicar Sugerencia al Formuleo
+                </Button>
+                <Link href="/formuleo" className="flex-1">
+                  <Button variant="outline" className="w-full gap-2">
+                    <FileText className="h-4 w-4" />
+                    Ir a Formuleo
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
+      
+      {/* Dialog for applying formula suggestion */}
+      <Dialog open={showFormulaSuggestionDialog} onOpenChange={setShowFormulaSuggestionDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calculator className="h-5 w-5" />
+              Aplicar Sugerencia de Dosificación
+            </DialogTitle>
+            <DialogDescription>
+              Esta acción actualizará la fórmula del pastón en el módulo de Formuleo
+            </DialogDescription>
+          </DialogHeader>
+          
+          {suggestedFormula && (
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="text-xs text-muted-foreground mb-1">Arena</div>
+                  <div className="text-2xl font-bold">{suggestedFormula.sand_kg} kg</div>
+                  <div className="text-xs text-muted-foreground">{suggestedFormula.sandPct}% del total</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="text-xs text-muted-foreground mb-1">Piedra</div>
+                  <div className="text-2xl font-bold">{suggestedFormula.stone_kg} kg</div>
+                  <div className="text-xs text-muted-foreground">{suggestedFormula.stonePct}% del total</div>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm">MF Mezcla Resultante:</span>
+                  <span className="font-bold text-blue-700">{suggestedFormula.mfMezcla.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-muted-foreground mt-1">
+                  <span>RMS vs Fuller:</span>
+                  <span>{suggestedFormula.rms.toFixed(2)}</span>
+                </div>
+              </div>
+              
+              <div className="text-sm text-muted-foreground">
+                <AlertTriangle className="h-4 w-4 inline mr-1 text-yellow-600" />
+                Esta acción creará una nueva versión de la fórmula del pastón manteniendo el historial de cambios.
+              </div>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowFormulaSuggestionDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={async () => {
+                if (!suggestedFormula || !currentPastonFormula) return
+                
+                // Update paston formula
+                const { error } = await supabase
+                  .from("paston_formulas")
+                  .update({
+                    sand_kg: suggestedFormula.sand_kg,
+                    stone_kg: suggestedFormula.stone_kg,
+                    modified_by: "Sistema (Análisis Granulométrico)",
+                    modified_at: new Date().toISOString(),
+                  })
+                  .eq("id", currentPastonFormula.id)
+                
+                if (!error) {
+                  // Record history
+                  await supabase.from("paston_formulas_history").insert({
+                    paston_formula_id: currentPastonFormula.id,
+                    plant: selectedPlant,
+                    modified_by: "Sistema (Análisis Granulométrico)",
+                    change_reason: `Ajuste automático basado en análisis granulométrico. MF Arena: ${stockpileData.arena?.modulo_finura?.toFixed(2)}, MF Piedra: ${stockpileData.piedra?.modulo_finura?.toFixed(2)}, MF Mezcla objetivo: ${suggestedFormula.mfMezcla.toFixed(2)}`,
+                    previous_values: {
+                      sand_kg: currentPastonFormula.sand_kg,
+                      stone_kg: currentPastonFormula.stone_kg,
+                    },
+                    new_values: {
+                      sand_kg: suggestedFormula.sand_kg,
+                      stone_kg: suggestedFormula.stone_kg,
+                    },
+                  })
+                  
+                  setShowFormulaSuggestionDialog(false)
+                  loadPastonFormula()
+                  // Show success (could add toast here)
+                  alert("Fórmula actualizada exitosamente")
+                } else {
+                  alert("Error al actualizar la fórmula: " + error.message)
+                }
+              }}
+              className="gap-2"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Confirmar y Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

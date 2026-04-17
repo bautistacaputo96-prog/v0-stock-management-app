@@ -2075,6 +2075,13 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                   <p className="text-xs text-muted-foreground">
                     MF Mezcla = (MF Arena × {selectedStockpileDetail.arenaPct}%) + (MF Piedra × {selectedStockpileDetail.piedraPct}%)
                   </p>
+                  <a 
+                    href="/calidad/granulometria/mezclas" 
+                    className="mt-3 flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    <TrendingUp className="h-4 w-4" />
+                    Ver análisis detallado y ajustar dosificación
+                  </a>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-4">
