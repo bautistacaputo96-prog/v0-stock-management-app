@@ -410,9 +410,7 @@ export default function DosificacionesPage() {
             </Dialog>
           </div>
         </div>
-      </div>
 
-      <div className="space-y-6">
         {/* Filter */}
         <Card>
           <CardContent className="py-3">

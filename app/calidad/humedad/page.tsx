@@ -325,9 +325,7 @@ export default function HumedadPage() {
             </Dialog>
           </div>
         </div>
-      </div>
 
-      <div className="space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {MATERIAL_TYPES.map(mat => {
