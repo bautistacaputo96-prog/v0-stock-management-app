@@ -46,9 +46,7 @@ export default function ParametrosIRAMPage() {
   }, {})
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navigation />
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-xl font-semibold text-foreground tracking-tight">Parametros IRAM</h1>
@@ -131,7 +129,6 @@ export default function ParametrosIRAMPage() {
           })}
         </div>
       )}
-      </div>
     </div>
   )
 }

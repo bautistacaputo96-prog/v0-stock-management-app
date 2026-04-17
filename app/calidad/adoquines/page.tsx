@@ -390,30 +390,27 @@ export default function CalidadAdoquinesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/calidad">
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Volver
-              </Button>
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
-                <FlaskConical className="h-6 w-6 text-orange-600" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Control de Calidad - Adoquines</h1>
-                <p className="text-muted-foreground text-sm">Ensayos de flexion segun norma IRAM</p>
-              </div>
-            </div>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center gap-4">
+        <Link href="/calidad">
+          <Button variant="ghost" size="sm">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Volver
+          </Button>
+        </Link>
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+            <FlaskConical className="h-6 w-6 text-orange-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Control de Calidad - Adoquines</h1>
+            <p className="text-muted-foreground text-sm">Ensayos de flexion segun norma IRAM</p>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <div className="space-y-6">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
@@ -1172,7 +1169,7 @@ export default function CalidadAdoquinesPage() {
             )}
           </DialogContent>
         </Dialog>
-      </main>
+      </div>
     </div>
   )
 }

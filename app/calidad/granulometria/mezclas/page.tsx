@@ -333,22 +333,19 @@ export default function MezclasGranulometriaPage() {
   )
   
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-3">
-            <Link href="/calidad/granulometria" className="text-muted-foreground hover:text-foreground">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold">Análisis de Mezclas Granulométricas</h1>
-              <p className="text-sm text-muted-foreground">Optimización de curvas según Fuller-Thompson e IRAM 1627</p>
-            </div>
-          </div>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center gap-3">
+        <Link href="/calidad/granulometria" className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-5 w-5" />
+        </Link>
+        <div>
+          <h1 className="text-xl font-bold">Análisis de Mezclas Granulométricas</h1>
+          <p className="text-sm text-muted-foreground">Optimización de curvas según Fuller-Thompson e IRAM 1627</p>
         </div>
-      </header>
+      </div>
       
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <div className="space-y-6">
         {/* Selección de línea de producción */}
         <Card>
           <CardContent className="py-4">
@@ -804,7 +801,7 @@ export default function MezclasGranulometriaPage() {
             <p className="text-sm leading-relaxed">{recommendation}</p>
           </CardContent>
         </Card>
-      </main>
+      </div>
     </div>
   )
 }

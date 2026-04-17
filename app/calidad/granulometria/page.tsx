@@ -246,20 +246,19 @@ export default function GranulometriaPage() {
     : tests.filter(t => t.material_type === selectedMaterial)
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link href="/calidad" className="text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
-              <div>
-                <h1 className="text-xl font-bold">Granulometría</h1>
-                <p className="text-sm text-muted-foreground">Control granulométrico de áridos</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/calidad" className="text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-bold">Granulometría</h1>
+            <p className="text-sm text-muted-foreground">Control granulométrico de áridos</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
               <Link href="/calidad/granulometria/mezclas">
                 <Button variant="outline" className="gap-2">
                   <BarChart3 className="h-4 w-4" />
@@ -394,9 +393,9 @@ export default function GranulometriaPage() {
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <div className="space-y-6">
         {/* Filter */}
         <Card>
           <CardContent className="py-3">
@@ -569,7 +568,7 @@ export default function GranulometriaPage() {
             </CardContent>
           </Card>
         )}
-      </main>
+      </div>
 
       {/* Bands Configuration Dialog */}
       <Dialog open={showBandsDialog} onOpenChange={setShowBandsDialog}>

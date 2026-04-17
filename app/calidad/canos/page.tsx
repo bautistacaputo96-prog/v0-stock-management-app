@@ -734,9 +734,7 @@ export default function PipeQualityPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navigation />
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1935,8 +1933,6 @@ export default function PipeQualityPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      </div>
     </div>
   )
 }
