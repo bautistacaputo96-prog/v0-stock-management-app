@@ -101,14 +101,55 @@ export default function GranulometriaPage() {
     setLoading(true)
     const { data, error } = await supabase
       .from("granulometry_tests")
-      .select("*")
+      .select(`
+        *,
+        mp_receipts!left(supplier_id, suppliers!left(name))
+      `)
       .order("test_date", { ascending: false })
       .limit(50)
 
     if (!error && data) {
-      setTests(data)
+      // Transform data to include supplier_name from joined table
+      const transformedData = data.map((test: any) => ({
+        ...test,
+        supplier_name: test.mp_receipts?.suppliers?.name || test.origin || null,
+        // Calculate passing_percentages from sieve columns
+        passing_percentages: calculatePassingFromSieveColumns(test),
+      }))
+      setTests(transformedData)
     }
     setLoading(false)
+  }
+
+  // Calculate passing percentages from individual sieve columns
+  function calculatePassingFromSieveColumns(test: any): Record<string, number> {
+    const sieveMapping: Record<string, string> = {
+      "25mm": "sieve_25000",
+      "19mm": "sieve_19000",
+      "12.5mm": "sieve_12500",
+      "9.5mm": "sieve_9500",
+      "N°4": "sieve_4750",
+      "N°8": "sieve_2360",
+      "N°16": "sieve_1180",
+      "N°30": "sieve_600",
+      "N°50": "sieve_300",
+      "N°100": "sieve_150",
+      "Fondo": "sieve_pan",
+    }
+    
+    const totalWeight = parseFloat(test.total_sample_weight_g) || 500
+    let cumulativeRetained = 0
+    const percentages: Record<string, number> = {}
+    
+    for (const sieve of SIEVE_SIZES) {
+      const colName = sieveMapping[sieve.label] || ""
+      const retained = parseFloat(test[colName]) || 0
+      cumulativeRetained += retained
+      const passing = ((totalWeight - cumulativeRetained) / totalWeight) * 100
+      percentages[sieve.label] = Math.max(0, Math.min(100, passing))
+    }
+    
+    return percentages
   }
 
   function calculatePassingPercentages(sieveResults: Record<string, number>, sampleWeight: number) {
@@ -433,6 +474,7 @@ export default function GranulometriaPage() {
                     <TableHead>Fecha</TableHead>
                     <TableHead>Material</TableHead>
                     <TableHead>Proveedor</TableHead>
+                    <TableHead>Remito</TableHead>
                     <TableHead className="text-right">Peso (g)</TableHead>
                     <TableHead className="text-right">MF</TableHead>
                     <TableHead className="text-center">Estado</TableHead>
@@ -449,8 +491,9 @@ export default function GranulometriaPage() {
                           {MATERIAL_TYPES.find(m => m.value === test.material_type)?.label || test.material_type}
                         </Badge>
                       </TableCell>
-                      <TableCell>{test.supplier || "-"}</TableCell>
-                      <TableCell className="text-right">{test.sample_weight_g}</TableCell>
+                      <TableCell>{test.supplier_name || test.origin || "-"}</TableCell>
+                      <TableCell className="font-mono text-sm">{test.remito_number || "-"}</TableCell>
+                      <TableCell className="text-right">{test.total_sample_weight_g || test.sample_weight_g}</TableCell>
                       <TableCell className="text-right font-medium">
                         {test.fineness_modulus?.toFixed(2) || "-"}
                       </TableCell>
