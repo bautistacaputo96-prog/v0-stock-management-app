@@ -31,11 +31,17 @@ export async function GET(request: Request) {
     const supabase = createClient()
     const ninetyDaysAgo = dateStr(-90)
 
-    // Fetch all receipts (quantity_tn, receipt_date - no plant column)
-    const { data: receipts } = await supabase
+    // Fetch receipts filtered by plant
+    let receiptsQuery = supabase
       .from("mp_receipts")
-      .select("material_type, quantity_tn, receipt_date")
+      .select("material_type, quantity_tn, receipt_date, plant")
       .order("receipt_date", { ascending: true })
+    
+    if (plant) {
+      receiptsQuery = receiptsQuery.eq("plant", plant)
+    }
+    
+    const { data: receipts } = await receiptsQuery
 
     // Fetch block production records (last 90 days)
     const { data: blockProductions } = await supabase
