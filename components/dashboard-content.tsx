@@ -353,11 +353,14 @@ export function DashboardContent() {
       const currentDay = today.getDate()
       const currentMonth = today.getMonth() + 1
       const currentYear = today.getFullYear()
-      const isCurrentMonth = startDate.getMonth() + 1 === currentMonth && startDate.getFullYear() === currentYear
+      const viewingMonth = monthIdx + 1 // monthIdx is 0-indexed
+      const viewingYear = year
+      const isViewingCurrentMonth = viewingMonth === currentMonth && viewingYear === currentYear
+      const isViewingPastMonth = viewingYear < currentYear || (viewingYear === currentYear && viewingMonth < currentMonth)
       
       for (const day in rawPipeDailyTotals) {
         const dayNum = parseInt(day)
-        const isPastDay = isCurrentMonth ? dayNum < currentDay : startDate < today
+        const isPastDay = isViewingPastMonth || (isViewingCurrentMonth && dayNum < currentDay)
         
         if (isPastDay) {
           // Past days: use raw planning with 1.2x factor (historical behavior)
