@@ -28,16 +28,20 @@ const IRAM_1627_ZONA_II = {
 }
 
 // Líneas de producción con restricciones de optimización
+// Adoquines: semiseco, vibro-prensado
+// Caños DN 300-600: semiseco, centrifugado o vibrado
+// Caños DN 800-1200: semiseco, vibrado interno
 const PRODUCTION_LINES = [
-  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 65, sandMax: 80, materials: ["arena", "piedra_0_6"] },
-  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 55, sandMax: 70, materials: ["arena", "piedra_0_10"] },
-  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 40, sandMax: 55, materials: ["arena", "piedra_0_10"] },
+  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
+  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
+  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
 ]
 
-// Límites de contenido de arcilla y arena fina
+// Límites de calidad
 const QUALITY_LIMITS = {
-  maxClayContent: 3.0, // % máximo de arcilla según IRAM 1512
-  maxFineContent: 15.0, // % máximo pasante tamiz N°100 (0.15mm)
+  maxClayContent: 3.0, // % máximo de arcilla según IRAM 1534
+  minSandMF: 2.30, // MF mínimo recomendado para arena
+  maxSandMF: 2.80, // MF máximo recomendado para arena
 }
 
 const MATERIAL_TYPES = [
@@ -905,34 +909,96 @@ export default function MezclasGranulometriaPage() {
             {/* Optimizador */}
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="py-4">
-  <div className="flex items-start gap-3">
-  <div className="p-2 bg-primary/10 rounded-lg">
-  <TrendingUp className="h-5 w-5 text-primary" />
-  </div>
-  <div className="flex-1">
-  <h4 className="font-medium">Proporción Óptima Sugerida</h4>
-  <p className="text-2xl font-bold text-primary mt-1">
-  {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
-  </p>
-  <div className="text-sm text-muted-foreground mt-1 space-y-1">
-  <p>RMS: {optimalResult.rms.toFixed(1)} <span className="text-xs">(Restricción: {currentLine.sandMin}-{currentLine.sandMax}% arena)</span></p>
-  {/* Show theoretical optimal if different from practical */}
-  {optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
-    <p className="text-xs text-amber-600 flex items-center gap-1">
-      <AlertTriangle className="h-3 w-3" />
-      Óptimo teórico: {optimalResult.theoretical.proportion}% arena (RMS: {optimalResult.theoretical.rms.toFixed(1)}) - fuera del rango permitido
-    </p>
-  )}
-                      {optimalResult.rms < currentRMS && (
-                        <p className="text-sm text-green-600">
-                          Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporción actual
-                        </p>
-                      )}
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <TrendingUp className="h-5 w-5 text-primary" />
                   </div>
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <h4 className="font-medium text-sm text-muted-foreground">Óptimo Práctico (Recomendado)</h4>
+                      <p className="text-2xl font-bold text-primary">
+                        {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        RMS: {optimalResult.rms.toFixed(1)} | Restricción: {currentLine.sandMin}-{currentLine.sandMax}% arena
+                      </p>
+                    </div>
+                    
+                    {/* Óptimo teórico si es diferente del práctico */}
+                    {optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                        <h4 className="font-medium text-sm text-amber-800 flex items-center gap-1">
+                          <Lightbulb className="h-4 w-4" />
+                          Óptimo Teórico (Referencia)
+                        </h4>
+                        <p className="text-lg font-semibold text-amber-700">
+                          {optimalResult.theoretical.proportion}% arena / {100 - optimalResult.theoretical.proportion}% piedra
+                        </p>
+                        <p className="text-sm text-amber-600">
+                          RMS: {optimalResult.theoretical.rms.toFixed(1)} | 
+                          Diferencia: +{(optimalResult.rms - optimalResult.theoretical.rms).toFixed(1)} puntos
+                        </p>
+                        <p className="text-xs text-amber-700 mt-2 leading-relaxed">
+                          La proporción óptima teórica queda fuera del rango operativo para este producto. 
+                          Se recomienda la proporción práctica para garantizar cohesión y trabajabilidad de la mezcla.
+                        </p>
+                      </div>
+                    )}
+                    
+                    {optimalResult.rms < currentRMS && (
+                      <p className="text-sm text-green-600">
+                        Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporción actual
+                      </p>
+                    )}
                   </div>
                 </div>
               </CardContent>
             </Card>
+            
+            {/* Alerta crítica por contenido de arcilla */}
+            {stockpileData.arena?.peso_humedo_g && stockpileData.arena?.peso_seco_g && 
+             ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent && (
+              <Card className="border-red-500 bg-red-50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2 text-red-700">
+                    <AlertTriangle className="h-5 w-5" />
+                    LOTE RECHAZADO - Contenido de Arcilla Excedido
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-red-700">
+                    <strong>Contenido de arcilla fuera de límite (C.A = {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100).toFixed(2)}%).</strong>
+                  </p>
+                  <p className="text-sm text-red-600 mt-2">
+                    Límite máximo para adoquines IRAM 1534: {QUALITY_LIMITS.maxClayContent}%. 
+                    Este lote no debe usarse en producción. La arcilla aumenta la demanda de agua, 
+                    reduce la resistencia y genera riesgo de fisuras por retracción.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Alerta por arena muy fina */}
+            {stockpileData.arena?.modulo_finura && stockpileData.arena.modulo_finura < QUALITY_LIMITS.minSandMF && (
+              <Card className="border-amber-500 bg-amber-50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
+                    <AlertTriangle className="h-5 w-5" />
+                    Arena con Módulo de Finura Bajo
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-amber-700">
+                    <strong>Arena con módulo de finura bajo (MF = {stockpileData.arena.modulo_finura.toFixed(2)}).</strong>
+                  </p>
+                  <p className="text-sm text-amber-600 mt-2">
+                    Este valor indica una arena muy fina que aumenta la demanda de pasta cementicia 
+                    y puede reducir la trabajabilidad del semiseco. Se recomienda evaluar un proveedor 
+                    de arena con MF entre {QUALITY_LIMITS.minSandMF.toFixed(2)} y {QUALITY_LIMITS.maxSandMF.toFixed(2)}.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
             
             {/* Alertas por tamiz */}
             {sieveAlerts.length > 0 && (
