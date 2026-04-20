@@ -347,31 +347,34 @@ export function DashboardContent() {
       })
       
       // Set daily targets:
-      // - If dailyTargetTotal is defined by the operator, use it for ALL days that have planning
-      // - Otherwise, use the raw planning total for each day
+      // - For past days (before today): use raw planning with 1.2x factor (historical behavior)
+      // - For today and future: if dailyTargetTotal is defined, use it; otherwise use raw planning with 1.2x
+      const today = new Date()
+      const currentDay = today.getDate()
+      const currentMonth = today.getMonth() + 1
+      const currentYear = today.getFullYear()
+      const isCurrentMonth = startDate.getMonth() + 1 === currentMonth && startDate.getFullYear() === currentYear
+      
       for (const day in rawPipeDailyTotals) {
         const dayNum = parseInt(day)
-        if (dailyTargetTotal > 0 && rawPipeDailyTotals[dayNum] > 0) {
-          // Use the operator-defined daily target for days with planning
+        const isPastDay = isCurrentMonth ? dayNum < currentDay : startDate < today
+        
+        if (isPastDay) {
+          // Past days: use raw planning with 1.2x factor (historical behavior)
+          pipeDailyTargets[dayNum] = Math.round(rawPipeDailyTotals[dayNum] * 1.2)
+        } else if (dailyTargetTotal > 0 && rawPipeDailyTotals[dayNum] > 0) {
+          // Today or future with custom target: use operator-defined daily target
           pipeDailyTargets[dayNum] = dailyTargetTotal
         } else {
-          // No daily target defined, use raw planning
-          pipeDailyTargets[dayNum] = rawPipeDailyTotals[dayNum] || 0
+          // Today or future without custom target: use raw planning with 1.2x
+          pipeDailyTargets[dayNum] = Math.round(rawPipeDailyTotals[dayNum] * 1.2)
         }
       }
       
-      // Adjust pipeTargets (monthly totals per size) proportionally if dailyTargetTotal is set
-      // Count days with planning and calculate new monthly target
-      const daysWithPlanning = Object.keys(rawPipeDailyTotals).length
-      if (dailyTargetTotal > 0 && daysWithPlanning > 0) {
-        const monthlyTargetTotal = dailyTargetTotal * daysWithPlanning
-        const rawMonthlyTotal = Object.values(rawPipeDailyTotals).reduce((a, b) => a + b, 0)
-        if (rawMonthlyTotal > 0) {
-          const factor = monthlyTargetTotal / rawMonthlyTotal
-          for (const size in pipeTargets) {
-            pipeTargets[size] = Math.round(pipeTargets[size] * factor)
-          }
-        }
+      // pipeTargets are just for monthly totals reference - use 1.2x factor as before
+      // (individual daily targets are already calculated correctly above)
+      for (const size in pipeTargets) {
+        pipeTargets[size] = Math.round(pipeTargets[size] * 1.2)
       }
     }
 
