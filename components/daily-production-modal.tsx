@@ -101,13 +101,14 @@ function desvio(produced: number, objective: number) {
 
 export function DailyProductionModal() {
   const { selectedPlant } = usePlant()
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true) // Start loading immediately
   const [navLoading, setNavLoading] = useState(false)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true) // Start open immediately
   const [dayData, setDayData] = useState<DayData | null>(null)
   const [prevDate, setPrevDate] = useState<string | null>(null)
   const [nextDate, setNextDate] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [hasLoadedInitially, setHasLoadedInitially] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
@@ -221,6 +222,14 @@ export function DailyProductionModal() {
     }
   }, [selectedPlant, supabase, fetchDayData])
 
+  // Auto-load last day when component mounts
+  useEffect(() => {
+    if (!hasLoadedInitially) {
+      loadLastDay()
+      setHasLoadedInitially(true)
+    }
+  }, [hasLoadedInitially, loadLastDay])
+
   const navigateDay = useCallback(async (direction: "prev" | "next") => {
     if (!dayData || navLoading) return
     const date = direction === "prev" ? prevDate : nextDate
@@ -256,25 +265,7 @@ export function DailyProductionModal() {
 
   return (
     <>
-      <div className="flex flex-col items-center justify-center py-16 gap-6">
-        <div className="text-center">
-          <h2 className="text-lg font-semibold text-foreground mb-1">Producción del Día</h2>
-          <p className="text-sm text-muted-foreground">
-            Visualizá el desempeño del último parte diario en pantalla completa
-          </p>
-        </div>
-        <Button
-          size="lg"
-          onClick={loadLastDay}
-          disabled={loading}
-          className="gap-2 text-base px-8 py-6 h-auto"
-        >
-          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Tv2 className="w-5 h-5" />}
-          {loading ? "Cargando..." : "Ver Producción del Día"}
-        </Button>
-      </div>
-
-      {/* ── MODAL FULLSCREEN ──────────────────────────────────────────────── */}
+      {/* ── MODAL FULLSCREEN (opens automatically) ──────────────────────────────────────────────── */}
       {open && (
         <div
           ref={modalRef}
@@ -301,7 +292,12 @@ export function DailyProductionModal() {
 
           {/* Contenido */}
           <div className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
-            {error || !dayData ? (
+            {loading ? (
+              <div className="flex-1 flex items-center justify-center flex-col gap-4">
+                <Loader2 className="w-10 h-10 animate-spin text-gray-400" />
+                <p className="text-lg text-gray-400">Cargando datos del último parte...</p>
+              </div>
+            ) : error || !dayData ? (
               <div className="flex-1 flex items-center justify-center">
                 <p className="text-xl text-gray-400">{error || "No hay partes diarios registrados aún."}</p>
               </div>

@@ -481,13 +481,16 @@ export default function PipeQualityPage() {
 
   // Handle edit control
   const handleEditControl = (control: any) => {
-    // Load control data into form
-    setControlDate(control.control_date)
+    // Load control data into form using existing state variables
+    setDate(control.control_date)
     setLote(control.lote || "")
     setFabricationOrder(control.fabrication_order || "")
-    setProductionResponsible(control.production_responsible_id?.toString() || "")
-    setLogisticsResponsible(control.logistics_responsible_id?.toString() || "")
-    setObservations(control.observations || "")
+    
+    // Find employee names by ID
+    const prodResp = employees.find(e => e.id === control.production_responsible_id)
+    const logResp = employees.find(e => e.id === control.logistics_responsible_id)
+    setProductionRespName(prodResp ? `${prodResp.first_name} ${prodResp.last_name}` : "")
+    setLogisticsRespName(logResp ? `${logResp.first_name} ${logResp.last_name}` : "")
     
     // Load items
     const newItems: PipeItem[] = PIPE_DIAMETERS.map(d => {
@@ -497,14 +500,20 @@ export default function PipeQualityPage() {
         first_quality: existingItem?.first_quality || 0,
         second_quality: existingItem?.second_quality || 0,
         broken: existingItem?.broken || 0,
-        defects: existingItem?.defects?.map((def: any) => ({
-          id: def.id,
-          reason_id: def.reason_id,
-          quantity: def.quantity
-        })) || []
       }
     })
     setItems(newItems)
+    
+    // Load defects
+    const newDefects: DiameterDefects[] = PIPE_DIAMETERS.map(d => {
+      const existingItem = control.items?.find((i: any) => i.diameter === d)
+      const reasons: DefectEntry[] = existingItem?.defects?.map((def: any) => ({
+        defect_reason_id: def.reason?.id || def.defect_reason_id,
+        quantity: def.quantity
+      })) || []
+      return { diameter: d, reasons }
+    })
+    setDefects(newDefects)
     
     setEditingControl(control)
     setActiveTab("planilla")
