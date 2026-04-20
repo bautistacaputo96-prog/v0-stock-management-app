@@ -345,70 +345,79 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
           <DialogTitle>Planificación de Producción - Caños</DialogTitle>
         </DialogHeader>
 
-        <div className="flex items-center gap-4 py-2 border-b">
-          <div className="flex items-center gap-2">
-            <Label>Mes:</Label>
-            <Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MONTHS.map((month, idx) => (
-                  <SelectItem key={idx} value={String(idx)}>{month}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <Label>Año:</Label>
-            <Select value={String(selectedYear)} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-              <SelectTrigger className="w-[100px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[2024, 2025, 2026, 2027].map(year => (
-                  <SelectItem key={year} value={String(year)}>{year}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {/* Objetivo Diario Total */}
-          <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-            <Target className="h-4 w-4 text-amber-600" />
-            <Label className="text-amber-700 font-medium">Objetivo Diario:</Label>
-            <Input 
-              type="number"
-              value={dailyTargetTotal || ""}
-              onChange={(e) => setDailyTargetTotal(parseInt(e.target.value) || 0)}
-              className="w-[100px] h-8 text-center font-bold text-amber-700 border-amber-300"
-              placeholder="0"
-            />
-            <span className="text-xs text-amber-600">
-              (Planif: {getGrandTotal()})
-            </span>
-          </div>
-          
-          <div className="flex-1" />
-          
-          {/* Audit info */}
-          {modifiedBy && (
-            <div className="text-xs text-muted-foreground flex items-center gap-2">
-              <User className="h-3 w-3" />
-              <span>Modificado por <strong>{modifiedBy}</strong></span>
-              {modifiedAt && (
-                <>
-                  <Clock className="h-3 w-3 ml-2" />
-                  <span>{new Date(modifiedAt).toLocaleString("es-AR")}</span>
-                </>
-              )}
+        <div className="space-y-2 py-2 border-b">
+          {/* Fila 1: Controles de mes/año y botón guardar */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label>Mes:</Label>
+              <Select value={String(selectedMonth)} onValueChange={(v) => setSelectedMonth(parseInt(v))}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONTHS.map((month, idx) => (
+                    <SelectItem key={idx} value={String(idx)}>{month}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <Label>Año:</Label>
+              <Select value={String(selectedYear)} onValueChange={(v) => setSelectedYear(parseInt(v))}>
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[2024, 2025, 2026, 2027].map(year => (
+                    <SelectItem key={year} value={String(year)}>{year}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex-1" />
+            
+            <Button onClick={handleSaveClick} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Guardar Planificación
+            </Button>
+          </div>
           
-          <Button onClick={handleSaveClick} disabled={saving} className="gap-2">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Guardar Planificación
-          </Button>
+          {/* Fila 2: Objetivo diario y audit info */}
+          <div className="flex items-center gap-4">
+            {/* Objetivo Diario Total */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+              <Target className="h-4 w-4 text-amber-600" />
+              <Label className="text-amber-700 font-medium whitespace-nowrap">Objetivo Diario:</Label>
+              <Input 
+                type="number"
+                value={dailyTargetTotal || ""}
+                onChange={(e) => setDailyTargetTotal(parseInt(e.target.value) || 0)}
+                className="w-[80px] h-8 text-center font-bold text-amber-700 border-amber-300"
+                placeholder="0"
+              />
+              <span className="text-xs text-amber-600 whitespace-nowrap">
+                caños (Planif: {getGrandTotal()})
+              </span>
+            </div>
+            
+            <div className="flex-1" />
+            
+            {/* Audit info */}
+            {modifiedBy && (
+              <div className="text-xs text-muted-foreground flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg">
+                <User className="h-3 w-3" />
+                <span>Modificado por <strong>{modifiedBy}</strong></span>
+                {modifiedAt && (
+                  <>
+                    <span className="text-muted-foreground/50">|</span>
+                    <Clock className="h-3 w-3" />
+                    <span>{new Date(modifiedAt).toLocaleString("es-AR")}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {loading ? (
