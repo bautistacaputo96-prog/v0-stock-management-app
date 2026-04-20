@@ -148,12 +148,14 @@ export default function GranulometriaPage() {
   const [stockpileTests, setStockpileTests] = useState<any[]>([])
   const [showStockpileDialog, setShowStockpileDialog] = useState(false)
   const [selectedStockpile, setSelectedStockpile] = useState<any | null>(null)
-  const [stockpileFormData, setStockpileFormData] = useState({
-    material_type: "arena",
-    tested_by: "",
-    total_sample_weight_g: 500,
-    sieve_results: {} as Record<string, number>,
-    notes: "",
+const [stockpileFormData, setStockpileFormData] = useState({
+  material_type: "arena",
+  tested_by: "",
+  total_sample_weight_g: 500,
+  sieve_results: {} as Record<string, number>,
+  notes: "",
+  peso_humedo_g: null as number | null, // PH - Peso húmedo antes del lavado
+  peso_seco_g: null as number | null, // PS - Peso seco después del lavado
   })
 
   const [formData, setFormData] = useState({
@@ -432,6 +434,8 @@ export default function GranulometriaPage() {
         modulo_finura: finenessModulus,
         is_within_spec: isWithinSpec,
         notes: stockpileFormData.notes,
+        peso_humedo_g: stockpileFormData.peso_humedo_g,
+        peso_seco_g: stockpileFormData.peso_seco_g,
       })
 
     if (error) {
@@ -447,6 +451,8 @@ export default function GranulometriaPage() {
       total_sample_weight_g: 500,
       sieve_results: {},
       notes: "",
+      peso_humedo_g: null,
+      peso_seco_g: null,
     })
     loadStockpileTests()
   }
@@ -746,6 +752,61 @@ function getChartData(test: GranulometryTest) {
                       </div>
                     </div>
                     
+                    {/* Contenido de Arcilla (solo para arena) */}
+                    {stockpileFormData.material_type === "arena" && (
+                      <div className="border rounded-lg p-4 bg-amber-50/50">
+                        <h4 className="font-medium mb-3 text-amber-800">Contenido de Arcilla (por lavado)</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-sm">Peso Húmedo (g)</Label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              placeholder="PH antes de lavar"
+                              value={stockpileFormData.peso_humedo_g || ""}
+                              onChange={(e) => setStockpileFormData({ ...stockpileFormData, peso_humedo_g: e.target.value ? Number(e.target.value) : null })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm">Peso Seco (g)</Label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              placeholder="PS después de lavar"
+                              value={stockpileFormData.peso_seco_g || ""}
+                              onChange={(e) => setStockpileFormData({ ...stockpileFormData, peso_seco_g: e.target.value ? Number(e.target.value) : null })}
+                            />
+                          </div>
+                          {stockpileFormData.peso_humedo_g && stockpileFormData.peso_seco_g && stockpileFormData.peso_humedo_g > 0 && (
+                            <>
+                              <div className="space-y-2">
+                                <Label className="text-sm text-muted-foreground">Arcilla (g)</Label>
+                                <div className="h-9 flex items-center px-3 bg-white rounded border text-sm font-medium">
+                                  {(stockpileFormData.peso_humedo_g - stockpileFormData.peso_seco_g).toFixed(1)} g
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-sm text-muted-foreground">% Arcilla</Label>
+                                <div className={`h-9 flex items-center px-3 rounded border text-sm font-bold ${
+                                  ((stockpileFormData.peso_humedo_g - stockpileFormData.peso_seco_g) / stockpileFormData.peso_humedo_g * 100) > 3 
+                                    ? "bg-red-100 text-red-700 border-red-300" 
+                                    : "bg-green-100 text-green-700 border-green-300"
+                                }`}>
+                                  {((stockpileFormData.peso_humedo_g - stockpileFormData.peso_seco_g) / stockpileFormData.peso_humedo_g * 100).toFixed(2)}%
+                                  {((stockpileFormData.peso_humedo_g - stockpileFormData.peso_seco_g) / stockpileFormData.peso_humedo_g * 100) > 3 && (
+                                    <span className="ml-2 text-xs">(Excede 3%)</span>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          El contenido de arcilla no debe superar el 3% para uso en hormigón según IRAM 1512.
+                        </p>
+                      </div>
+                    )}
+                    
                     <div className="space-y-2">
                       <Label>Observaciones</Label>
                       <Input
@@ -793,17 +854,27 @@ function getChartData(test: GranulometryTest) {
                             <AlertTriangle className={`h-5 w-5 ${textColor}`} />
                           )}
                         </div>
-                        <div className="text-2xl font-bold">
-                          MF: {test.modulo_finura?.toFixed(2) || "-"}
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {new Date(test.test_date).toLocaleDateString("es-AR")} - {test.tested_by}
-                        </div>
-                        <div className={`text-xs mt-1 ${textColor}`}>
-                          {validation.status === "approved" ? "Dentro de especificación" : 
-                           validation.status === "warning" ? "Atención: 1 tamiz fuera" : "Fuera de especificación"}
-                        </div>
-                      </div>
+                                      <div className="text-2xl font-bold">
+                                          MF: {test.modulo_finura?.toFixed(2) || "-"}
+                                        </div>
+                                        {/* Clay content for sand */}
+                                        {test.material_type === "arena" && test.peso_humedo_g && test.peso_seco_g && (
+                                          <div className={`text-sm font-medium mt-1 ${
+                                            ((test.peso_humedo_g - test.peso_seco_g) / test.peso_humedo_g * 100) > 3 
+                                              ? "text-red-600" : "text-green-600"
+                                          }`}>
+                                            Arcilla: {((test.peso_humedo_g - test.peso_seco_g) / test.peso_humedo_g * 100).toFixed(2)}%
+                                            {((test.peso_humedo_g - test.peso_seco_g) / test.peso_humedo_g * 100) > 3 && " (!)"}
+                                          </div>
+                                        )}
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                          {new Date(test.test_date).toLocaleDateString("es-AR")} - {test.tested_by}
+                                        </div>
+                                        <div className={`text-xs mt-1 ${textColor}`}>
+                                          {validation.status === "approved" ? "Dentro de especificación" : 
+                                           validation.status === "warning" ? "Atención: 1 tamiz fuera" : "Fuera de especificación"}
+                                        </div>
+                                      </div>
                     )
                   })}
                 </div>

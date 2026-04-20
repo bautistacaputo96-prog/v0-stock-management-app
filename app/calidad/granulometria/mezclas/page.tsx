@@ -27,12 +27,18 @@ const IRAM_1627_ZONA_II = {
   max: [100, 100, 100, 90, 70, 34, 15]
 }
 
-// Líneas de producción
+// Líneas de producción con restricciones de optimización
 const PRODUCTION_LINES = [
-  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, materials: ["arena", "piedra_0_6"] },
-  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, materials: ["arena", "piedra_0_10"] },
-  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, materials: ["arena", "piedra_0_10"] },
+  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 65, sandMax: 80, materials: ["arena", "piedra_0_6"] },
+  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 55, sandMax: 70, materials: ["arena", "piedra_0_10"] },
+  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 40, sandMax: 55, materials: ["arena", "piedra_0_10"] },
 ]
+
+// Límites de contenido de arcilla y arena fina
+const QUALITY_LIMITS = {
+  maxClayContent: 3.0, // % máximo de arcilla según IRAM 1512
+  maxFineContent: 15.0, // % máximo pasante tamiz N°100 (0.15mm)
+}
 
 const MATERIAL_TYPES = [
   { value: "arena", label: "Arena" },
@@ -110,8 +116,8 @@ function calculateRMS(actual: number[], theoretical: number[]): number {
   return count > 0 ? Math.sqrt(sumSquares / count) : 0
 }
 
-// Encontrar proporción óptima
-function findOptimalProportion(passing1: number[], passing2: number[], tma: number): { proportion: number; rms: number } {
+// Encontrar proporción óptima teórica (sin restricciones)
+function findOptimalProportionTheoretical(passing1: number[], passing2: number[], tma: number): { proportion: number; rms: number } {
   const fullerCurve = calculateFullerThompson(tma)
   let bestProportion = 50
   let bestRMS = Infinity
@@ -127,6 +133,29 @@ function findOptimalProportion(passing1: number[], passing2: number[], tma: numb
   }
   
   return { proportion: bestProportion, rms: bestRMS }
+}
+
+// Encontrar proporción óptima práctica (con restricciones por tipo de producto)
+function findOptimalProportion(passing1: number[], passing2: number[], tma: number, sandMin: number = 0, sandMax: number = 100): { proportion: number; rms: number; theoretical: { proportion: number; rms: number } } {
+  const fullerCurve = calculateFullerThompson(tma)
+  let bestProportion = sandMin
+  let bestRMS = Infinity
+  
+  // Calcular óptimo teórico primero
+  const theoretical = findOptimalProportionTheoretical(passing1, passing2, tma)
+  
+  // Buscar óptimo dentro de las restricciones
+  for (let p = sandMin; p <= sandMax; p++) {
+    const blend = calculateBlendCurve(passing1, passing2, p)
+    const rms = calculateRMS(blend, fullerCurve)
+    
+    if (rms < bestRMS) {
+      bestRMS = rms
+      bestProportion = p
+    }
+  }
+  
+  return { proportion: bestProportion, rms: bestRMS, theoretical }
 }
 
 // Verificar alertas por tamiz
@@ -481,9 +510,9 @@ export default function MezclasGranulometriaPage() {
     return calculateRMS(blendPassing, iramMid)
   }, [blendPassing])
   
-  const optimalResult = useMemo(() => 
-    findOptimalProportion(sandPassing, stonePassing, currentLine.tma),
-    [sandPassing, stonePassing, currentLine.tma]
+  const optimalResult = useMemo(() =>
+  findOptimalProportion(sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax),
+  [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax]
   )
   
   // Alias for clearer naming in formula suggestion section
@@ -569,9 +598,10 @@ export default function MezclasGranulometriaPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="flex gap-4 text-sm text-muted-foreground ml-auto">
+              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
                 <span>TMA: <strong>{currentLine.tma}mm</strong></span>
                 <span>MF óptimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
+                <span className="text-amber-600">Arena: <strong>{currentLine.sandMin} - {currentLine.sandMax}%</strong></span>
               </div>
             </div>
           </CardContent>
@@ -634,10 +664,20 @@ export default function MezclasGranulometriaPage() {
                               )}
                             </h4>
                             {stockpileData.arena && (
-                              <p className="text-xs text-muted-foreground">
-                                MF: {stockpileData.arena.modulo_finura?.toFixed(2)} | 
-                                Ensayado: {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} por {stockpileData.arena.tested_by}
-                              </p>
+                              <div className="text-xs text-muted-foreground">
+                                <span>MF: {stockpileData.arena.modulo_finura?.toFixed(2)}</span>
+                                {/* Clay content alert */}
+                                {stockpileData.arena.peso_humedo_g && stockpileData.arena.peso_seco_g && (
+                                  <span className={`ml-2 font-medium ${
+                                    ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent 
+                                      ? "text-red-600" : "text-green-600"
+                                  }`}>
+                                    | Arcilla: {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100).toFixed(1)}%
+                                    {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent && " (!)"}
+                                  </span>
+                                )}
+                                <span className="block">Ensayado: {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} por {stockpileData.arena.tested_by}</span>
+                              </div>
                             )}
                           </div>
                           {!stockpileData.arena && (
@@ -865,23 +905,30 @@ export default function MezclasGranulometriaPage() {
             {/* Optimizador */}
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="py-4">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    <TrendingUp className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium">Proporción Óptima Sugerida</h4>
-                    <p className="text-2xl font-bold text-primary mt-1">
-                      {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      RMS: {optimalResult.rms.toFixed(1)} 
+  <div className="flex items-start gap-3">
+  <div className="p-2 bg-primary/10 rounded-lg">
+  <TrendingUp className="h-5 w-5 text-primary" />
+  </div>
+  <div className="flex-1">
+  <h4 className="font-medium">Proporción Óptima Sugerida</h4>
+  <p className="text-2xl font-bold text-primary mt-1">
+  {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
+  </p>
+  <div className="text-sm text-muted-foreground mt-1 space-y-1">
+  <p>RMS: {optimalResult.rms.toFixed(1)} <span className="text-xs">(Restricción: {currentLine.sandMin}-{currentLine.sandMax}% arena)</span></p>
+  {/* Show theoretical optimal if different from practical */}
+  {optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
+    <p className="text-xs text-amber-600 flex items-center gap-1">
+      <AlertTriangle className="h-3 w-3" />
+      Óptimo teórico: {optimalResult.theoretical.proportion}% arena (RMS: {optimalResult.theoretical.rms.toFixed(1)}) - fuera del rango permitido
+    </p>
+  )}
                       {optimalResult.rms < currentRMS && (
-                        <span className="text-green-600 ml-2">
-                          (mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos)
-                        </span>
+                        <p className="text-sm text-green-600">
+                          Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporción actual
+                        </p>
                       )}
-                    </p>
+                  </div>
                   </div>
                 </div>
               </CardContent>
