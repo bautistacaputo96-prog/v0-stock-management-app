@@ -313,8 +313,18 @@ export function DashboardContent() {
     const pipeTargets: Record<string, number> = {}
     // Guardar planificacion diaria para calcular cumplimiento por dia
     const pipeDailyTargets: Record<number, number> = {} // day -> total planificado ese dia
+    let dailyTargetTotal = 0 // Objetivo diario total definido por el usuario
+    let totalPlanificado = 0 // Total de la planificación mensual
     
     if (cmPlanning.data) {
+      // Get daily_target_total from first row (all rows share same value)
+      const firstRow = cmPlanning.data[0]
+      if (firstRow?.daily_target_total) {
+        dailyTargetTotal = firstRow.daily_target_total
+      }
+      
+      // First pass: calculate total planificado and raw daily targets
+      const rawPipeDailyTargets: Record<number, number> = {}
       cmPlanning.data.forEach((row: any) => {
         // Solo incluir tamaños correspondientes a la planta
         if (!plantSizes.includes(row.pipe_size)) return
@@ -322,10 +332,30 @@ export function DashboardContent() {
         for (let day = 1; day <= 31; day++) {
           const dayValue = row[`day_${day}`] || 0
           total += dayValue
-          pipeDailyTargets[day] = (pipeDailyTargets[day] || 0) + dayValue
+          rawPipeDailyTargets[day] = (rawPipeDailyTargets[day] || 0) + dayValue
         }
-        if (total > 0) pipeTargets[row.pipe_size] = total
+        if (total > 0) {
+          pipeTargets[row.pipe_size] = total
+          totalPlanificado += total
+        }
       })
+      
+      // Calculate proportional daily targets if dailyTargetTotal is set
+      // If dailyTargetTotal > totalPlanificado, scale up each day proportionally
+      const factor = dailyTargetTotal > 0 && totalPlanificado > 0 
+        ? dailyTargetTotal / totalPlanificado 
+        : 1
+      
+      for (const day in rawPipeDailyTargets) {
+        pipeDailyTargets[parseInt(day)] = Math.round(rawPipeDailyTargets[parseInt(day)] * factor)
+      }
+      
+      // Also adjust pipeTargets proportionally for individual size targets
+      if (factor !== 1) {
+        for (const size in pipeTargets) {
+          pipeTargets[size] = Math.round(pipeTargets[size] * factor)
+        }
+      }
     }
 
     setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes))

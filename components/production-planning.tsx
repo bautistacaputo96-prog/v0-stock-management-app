@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Calendar, Save, X, Loader2 } from "lucide-react"
+import { Calendar, Save, X, Loader2, Target, User, Clock } from "lucide-react"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 const PIPE_SIZES = ["300", "400", "500", "600", "800", "1000", "1200"]
 const SILKE_PIPE_SIZES = ["300", "400", "500", "600"]
@@ -98,6 +99,13 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
   const supabase = createClient()
+  
+  // Daily target and audit info
+  const [dailyTargetTotal, setDailyTargetTotal] = useState<number>(0)
+  const [modifiedBy, setModifiedBy] = useState<string | null>(null)
+  const [modifiedAt, setModifiedAt] = useState<string | null>(null)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [saveUserName, setSaveUserName] = useState("")
 
   // Get days in month
   const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
@@ -153,6 +161,18 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
       })
 
       if (data) {
+        // Load audit info from first row (all rows share the same audit info)
+        const firstRow = data[0]
+        if (firstRow) {
+          setDailyTargetTotal(firstRow.daily_target_total || 0)
+          setModifiedBy(firstRow.modified_by || null)
+          setModifiedAt(firstRow.modified_at || null)
+        } else {
+          setDailyTargetTotal(0)
+          setModifiedBy(null)
+          setModifiedAt(null)
+        }
+        
         data.forEach((row: any) => {
           const size = row.pipe_size
           if (gridData[size]) {
@@ -214,9 +234,21 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
     }))
   }
 
-  async function savePlanning() {
+  async function savePlanning(userName: string) {
     setSaving(true)
+    const now = new Date().toISOString()
+    
     try {
+      // First, save history record
+      await supabase.from("production_planning_history").insert({
+        year: selectedYear,
+        month: selectedMonth + 1,
+        daily_target_total: dailyTargetTotal,
+        planning_snapshot: planningData,
+        modified_by: userName,
+        modified_at: now,
+      })
+      
       // Build rows with day_1, day_2, etc. structure
       for (const pipeSize of PIPE_SIZES) {
         const rowData = planningData[pipeSize] || {}
@@ -227,7 +259,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
           dayColumns[`day_${day}`] = rowData[day] || 0
         }
 
-        // Upsert row for this pipe size
+        // Upsert row for this pipe size with audit info
         const { error } = await supabase
           .from("production_planning")
           .upsert({
@@ -235,13 +267,20 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
             month: selectedMonth + 1,
             pipe_size: pipeSize,
             ...dayColumns,
-            updated_at: new Date().toISOString()
+            daily_target_total: dailyTargetTotal,
+            modified_by: userName,
+            modified_at: now,
+            updated_at: now
           }, {
             onConflict: 'year,month,pipe_size'
           })
 
         if (error) throw error
       }
+
+      // Update local state
+      setModifiedBy(userName)
+      setModifiedAt(now)
 
       toast({
         title: "Guardado",
@@ -256,7 +295,13 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
       })
     } finally {
       setSaving(false)
+      setShowSaveDialog(false)
+      setSaveUserName("")
     }
+  }
+  
+  function handleSaveClick() {
+    setShowSaveDialog(true)
   }
 
   // Calculate totals
@@ -327,8 +372,40 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
               </SelectContent>
             </Select>
           </div>
+          
+          {/* Objetivo Diario Total */}
+          <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+            <Target className="h-4 w-4 text-amber-600" />
+            <Label className="text-amber-700 font-medium">Objetivo Diario:</Label>
+            <Input 
+              type="number"
+              value={dailyTargetTotal || ""}
+              onChange={(e) => setDailyTargetTotal(parseInt(e.target.value) || 0)}
+              className="w-[100px] h-8 text-center font-bold text-amber-700 border-amber-300"
+              placeholder="0"
+            />
+            <span className="text-xs text-amber-600">
+              (Planif: {getGrandTotal()})
+            </span>
+          </div>
+          
           <div className="flex-1" />
-          <Button onClick={savePlanning} disabled={saving} className="gap-2">
+          
+          {/* Audit info */}
+          {modifiedBy && (
+            <div className="text-xs text-muted-foreground flex items-center gap-2">
+              <User className="h-3 w-3" />
+              <span>Modificado por <strong>{modifiedBy}</strong></span>
+              {modifiedAt && (
+                <>
+                  <Clock className="h-3 w-3 ml-2" />
+                  <span>{new Date(modifiedAt).toLocaleString("es-AR")}</span>
+                </>
+              )}
+            </div>
+          )}
+          
+          <Button onClick={handleSaveClick} disabled={saving} className="gap-2">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Guardar Planificación
           </Button>
@@ -572,6 +649,49 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
           </div>
         </div>
       </DialogContent>
+      
+      {/* Save Confirmation Dialog */}
+      <AlertDialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Guardar Planificación</AlertDialogTitle>
+            <AlertDialogDescription>
+              Ingresá tu nombre para registrar quién realizó la modificación.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-4">
+            <Label htmlFor="userName">Nombre del responsable</Label>
+            <Input
+              id="userName"
+              value={saveUserName}
+              onChange={(e) => setSaveUserName(e.target.value)}
+              placeholder="Ej: Juan Pérez"
+              className="mt-2"
+              autoFocus
+            />
+            <div className="mt-4 p-3 bg-muted rounded-lg text-sm">
+              <div className="flex justify-between">
+                <span>Planificación mensual:</span>
+                <strong>{getGrandTotal()} caños</strong>
+              </div>
+              <div className="flex justify-between text-amber-700">
+                <span>Objetivo diario total:</span>
+                <strong>{dailyTargetTotal || "No definido"} caños</strong>
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setSaveUserName("")}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => savePlanning(saveUserName)}
+              disabled={!saveUserName.trim() || saving}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Confirmar y Guardar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }
