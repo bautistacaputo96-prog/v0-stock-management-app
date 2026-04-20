@@ -37,12 +37,45 @@ const PRODUCTION_LINES = [
   { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
 ]
 
-// Límites de calidad
-const QUALITY_LIMITS = {
-  maxClayContent: 3.0, // % máximo de arcilla según IRAM 1534
-  minSandMF: 2.30, // MF mínimo recomendado para arena
-  maxSandMF: 2.80, // MF máximo recomendado para arena
+// ══════════════════════════════════════════════════════════════════════════════
+// LÍMITES CALIBRADOS PARA EL MERCADO DE BUENOS AIRES
+// ══════════════════════════════════════════════════════════════════════════════
+// Las arenas disponibles en Buenos Aires son de río/médano con MF entre 1.70-2.00
+// No existe oferta local de arena de trituración con MF > 2.30
+
+// MF de arena - límites ajustados al mercado local
+const SAND_MF_LIMITS = {
+  optimal: { min: 1.80, max: 2.00 },     // Sin alerta
+  acceptable: { min: 1.60, max: 1.79 },  // Alerta amarilla
+  attention: { min: 1.40, max: 1.59 },   // Alerta naranja
+  reject: { max: 1.40 },                  // Alerta roja - bloquear lote
 }
+
+// Alertas de arena - lógica ajustada al mercado local
+const SAND_LIMITS = {
+  maxClayContent: 3.0,           // C.A ≤ 3% para verde
+  maxClayContentYellow: 5.0,     // C.A entre 3-5% amarilla, >5% roja
+  maxPassing060: 90,             // % pasante 0.60mm ≤ 90% para verde
+  maxPassing060Yellow: 95,       // % pasante 0.60mm 90-95% amarilla
+  maxPassing030: 45,             // % pasante 0.30mm ≤ 45% para verde
+  maxPassing030Red: 50,          // % pasante 0.30mm > 50% roja
+}
+
+// Alertas de piedra 0/6 - énfasis en polvo de trituración
+const STONE_06_LIMITS = {
+  maxPassing236: 25,             // % pasante 2.36mm ≤ 25% para verde
+  maxPassing236Yellow: 40,       // % pasante 2.36mm 25-40% amarilla, >40% roja
+  maxPassing118: 10,             // % pasante 1.18mm ≤ 10% para verde
+  maxPassing118Red: 20,          // % pasante 1.18mm > 20% roja
+  maxClayContent: 1.0,           // C.A ≤ 1% para verde
+  maxClayContentYellow: 3.0,     // C.A 1-3% amarilla, >3% roja
+}
+
+// Nota del mercado local
+const MARKET_NOTE = "El mercado local de Buenos Aires no dispone de arenas con MF superior a 2.0. Los límites están calibrados a la oferta disponible."
+
+// Mensaje para perfil granulométrico típico de arena local
+const LOCAL_SAND_PROFILE_MESSAGE = "Perfil granulométrico típico de arena local. La deficiencia en fracción gruesa (≥ 1.18 mm) no puede corregirse con cambio de proveedor en este mercado. Se recomienda compensar con una piedra que tenga bajo contenido de finos (C.A < 1%) para no agravar el exceso de finos en la mezcla."
 
 const MATERIAL_TYPES = [
   { value: "arena", label: "Arena" },
@@ -64,6 +97,121 @@ interface GranulometryTest {
   sieve_results: Record<string, number>
   passing_percentages: Record<string, number>
   fineness_modulus: number | null
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FUNCIONES DE EVALUACIÓN DE ALERTAS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Evaluar estado de arena según límites del mercado local
+function evaluateSandAlert(mf: number | null, clayContent: number | null, passing060: number | null, passing030: number | null): {
+  status: "green" | "yellow" | "orange" | "red"
+  messages: string[]
+} {
+  const messages: string[] = []
+  let status: "green" | "yellow" | "orange" | "red" = "green"
+  
+  // Evaluar contenido de arcilla
+  if (clayContent !== null) {
+    if (clayContent > SAND_LIMITS.maxClayContentYellow) {
+      status = "red"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede el límite máximo (>${SAND_LIMITS.maxClayContentYellow}%)`)
+    } else if (clayContent > SAND_LIMITS.maxClayContent) {
+      if (status !== "red") status = "yellow"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${SAND_LIMITS.maxClayContent}%)`)
+    }
+  }
+  
+  // Evaluar MF
+  if (mf !== null) {
+    if (mf < SAND_MF_LIMITS.reject.max) {
+      status = "red"
+      messages.push(`MF = ${mf.toFixed(2)} muy bajo (<${SAND_MF_LIMITS.reject.max})`)
+    } else if (mf < SAND_MF_LIMITS.attention.min) {
+      if (status !== "red") status = "orange"
+      messages.push(`MF = ${mf.toFixed(2)} requiere atención`)
+    } else if (mf < SAND_MF_LIMITS.acceptable.min) {
+      if (status !== "red" && status !== "orange") status = "yellow"
+      messages.push(`MF = ${mf.toFixed(2)} aceptable pero bajo`)
+    }
+  }
+  
+  // Evaluar % pasante 0.60mm
+  if (passing060 !== null) {
+    if (passing060 > SAND_LIMITS.maxPassing060Yellow) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 0.60mm = ${passing060.toFixed(1)}% elevado`)
+    } else if (passing060 > SAND_LIMITS.maxPassing060) {
+      if (status !== "red" && status !== "orange") status = "yellow"
+      messages.push(`Pasante 0.60mm = ${passing060.toFixed(1)}% en límite`)
+    }
+  }
+  
+  // Evaluar % pasante 0.30mm
+  if (passing030 !== null) {
+    if (passing030 > SAND_LIMITS.maxPassing030Red) {
+      status = "red"
+      messages.push(`Pasante 0.30mm = ${passing030.toFixed(1)}% excede límite (>${SAND_LIMITS.maxPassing030Red}%)`)
+    } else if (passing030 > SAND_LIMITS.maxPassing030) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 0.30mm = ${passing030.toFixed(1)}% elevado`)
+    }
+  }
+  
+  return { status, messages }
+}
+
+// Evaluar estado de piedra 0/6
+function evaluateStone06Alert(clayContent: number | null, passing236: number | null, passing118: number | null): {
+  status: "green" | "yellow" | "red"
+  messages: string[]
+} {
+  const messages: string[] = []
+  let status: "green" | "yellow" | "red" = "green"
+  
+  // Evaluar contenido de arcilla/polvo
+  if (clayContent !== null) {
+    if (clayContent > STONE_06_LIMITS.maxClayContentYellow) {
+      status = "red"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede límite (>${STONE_06_LIMITS.maxClayContentYellow}%)`)
+    } else if (clayContent > STONE_06_LIMITS.maxClayContent) {
+      if (status !== "red") status = "yellow"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${STONE_06_LIMITS.maxClayContent}%)`)
+    }
+  }
+  
+  // Evaluar % pasante 2.36mm
+  if (passing236 !== null) {
+    if (passing236 > STONE_06_LIMITS.maxPassing236Yellow) {
+      status = "red"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% excede límite`)
+    } else if (passing236 > STONE_06_LIMITS.maxPassing236) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% con exceso de finos`)
+    }
+  }
+  
+  // Evaluar % pasante 1.18mm
+  if (passing118 !== null) {
+    if (passing118 > STONE_06_LIMITS.maxPassing118Red) {
+      status = "red"
+      messages.push(`Pasante 1.18mm = ${passing118.toFixed(1)}% excede límite`)
+    } else if (passing118 > STONE_06_LIMITS.maxPassing118) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 1.18mm = ${passing118.toFixed(1)}% elevado`)
+    }
+  }
+  
+  return { status, messages }
+}
+
+// Detectar perfil típico de arena local (deficiencia en fracción gruesa)
+function isTypicalLocalSandProfile(passingPercentages: Record<string, number> | null): boolean {
+  if (!passingPercentages) return false
+  const passing118 = passingPercentages["1.18"] ?? passingPercentages["1.18mm"]
+  const passing060 = passingPercentages["0.60"] ?? passingPercentages["0.60mm"] ?? passingPercentages["0.6"]
+  // Arena local típica: muy poco retenido en ≥1.18mm y alto pasante en 0.60mm
+  return (passing118 !== undefined && passing118 > 95) && (passing060 !== undefined && passing060 > 80)
 }
 
 // Calcular curva Fuller-Thompson
@@ -656,84 +804,130 @@ export default function MezclasGranulometriaPage() {
                   ) : (
                     <div className="space-y-4">
                       {/* Arena Stockpile */}
-                      <div className={`border rounded-lg p-4 ${stockpileData.arena ? "bg-green-50/50 border-green-200" : "bg-yellow-50/50 border-yellow-200"}`}>
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-medium flex items-center gap-2">
-                              Arena
-                              {stockpileData.arena ? (
-                                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                              )}
-                            </h4>
-                            {stockpileData.arena && (
-                              <div className="text-xs text-muted-foreground">
-                                <span>MF: {stockpileData.arena.modulo_finura?.toFixed(2)}</span>
-                                {/* Clay content alert */}
-                                {stockpileData.arena.peso_humedo_g && stockpileData.arena.peso_seco_g && (
-                                  <span className={`ml-2 font-medium ${
-                                    ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent 
-                                      ? "text-red-600" : "text-green-600"
-                                  }`}>
-                                    | Arcilla: {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100).toFixed(1)}%
-                                    {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent && " (!)"}
-                                  </span>
+                      {(() => {
+                        const clayContent = stockpileData.arena?.peso_humedo_g && stockpileData.arena?.peso_seco_g
+                          ? ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100)
+                          : null
+                        const passing060 = stockpileData.arena?.passing_percentages?.["0.60"] ?? stockpileData.arena?.passing_percentages?.["0.6"] ?? null
+                        const passing030 = stockpileData.arena?.passing_percentages?.["0.30"] ?? stockpileData.arena?.passing_percentages?.["0.3"] ?? null
+                        const sandAlert = stockpileData.arena 
+                          ? evaluateSandAlert(stockpileData.arena.modulo_finura, clayContent, passing060, passing030)
+                          : { status: "green" as const, messages: [] }
+                        const borderColor = sandAlert.status === "red" ? "border-red-300 bg-red-50/50" 
+                          : sandAlert.status === "orange" ? "border-orange-300 bg-orange-50/50"
+                          : sandAlert.status === "yellow" ? "border-amber-300 bg-amber-50/50"
+                          : stockpileData.arena ? "border-green-200 bg-green-50/50" : "border-yellow-200 bg-yellow-50/50"
+                        const iconColor = sandAlert.status === "red" ? "text-red-600" 
+                          : sandAlert.status === "orange" ? "text-orange-600"
+                          : sandAlert.status === "yellow" ? "text-amber-600"
+                          : "text-green-600"
+                        
+                        return (
+                          <div className={`border rounded-lg p-4 ${borderColor}`}>
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <h4 className="font-medium flex items-center gap-2">
+                                  Arena
+                                  {stockpileData.arena ? (
+                                    sandAlert.status === "green" ? <CheckCircle2 className={`h-4 w-4 ${iconColor}`} /> : <AlertTriangle className={`h-4 w-4 ${iconColor}`} />
+                                  ) : (
+                                    <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                                  )}
+                                </h4>
+                                {stockpileData.arena && (
+                                  <div className="text-xs text-muted-foreground">
+                                    <span className={stockpileData.arena.modulo_finura && stockpileData.arena.modulo_finura < SAND_MF_LIMITS.acceptable.min ? "text-amber-600 font-medium" : ""}>
+                                      MF: {stockpileData.arena.modulo_finura?.toFixed(2)}
+                                    </span>
+                                    {clayContent !== null && (
+                                      <span className={`ml-2 font-medium ${
+                                        clayContent > SAND_LIMITS.maxClayContentYellow ? "text-red-600" 
+                                        : clayContent > SAND_LIMITS.maxClayContent ? "text-amber-600" : "text-green-600"
+                                      }`}>
+                                        | C.A: {clayContent.toFixed(1)}%
+                                        {clayContent > SAND_LIMITS.maxClayContent && " (!)"}
+                                      </span>
+                                    )}
+                                    <span className="block">Ensayado: {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} por {stockpileData.arena.tested_by}</span>
+                                  </div>
                                 )}
-                                <span className="block">Ensayado: {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} por {stockpileData.arena.tested_by}</span>
+                              </div>
+                            {stockpileData.arena?.passing && (
+                              <div className="grid grid-cols-7 gap-1 text-xs mt-2">
+                                {SIEVE_SIZES_MM.map((size, i) => (
+                                  <div key={size} className="text-center bg-white/50 rounded p-1">
+                                    <div className="font-medium">{size}mm</div>
+                                    <div>{stockpileData.arena.passing[i]?.toFixed(1)}%</div>
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
-                          {!stockpileData.arena && (
-                            <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
-                          )}
-                        </div>
-                        {stockpileData.arena?.passing && (
-                          <div className="grid grid-cols-7 gap-1 text-xs">
-                            {SIEVE_SIZES_MM.map((size, i) => (
-                              <div key={size} className="text-center bg-white/50 rounded p-1">
-                                <div className="font-medium">{size}mm</div>
-                                <div>{stockpileData.arena.passing[i]?.toFixed(1)}%</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                        )
+                      })()}
                       
                       {/* Piedra Stockpile */}
-                      <div className={`border rounded-lg p-4 ${stockpileData.piedra ? "bg-green-50/50 border-green-200" : "bg-yellow-50/50 border-yellow-200"}`}>
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-medium flex items-center gap-2">
-                              Piedra {selectedPlant === "ranchos" ? "0/6" : "0/10"}
-                              {stockpileData.piedra ? (
-                                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                      {(() => {
+                        const clayContent = stockpileData.piedra_0_6?.peso_humedo_g && stockpileData.piedra_0_6?.peso_seco_g
+                          ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
+                          : null
+                        const passing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+                        const passing118 = stockpileData.piedra?.passing_percentages?.["1.18"] ?? null
+                        const stoneAlert = stockpileData.piedra_0_6 
+                          ? evaluateStone06Alert(clayContent, passing236, passing118)
+                          : { status: "green" as const, messages: [] }
+                        const borderColor = stoneAlert.status === "red" ? "border-red-300 bg-red-50/50" 
+                          : stoneAlert.status === "yellow" ? "border-amber-300 bg-amber-50/50"
+                          : stockpileData.piedra ? "border-green-200 bg-green-50/50" : "border-yellow-200 bg-yellow-50/50"
+                        const iconColor = stoneAlert.status === "red" ? "text-red-600" 
+                          : stoneAlert.status === "yellow" ? "text-amber-600"
+                          : "text-green-600"
+                        
+                        return (
+                          <div className={`border rounded-lg p-4 ${borderColor}`}>
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <h4 className="font-medium flex items-center gap-2">
+                                  Piedra {selectedPlant === "ranchos" ? "0/6" : "0/10"}
+                                  {stockpileData.piedra ? (
+                                    stoneAlert.status === "green" ? <CheckCircle2 className={`h-4 w-4 ${iconColor}`} /> : <AlertTriangle className={`h-4 w-4 ${iconColor}`} />
+                                  ) : (
+                                    <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                                  )}
+                                </h4>
+                                {stockpileData.piedra && (
+                                  <div className="text-xs text-muted-foreground">
+                                    <span>MF: {stockpileData.piedra.modulo_finura?.toFixed(2)}</span>
+                                    {clayContent !== null && (
+                                      <span className={`ml-2 font-medium ${
+                                        clayContent > STONE_06_LIMITS.maxClayContentYellow ? "text-red-600" 
+                                        : clayContent > STONE_06_LIMITS.maxClayContent ? "text-amber-600" : "text-green-600"
+                                      }`}>
+                                        | C.A: {clayContent.toFixed(1)}%
+                                        {clayContent > STONE_06_LIMITS.maxClayContent && " (!)"}
+                                      </span>
+                                    )}
+                                    <span className="block">Ensayado: {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} por {stockpileData.piedra.tested_by}</span>
+                                  </div>
+                                )}
+                              </div>
+                              {!stockpileData.piedra && (
+                                <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
                               )}
-                            </h4>
-                            {stockpileData.piedra && (
-                              <p className="text-xs text-muted-foreground">
-                                MF: {stockpileData.piedra.modulo_finura?.toFixed(2)} | 
-                                Ensayado: {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} por {stockpileData.piedra.tested_by}
-                              </p>
+                            </div>
+                            {stockpileData.piedra?.passing && (
+                              <div className="grid grid-cols-7 gap-1 text-xs mt-2">
+                                {SIEVE_SIZES_MM.map((size, i) => (
+                                  <div key={size} className="text-center bg-white/50 rounded p-1">
+                                    <div className="font-medium">{size}mm</div>
+                                    <div>{stockpileData.piedra.passing[i]?.toFixed(1)}%</div>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
-                          {!stockpileData.piedra && (
-                            <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
-                          )}
-                        </div>
-                        {stockpileData.piedra?.passing && (
-                          <div className="grid grid-cols-7 gap-1 text-xs">
-                            {SIEVE_SIZES_MM.map((size, i) => (
-                              <div key={size} className="text-center bg-white/50 rounded p-1">
-                                <div className="font-medium">{size}mm</div>
-                                <div>{stockpileData.piedra.passing[i]?.toFixed(1)}%</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                        )
+                      })()}
                       
                       <Button 
                         variant="outline" 
@@ -955,50 +1149,184 @@ export default function MezclasGranulometriaPage() {
               </CardContent>
             </Card>
             
-            {/* Alerta crítica por contenido de arcilla */}
-            {stockpileData.arena?.peso_humedo_g && stockpileData.arena?.peso_seco_g && 
-             ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100) > QUALITY_LIMITS.maxClayContent && (
-              <Card className="border-red-500 bg-red-50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2 text-red-700">
-                    <AlertTriangle className="h-5 w-5" />
-                    LOTE RECHAZADO - Contenido de Arcilla Excedido
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-red-700">
-                    <strong>Contenido de arcilla fuera de límite (C.A = {((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100).toFixed(2)}%).</strong>
-                  </p>
-                  <p className="text-sm text-red-600 mt-2">
-                    Límite máximo para adoquines IRAM 1534: {QUALITY_LIMITS.maxClayContent}%. 
-                    Este lote no debe usarse en producción. La arcilla aumenta la demanda de agua, 
-                    reduce la resistencia y genera riesgo de fisuras por retracción.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+            {/* ══════════════════════════════════════════════════════════════════════════════
+                ALERTAS DE CALIDAD - CALIBRADAS PARA MERCADO DE BUENOS AIRES
+                ══════════════════════════════════════════════════════════════════════════════ */}
             
-            {/* Alerta por arena muy fina */}
-            {stockpileData.arena?.modulo_finura && stockpileData.arena.modulo_finura < QUALITY_LIMITS.minSandMF && (
-              <Card className="border-amber-500 bg-amber-50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
-                    <AlertTriangle className="h-5 w-5" />
-                    Arena con Módulo de Finura Bajo
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-amber-700">
-                    <strong>Arena con módulo de finura bajo (MF = {stockpileData.arena.modulo_finura.toFixed(2)}).</strong>
-                  </p>
-                  <p className="text-sm text-amber-600 mt-2">
-                    Este valor indica una arena muy fina que aumenta la demanda de pasta cementicia 
-                    y puede reducir la trabajabilidad del semiseco. Se recomienda evaluar un proveedor 
-                    de arena con MF entre {QUALITY_LIMITS.minSandMF.toFixed(2)} y {QUALITY_LIMITS.maxSandMF.toFixed(2)}.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+            {/* Nota del mercado local */}
+            <Card className="border-blue-200 bg-blue-50/50">
+              <CardContent className="py-3">
+                <p className="text-xs text-blue-700 flex items-start gap-2">
+                  <Lightbulb className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  {MARKET_NOTE}
+                </p>
+              </CardContent>
+            </Card>
+            
+            {/* Alerta de Arena */}
+            {stockpileData.arena && (() => {
+              const clayContent = stockpileData.arena.peso_humedo_g && stockpileData.arena.peso_seco_g
+                ? ((stockpileData.arena.peso_humedo_g - stockpileData.arena.peso_seco_g) / stockpileData.arena.peso_humedo_g * 100)
+                : null
+              const passing060 = stockpileData.arena.passing_percentages?.["0.60"] ?? stockpileData.arena.passing_percentages?.["0.6"] ?? null
+              const passing030 = stockpileData.arena.passing_percentages?.["0.30"] ?? stockpileData.arena.passing_percentages?.["0.3"] ?? null
+              const sandAlert = evaluateSandAlert(stockpileData.arena.modulo_finura, clayContent, passing060, passing030)
+              const isTypicalProfile = isTypicalLocalSandProfile(stockpileData.arena.passing_percentages)
+              
+              if (sandAlert.status === "red") {
+                return (
+                  <Card className="border-red-500 bg-red-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-red-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        ARENA RECHAZADA - Fuera de límites operativos
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="text-sm text-red-700 space-y-1">
+                        {sandAlert.messages.map((msg, i) => <li key={i}>• {msg}</li>)}
+                      </ul>
+                      <p className="text-sm text-red-600 mt-2 font-medium">
+                        Arena fuera de límites operativos. No usar en producción.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              } else if (sandAlert.status === "orange") {
+                return (
+                  <Card className="border-orange-500 bg-orange-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        ARENA - Requiere atención de Calidad
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="text-sm text-orange-700 space-y-1">
+                        {sandAlert.messages.map((msg, i) => <li key={i}>• {msg}</li>)}
+                      </ul>
+                      <p className="text-sm text-orange-600 mt-2">
+                        Informar al departamento de calidad para evaluación.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              } else if (sandAlert.status === "yellow") {
+                return (
+                  <Card className="border-amber-400 bg-amber-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        Arena aceptable con observación
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="text-sm text-amber-700 space-y-1">
+                        {sandAlert.messages.map((msg, i) => <li key={i}>• {msg}</li>)}
+                      </ul>
+                      <p className="text-sm text-amber-600 mt-2">
+                        Arena dentro del rango local pero con características que pueden aumentar la demanda de cemento. 
+                        Monitorear resistencia de probetas.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              } else if (isTypicalProfile) {
+                return (
+                  <Card className="border-blue-300 bg-blue-50/50">
+                    <CardContent className="py-3">
+                      <p className="text-xs text-blue-700">
+                        <strong>Arena apta.</strong> {LOCAL_SAND_PROFILE_MESSAGE}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              }
+              return null
+            })()}
+            
+            {/* Alerta de Piedra 0/6 */}
+            {stockpileData.piedra_0_6 && (() => {
+              const clayContent = stockpileData.piedra_0_6.peso_humedo_g && stockpileData.piedra_0_6.peso_seco_g
+                ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
+                : null
+              const passing236 = stockpileData.piedra_0_6.passing_percentages?.["2.36"] ?? null
+              const passing118 = stockpileData.piedra_0_6.passing_percentages?.["1.18"] ?? null
+              const stoneAlert = evaluateStone06Alert(clayContent, passing236, passing118)
+              
+              if (stoneAlert.status === "red") {
+                return (
+                  <Card className="border-red-500 bg-red-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-red-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        PIEDRA 0/6 RECHAZADA - Fuera de especificación
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="text-sm text-red-700 space-y-1">
+                        {stoneAlert.messages.map((msg, i) => <li key={i}>• {msg}</li>)}
+                      </ul>
+                      <p className="text-sm text-red-600 mt-2">
+                        Piedra fuera de especificación IRAM 1627 para árido grueso fino. 
+                        Reclamar certificado de granulometría al proveedor y evaluar rechazo del lote.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              } else if (stoneAlert.status === "yellow") {
+                return (
+                  <Card className="border-amber-400 bg-amber-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        Piedra 0/6 con exceso de finos
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="text-sm text-amber-700 space-y-1">
+                        {stoneAlert.messages.map((msg, i) => <li key={i}>• {msg}</li>)}
+                      </ul>
+                      <p className="text-sm text-amber-600 mt-2">
+                        La piedra presenta exceso de finos de trituración. Esto agrava la finura de la mezcla 
+                        cuando se combina con arenas locales. Considerar solicitar material lavado al proveedor.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              }
+              return null
+            })()}
+            
+            {/* Alerta cuando ambos áridos tienen exceso de finos */}
+            {stockpileData.arena && stockpileData.piedra_0_6 && (() => {
+              const sandPassing060 = stockpileData.arena.passing_percentages?.["0.60"] ?? stockpileData.arena.passing_percentages?.["0.6"] ?? 0
+              const stonePassing236 = stockpileData.piedra_0_6.passing_percentages?.["2.36"] ?? 0
+              
+              if (sandPassing060 > 80 && stonePassing236 > 25) {
+                return (
+                  <Card className="border-purple-400 bg-purple-50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-purple-700">
+                        <Lightbulb className="h-5 w-5" />
+                        Recomendación - Ambos áridos con exceso de finos
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-purple-700">
+                        Ambos áridos presentan exceso de finos respecto a la curva ideal. 
+                        La optimización de proporción tiene impacto limitado en este caso.
+                      </p>
+                      <p className="text-sm text-purple-600 mt-2 font-medium">
+                        La mejora más significativa se lograría reemplazando la piedra 0/6 por una piedra 
+                        con menor contenido de polvo de trituración, como una piedra 0/10 lavada.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              }
+              return null
+            })()}
             
             {/* Alertas por tamiz */}
             {sieveAlerts.length > 0 && (
