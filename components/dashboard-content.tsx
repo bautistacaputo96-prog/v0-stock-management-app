@@ -36,7 +36,9 @@ interface MonthData {
   blockDowntimes: { reason: string; minutes: number }[]
   pipeDowntimes: { reason: string; minutes: number }[]
   pipeTargets: Record<string, number>
-  pipeDailyTargets: Record<number, number> // day -> total planificado ese dia
+  pipeDailyTargets: Record<number, number> // day -> objetivo diario total
+  dailyTargetTotal: number // Objetivo diario definido por el operario
+  pipeDailyPlanBySize: Record<number, Record<string, number>> // day -> {size -> cantidad planificada}
   }
 
 type ActiveLine = "bloques" | "canos" | "produccion-diaria"
@@ -312,9 +314,10 @@ export function DashboardContent() {
     
     const pipeTargets: Record<string, number> = {}
     // Guardar planificacion diaria para calcular cumplimiento por dia
-    const pipeDailyTargets: Record<number, number> = {} // day -> total planificado ese dia
+    const pipeDailyTargets: Record<number, number> = {} // day -> objetivo diario total
+    // Guardar planificación cruda por día y medida para calcular proporciones
+    const pipeDailyPlanBySize: Record<number, Record<string, number>> = {} // day -> {size -> cantidad}
     let dailyTargetTotal = 0 // Objetivo diario total definido por el usuario
-    let totalPlanificado = 0 // Total de la planificación mensual
     
     if (cmPlanning.data) {
       // Get daily_target_total from first row (all rows share same value)
@@ -323,42 +326,56 @@ export function DashboardContent() {
         dailyTargetTotal = firstRow.daily_target_total
       }
       
-      // First pass: calculate total planificado and raw daily targets
-      const rawPipeDailyTargets: Record<number, number> = {}
+      // Build planning data by day and size
+      const rawPipeDailyTotals: Record<number, number> = {} // day -> total planificado ese día
       cmPlanning.data.forEach((row: any) => {
         // Solo incluir tamaños correspondientes a la planta
         if (!plantSizes.includes(row.pipe_size)) return
-        let total = 0
+        let sizeTotal = 0
         for (let day = 1; day <= 31; day++) {
           const dayValue = row[`day_${day}`] || 0
-          total += dayValue
-          rawPipeDailyTargets[day] = (rawPipeDailyTargets[day] || 0) + dayValue
+          if (dayValue > 0) {
+            sizeTotal += dayValue
+            rawPipeDailyTotals[day] = (rawPipeDailyTotals[day] || 0) + dayValue
+            if (!pipeDailyPlanBySize[day]) pipeDailyPlanBySize[day] = {}
+            pipeDailyPlanBySize[day][row.pipe_size] = dayValue
+          }
         }
-        if (total > 0) {
-          pipeTargets[row.pipe_size] = total
-          totalPlanificado += total
+        if (sizeTotal > 0) {
+          pipeTargets[row.pipe_size] = sizeTotal
         }
       })
       
-      // Calculate proportional daily targets if dailyTargetTotal is set
-      // If dailyTargetTotal > totalPlanificado, scale up each day proportionally
-      const factor = dailyTargetTotal > 0 && totalPlanificado > 0 
-        ? dailyTargetTotal / totalPlanificado 
-        : 1
-      
-      for (const day in rawPipeDailyTargets) {
-        pipeDailyTargets[parseInt(day)] = Math.round(rawPipeDailyTargets[parseInt(day)] * factor)
+      // Set daily targets:
+      // - If dailyTargetTotal is defined by the operator, use it for ALL days that have planning
+      // - Otherwise, use the raw planning total for each day
+      for (const day in rawPipeDailyTotals) {
+        const dayNum = parseInt(day)
+        if (dailyTargetTotal > 0 && rawPipeDailyTotals[dayNum] > 0) {
+          // Use the operator-defined daily target for days with planning
+          pipeDailyTargets[dayNum] = dailyTargetTotal
+        } else {
+          // No daily target defined, use raw planning
+          pipeDailyTargets[dayNum] = rawPipeDailyTotals[dayNum] || 0
+        }
       }
       
-      // Also adjust pipeTargets proportionally for individual size targets
-      if (factor !== 1) {
-        for (const size in pipeTargets) {
-          pipeTargets[size] = Math.round(pipeTargets[size] * factor)
+      // Adjust pipeTargets (monthly totals per size) proportionally if dailyTargetTotal is set
+      // Count days with planning and calculate new monthly target
+      const daysWithPlanning = Object.keys(rawPipeDailyTotals).length
+      if (dailyTargetTotal > 0 && daysWithPlanning > 0) {
+        const monthlyTargetTotal = dailyTargetTotal * daysWithPlanning
+        const rawMonthlyTotal = Object.values(rawPipeDailyTotals).reduce((a, b) => a + b, 0)
+        if (rawMonthlyTotal > 0) {
+          const factor = monthlyTargetTotal / rawMonthlyTotal
+          for (const size in pipeTargets) {
+            pipeTargets[size] = Math.round(pipeTargets[size] * factor)
+          }
         }
       }
     }
 
-    setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes))
+    setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes, dailyTargetTotal, pipeDailyPlanBySize))
     setPrevMonth(processMonthData(pmBlocks.data || [], pmPipes.data || [], weights, {}, {}, []))
 
     // Independent mp_receipts fetch — graceful fallback
@@ -572,7 +589,7 @@ export function DashboardContent() {
     setLoading(false)
   }
 
-  function processMonthData(blockRecords: any[], pipeRecords: any[], weights: Record<string, number>, pipeTargets: Record<string, number> = {}, pipeDailyTargets: Record<number, number> = {}, plantSizes: string[] = []): MonthData {
+  function processMonthData(blockRecords: any[], pipeRecords: any[], weights: Record<string, number>, pipeTargets: Record<string, number> = {}, pipeDailyTargets: Record<number, number> = {}, plantSizes: string[] = [], dailyTargetTotal: number = 0, pipeDailyPlanBySize: Record<number, Record<string, number>> = {}): MonthData {
     const blockMetrics = blockRecords.map(r => calculateReportMetrics(r))
     const pipeMetrics = pipeRecords.length > 0 ? calculatePipeMetrics(pipeRecords, weights) : null
 
@@ -637,7 +654,7 @@ export function DashboardContent() {
     })
     const pipeDowntimes = Array.from(pipeDtMap.entries()).map(([reason, minutes]) => ({ reason, minutes })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
 
-    return { blockRecords, pipeRecords, blockMetrics, pipeMetrics, pipeDailyData, blockDowntimes, pipeDowntimes, pipeTargets, pipeDailyTargets }
+    return { blockRecords, pipeRecords, blockMetrics, pipeMetrics, pipeDailyData, blockDowntimes, pipeDowntimes, pipeTargets, pipeDailyTargets, dailyTargetTotal, pipeDailyPlanBySize }
   }
 
   // ── Block chart data ──────────────────────────────────────────────────
