@@ -53,13 +53,14 @@ export async function GET(request: NextRequest) {
 
     if (type === "flexion-pending") {
       // Get specimens pending testing (7 or 28 days reached)
-      // Specimens without test_date are pending
+      // Specimens without test_date are pending, filter by plant via sample relation
       const { data, error } = await supabase
         .from("quality_flexion_specimens")
         .select(`
           *,
-          sample:quality_flexion_samples(*)
+          sample:quality_flexion_samples!inner(*)
         `)
+        .eq("sample.plant", "ranchos")
         .is("test_date", null)
         .order("test_age_days", { ascending: true })
       

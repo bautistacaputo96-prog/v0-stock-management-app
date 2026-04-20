@@ -392,22 +392,98 @@ export default function CalidadAdoquinesPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center gap-4">
-        <Link href="/calidad">
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Volver
-          </Button>
-        </Link>
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
-            <FlaskConical className="h-6 w-6 text-orange-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Control de Calidad - Adoquines</h1>
-            <p className="text-muted-foreground text-sm">Ensayos de flexion segun norma IRAM</p>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Link href="/calidad">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Volver
+            </Button>
+          </Link>
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+              <FlaskConical className="h-6 w-6 text-orange-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Control de Calidad - Adoquines</h1>
+              <p className="text-muted-foreground text-sm">Ensayos de flexion segun norma IRAM</p>
+            </div>
           </div>
         </div>
+        
+        {/* Botón Nueva Muestra siempre visible */}
+        <Dialog open={showNewSampleDialog} onOpenChange={setShowNewSampleDialog}>
+          <DialogTrigger asChild>
+            <Button onClick={() => setSampleForm(prev => ({ ...prev, sample_code: generateSampleCode() }))}>
+              <Plus className="w-4 h-4 mr-2" />
+              Nueva Muestra
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Nueva Muestra de Flexion</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Codigo de Muestra</Label>
+                <Input
+                  value={sampleForm.sample_code}
+                  onChange={e => setSampleForm(prev => ({ ...prev, sample_code: e.target.value }))}
+                  placeholder="Ej: F240115-01"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Tipo de Adoquin</Label>
+                <Select
+                  value={sampleForm.adoquin_type}
+                  onValueChange={v => setSampleForm(prev => ({ ...prev, adoquin_type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar tipo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ADOQUIN_TYPES.map(t => (
+                      <SelectItem key={t.code} value={t.code}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Fecha de Muestreo</Label>
+                  <Input
+                    type="date"
+                    value={sampleForm.sample_date}
+                    onChange={e => setSampleForm(prev => ({ ...prev, sample_date: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Fecha de Produccion</Label>
+                  <Input
+                    type="date"
+                    value={sampleForm.production_date}
+                    onChange={e => setSampleForm(prev => ({ ...prev, production_date: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Observaciones</Label>
+                <Textarea
+                  value={sampleForm.notes}
+                  onChange={e => setSampleForm(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Notas adicionales..."
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowNewSampleDialog(false)}>Cancelar</Button>
+                <Button onClick={saveSample} disabled={saving || !sampleForm.sample_code || !sampleForm.adoquin_type}>
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Guardar Muestra
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="space-y-6">
@@ -600,89 +676,14 @@ export default function CalidadAdoquinesPage() {
           {/* Samples Tab */}
           <TabsContent value="samples" className="space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-lg font-semibold">Muestras de Flexion</h2>
-              <Dialog open={showNewSampleDialog} onOpenChange={setShowNewSampleDialog}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => setSampleForm(prev => ({ ...prev, sample_code: generateSampleCode() }))}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Nueva Muestra
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Registrar Nueva Muestra de Flexion</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Codigo de Muestra</Label>
-                        <Input
-                          value={sampleForm.sample_code}
-                          onChange={(e) => setSampleForm(prev => ({ ...prev, sample_code: e.target.value }))}
-                          placeholder="F240115-01"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Tipo de Adoquin</Label>
-                        <Select
-                          value={sampleForm.adoquin_type}
-                          onValueChange={(v) => setSampleForm(prev => ({ ...prev, adoquin_type: v }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ADOQUIN_TYPES.map(t => (
-                              <SelectItem key={t.code} value={t.code}>{t.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Fecha de Extraccion</Label>
-                        <Input
-                          type="date"
-                      value={sampleForm.sample_date}
-                      onChange={(e) => setSampleForm(prev => ({ ...prev, sample_date: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Fecha de Produccion</Label>
-                        <Input
-                          type="date"
-                          value={sampleForm.production_date}
-                          onChange={(e) => setSampleForm(prev => ({ ...prev, production_date: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Notas (opcional)</Label>
-                      <Textarea
-                        value={sampleForm.notes}
-                        onChange={(e) => setSampleForm(prev => ({ ...prev, notes: e.target.value }))}
-                        placeholder="Observaciones adicionales..."
-                        rows={2}
-                      />
-                    </div>
-
-                    <Alert>
-                      <Calendar className="h-4 w-4" />
-                      <AlertDescription>
-                        Se crearan 3 especimenes: 1 para ensayo a 7 dias y 2 para ensayo a 28 dias.
-                      </AlertDescription>
-                    </Alert>
-
-                    <Button onClick={saveSample} className="w-full" disabled={saving || !sampleForm.sample_code || !sampleForm.adoquin_type}>
-                      {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                      Registrar Muestra
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <h2 className="text-lg font-semibold">Historial de Muestras de Flexion</h2>
+              <Button onClick={() => {
+                setSampleForm(prev => ({ ...prev, sample_code: generateSampleCode() }))
+                setShowNewSampleDialog(true)
+              }}>
+                <Plus className="w-4 h-4 mr-2" />
+                Nueva Muestra
+              </Button>
             </div>
 
             <Card>

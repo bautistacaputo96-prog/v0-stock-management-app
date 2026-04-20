@@ -6,9 +6,30 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabase } from "@/lib/supabase"
-import { Loader2, Plus, X, Truck, ChevronDown } from "lucide-react"
+import { Loader2, Plus, X, Truck, ChevronDown, FlaskConical, Trash2 } from "lucide-react"
+
+// Tipos de adoquin disponibles
+const ADOQUIN_TYPES = [
+  { code: "AH6", name: "Adoquin H6" },
+  { code: "AH6-R", name: "Adoquin H6 Rojo" },
+  { code: "AH6-A", name: "Adoquin H6 Amarillo" },
+  { code: "AH6-N", name: "Adoquin H6 Negro" },
+  { code: "AH8", name: "Adoquin H8" },
+  { code: "AH8-R", name: "Adoquin H8 Rojo" },
+  { code: "AH8-A", name: "Adoquin H8 Amarillo" },
+  { code: "AH8-N", name: "Adoquin H8 Negro" },
+]
+
+interface SampleEntry {
+  id: string
+  sample_code: string
+  adoquin_type: string
+  observations: string
+}
 
 interface CurrentSupplier {
   id?: number
@@ -164,6 +185,10 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
   const [downtimes, setDowntimes] = useState<Record<string, DowntimeEntry>>({})
   const [observations, setObservations] = useState("")
 
+  // Muestras de calidad
+  const [samplesTaken, setSamplesTaken] = useState(false)
+  const [samples, setSamples] = useState<SampleEntry[]>([])
+
   // Load product types, available suppliers, and current suppliers from DB
   useEffect(() => {
     const loadData = async () => {
@@ -311,6 +336,37 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     return cur?.supplier_name || "Sin asignar"
   }
 
+  // Generate sample code
+  function generateSampleCode(): string {
+    const date = new Date(formData.productionDate)
+    const year = date.getFullYear().toString().slice(-2)
+    const month = (date.getMonth() + 1).toString().padStart(2, "0")
+    const day = date.getDate().toString().padStart(2, "0")
+    const random = Math.floor(Math.random() * 100).toString().padStart(2, "0")
+    return `F${year}${month}${day}-${random}`
+  }
+
+  // Add new sample
+  function addSample() {
+    const newSample: SampleEntry = {
+      id: crypto.randomUUID(),
+      sample_code: generateSampleCode(),
+      adoquin_type: formData.productTypeCode || "",
+      observations: ""
+    }
+    setSamples(prev => [...prev, newSample])
+  }
+
+  // Remove sample
+  function removeSample(id: string) {
+    setSamples(prev => prev.filter(s => s.id !== id))
+  }
+
+  // Update sample
+  function updateSample(id: string, field: keyof SampleEntry, value: string) {
+    setSamples(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s))
+  }
+
   // Change a supplier persistently
   async function changeSupplier(ingredient: string, newSupplierName: string) {
     try {
@@ -453,8 +509,59 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           }
         }
 
+        // Guardar muestras de calidad
+        if (samplesTaken && samples.length > 0) {
+          for (const sample of samples) {
+            if (!sample.sample_code || !sample.adoquin_type) continue
+
+            // Crear la muestra en quality_flexion_samples
+            const { data: sampleData, error: sampleErr } = await supabase
+              .from("quality_flexion_samples")
+              .insert({
+                sample_code: sample.sample_code,
+                adoquin_type: sample.adoquin_type,
+                sample_date: formData.productionDate,
+                production_date: formData.productionDate,
+                paver_production_id: newRecord.id,
+                plant: "ranchos",
+                status: "pending",
+                observations: sample.observations || null,
+                formula_cement_kg: formData.formulaCementKg ? Number(formData.formulaCementKg) : null,
+                formula_sand_kg: formData.formulaSandKg ? Number(formData.formulaSandKg) : null,
+                formula_stone_kg: formData.formulaStoneKg ? Number(formData.formulaStoneKg) : null,
+                formula_additive_lts: formData.formulaAdditiveLts ? Number(formData.formulaAdditiveLts) : null,
+              })
+              .select()
+              .single()
+
+            if (sampleErr) {
+              console.error("[v0] Error saving sample:", sampleErr)
+              continue
+            }
+
+            // Crear especímenes para 7 y 28 días (3 probetas por cada edad)
+            const specimens = []
+            for (const age of [7, 28]) {
+              for (let i = 1; i <= 3; i++) {
+                specimens.push({
+                  sample_id: sampleData.id,
+                  specimen_number: age === 7 ? i : i + 3,
+                  test_age_days: age,
+                })
+              }
+            }
+
+            await supabase.from("quality_flexion_specimens").insert(specimens)
+          }
+        }
+
         localStorage.removeItem("paverProductionForm")
-        toast({ title: "Guardado", description: "El parte de adoquines se guardo correctamente" })
+        toast({ 
+          title: "Guardado", 
+          description: samplesTaken && samples.length > 0 
+            ? `Parte y ${samples.length} muestra(s) guardados correctamente` 
+            : "El parte de adoquines se guardo correctamente" 
+        })
 
         // Reset form
         setFormData({
@@ -481,6 +588,8 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         setSupplierChanged(false)
         setSupplierChangeNotes("")
         setShowSupplierPanel(false)
+        setSamplesTaken(false)
+        setSamples([])
       }
     } catch (error) {
       console.error("[v0] Error submitting paver form:", error)
@@ -855,6 +964,104 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             </div>
           )
         })}
+      </div>
+
+      {/* Muestras de Calidad */}
+      <div className="space-y-3 rounded-lg border-2 border-orange-200 p-3 bg-orange-50/30">
+        <div className="flex items-center justify-between border-b border-orange-200 pb-2">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="h-5 w-5 text-orange-600" />
+            <h2 className="text-lg font-bold text-foreground">Muestras de Calidad</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="pv-samples-taken" className="text-sm">¿Se extrajeron muestras?</Label>
+            <Switch
+              id="pv-samples-taken"
+              checked={samplesTaken}
+              onCheckedChange={(checked) => {
+                setSamplesTaken(checked)
+                if (!checked) setSamples([])
+              }}
+            />
+          </div>
+        </div>
+
+        {samplesTaken && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                {samples.length} muestra{samples.length !== 1 ? "s" : ""} registrada{samples.length !== 1 ? "s" : ""}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={addSample} className="gap-1">
+                <Plus className="h-4 w-4" />
+                Agregar Muestra
+              </Button>
+            </div>
+
+            {samples.length > 0 && (
+              <div className="space-y-3">
+                {samples.map((sample, index) => (
+                  <div key={sample.id} className="grid gap-3 p-3 border rounded-lg bg-background">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Muestra #{index + 1}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => removeSample(sample.id)}
+                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Nomenclatura / Codigo</Label>
+                        <Input
+                          value={sample.sample_code}
+                          onChange={e => updateSample(sample.id, "sample_code", e.target.value)}
+                          placeholder="Ej: F260420-01"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Tipo de Adoquin</Label>
+                        <Select
+                          value={sample.adoquin_type}
+                          onValueChange={v => updateSample(sample.id, "adoquin_type", v)}
+                        >
+                          <SelectTrigger className="h-8 text-sm">
+                            <SelectValue placeholder="Seleccionar" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ADOQUIN_TYPES.map(t => (
+                              <SelectItem key={t.code} value={t.code}>{t.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Observaciones</Label>
+                        <Input
+                          value={sample.observations}
+                          onChange={e => updateSample(sample.id, "observations", e.target.value)}
+                          placeholder="Notas de la muestra..."
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {samples.length === 0 && (
+              <div className="text-center py-4 text-sm text-muted-foreground">
+                No hay muestras registradas. Haga clic en "Agregar Muestra" para comenzar.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Observations */}
