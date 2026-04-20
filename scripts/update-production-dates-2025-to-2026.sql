@@ -1,60 +1,95 @@
--- Update production records from January 2025 to January 2026
--- This script updates all production-related tables
+-- Update production dates from January 2025 to January 2026
+-- This script updates all production-related tables with correct table names
 
--- Update production_entries (partes de producción)
-UPDATE production_entries
-SET 
-  date = date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year',
-  updated_at = NOW()
-WHERE date >= '2025-01-01' AND date < '2025-02-01';
+-- Update paver production (adoquines - Ranchos)
+UPDATE paver_production
+SET production_date = production_date + INTERVAL '1 year'
+WHERE production_date >= '2025-01-01' AND production_date < '2025-02-01';
 
--- Update mp_entries (materia prima)
-UPDATE mp_entries
-SET 
-  date = date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
-WHERE date >= '2025-01-01' AND date < '2025-02-01';
+-- Update pipe production (caños - Mercedes)
+UPDATE pipe_production
+SET production_date = production_date + INTERVAL '1 year'
+WHERE production_date >= '2025-01-01' AND production_date < '2025-02-01';
 
--- Update scrap_entries (rezago)
-UPDATE scrap_entries
-SET 
-  date = date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
-WHERE date >= '2025-01-01' AND date < '2025-02-01';
+-- Update block production
+UPDATE block_production
+SET production_date = production_date + INTERVAL '1 year'
+WHERE production_date >= '2025-01-01' AND production_date < '2025-02-01';
 
--- Update granulometry_tests
+-- Update mp_receipts (materia prima)
+UPDATE mp_receipts
+SET receipt_date = receipt_date + INTERVAL '1 year'
+WHERE receipt_date >= '2025-01-01' AND receipt_date < '2025-02-01';
+
+-- Update granulometry tests
 UPDATE granulometry_tests
-SET 
-  test_date = test_date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
+SET test_date = test_date + INTERVAL '1 year'
 WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
 
--- Update stockpile_granulometry
+-- Update stockpile granulometry
 UPDATE stockpile_granulometry
-SET 
-  test_date = test_date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
+SET test_date = test_date + INTERVAL '1 year'
 WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
 
--- Update compression_tests
-UPDATE compression_tests
-SET 
-  test_date = test_date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
+-- Update humidity tests
+UPDATE humidity_tests
+SET test_date = test_date + INTERVAL '1 year'
 WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
 
--- Update absorption_tests
+-- Update absorption tests
 UPDATE absorption_tests
-SET 
-  test_date = test_date + INTERVAL '1 year',
-  created_at = created_at + INTERVAL '1 year'
+SET test_date = test_date + INTERVAL '1 year'
 WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
+
+-- Update flexion tests
+UPDATE flexion_tests
+SET test_date = test_date + INTERVAL '1 year'
+WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
+
+-- Update quality flexion samples (production_date)
+UPDATE quality_flexion_samples
+SET production_date = production_date + INTERVAL '1 year'
+WHERE production_date >= '2025-01-01' AND production_date < '2025-02-01';
+
+-- Update quality flexion samples (sample_date)
+UPDATE quality_flexion_samples
+SET sample_date = sample_date + INTERVAL '1 year'
+WHERE sample_date >= '2025-01-01' AND sample_date < '2025-02-01';
+
+-- Update quality flexion specimens
+UPDATE quality_flexion_specimens
+SET test_date = test_date + INTERVAL '1 year'
+WHERE test_date >= '2025-01-01' AND test_date < '2025-02-01';
+
+-- Update pipe quality control
+UPDATE pipe_quality_control
+SET control_date = control_date + INTERVAL '1 year'
+WHERE control_date >= '2025-01-01' AND control_date < '2025-02-01';
+
+-- Update attendance
+UPDATE attendance
+SET attendance_date = attendance_date + INTERVAL '1 year'
+WHERE attendance_date >= '2025-01-01' AND attendance_date < '2025-02-01';
+
+-- Update maintenance tasks
+UPDATE maintenance_tasks
+SET task_date = task_date + INTERVAL '1 year'
+WHERE task_date >= '2025-01-01' AND task_date < '2025-02-01';
+
+-- Update maintenance fuel records
+UPDATE maintenance_fuel_records
+SET fuel_date = fuel_date + INTERVAL '1 year'
+WHERE fuel_date >= '2025-01-01' AND fuel_date < '2025-02-01';
+
+-- Update maintenance parte diario
+UPDATE maintenance_parte_diario
+SET parte_date = parte_date + INTERVAL '1 year'
+WHERE parte_date >= '2025-01-01' AND parte_date < '2025-02-01';
 
 -- Verify the updates
-SELECT 'production_entries' as table_name, COUNT(*) as records_in_jan_2026 
-FROM production_entries WHERE date >= '2026-01-01' AND date < '2026-02-01'
+SELECT 'paver_production' as table_name, COUNT(*) as records_in_jan_2026 
+FROM paver_production WHERE production_date >= '2026-01-01' AND production_date < '2026-02-01'
 UNION ALL
-SELECT 'mp_entries', COUNT(*) FROM mp_entries WHERE date >= '2026-01-01' AND date < '2026-02-01'
+SELECT 'pipe_production', COUNT(*) FROM pipe_production WHERE production_date >= '2026-01-01' AND production_date < '2026-02-01'
 UNION ALL
-SELECT 'scrap_entries', COUNT(*) FROM scrap_entries WHERE date >= '2026-01-01' AND date < '2026-02-01';
+SELECT 'mp_receipts', COUNT(*) FROM mp_receipts WHERE receipt_date >= '2026-01-01' AND receipt_date < '2026-02-01';
