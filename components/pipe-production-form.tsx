@@ -282,6 +282,42 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   const [formulaChangeReason, setFormulaChangeReason] = useState("")
   const [originalDosificacion, setOriginalDosificacion] = useState({ ...emptyDosif })
   
+  // Proveedores por ingrediente
+  const [ingredientSuppliers, setIngredientSuppliers] = useState<Record<string, string[]>>({})
+  const [currentSuppliers, setCurrentSuppliers] = useState<Record<string, string>>({
+    Cemento: "",
+    Arena: "",
+    Piedra: ""
+  })
+  
+  // Cargar proveedores desde la tabla suppliers
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      const supabase = getSupabase()
+      const plantValue = plantName === "Villa Rosa" ? "villa_rosa" : (plantName === "Mercedes" ? "mercedes" : "silke")
+      
+      const { data } = await supabase
+        .from("suppliers")
+        .select("material_type, name")
+        .eq("plant", plantValue)
+        .eq("is_active", true)
+        .order("material_type", { ascending: true })
+        .order("name", { ascending: true })
+      
+      if (data) {
+        const grouped: Record<string, string[]> = {}
+        data.forEach((s: { material_type: string; name: string }) => {
+          if (!grouped[s.material_type]) grouped[s.material_type] = []
+          if (!grouped[s.material_type].includes(s.name)) {
+            grouped[s.material_type].push(s.name)
+          }
+        })
+        setIngredientSuppliers(grouped)
+      }
+    }
+    loadSuppliers()
+  }, [plantName])
+  
   // Cargar fórmula del pastón desde Formuleo
   useEffect(() => {
     const loadPastonFormula = async () => {
@@ -1205,12 +1241,41 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
+      {/* Proveedores */}
+      {Object.keys(ingredientSuppliers).length > 0 && (
+        <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/30">
+          <h3 className="text-sm font-semibold text-foreground">Proveedores</h3>
+          <div className="grid grid-cols-3 gap-3">
+            {["Cemento", "Arena", "Piedra"].map((ingredient) => (
+              <div key={ingredient} className="space-y-1">
+                <Label className="text-xs">{ingredient}</Label>
+                <Select
+                  value={currentSuppliers[ingredient] || ""}
+                  onValueChange={(value) => setCurrentSuppliers(prev => ({ ...prev, [ingredient]: value }))}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder={`Seleccionar ${ingredient.toLowerCase()}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(ingredientSuppliers[ingredient] || []).map((supplier) => (
+                      <SelectItem key={supplier} value={supplier} className="text-xs">
+                        {supplier}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Producción y Transporte side by side */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Producción - Caños Húmedos */}
         <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/30">
           <h3 className="text-sm font-semibold text-foreground">
-            {plantName === "Villa Rosa" ? "Canos Humedos (Produccion)" : "Producción"}
+            {plantName === "Villa Rosa" ? "Canos Humedos (Produccion)" : "Produccion"}
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
