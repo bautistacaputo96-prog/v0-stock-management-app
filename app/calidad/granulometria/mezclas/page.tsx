@@ -852,6 +852,10 @@ export default function MezclasGranulometriaPage() {
                                   </div>
                                 )}
                               </div>
+                              {!stockpileData.arena && (
+                                <Badge variant="outline" className="text-yellow-700">Sin datos</Badge>
+                              )}
+                            </div>
                             {stockpileData.arena?.passing && (
                               <div className="grid grid-cols-7 gap-1 text-xs mt-2">
                                 {SIEVE_SIZES_MM.map((size, i) => (
