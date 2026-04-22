@@ -33,10 +33,17 @@ interface PeriodData {
   totalPlanned: number
   byDiameterPlanned: Record<number, number>
   
-  // Cajones de desperdicio (del parte diario)
+  // Cajones de desperdicio (del parte diario) - desglosado por tipo
   totalScrapBoxes: number
   totalScrapTn: number
   scrapBoxWeight: number
+  wasteBins: {
+    bin1Cinta: { boxes: number; kg: number }      // Cajón 1 - Sector Cinta (710kg)
+    bin2Desmolde: { boxes: number; kg: number }   // Cajón 2 - Sector Desmolde (656kg)
+    bin3Cinta: { boxes: number; kg: number }      // Cajón 3 - Sector Cinta (710kg)
+    bin4Rotos: { boxes: number; kg: number }      // Cajón 4 - Caños Rotos (1307kg)
+    bin5Mezcladora: { boxes: number; kg: number } // Cajón 5 - Mezcladora (710kg)
+  }
   
   // Calidad (del control de calidad)
   qualityData: {
@@ -259,6 +266,15 @@ export function UnifiedPipeReport() {
     let effectiveMinutes = 0
     const dailyProd: Record<string, { units: number; weightKg: number; scrapBoxes: number; reprocessed: number }> = {}
     
+    // Cajones de desperdicio por tipo
+    const wasteBins = {
+      bin1Cinta: { boxes: 0, kg: 0 },      // 710 kg
+      bin2Desmolde: { boxes: 0, kg: 0 },   // 656 kg
+      bin3Cinta: { boxes: 0, kg: 0 },      // 710 kg
+      bin4Rotos: { boxes: 0, kg: 0 },      // 1307 kg
+      bin5Mezcladora: { boxes: 0, kg: 0 }, // 710 kg
+    }
+    
     // Paradas con comentarios
     const downtimeData: Record<string, { minutes: number; comments: string[] }> = {}
     let totalDowntimeMinutes = 0
@@ -294,9 +310,28 @@ export function UnifiedPipeReport() {
         dailyProd[dateKey].reprocessed += reprocessed
       })
 
-      // Cajones de desperdicio
-      totalScrapBoxes += record.scrap_boxes || 0
-      dailyProd[dateKey].scrapBoxes += record.scrap_boxes || 0
+      // Cajones de desperdicio por tipo
+      const bin1 = record.waste_bin_1_cinta || 0
+      const bin2 = record.waste_bin_2_desmolde || 0
+      const bin3 = record.waste_bin_3_cinta || 0
+      const bin4 = record.waste_bin_4_rotos || 0
+      const bin5 = record.waste_bin_5_mezcladora || 0
+      
+      wasteBins.bin1Cinta.boxes += bin1
+      wasteBins.bin1Cinta.kg += bin1 * 710
+      wasteBins.bin2Desmolde.boxes += bin2
+      wasteBins.bin2Desmolde.kg += bin2 * 656
+      wasteBins.bin3Cinta.boxes += bin3
+      wasteBins.bin3Cinta.kg += bin3 * 710
+      wasteBins.bin4Rotos.boxes += bin4
+      wasteBins.bin4Rotos.kg += bin4 * 1307
+      wasteBins.bin5Mezcladora.boxes += bin5
+      wasteBins.bin5Mezcladora.kg += bin5 * 710
+      
+      // Total (usar total_waste_kg si existe, sino calcular de cajones individuales, sino usar scrap_boxes legacy)
+      const dayScrapKg = record.total_waste_kg || (bin1 * 710 + bin2 * 656 + bin3 * 710 + bin4 * 1307 + bin5 * 710) || (record.scrap_boxes || 0) * scrapBoxWeight
+      totalScrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
+      dailyProd[dateKey].scrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
 
       // Minutos disponibles y efectivos (estimación si no hay campo específico)
       // Turno de 8 horas = 480 min, menos limpieza
@@ -573,6 +608,7 @@ export function UnifiedPipeReport() {
       totalScrapBoxes,
       totalScrapTn: cajonesDesperdicioTn,
       scrapBoxWeight,
+      wasteBins,
       qualityData,
       totalDowntimeMinutes,
       availableMinutes,
@@ -977,13 +1013,53 @@ export function UnifiedPipeReport() {
                     </tr>
                     <tr className="bg-orange-50">
                       <td className="py-2 px-2 font-medium text-orange-700">Cajones desperdicio</td>
-                      <td className="py-2 px-2 text-center text-orange-600">{currentPeriod.totalScrapBoxes} caj</td>
+                      <td className="py-2 px-2 text-center text-orange-600">{currentPeriod.totalScrapBoxes.toFixed(1)} caj</td>
                       <td className="py-2 px-2 text-center font-semibold text-orange-600">{currentPeriod.totalScrapTn.toFixed(2)}</td>
                       <td className="py-2 px-2 text-center font-bold text-orange-600">{currentPeriod.scrapIndex.toFixed(2)}%</td>
                       <td className="py-2 px-2 text-muted-foreground">Parte diario</td>
                     </tr>
+                    {/* Desglose por tipo de cajón */}
+                    {currentPeriod.wasteBins && (currentPeriod.wasteBins.bin1Cinta.boxes > 0 || currentPeriod.wasteBins.bin2Desmolde.boxes > 0 || currentPeriod.wasteBins.bin3Cinta.boxes > 0 || currentPeriod.wasteBins.bin4Rotos.boxes > 0 || currentPeriod.wasteBins.bin5Mezcladora.boxes > 0) && (
+                      <>
+                        <tr className="text-muted-foreground">
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C1-Cinta (710kg)</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin1Cinta.boxes.toFixed(1)} caj</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin1Cinta.kg / 1000).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin1Cinta.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>
+                          <td className="py-1 px-2 text-[10px]"></td>
+                        </tr>
+                        <tr className="text-muted-foreground">
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C2-Desmolde (656kg)</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin2Desmolde.boxes.toFixed(1)} caj</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin2Desmolde.kg / 1000).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin2Desmolde.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>
+                          <td className="py-1 px-2 text-[10px]"></td>
+                        </tr>
+                        <tr className="text-muted-foreground">
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C3-Cinta (710kg)</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin3Cinta.boxes.toFixed(1)} caj</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin3Cinta.kg / 1000).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin3Cinta.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>
+                          <td className="py-1 px-2 text-[10px]"></td>
+                        </tr>
+                        <tr className="text-muted-foreground">
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C4-Caños Rotos (1307kg)</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin4Rotos.boxes.toFixed(1)} caj</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin4Rotos.kg / 1000).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin4Rotos.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>
+                          <td className="py-1 px-2 text-[10px]"></td>
+                        </tr>
+                        <tr className="text-muted-foreground">
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C5-Mezcladora (710kg)</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin5Mezcladora.boxes.toFixed(1)} caj</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin5Mezcladora.kg / 1000).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin5Mezcladora.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>
+                          <td className="py-1 px-2 text-[10px]"></td>
+                        </tr>
+                      </>
+                    )}
                     <tr className="text-muted-foreground">
-                      <td className="py-2 px-2 pl-4 text-[10px]">└ Rotura producción (incluida)</td>
+                      <td className="py-2 px-2 pl-4 text-[10px]">└ Rotura producción (INFO)</td>
                       <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaProduccionUnits.toLocaleString()}</td>
                       <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaProduccionTn.toFixed(2)}</td>
                       <td className="py-2 px-2 text-center text-[10px]">{currentPeriod.roturaEnCajonesIndex.toFixed(1)}% caj</td>

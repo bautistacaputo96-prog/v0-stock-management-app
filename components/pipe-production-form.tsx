@@ -201,7 +201,12 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     operatorName: "",
     productionEndTime: "",
     cementFinalShiftTn: "",
-    scrapBoxes: "",
+    // Cajones de desperdicio por tipo (precisión 0.5)
+    wasteBin1Cinta: "",      // Cajón 1 - Sector Cinta (710kg)
+    wasteBin2Desmolde: "",   // Cajón 2 - Sector Desmolde (656kg)
+    wasteBin3Cinta: "",      // Cajón 3 - Sector Cinta (710kg)
+    wasteBin4Rotos: "",      // Cajón 4 - Caños Rotos (1307kg)
+    wasteBin5Mezcladora: "", // Cajón 5 - Mezcladora (710kg)
     blocones: "",
     cantidadPastones: "",
     silo1: "",
@@ -363,9 +368,13 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         cleaningMinutes: editingRecord.cleaning_minutes?.toString() || "",
         tprMinutes: editingRecord.tpr_minutes?.toString() || "",
         operatorName: editingRecord.machine_operator || "",
-        cementFinalShiftTn: editingRecord.cement_final_shift_tn?.toString() || "",
-        scrapBoxes: editingRecord.scrap_boxes?.toString() || "",
-      })
+  cementFinalShiftTn: editingRecord.cement_final_shift_tn?.toString() || "",
+  wasteBin1Cinta: editingRecord.waste_bin_1_cinta?.toString() || "",
+  wasteBin2Desmolde: editingRecord.waste_bin_2_desmolde?.toString() || "",
+  wasteBin3Cinta: editingRecord.waste_bin_3_cinta?.toString() || "",
+  wasteBin4Rotos: editingRecord.waste_bin_4_rotos?.toString() || "",
+  wasteBin5Mezcladora: editingRecord.waste_bin_5_mezcladora?.toString() || "",
+  })
       
       // Load dosificacion (usar dosif_chico como fuente, mantiene compatibilidad con registros antiguos)
       setDosificacion({
@@ -513,10 +522,22 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         dosif_chico_aditivo_1_kg: Number.parseFloat(dosificacion.additive1) || null,
         dosif_chico_aditivo_2_kg: Number.parseFloat(dosificacion.additive2) || null,
         dosif_chico_agua_kg: Number.parseFloat(dosificacion.water) || null,
-        // Métricas
-        cement_final_shift_tn: Number.parseFloat(formData.cementFinalShiftTn) || null,
-        scrap_boxes: Number.parseInt(formData.scrapBoxes) || 0,
-        total_downtime_minutes: totalDowntimeMinutes,
+  // Métricas
+  cement_final_shift_tn: Number.parseFloat(formData.cementFinalShiftTn) || null,
+  // Cajones de desperdicio por tipo
+  waste_bin_1_cinta: Number.parseFloat(formData.wasteBin1Cinta) || 0,
+  waste_bin_2_desmolde: Number.parseFloat(formData.wasteBin2Desmolde) || 0,
+  waste_bin_3_cinta: Number.parseFloat(formData.wasteBin3Cinta) || 0,
+  waste_bin_4_rotos: Number.parseFloat(formData.wasteBin4Rotos) || 0,
+  waste_bin_5_mezcladora: Number.parseFloat(formData.wasteBin5Mezcladora) || 0,
+  total_waste_kg: (
+    (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
+    (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
+    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
+    (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
+    (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
+  ),
+  total_downtime_minutes: totalDowntimeMinutes,
   observations: observationsComments || null,
   plant: selectedPlant === "villa-rosa" ? "villa-rosa" : "silke",
   }
@@ -650,8 +671,12 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     cleaningMinutes: "",
     tprMinutes: "",
     operatorName: "",
-    cementFinalShiftTn: "",
-    scrapBoxes: "",
+  cementFinalShiftTn: "",
+  wasteBin1Cinta: "",
+  wasteBin2Desmolde: "",
+  wasteBin3Cinta: "",
+  wasteBin4Rotos: "",
+  wasteBin5Mezcladora: "",
   })
     const initialProduction: Record<string, Record<string, string>> = {}
     const initialTransporte: Record<string, Record<string, string>> = {}
@@ -849,12 +874,47 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             </div>
           </div>
 
-          {/* Fila 4: Extras opcionales */}
-          <div className="grid grid-cols-6 gap-2">
-            <div className="space-y-1">
-              <Label className="text-[10px]">Cajones Desp.</Label>
-              <Input type="number" min="0" value={formData.scrapBoxes || ""} onChange={(e) => setFormData({ ...formData, scrapBoxes: e.target.value })} className="h-7 text-xs" />
+          {/* Fila 4: Cajones de Desperdicio */}
+          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/30 p-2">
+            <Label className="text-[10px] font-semibold text-amber-700">Cajones de Desperdicio (0.5 precisión)</Label>
+            <div className="grid grid-cols-5 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[10px]">C1-Cinta (710kg)</Label>
+                <Input type="number" min="0" step="0.5" value={formData.wasteBin1Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin1Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">C2-Desmolde (656kg)</Label>
+                <Input type="number" min="0" step="0.5" value={formData.wasteBin2Desmolde || ""} onChange={(e) => setFormData({ ...formData, wasteBin2Desmolde: e.target.value })} className="h-7 text-xs" placeholder="0" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">C3-Cinta (710kg)</Label>
+                <Input type="number" min="0" step="0.5" value={formData.wasteBin3Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin3Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">C4-Rotos (1307kg)</Label>
+                <Input type="number" min="0" step="0.5" value={formData.wasteBin4Rotos || ""} onChange={(e) => setFormData({ ...formData, wasteBin4Rotos: e.target.value })} className="h-7 text-xs" placeholder="0" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">C5-Mezcla (710kg)</Label>
+                <Input type="number" min="0" step="0.5" value={formData.wasteBin5Mezcladora || ""} onChange={(e) => setFormData({ ...formData, wasteBin5Mezcladora: e.target.value })} className="h-7 text-xs" placeholder="0" />
+              </div>
             </div>
+            {/* Total desperdicio calculado */}
+            {(Number.parseFloat(formData.wasteBin1Cinta) || Number.parseFloat(formData.wasteBin2Desmolde) || Number.parseFloat(formData.wasteBin3Cinta) || Number.parseFloat(formData.wasteBin4Rotos) || Number.parseFloat(formData.wasteBin5Mezcladora)) ? (
+              <div className="text-[10px] text-amber-700 font-medium text-right">
+                Total: {(
+                  (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
+                  (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
+                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
+                  (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
+                  (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
+                ).toLocaleString()} kg
+              </div>
+            ) : null}
+          </div>
+
+          {/* Fila 5: Extras opcionales */}
+          <div className="grid grid-cols-5 gap-2">
             <div className="space-y-1">
               <Label className="text-[10px]">Blocones</Label>
               <Input type="number" min="0" value={formData.blocones || ""} onChange={(e) => setFormData({ ...formData, blocones: e.target.value })} className="h-7 text-xs" />
@@ -1172,32 +1232,110 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
-      {/* Cemento al Finalizar y Cajones Desperdicio */}
+      {/* Cemento al Finalizar */}
+      <div className="space-y-1">
+        <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
+        <Input
+          id="cementFinalShiftTn"
+          type="number"
+          step="0.01"
+          min="0"
+          value={formData.cementFinalShiftTn}
+          onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
+          className="h-8 text-sm w-48"
+        />
+      </div>
+
+      {/* Cajones de Desperdicio */}
+      <div className="space-y-3 rounded-lg border-2 border-amber-300 bg-amber-50/50 p-4">
+        <div className="flex items-center justify-between">
+          <Label className="text-sm font-semibold text-amber-800">Cajones de Desperdicio</Label>
+          <span className="text-xs text-amber-600">Precisión: 0.5 cajones</span>
+        </div>
+        <div className="grid grid-cols-5 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-amber-700">C1 - Cinta</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={formData.wasteBin1Cinta}
+              onChange={(e) => setFormData({ ...formData, wasteBin1Cinta: e.target.value })}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-muted-foreground">710 kg/cajón</span>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-amber-700">C2 - Desmolde</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={formData.wasteBin2Desmolde}
+              onChange={(e) => setFormData({ ...formData, wasteBin2Desmolde: e.target.value })}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-muted-foreground">656 kg/cajón</span>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-amber-700">C3 - Cinta</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={formData.wasteBin3Cinta}
+              onChange={(e) => setFormData({ ...formData, wasteBin3Cinta: e.target.value })}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-muted-foreground">710 kg/cajón</span>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-amber-700">C4 - Caños Rotos</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={formData.wasteBin4Rotos}
+              onChange={(e) => setFormData({ ...formData, wasteBin4Rotos: e.target.value })}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-muted-foreground">1307 kg/cajón</span>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-amber-700">C5 - Mezcladora</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={formData.wasteBin5Mezcladora}
+              onChange={(e) => setFormData({ ...formData, wasteBin5Mezcladora: e.target.value })}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+            <span className="text-[10px] text-muted-foreground">710 kg/cajón</span>
+          </div>
+        </div>
+        {/* Total calculado */}
+        <div className="flex justify-between items-center pt-2 border-t border-amber-200">
+          <span className="text-sm text-amber-700">Total Desperdicio:</span>
+          <span className="text-lg font-bold text-amber-800">
+            {(
+              (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
+              (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
+              (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
+              (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
+              (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
+            ).toLocaleString()} kg
+          </span>
+        </div>
+      </div>
+
+      {/* Extras Villa Rosa */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-1">
-          <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
-          <Input
-            id="cementFinalShiftTn"
-            type="number"
-            step="0.01"
-            min="0"
-            value={formData.cementFinalShiftTn}
-            onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
-            className="h-8 text-sm"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="scrapBoxes" className="text-xs">Cajones Desperdicio</Label>
-          <Input
-            id="scrapBoxes"
-            type="number"
-            min="0"
-            value={formData.scrapBoxes}
-            onChange={(e) => setFormData({ ...formData, scrapBoxes: e.target.value })}
-            className="h-8 text-sm"
-            placeholder="Cantidad de cajones"
-          />
-        </div>
         {plantName === "Villa Rosa" && (
           <>
             <div className="space-y-1">
