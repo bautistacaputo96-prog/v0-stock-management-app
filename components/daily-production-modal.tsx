@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { usePlant } from "@/lib/plant-context"
 import { Button } from "@/components/ui/button"
