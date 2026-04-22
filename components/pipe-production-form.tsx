@@ -481,6 +481,13 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         water: editingRecord.dosif_chico_agua_kg?.toString() || "",
       })
       
+      // Load suppliers
+      setCurrentSuppliers({
+        Cemento: editingRecord.supplier_cement || "",
+        Arena: editingRecord.supplier_sand || "",
+        Piedra: editingRecord.supplier_stone || "",
+      })
+      
       // Load production data
       const newProduction: Record<string, Record<string, string>> = {}
       PIPE_SIZES.forEach((size) => {
@@ -645,6 +652,10 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   total_downtime_minutes: totalDowntimeMinutes,
   observations: observationsComments || null,
   plant: selectedPlant === "villa-rosa" ? "villa-rosa" : "silke",
+  // Proveedores
+  supplier_cement: currentSuppliers.Cemento || null,
+  supplier_sand: currentSuppliers.Arena || null,
+  supplier_stone: currentSuppliers.Piedra || null,
   }
 
       // Agregar producción por medida
