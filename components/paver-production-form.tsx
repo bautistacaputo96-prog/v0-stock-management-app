@@ -234,18 +234,19 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     const loadMixDesign = async () => {
       try {
         const supabase = getSupabase()
-        // Get the adoquin type based on the product code (e.g., "AH6" from "AH6" or "AH6-R")
-        const baseType = formData.productTypeCode.split("-")[0] + (formData.productTypeCode.includes("-") ? "-" + formData.productTypeCode.split("-")[1] : "")
+        console.log("[v0] Loading mix design for productTypeCode:", formData.productTypeCode)
         
-        const { data } = await supabase
+        // First try exact match, then try without plant filter
+        let { data, error } = await supabase
           .from("paver_mix_designs")
           .select("*")
-          .eq("plant", "ranchos")
           .eq("adoquin_type", formData.productTypeCode)
           .eq("is_active", true)
           .order("modified_at", { ascending: false })
           .limit(1)
           .single()
+        
+        console.log("[v0] Mix design query result:", { data, error })
         
         if (data) {
           setMixDesign(data)
@@ -446,6 +447,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
 
   // Change a supplier persistently
   async function changeSupplier(ingredient: string, newSupplierName: string) {
+    console.log("[v0] changeSupplier called:", { ingredient, newSupplierName })
     try {
       const supabase = getSupabase()
       // Upsert the current supplier
@@ -455,6 +457,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           { ingredient_name: ingredient, supplier_name: newSupplierName, changed_at: new Date().toISOString() },
           { onConflict: "ingredient_name" }
         )
+      console.log("[v0] changeSupplier upsert result:", { error })
       if (error) throw error
       // Update local state
       setCurrentSuppliers(prev => {
@@ -947,6 +950,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             {["Cemento", "Arena", "Piedra (0-6)"].map(ingredient => {
               const current = getCurrentSupplier(ingredient)
               const options = allSuppliers.filter(s => s.ingredient_name === ingredient)
+              console.log("[v0] Supplier options for", ingredient, ":", options, "allSuppliers:", allSuppliers)
               return (
                 <div key={ingredient} className="flex items-center gap-3">
                   <span className="text-xs font-medium w-24 shrink-0">{ingredient}</span>
