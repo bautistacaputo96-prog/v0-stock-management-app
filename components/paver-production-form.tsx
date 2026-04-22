@@ -174,6 +174,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     formulaSandKg: "",
     formulaStoneKg: "",
     formulaAdditiveLts: "",
+    formulaDaraccelGrams: "",
     pastonesCount: "",
     tablesProduced: "",
     wetPieceWeightKg: "",
@@ -194,6 +195,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     sand_kg: number
     stone_kg: number
     additive_liters: number
+    daraccel_grams: number
     modified_by: string
     modified_at: string
   } | null>(null)
@@ -201,7 +203,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
   const [showFormulaChangeDialog, setShowFormulaChangeDialog] = useState(false)
   const [formulaChangedBy, setFormulaChangedBy] = useState("")
   const [formulaChangeReason, setFormulaChangeReason] = useState("")
-  const [originalFormula, setOriginalFormula] = useState({ cement: "", sand: "", stone: "", additive: "" })
+  const [originalFormula, setOriginalFormula] = useState({ cement: "", sand: "", stone: "", additive: "", daraccel: "" })
 
   // Muestras de calidad
   const [samplesTaken, setSamplesTaken] = useState(false)
@@ -218,7 +220,10 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
         ])
         if (prodRes.data) setProductTypes(prodRes.data)
-        if (allSupRes.data) setAllSuppliers(allSupRes.data)
+        if (allSupRes.data) {
+          console.log("[v0] All paver suppliers loaded:", allSupRes.data)
+          setAllSuppliers(allSupRes.data)
+        }
         if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
       } catch {}
     }
@@ -248,10 +253,11 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         if (data) {
           setMixDesign(data)
           const newFormula = {
-            cement: data.cement_kg?.toString() || "",
-            sand: data.sand_kg?.toString() || "",
-            stone: data.stone_kg?.toString() || "",
-            additive: data.additive_liters?.toString() || ""
+            cement: data.cement_kg > 0 ? data.cement_kg.toString() : "",
+            sand: data.sand_kg > 0 ? data.sand_kg.toString() : "",
+            stone: data.stone_kg > 0 ? data.stone_kg.toString() : "",
+            additive: data.additive_liters > 0 ? data.additive_liters.toString() : "",
+            daraccel: data.daraccel_grams > 0 ? data.daraccel_grams.toString() : ""
           }
           setOriginalFormula(newFormula)
           setFormData(prev => ({
@@ -259,7 +265,8 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             formulaCementKg: newFormula.cement,
             formulaSandKg: newFormula.sand,
             formulaStoneKg: newFormula.stone,
-            formulaAdditiveLts: newFormula.additive
+            formulaAdditiveLts: newFormula.additive,
+            formulaDaraccelGrams: newFormula.daraccel
           }))
         }
       } catch {}
@@ -269,15 +276,16 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
   
   // Detect if formula was modified
   useEffect(() => {
-    if (mixDesign && originalFormula.cement) {
+    if (mixDesign) {
       const changed = 
         formData.formulaCementKg !== originalFormula.cement ||
         formData.formulaSandKg !== originalFormula.sand ||
         formData.formulaStoneKg !== originalFormula.stone ||
-        formData.formulaAdditiveLts !== originalFormula.additive
+        formData.formulaAdditiveLts !== originalFormula.additive ||
+        formData.formulaDaraccelGrams !== originalFormula.daraccel
       setFormulaModified(changed)
     }
-  }, [formData.formulaCementKg, formData.formulaSandKg, formData.formulaStoneKg, formData.formulaAdditiveLts, originalFormula, mixDesign])
+  }, [formData.formulaCementKg, formData.formulaSandKg, formData.formulaStoneKg, formData.formulaAdditiveLts, formData.formulaDaraccelGrams, originalFormula, mixDesign])
 
   // Load last record
   useEffect(() => {
@@ -879,7 +887,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             )}
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           <div className="space-y-1">
             <Label htmlFor="pv-f-cement" className="text-xs">Cemento (kg)</Label>
             <Input id="pv-f-cement" type="number" step="0.1" min="0" value={formData.formulaCementKg}
@@ -896,9 +904,14 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
               onChange={e => setFormData({ ...formData, formulaStoneKg: e.target.value })} className="h-8 text-sm" placeholder="kg" />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="pv-f-add" className="text-xs">Lts Solucion Aditivo x Paston</Label>
+            <Label htmlFor="pv-f-add" className="text-xs">Lts Solucion Aditivo</Label>
             <Input id="pv-f-add" type="number" step="0.01" min="0" value={formData.formulaAdditiveLts}
               onChange={e => setFormData({ ...formData, formulaAdditiveLts: e.target.value })} className="h-8 text-sm" placeholder="lts" />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="pv-f-daraccel" className="text-xs">Daraccel (g)</Label>
+            <Input id="pv-f-daraccel" type="number" step="0.1" min="0" value={formData.formulaDaraccelGrams}
+              onChange={e => setFormData({ ...formData, formulaDaraccelGrams: e.target.value })} className="h-8 text-sm" placeholder="gramos" />
           </div>
         </div>
       </div>
