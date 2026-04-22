@@ -220,10 +220,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
         ])
         if (prodRes.data) setProductTypes(prodRes.data)
-        if (allSupRes.data) {
-          console.log("[v0] All paver suppliers loaded:", allSupRes.data)
-          setAllSuppliers(allSupRes.data)
-        }
+        if (allSupRes.data) setAllSuppliers(allSupRes.data)
         if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
       } catch {}
     }
