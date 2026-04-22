@@ -216,7 +216,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         const supabase = getSupabase()
         const [prodRes, allSupRes, curSupRes] = await Promise.all([
           supabase.from("paver_product_types").select("*").eq("active", true).order("product_code"),
-          supabase.from("paver_suppliers").select("*").eq("active", true).order("ingredient_name, supplier_name"),
+          supabase.from("paver_suppliers").select("id, ingredient_name, supplier_name").eq("active", true).order("ingredient_name").order("supplier_name"),
           supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
         ])
         if (prodRes.data) setProductTypes(prodRes.data)
