@@ -10,7 +10,8 @@ import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabase } from "@/lib/supabase"
-import { Loader2, Plus, X, Truck, ChevronDown, FlaskConical, Trash2 } from "lucide-react"
+import { Loader2, Plus, X, Truck, ChevronDown, FlaskConical, Trash2, AlertTriangle } from "lucide-react"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 
 // Tipos de adoquin disponibles
 const ADOQUIN_TYPES = [
@@ -185,6 +186,23 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
   const [downtimes, setDowntimes] = useState<Record<string, DowntimeEntry>>({})
   const [observations, setObservations] = useState("")
 
+  // Formula from paver_mix_designs
+  const [mixDesign, setMixDesign] = useState<{
+    id?: string
+    adoquin_type: string
+    cement_kg: number
+    sand_kg: number
+    stone_kg: number
+    additive_liters: number
+    modified_by: string
+    modified_at: string
+  } | null>(null)
+  const [formulaModified, setFormulaModified] = useState(false)
+  const [showFormulaChangeDialog, setShowFormulaChangeDialog] = useState(false)
+  const [formulaChangedBy, setFormulaChangedBy] = useState("")
+  const [formulaChangeReason, setFormulaChangeReason] = useState("")
+  const [originalFormula, setOriginalFormula] = useState({ cement: "", sand: "", stone: "", additive: "" })
+
   // Muestras de calidad
   const [samplesTaken, setSamplesTaken] = useState(false)
   const [samples, setSamples] = useState<SampleEntry[]>([])
@@ -206,6 +224,60 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     }
     loadData()
   }, [])
+
+  // Load mix design formula when product type changes
+  useEffect(() => {
+    if (!formData.productTypeCode || editingRecord) return
+    
+    const loadMixDesign = async () => {
+      try {
+        const supabase = getSupabase()
+        // Get the adoquin type based on the product code (e.g., "AH6" from "AH6" or "AH6-R")
+        const baseType = formData.productTypeCode.split("-")[0] + (formData.productTypeCode.includes("-") ? "-" + formData.productTypeCode.split("-")[1] : "")
+        
+        const { data } = await supabase
+          .from("paver_mix_designs")
+          .select("*")
+          .eq("plant", "ranchos")
+          .eq("adoquin_type", formData.productTypeCode)
+          .eq("is_active", true)
+          .order("modified_at", { ascending: false })
+          .limit(1)
+          .single()
+        
+        if (data) {
+          setMixDesign(data)
+          const newFormula = {
+            cement: data.cement_kg?.toString() || "",
+            sand: data.sand_kg?.toString() || "",
+            stone: data.stone_kg?.toString() || "",
+            additive: data.additive_liters?.toString() || ""
+          }
+          setOriginalFormula(newFormula)
+          setFormData(prev => ({
+            ...prev,
+            formulaCementKg: newFormula.cement,
+            formulaSandKg: newFormula.sand,
+            formulaStoneKg: newFormula.stone,
+            formulaAdditiveLts: newFormula.additive
+          }))
+        }
+      } catch {}
+    }
+    loadMixDesign()
+  }, [formData.productTypeCode, editingRecord])
+  
+  // Detect if formula was modified
+  useEffect(() => {
+    if (mixDesign && originalFormula.cement) {
+      const changed = 
+        formData.formulaCementKg !== originalFormula.cement ||
+        formData.formulaSandKg !== originalFormula.sand ||
+        formData.formulaStoneKg !== originalFormula.stone ||
+        formData.formulaAdditiveLts !== originalFormula.additive
+      setFormulaModified(changed)
+    }
+  }, [formData.formulaCementKg, formData.formulaSandKg, formData.formulaStoneKg, formData.formulaAdditiveLts, originalFormula, mixDesign])
 
   // Load last record
   useEffect(() => {
@@ -430,6 +502,16 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
       return
     }
 
+    // Si la fórmula fue modificada, pedir nombre y razón del cambio
+    if (formulaModified && !formulaChangedBy) {
+      setShowFormulaChangeDialog(true)
+      return
+    }
+
+    await executeSubmit()
+  }
+
+  async function executeSubmit() {
     setLoading(true)
 
     try {
@@ -555,6 +637,24 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           }
         }
 
+        // Si hubo cambio de fórmula, guardar en historial
+        if (formulaModified && formulaChangedBy && mixDesign) {
+          await supabase.from("paver_formula_changes").insert({
+            plant: "ranchos",
+            formula_type: "mix_design",
+            adoquin_type: formData.productTypeCode,
+            previous_values: originalFormula,
+            new_values: {
+              cement: formData.formulaCementKg,
+              sand: formData.formulaSandKg,
+              stone: formData.formulaStoneKg,
+              additive: formData.formulaAdditiveLts
+            },
+            change_reason: formulaChangeReason || "Cambio en parte diario",
+            changed_by: formulaChangedBy
+          })
+        }
+
         localStorage.removeItem("paverProductionForm")
         toast({ 
           title: "Guardado", 
@@ -563,7 +663,10 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             : "El parte de adoquines se guardo correctamente" 
         })
 
-        // Reset form
+        // Reset form and formula change state
+        setFormulaChangedBy("")
+        setFormulaChangeReason("")
+        setFormulaModified(false)
         setFormData({
           productionDate: new Date().toISOString().split("T")[0],
           startTime: "06:00",
@@ -763,9 +866,19 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         </div>
       </div>
 
-      {/* Formula del Paston - individual inputs like bloques */}
+      {/* Formula del Paston - cargada desde Formuleo */}
       <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-        <h3 className="text-sm font-semibold text-foreground">Formula del Paston</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground">Dosificacion (desde Formuleo)</h3>
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            {mixDesign?.modified_at && (
+              <span>Ultima modificacion: {new Date(mixDesign.modified_at).toLocaleDateString("es-AR")} por {mixDesign.modified_by}</span>
+            )}
+            {formulaModified && (
+              <span className="text-amber-600 font-medium">(Modificado en este parte)</span>
+            )}
+          </div>
+        </div>
         <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
             <Label htmlFor="pv-f-cement" className="text-xs">Cemento (kg)</Label>
@@ -783,7 +896,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
               onChange={e => setFormData({ ...formData, formulaStoneKg: e.target.value })} className="h-8 text-sm" placeholder="kg" />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="pv-f-add" className="text-xs">Aditivo Mark V (lts)</Label>
+            <Label htmlFor="pv-f-add" className="text-xs">Lts Solucion Aditivo x Paston</Label>
             <Input id="pv-f-add" type="number" step="0.01" min="0" value={formData.formulaAdditiveLts}
               onChange={e => setFormData({ ...formData, formulaAdditiveLts: e.target.value })} className="h-8 text-sm" placeholder="lts" />
           </div>
@@ -1085,6 +1198,75 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : editingRecord ? "Actualizar" : "Guardar Parte"}
         </Button>
       </div>
+
+      {/* Dialogo de cambio de formula */}
+      <Dialog open={showFormulaChangeDialog} onOpenChange={setShowFormulaChangeDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Cambio de Formula Detectado
+            </DialogTitle>
+            <DialogDescription>
+              Los valores de dosificacion fueron modificados respecto a la formula cargada en Formuleo. 
+              Por favor ingrese quien realiza el cambio y el motivo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="pv-formulaChangedBy">Nombre de quien modifica *</Label>
+              <Input
+                id="pv-formulaChangedBy"
+                value={formulaChangedBy}
+                onChange={(e) => setFormulaChangedBy(e.target.value)}
+                placeholder="Ej: Juan Perez"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="pv-formulaChangeReason">Motivo del cambio</Label>
+              <Textarea
+                id="pv-formulaChangeReason"
+                value={formulaChangeReason}
+                onChange={(e) => setFormulaChangeReason(e.target.value)}
+                placeholder="Ej: Ajuste por humedad de aridos..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowFormulaChangeDialog(false)
+                // Restaurar valores originales
+                setFormData(prev => ({
+                  ...prev,
+                  formulaCementKg: originalFormula.cement,
+                  formulaSandKg: originalFormula.sand,
+                  formulaStoneKg: originalFormula.stone,
+                  formulaAdditiveLts: originalFormula.additive
+                }))
+                setFormulaModified(false)
+              }}
+            >
+              Cancelar y Restaurar
+            </Button>
+            <Button 
+              onClick={() => {
+                if (!formulaChangedBy.trim()) {
+                  toast({ title: "Requerido", description: "Debe ingresar el nombre de quien modifica", variant: "destructive" })
+                  return
+                }
+                setShowFormulaChangeDialog(false)
+                executeSubmit()
+              }}
+              disabled={!formulaChangedBy.trim()}
+            >
+              Confirmar y Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   )
 }

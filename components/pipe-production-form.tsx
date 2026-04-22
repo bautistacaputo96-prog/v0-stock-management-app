@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabase } from "@/lib/supabase"
-import { Loader2, Zap, ListPlus } from "lucide-react"
+import { Loader2, Zap, ListPlus, AlertTriangle } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 
 interface DowntimeEntry {
   minutes: number
@@ -260,17 +261,73 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   }, [formData.shift, editingRecord])
 
   // Dosificación única para todos los caños
-  const emptyDosif = { cement: "", sand: "", stone010: "", stone020: "", additive1: "", additive2: "", water: "" }
+  const emptyDosif = { cement: "", sand: "", stone010: "", stone020: "", additiveLiters: "", water: "" }
   const [dosificacion, setDosificacion] = useState({ ...emptyDosif })
   
-  // Dosificación por defecto para Villa Rosa: 160kg cemento, 178kg arena, 1160kg piedra 0/10, 500g aditivo
+  // Fórmula del pastón desde Formuleo
+  const [pastonFormula, setPastonFormula] = useState<{
+    id?: number
+    cement_kg: number
+    sand_kg: number
+    stone_kg: number
+    diluted_additive_per_paston_liters: number
+    additive_1_name: string
+    additive_2_name: string
+    modified_by: string
+    modified_at: string
+  } | null>(null)
+  const [formulaModified, setFormulaModified] = useState(false)
+  const [showFormulaChangeDialog, setShowFormulaChangeDialog] = useState(false)
+  const [formulaChangedBy, setFormulaChangedBy] = useState("")
+  const [formulaChangeReason, setFormulaChangeReason] = useState("")
+  const [originalDosificacion, setOriginalDosificacion] = useState({ ...emptyDosif })
+  
+  // Cargar fórmula del pastón desde Formuleo
   useEffect(() => {
-    if (!editingRecord && plantName === "Villa Rosa") {
-      setDosificacion({
-        cement: "160", sand: "178", stone010: "1160", stone020: "", additive1: "", additive2: "500", water: ""
-      })
+    const loadPastonFormula = async () => {
+      const supabase = getSupabase()
+      const plantValue = plantName === "Villa Rosa" ? "villa_rosa" : (plantName === "Mercedes" ? "mercedes" : "silke")
+      
+      const { data } = await supabase
+        .from("paston_formulas")
+        .select("*")
+        .eq("plant", plantValue)
+        .eq("is_active", true)
+        .order("modified_at", { ascending: false })
+        .limit(1)
+        .single()
+      
+      if (data) {
+        setPastonFormula(data)
+        // Auto-llenar dosificación con valores de la fórmula (si no hay editingRecord)
+        if (!editingRecord) {
+          const newDosif = {
+            cement: data.cement_kg?.toString() || "",
+            sand: data.sand_kg?.toString() || "",
+            stone010: data.stone_kg?.toString() || "",
+            stone020: "",
+            additiveLiters: data.diluted_additive_per_paston_liters?.toString() || "",
+            water: ""
+          }
+          setDosificacion(newDosif)
+          setOriginalDosificacion(newDosif)
+        }
+      }
     }
+    loadPastonFormula()
   }, [plantName, editingRecord])
+  
+  // Detectar si la dosificación fue modificada respecto a la fórmula original
+  useEffect(() => {
+    if (pastonFormula && originalDosificacion.cement) {
+      const changed = 
+        dosificacion.cement !== originalDosificacion.cement ||
+        dosificacion.sand !== originalDosificacion.sand ||
+        dosificacion.stone010 !== originalDosificacion.stone010 ||
+        dosificacion.additiveLiters !== originalDosificacion.additiveLiters
+      setFormulaModified(changed)
+    }
+  }, [dosificacion, originalDosificacion, pastonFormula])
 
   // Producción por medida - inicializar vacío
   const [production, setProduction] = useState<Record<string, Record<string, string>>>({})
@@ -377,13 +434,14 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   })
       
       // Load dosificacion (usar dosif_chico como fuente, mantiene compatibilidad con registros antiguos)
+      // Calcular litros de aditivo: suma de aditivo 1 y 2 (están en gramos, convertir a litros aprox)
+      const totalAdditiveGrams = (editingRecord.dosif_chico_aditivo_1_kg || 0) + (editingRecord.dosif_chico_aditivo_2_kg || 0)
       setDosificacion({
         cement: editingRecord.dosif_chico_cemento_kg?.toString() || "",
         sand: editingRecord.dosif_chico_arena_kg?.toString() || "",
         stone010: editingRecord.dosif_chico_piedra_0_10_kg?.toString() || "",
         stone020: editingRecord.dosif_chico_piedra_0_20_kg?.toString() || "",
-        additive1: editingRecord.dosif_chico_aditivo_1_kg?.toString() || "",
-        additive2: editingRecord.dosif_chico_aditivo_2_kg?.toString() || "",
+        additiveLiters: totalAdditiveGrams > 0 ? (totalAdditiveGrams / 1000).toFixed(2) : "",
         water: editingRecord.dosif_chico_agua_kg?.toString() || "",
       })
       
@@ -498,6 +556,16 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
       return
     }
 
+    // Si la fórmula fue modificada, pedir nombre y razón del cambio
+    if (formulaModified && !formulaChangedBy) {
+      setShowFormulaChangeDialog(true)
+      return
+    }
+
+    await executeSubmit()
+  }
+
+  async function executeSubmit() {
     setLoading(true)
 
     try {
@@ -515,12 +583,13 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         tpr_minutes: Number.parseInt(formData.tprMinutes) || null,
         machine_operator: formData.operatorName || null,
         // Dosificación única (guardamos en columnas dosif_chico para compatibilidad)
+        // additiveLiters ahora es litros de solución diluida por pastón
         dosif_chico_cemento_kg: Number.parseFloat(dosificacion.cement) || null,
         dosif_chico_arena_kg: Number.parseFloat(dosificacion.sand) || null,
         dosif_chico_piedra_0_10_kg: Number.parseFloat(dosificacion.stone010) || null,
         dosif_chico_piedra_0_20_kg: Number.parseFloat(dosificacion.stone020) || null,
-        dosif_chico_aditivo_1_kg: Number.parseFloat(dosificacion.additive1) || null,
-        dosif_chico_aditivo_2_kg: Number.parseFloat(dosificacion.additive2) || null,
+        dosif_chico_aditivo_1_kg: (Number.parseFloat(dosificacion.additiveLiters) || 0) * 1000, // Guardamos en gramos para compatibilidad
+        dosif_chico_aditivo_2_kg: null, // Ya no separamos aditivos
         dosif_chico_agua_kg: Number.parseFloat(dosificacion.water) || null,
   // Métricas
   cement_final_shift_tn: Number.parseFloat(formData.cementFinalShiftTn) || null,
@@ -643,10 +712,27 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
           }
         }
 
-        localStorage.removeItem("pipeProductionForm")
-        toast({ title: "Guardado", description: "El parte de producción se guardó correctamente" })
+        // Si hubo cambio de fórmula, guardar en historial
+        if (formulaModified && formulaChangedBy && pastonFormula) {
+          const plantValue = plantName === "Villa Rosa" ? "villa_rosa" : (plantName === "Mercedes" ? "mercedes" : "silke")
+          await supabase.from("paston_formulas_history").insert({
+            paston_formula_id: pastonFormula.id,
+            plant: plantValue,
+            previous_values: originalDosificacion,
+            new_values: dosificacion,
+            change_reason: formulaChangeReason || "Cambio en parte diario",
+            modified_by: formulaChangedBy,
+            modified_at: new Date().toISOString()
+          })
+        }
 
-        // Reset form
+        localStorage.removeItem("pipeProductionForm")
+        toast({ title: "Guardado", description: "El parte de produccion se guardo correctamente" })
+
+        // Reset form and formula change state
+        setFormulaChangedBy("")
+        setFormulaChangeReason("")
+        setFormulaModified(false)
         resetForm()
       }
     } catch (error) {
@@ -1073,15 +1159,25 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         />
       </div>
 
-      {/* Dosificación única */}
+      {/* Dosificación única - cargada desde Formuleo */}
       <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/30">
-        <h3 className="text-sm font-semibold text-foreground">
-          {plantName === "Villa Rosa" ? "Produccion (Consumo por Paston)" : "Dosificación"}
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground">
+            {plantName === "Villa Rosa" ? "Produccion (Consumo por Paston)" : "Dosificacion (desde Formuleo)"}
+          </h3>
+          {pastonFormula?.modified_at && (
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>Ultima modificacion: {new Date(pastonFormula.modified_at).toLocaleDateString("es-AR")} por {pastonFormula.modified_by}</span>
+              {formulaModified && (
+                <span className="text-amber-600 font-medium">(Modificado en este parte)</span>
+              )}
+            </div>
+          )}
+        </div>
         {plantName === "Villa Rosa" && (
           <p className="text-[10px] text-muted-foreground">Valores predeterminados: Cemento 160kg, Arena 178kg, Piedra 0/10 1160kg, Aditivo 500g diluido en 1000ml</p>
         )}
-        <div className="grid grid-cols-4 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
           <div className="space-y-1">
             <Label className="text-[10px]">Cemento (kg)</Label>
             <Input type="number" step="0.01" min="0" value={dosificacion.cement || ""} onChange={(e) => setDosificacion({ ...dosificacion, cement: e.target.value })} className="h-7 text-xs" placeholder={plantName === "Villa Rosa" ? "160" : ""} />
@@ -1099,12 +1195,8 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             <Input type="number" step="0.01" min="0" value={dosificacion.stone020 || ""} onChange={(e) => setDosificacion({ ...dosificacion, stone020: e.target.value })} className="h-7 text-xs" />
           </div>
           <div className="space-y-1">
-            <Label className="text-[10px]">MARK V (g)</Label>
-            <Input type="number" step="0.01" min="0" value={dosificacion.additive1 || ""} onChange={(e) => setDosificacion({ ...dosificacion, additive1: e.target.value })} className="h-7 text-xs" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px]">{plantName === "Villa Rosa" ? "Aditivo (g)" : "DARASELL (g)"}</Label>
-            <Input type="number" step="0.01" min="0" value={dosificacion.additive2 || ""} onChange={(e) => setDosificacion({ ...dosificacion, additive2: e.target.value })} className="h-7 text-xs" placeholder={plantName === "Villa Rosa" ? "500" : ""} />
+            <Label className="text-[10px]">Lts Solucion Aditivo x Paston</Label>
+            <Input type="number" step="0.01" min="0" value={dosificacion.additiveLiters || ""} onChange={(e) => setDosificacion({ ...dosificacion, additiveLiters: e.target.value })} className="h-7 text-xs" />
           </div>
           <div className="space-y-1">
             <Label className="text-[10px]">Agua (lts)</Label>
@@ -1630,6 +1722,69 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
       </div>
       </>
       )}
+
+      {/* Dialogo de cambio de formula */}
+      <Dialog open={showFormulaChangeDialog} onOpenChange={setShowFormulaChangeDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Cambio de Formula Detectado
+            </DialogTitle>
+            <DialogDescription>
+              Los valores de dosificacion fueron modificados respecto a la formula cargada en Formuleo. 
+              Por favor ingrese quien realiza el cambio y el motivo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="formulaChangedBy">Nombre de quien modifica *</Label>
+              <Input
+                id="formulaChangedBy"
+                value={formulaChangedBy}
+                onChange={(e) => setFormulaChangedBy(e.target.value)}
+                placeholder="Ej: Juan Perez"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="formulaChangeReason">Motivo del cambio</Label>
+              <Textarea
+                id="formulaChangeReason"
+                value={formulaChangeReason}
+                onChange={(e) => setFormulaChangeReason(e.target.value)}
+                placeholder="Ej: Ajuste por humedad de aridos..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowFormulaChangeDialog(false)
+                // Restaurar valores originales
+                setDosificacion({ ...originalDosificacion })
+                setFormulaModified(false)
+              }}
+            >
+              Cancelar y Restaurar
+            </Button>
+            <Button 
+              onClick={() => {
+                if (!formulaChangedBy.trim()) {
+                  toast({ title: "Requerido", description: "Debe ingresar el nombre de quien modifica", variant: "destructive" })
+                  return
+                }
+                setShowFormulaChangeDialog(false)
+                executeSubmit()
+              }}
+              disabled={!formulaChangedBy.trim()}
+            >
+              Confirmar y Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   )
 }
