@@ -582,12 +582,15 @@ export function ProductionHistory() {
                                       )}
                                     </DialogContent>
                                   </Dialog>
-                                  <AlertDialog open={deletingId === record.id}>
+                                  <AlertDialog 
+                                    open={deletingId === record.id}
+                                    onOpenChange={(open) => !open && setDeletingId(null)}
+                                  >
                                     <AlertDialogTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-7 w-7 p-0"
+                                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
                                         onClick={() => setDeletingId(record.id)}
                                       >
                                         <Trash2 className="h-3 w-3" />
@@ -597,14 +600,18 @@ export function ProductionHistory() {
                                       <AlertDialogHeader>
                                         <AlertDialogTitle>Eliminar Registro</AlertDialogTitle>
                                         <AlertDialogDescription>
-                                          ¿Estás seguro de que quieres eliminar este registro de producción de bloques?
+                                          ¿Estas seguro de que quieres eliminar este registro de produccion de bloques del {new Date(record.production_date).toLocaleDateString("es-AR")} - Turno {record.shift}?
+                                          Esta accion no se puede deshacer.
                                         </AlertDialogDescription>
                                       </AlertDialogHeader>
                                       <AlertDialogFooter>
                                         <AlertDialogCancel onClick={() => setDeletingId(null)}>
                                           Cancelar
                                         </AlertDialogCancel>
-                                        <AlertDialogAction onClick={() => handleDeleteBlock(record.id)}>
+                                        <AlertDialogAction 
+                                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                          onClick={() => handleDeleteBlock(record.id)}
+                                        >
                                           Eliminar
                                         </AlertDialogAction>
                                       </AlertDialogFooter>
@@ -869,7 +876,8 @@ export function ProductionHistory() {
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-7 w-7 p-0"
+                                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                        onClick={() => setDeletingId(record.id)}
                                       >
                                         <Trash2 className="h-3 w-3" />
                                       </Button>
@@ -878,12 +886,16 @@ export function ProductionHistory() {
                                       <AlertDialogHeader>
                                         <AlertDialogTitle>Eliminar Registro</AlertDialogTitle>
                                         <AlertDialogDescription>
-                                          ¿Estás seguro de que quieres eliminar este registro de producción de caños?
+                                          ¿Estas seguro de que quieres eliminar este registro de produccion de canos del {new Date(record.production_date).toLocaleDateString("es-AR")} - Turno {record.shift}?
+                                          Esta accion no se puede deshacer.
                                         </AlertDialogDescription>
                                       </AlertDialogHeader>
                                       <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                        <AlertDialogAction onClick={() => handleDeletePipe(record.id)}>
+                                        <AlertDialogCancel onClick={() => setDeletingId(null)}>Cancelar</AlertDialogCancel>
+                                        <AlertDialogAction 
+                                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                          onClick={() => handleDeletePipe(record.id)}
+                                        >
                                           Eliminar
                                         </AlertDialogAction>
                                       </AlertDialogFooter>
