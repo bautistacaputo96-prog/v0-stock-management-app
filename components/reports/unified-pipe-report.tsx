@@ -63,6 +63,9 @@ interface PeriodData {
   effectiveMinutes: number
   topDowntimes: { reason: string; minutes: number; percentage: number; topComment: string }[]
   
+  // Roturas de molde (del parte diario)
+  moldBreakages: { diameter: string; count: number; reasons: string[]; comments: string[] }[]
+  
   // Fórmulas materia prima
   materialConsumption: Record<string, { total: number; byDiameter: Record<number, number> }> | null
   
@@ -227,10 +230,10 @@ export function UnifiedPipeReport() {
     })
     setFormulas(formulasData)
 
-    // 3. Cargar producción del parte diario
+    // 3. Cargar producción del parte diario con roturas de molde
     const { data: productionData } = await supabase
       .from("pipe_production")
-      .select("*, pipe_downtime(id, downtime_reason_id, custom_reason, minutes, comments, downtime_category, downtime_reasons:downtime_reason_id(reason))")
+      .select("*, pipe_downtime(id, downtime_reason_id, custom_reason, minutes, comments, downtime_category, downtime_reasons:downtime_reason_id(reason)), pipe_mold_breakage(id, diameter, reasons, comments)")
       .gte("production_date", periodStart)
       .lte("production_date", periodEnd)
       .or(`plant.is.null,plant.eq.${plantFilter}`)
@@ -387,6 +390,37 @@ export function UnifiedPipeReport() {
         weightTn: data.weightKg / 1000,
         scrapBoxes: data.scrapBoxes,
         reprocessed: data.reprocessed
+      }))
+
+    // Roturas de molde por diámetro
+    const moldBreakageData: Record<string, { count: number; reasons: string[]; comments: string[] }> = {}
+    weekdayProductionData.forEach((record: any) => {
+      record.pipe_mold_breakage?.forEach((mb: any) => {
+        const diam = mb.diameter || "Sin especificar"
+        if (!moldBreakageData[diam]) {
+          moldBreakageData[diam] = { count: 0, reasons: [], comments: [] }
+        }
+        moldBreakageData[diam].count += 1
+        if (mb.reasons && Array.isArray(mb.reasons)) {
+          mb.reasons.forEach((r: string) => {
+            if (r && !moldBreakageData[diam].reasons.includes(r)) {
+              moldBreakageData[diam].reasons.push(r)
+            }
+          })
+        }
+        if (mb.comments) {
+          moldBreakageData[diam].comments.push(mb.comments)
+        }
+      })
+    })
+    
+    const moldBreakages = Object.entries(moldBreakageData)
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([diameter, data]) => ({
+        diameter,
+        count: data.count,
+        reasons: data.reasons,
+        comments: data.comments
       }))
 
     // 4. Cargar planificación
@@ -617,6 +651,7 @@ export function UnifiedPipeReport() {
       availableMinutes,
       effectiveMinutes,
       topDowntimes,
+      moldBreakages,
       materialConsumption,
       // Índices principales
       qualityIndex,
@@ -896,10 +931,12 @@ export function UnifiedPipeReport() {
             </Card>
           </div>
 
-          {/* SECCIÓN 2: DESGLOSE POR DIÁMETRO */}
+          {/* ========================================== */}
+          {/* SECCIÓN 2: PRODUCCIÓN */}
+          {/* ========================================== */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm uppercase tracking-wide">Desglose por Diámetro</CardTitle>
+              <CardTitle className="text-sm uppercase tracking-wide">Produccion por Diametro</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -959,10 +996,46 @@ export function UnifiedPipeReport() {
             </CardContent>
           </Card>
 
-          {/* SECCIÓN 3: ÍNDICES DE CALIDAD Y DESPERDICIO */}
+          {/* Gráfico Evolución Diaria de Producción */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm uppercase tracking-wide">Índices de Calidad y Desperdicio</CardTitle>
+              <CardTitle className="text-sm uppercase tracking-wide">Evolucion Diaria de Produccion</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[250px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={currentPeriod.dailyProduction} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="prodGradient2" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v) => formatDateShort(v)} />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      contentStyle={{ fontSize: 12 }}
+                      labelFormatter={(v) => `Fecha: ${formatDate(v)}`}
+                      formatter={(value: number, name: string) => {
+                        if (name === "units") return [value.toLocaleString(), "Canos"]
+                        return [value, name]
+                      }}
+                    />
+                    <Area type="monotone" dataKey="units" stroke="#1e3a5f" strokeWidth={2} fill="url(#prodGradient2)" dot={{ r: 3, fill: "#1e3a5f" }} name="units" />
+                    <ReferenceLine y={currentPeriod.totalUnits / currentPeriod.daysWorked} stroke="#1e3a5f" strokeDasharray="4 4" strokeOpacity={0.6} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ========================================== */}
+          {/* SECCIÓN 3: CALIDAD Y DESPERDICIO */}
+          {/* ========================================== */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm uppercase tracking-wide">Calidad y Desperdicio</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Fórmulas explicativas */}
@@ -1269,40 +1342,83 @@ export function UnifiedPipeReport() {
             </Card>
           </div>
 
-          {/* SECCIÓN 4: PARADAS */}
-          {currentPeriod.topDowntimes.length > 0 && (
+          {/* ========================================== */}
+          {/* SECCIÓN 4: DEFECTOS */}
+          {/* ========================================== */}
+          {currentPeriod.qualityData && currentPeriod.qualityData.topDefects.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm uppercase tracking-wide">Top 5 Paradas</CardTitle>
+                <CardTitle className="text-sm uppercase tracking-wide">Defectos mas Frecuentes</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-amber-50">
+                      <th className="text-left py-2 px-2 font-medium">Motivo</th>
+                      <th className="text-center py-2 px-2 font-medium">Cant.</th>
+                      <th className="text-center py-2 px-2 font-medium">%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentPeriod.qualityData.topDefects.map((def, idx) => (
+                      <tr key={idx} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
+                        <td className="py-2 px-2">{def.reason}</td>
+                        <td className="py-2 px-2 text-center font-medium">{def.count}</td>
+                        <td className="py-2 px-2 text-center">{def.percentage.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ========================================== */}
+          {/* SECCIÓN 5: ROTURAS POR TIPO DE MOLDE */}
+          {/* ========================================== */}
+          {currentPeriod.moldBreakages && currentPeriod.moldBreakages.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm uppercase tracking-wide">Roturas por Tipo de Molde</CardTitle>
               </CardHeader>
               <CardContent>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-red-50">
-                      <th className="text-left py-2 px-2 font-medium text-red-800">Motivo</th>
-                      <th className="text-center py-2 px-2 font-medium text-red-800">Min</th>
-                      <th className="text-center py-2 px-2 font-medium text-red-800">%</th>
-                      <th className="text-left py-2 px-2 font-medium text-red-800">Comentario frecuente</th>
+                      <th className="text-left py-2 px-2 font-medium">Diametro</th>
+                      <th className="text-center py-2 px-2 font-medium">Cantidad</th>
+                      <th className="text-left py-2 px-2 font-medium">Motivos</th>
+                      <th className="text-left py-2 px-2 font-medium">Comentarios</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {currentPeriod.topDowntimes.map((dt, idx) => (
+                    {currentPeriod.moldBreakages.map((mb, idx) => (
                       <tr key={idx} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
-                        <td className="py-2 px-2">{dt.reason}</td>
-                        <td className="py-2 px-2 text-center font-medium text-red-600">{dt.minutes}</td>
-                        <td className="py-2 px-2 text-center">{dt.percentage.toFixed(1)}%</td>
-                        <td className="py-2 px-2 text-muted-foreground text-xs truncate max-w-[200px]">
-                          {dt.topComment || "-"}
+                        <td className="py-2 px-2 font-medium">{mb.diameter}</td>
+                        <td className="py-2 px-2 text-center text-red-600 font-semibold">{mb.count}</td>
+                        <td className="py-2 px-2 text-muted-foreground text-xs">
+                          {mb.reasons.length > 0 ? mb.reasons.join(", ") : "-"}
+                        </td>
+                        <td className="py-2 px-2 text-muted-foreground text-xs max-w-[300px]">
+                          {mb.comments.length > 0 ? (
+                            <ul className="list-disc list-inside space-y-0.5">
+                              {mb.comments.slice(0, 3).map((c, i) => (
+                                <li key={i} className="truncate">{c}</li>
+                              ))}
+                              {mb.comments.length > 3 && (
+                                <li className="text-muted-foreground">+{mb.comments.length - 3} mas...</li>
+                              )}
+                            </ul>
+                          ) : "-"}
                         </td>
                       </tr>
                     ))}
                     <tr className="border-t-2 bg-red-50 font-semibold">
                       <td className="py-2 px-2">TOTAL</td>
-                      <td className="py-2 px-2 text-center text-red-600">{currentPeriod.totalDowntimeMinutes}</td>
-                      <td className="py-2 px-2 text-center">100%</td>
-                      <td className="py-2 px-2 text-muted-foreground">
-                        ({(currentPeriod.totalDowntimeMinutes / 60).toFixed(1)} horas)
+                      <td className="py-2 px-2 text-center text-red-600">
+                        {currentPeriod.moldBreakages.reduce((sum, mb) => sum + mb.count, 0)}
                       </td>
+                      <td className="py-2 px-2" colSpan={2}></td>
                     </tr>
                   </tbody>
                 </table>
@@ -1310,132 +1426,9 @@ export function UnifiedPipeReport() {
             </Card>
           )}
 
-          {/* SECCIÓN 5: GRÁFICO EVOLUCIÓN DIARIA */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm uppercase tracking-wide">Evolución Diaria de Producción</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[250px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={currentPeriod.dailyProduction} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="prodGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis 
-                      dataKey="date" 
-                      tick={{ fontSize: 10 }} 
-                      tickFormatter={(v) => formatDateShort(v)}
-                    />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12 }}
-                      labelFormatter={(v) => `Fecha: ${formatDate(v)}`}
-                      formatter={(value: number, name: string) => {
-                        if (name === "units") return [value.toLocaleString(), "Caños"]
-                        return [value, name]
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="units"
-                      stroke="#1e3a5f"
-                      strokeWidth={2}
-                      fill="url(#prodGradient)"
-                      dot={{ r: 3, fill: "#1e3a5f" }}
-                      name="units"
-                    />
-                    <ReferenceLine
-                      y={currentPeriod.totalUnits / currentPeriod.daysWorked}
-                      stroke="#1e3a5f"
-                      strokeDasharray="4 4"
-                      strokeOpacity={0.6}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* SECCIÓN 6: ANÁLISIS DE ROTURAS */}
-          {currentPeriod.qualityData && currentPeriod.qualityData.topDefects.length > 0 && (
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* Defectos más frecuentes */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm uppercase tracking-wide">Defectos más frecuentes</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-amber-50">
-                        <th className="text-left py-2 px-2 font-medium">Motivo</th>
-                        <th className="text-center py-2 px-2 font-medium">Cant.</th>
-                        <th className="text-center py-2 px-2 font-medium">%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {currentPeriod.qualityData.topDefects.map((def, idx) => (
-                        <tr key={idx} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
-                          <td className="py-2 px-2">{def.reason}</td>
-                          <td className="py-2 px-2 text-center font-medium">{def.count}</td>
-                          <td className="py-2 px-2 text-center">{def.percentage.toFixed(1)}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-
-              {/* Calidad por diámetro */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm uppercase tracking-wide">Calidad por diámetro</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left py-2 px-2 font-medium">Diámetro</th>
-                        <th className="text-center py-2 px-2 font-medium text-green-600">1ra %</th>
-                        <th className="text-center py-2 px-2 font-medium text-amber-600">2da %</th>
-                        <th className="text-center py-2 px-2 font-medium text-red-600">Rot %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeDiameters.map((d, idx) => {
-                        const qual = currentPeriod.qualityData?.byDiameter[d]
-                        if (!qual) return null
-                        const total = qual.first + qual.second + qual.broken
-                        if (total === 0) return null
-                        
-                        return (
-                          <tr key={d} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
-                            <td className="py-2 px-2 font-medium">CC{d}</td>
-                            <td className="py-2 px-2 text-center text-green-600">
-                              {((qual.first / total) * 100).toFixed(1)}%
-                            </td>
-                            <td className="py-2 px-2 text-center text-amber-600">
-                              {((qual.second / total) * 100).toFixed(1)}%
-                            </td>
-                            <td className="py-2 px-2 text-center text-red-600">
-                              {((qual.broken / total) * 100).toFixed(1)}%
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {/* SECCIÓN 7: CONSUMO DE MATERIA PRIMA */}
+          {/* ========================================== */}
+          {/* SECCIÓN 6: CONSUMO DE MATERIA PRIMA */}
+          {/* ========================================== */}
           {currentPeriod.materialConsumption && (
             <Card>
               <CardHeader className="pb-2">
