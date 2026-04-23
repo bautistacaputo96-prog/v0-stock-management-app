@@ -55,9 +55,9 @@ const MERCEDES_MODULES = [
     color: "bg-blue-500",
   },
   {
-    title: "Dosificaciones",
-    description: "Formulas de mezcla por diametro",
-    href: "/calidad/dosificaciones",
+    title: "Formuleo",
+    description: "Formulas de mezcla (paston)",
+    href: "/formuleo",
     icon: Beaker,
     color: "bg-purple-500",
   },
