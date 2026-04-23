@@ -317,19 +317,22 @@ export function UnifiedPipeReport() {
       const bin4 = record.waste_bin_4_rotos || 0
       const bin5 = record.waste_bin_5_mezcladora || 0
       
+      // Peso NETO del material (descontando tara del tacho vacío)
+      // Tara: C1=133.3kg, C2=127.6kg, C3=108.5kg, C4=232.5kg, C5=133.3kg
+      // Neto: C1=576.7kg, C2=528.4kg, C3=601.5kg, C4=1074.5kg, C5=576.7kg
       wasteBins.bin1Cinta.boxes += bin1
-      wasteBins.bin1Cinta.kg += bin1 * 710
+      wasteBins.bin1Cinta.kg += bin1 * 576.7
       wasteBins.bin2Desmolde.boxes += bin2
-      wasteBins.bin2Desmolde.kg += bin2 * 656
+      wasteBins.bin2Desmolde.kg += bin2 * 528.4
       wasteBins.bin3Cinta.boxes += bin3
-      wasteBins.bin3Cinta.kg += bin3 * 710
+      wasteBins.bin3Cinta.kg += bin3 * 601.5
       wasteBins.bin4Rotos.boxes += bin4
-      wasteBins.bin4Rotos.kg += bin4 * 1307
+      wasteBins.bin4Rotos.kg += bin4 * 1074.5
       wasteBins.bin5Mezcladora.boxes += bin5
-      wasteBins.bin5Mezcladora.kg += bin5 * 710
+      wasteBins.bin5Mezcladora.kg += bin5 * 576.7
       
-      // Total (usar total_waste_kg si existe, sino calcular de cajones individuales, sino usar scrap_boxes legacy)
-      const dayScrapKg = record.total_waste_kg || (bin1 * 710 + bin2 * 656 + bin3 * 710 + bin4 * 1307 + bin5 * 710) || (record.scrap_boxes || 0) * scrapBoxWeight
+      // Total (usar total_waste_kg si existe, sino calcular de cajones individuales con peso neto, sino usar scrap_boxes legacy)
+      const dayScrapKg = record.total_waste_kg || (bin1 * 576.7 + bin2 * 528.4 + bin3 * 601.5 + bin4 * 1074.5 + bin5 * 576.7) || (record.scrap_boxes || 0) * scrapBoxWeight
       totalScrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
       dailyProd[dateKey].scrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
 

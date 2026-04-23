@@ -994,17 +994,42 @@ export function ProductionHistory() {
                                     </div>
                                   </div>
                                   
-                                  {/* Cajones de Desperdicio del Parte Diario */}
-                                  {record.scrap_boxes > 0 && (
-                                    <div className="mt-4 pt-4 border-t">
-                                      <p className="text-sm font-medium mb-2 text-amber-600">Cajones de Desperdicio (Parte Diario)</p>
-                                      <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3 inline-block">
-                                        <p className="text-xs text-muted-foreground">Desperdicio</p>
-                                        <p className="text-2xl font-bold text-amber-600">{record.scrap_boxes}</p>
-                                        <p className="text-xs text-muted-foreground">cajones</p>
+                                  {/* Cajones de Desperdicio del Parte Diario - suma de los 5 tipos */}
+                                  {(() => {
+                                    const totalBins = (record.waste_bin_1_cinta || 0) + (record.waste_bin_2_desmolde || 0) + 
+                                                     (record.waste_bin_3_cinta || 0) + (record.waste_bin_4_rotos || 0) + 
+                                                     (record.waste_bin_5_mezcladora || 0) || record.scrap_boxes || 0
+                                    const totalKg = (record.waste_bin_1_cinta || 0) * 576.7 + (record.waste_bin_2_desmolde || 0) * 528.4 +
+                                                   (record.waste_bin_3_cinta || 0) * 601.5 + (record.waste_bin_4_rotos || 0) * 1074.5 +
+                                                   (record.waste_bin_5_mezcladora || 0) * 576.7
+                                    return totalBins > 0 ? (
+                                      <div className="mt-4 pt-4 border-t">
+                                        <p className="text-sm font-medium mb-2 text-amber-600">Cajones de Desperdicio (Parte Diario)</p>
+                                        <div className="flex gap-4">
+                                          <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                                            <p className="text-xs text-muted-foreground">Total Cajones</p>
+                                            <p className="text-2xl font-bold text-amber-600">{totalBins}</p>
+                                          </div>
+                                          {totalKg > 0 && (
+                                            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                                              <p className="text-xs text-muted-foreground">Peso Neto</p>
+                                              <p className="text-2xl font-bold text-amber-600">{(totalKg / 1000).toFixed(2)} tn</p>
+                                            </div>
+                                          )}
+                                        </div>
+                                        {/* Desglose por tipo si hay nuevos campos */}
+                                        {(record.waste_bin_1_cinta || record.waste_bin_2_desmolde || record.waste_bin_3_cinta || record.waste_bin_4_rotos || record.waste_bin_5_mezcladora) && (
+                                          <div className="mt-2 text-xs text-muted-foreground">
+                                            {record.waste_bin_1_cinta > 0 && <span className="mr-3">C1-Cinta: {record.waste_bin_1_cinta}</span>}
+                                            {record.waste_bin_2_desmolde > 0 && <span className="mr-3">C2-Desmolde: {record.waste_bin_2_desmolde}</span>}
+                                            {record.waste_bin_3_cinta > 0 && <span className="mr-3">C3-Cinta: {record.waste_bin_3_cinta}</span>}
+                                            {record.waste_bin_4_rotos > 0 && <span className="mr-3">C4-Rotos: {record.waste_bin_4_rotos}</span>}
+                                            {record.waste_bin_5_mezcladora > 0 && <span className="mr-3">C5-Mezcla: {record.waste_bin_5_mezcladora}</span>}
+                                          </div>
+                                        )}
                                       </div>
-                                    </div>
-                                  )}
+                                    ) : null
+                                  })()}
                                   
                                   {/* Segunda y Rotos desde Control de Calidad */}
                                   {record.quality_waste && (record.quality_waste.second > 0 || record.quality_waste.broken > 0) && (
