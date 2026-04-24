@@ -109,23 +109,19 @@ export function ExecutiveReports() {
         .order("production_date", { ascending: true })
 
       if (prodError) {
-        console.log("[v0] Error loading production:", prodError)
+        console.error("Error loading production:", prodError)
       }
 
-      // 2. Control de calidad
+      // 2. Control de calidad con items
       const { data: qualityData, error: qualError } = await supabase
         .from("pipe_quality_control")
-        .select("*, pipe_quality_defects(id, is_second, defect_reason)")
-        .eq("plant", selectedPlant || "mercedes")
+        .select("*, pipe_quality_items(id, diameter, first_quality, second_quality, broken), pipe_quality_defects(id, defect_type, defect_reason_id, pipe_defect_reasons:defect_reason_id(reason))")
         .gte("control_date", dateFrom)
         .lte("control_date", dateTo)
 
       if (qualError) {
-        console.log("[v0] Error loading quality:", qualError)
+        console.error("Error loading quality:", qualError)
       }
-
-      console.log("[v0] Production data loaded:", productionData?.length, "records")
-      console.log("[v0] Quality data loaded:", qualityData?.length, "records")
 
       // Filtrar solo dias laborales (Lunes a Sabado)
       const weekdayProductionData = productionData?.filter(record => {
@@ -235,7 +231,7 @@ export function ExecutiveReports() {
         })
       })
 
-      // Procesar calidad
+      // Procesar calidad desde pipe_quality_items
       let totalFirst = 0, totalSecond = 0, totalBroken = 0
       const byDiameterQuality: Record<number, { first: number; second: number; broken: number }> = {}
       PIPE_DIAMETERS.forEach(d => {
@@ -244,22 +240,27 @@ export function ExecutiveReports() {
       const defectCounts: Record<string, number> = {}
 
       qualityData?.forEach((qc: any) => {
-        PIPE_DIAMETERS.forEach(d => {
-          const first = qc[`cc${d}_first`] || 0
-          const second = qc[`cc${d}_second`] || 0
-          const broken = qc[`cc${d}_broken`] || 0
+        // Procesar items de calidad (cada item tiene diameter, first_quality, second_quality, broken)
+        qc.pipe_quality_items?.forEach((item: any) => {
+          const diameter = item.diameter
+          const first = item.first_quality || 0
+          const second = item.second_quality || 0
+          const broken = item.broken || 0
           
           totalFirst += first
           totalSecond += second
           totalBroken += broken
           
-          byDiameterQuality[d].first += first
-          byDiameterQuality[d].second += second
-          byDiameterQuality[d].broken += broken
+          if (byDiameterQuality[diameter]) {
+            byDiameterQuality[diameter].first += first
+            byDiameterQuality[diameter].second += second
+            byDiameterQuality[diameter].broken += broken
+          }
         })
 
+        // Procesar defectos
         qc.pipe_quality_defects?.forEach((def: any) => {
-          const reason = def.defect_reason || "Otros"
+          const reason = def.pipe_defect_reasons?.reason || def.defect_type || "Otros"
           defectCounts[reason] = (defectCounts[reason] || 0) + 1
         })
       })
@@ -770,7 +771,7 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
           </div>
         )}
 
-        {/* Cajones de Desperdicio */}
+        {/* Cajones de Desperdicio - con porcentajes */}
         <div className="border rounded-lg overflow-hidden">
           <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
             <h3 className="font-semibold text-xs uppercase tracking-wide">Cajones de Desperdicio</h3>
@@ -779,40 +780,33 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
             <thead style={{ backgroundColor: COLORS.light }}>
               <tr>
                 <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
-                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
                 <th className="text-center py-1.5 px-2 font-medium">Kg</th>
+                <th className="text-center py-1.5 px-2 font-medium">%</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t">
-                <td className="py-1.5 px-2">C1 - Cinta</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin1Cinta.boxes || "-"}</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin1Cinta.kg > 0 ? Math.round(data.wasteBins.bin1Cinta.kg) : "-"}</td>
-              </tr>
-              <tr className="border-t" style={{ backgroundColor: COLORS.light }}>
-                <td className="py-1.5 px-2">C2 - Desmolde</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin2Desmolde.boxes || "-"}</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin2Desmolde.kg > 0 ? Math.round(data.wasteBins.bin2Desmolde.kg) : "-"}</td>
-              </tr>
-              <tr className="border-t">
-                <td className="py-1.5 px-2">C3 - Cinta</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin3Cinta.boxes || "-"}</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin3Cinta.kg > 0 ? Math.round(data.wasteBins.bin3Cinta.kg) : "-"}</td>
-              </tr>
-              <tr className="border-t" style={{ backgroundColor: COLORS.light }}>
-                <td className="py-1.5 px-2">C4 - Rotos</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin4Rotos.boxes || "-"}</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin4Rotos.kg > 0 ? Math.round(data.wasteBins.bin4Rotos.kg) : "-"}</td>
-              </tr>
-              <tr className="border-t">
-                <td className="py-1.5 px-2">C5 - Mezcladora</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin5Mezcladora.boxes || "-"}</td>
-                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin5Mezcladora.kg > 0 ? Math.round(data.wasteBins.bin5Mezcladora.kg) : "-"}</td>
-              </tr>
+              {[
+                { name: "C1 - Cinta", kg: data.wasteBins.bin1Cinta.kg },
+                { name: "C2 - Desmolde", kg: data.wasteBins.bin2Desmolde.kg },
+                { name: "C3 - Cinta", kg: data.wasteBins.bin3Cinta.kg },
+                { name: "C4 - Rotos", kg: data.wasteBins.bin4Rotos.kg },
+                { name: "C5 - Mezcladora", kg: data.wasteBins.bin5Mezcladora.kg }
+              ].map((bin, idx) => {
+                const pct = data.totalWasteKg > 0 ? (bin.kg / data.totalWasteKg) * 100 : 0
+                return (
+                  <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                    <td className="py-1.5 px-2">{bin.name}</td>
+                    <td className="py-1.5 px-2 text-center">{bin.kg > 0 ? Math.round(bin.kg) : "-"}</td>
+                    <td className="py-1.5 px-2 text-center font-medium" style={{ color: pct > 30 ? COLORS.danger : COLORS.primary }}>
+                      {bin.kg > 0 ? `${pct.toFixed(1)}%` : "-"}
+                    </td>
+                  </tr>
+                )
+              })}
               <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
                 <td className="py-1.5 px-2">TOTAL</td>
-                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>{totalWasteBins || "-"}</td>
                 <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>{data.totalWasteKg > 0 ? `${(data.totalWasteKg / 1000).toFixed(2)} tn` : "-"}</td>
+                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>100%</td>
               </tr>
             </tbody>
           </table>
