@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { UnifiedPipeReport } from "@/components/reports/unified-pipe-report"
 import { CustomRangeReport } from "@/components/reports/custom-range-report"
+import { ExecutiveReports } from "@/components/reports/executive-reports"
 import { Factory, Cylinder } from "lucide-react"
 import { usePlant } from "@/lib/plant-context"
 
@@ -87,7 +88,10 @@ export function ReportsContent() {
 
       {/* Contenido del informe */}
       {selectedLine === "caños" ? (
-        <UnifiedPipeReport />
+        <>
+          <ExecutiveReports />
+          <UnifiedPipeReport />
+        </>
       ) : (
         <CustomRangeReport lineType="bloques" />
       )}
