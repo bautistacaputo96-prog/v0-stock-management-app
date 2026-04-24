@@ -4,15 +4,16 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { 
-  Beaker, 
-  FlaskConical, 
-  Droplets, 
-  TestTube2, 
-  FileText, 
-  Settings, 
+import {
+  Beaker,
+  FlaskConical,
+  Droplets,
+  TestTube2,
+  FileText,
+  Settings,
   BarChart3,
   Cylinder,
+  Hammer,
   ArrowRight,
   Grid3X3,
   Clock,
@@ -83,6 +84,13 @@ const MERCEDES_MODULES = [
     color: "bg-green-500",
   },
   {
+    title: "Resultados de Roturas",
+    description: "Ensayos de compresion de probetas de hormigon",
+    href: "/calidad/roturas",
+    icon: Hammer,
+    color: "bg-indigo-500",
+  },
+  {
     title: "Parametros",
     description: "Configuracion de limites y alertas",
     href: "/calidad/parametros",
@@ -128,6 +136,13 @@ const RANCHOS_MODULES = [
     href: "/calidad/ensayos",
     icon: TestTube2,
     color: "bg-green-500",
+  },
+  {
+    title: "Resultados de Roturas",
+    description: "Ensayos de compresion de probetas de hormigon",
+    href: "/calidad/roturas",
+    icon: Hammer,
+    color: "bg-indigo-500",
   },
   {
     title: "Parametros",
