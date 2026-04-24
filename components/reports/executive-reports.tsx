@@ -96,6 +96,7 @@ export function ExecutiveReports() {
   // Cargar datos para los informes
   async function loadReportData() {
     setLoading(true)
+    console.log("[v0] Loading report data - dateFrom:", dateFrom, "dateTo:", dateTo, "plant:", selectedPlant)
     try {
       const supabase = getSupabase()
       
@@ -254,7 +255,9 @@ export function ExecutiveReports() {
       })
       const defectCounts: Record<string, number> = {}
 
+      console.log("[v0] Quality records:", qualityData?.length)
       qualityData?.forEach((control: any) => {
+        console.log("[v0] Control items:", control.items?.length, "items")
         // Procesar items de calidad (alias: items)
         control.items?.forEach((item: any) => {
           const diameter = item.diameter
@@ -281,6 +284,7 @@ export function ExecutiveReports() {
       })
 
       const totalClassified = totalFirst + totalSecond + totalBroken
+      console.log("[v0] Quality totals - First:", totalFirst, "Second:", totalSecond, "Broken:", totalBroken, "Total:", totalClassified)
       const qualityIndex = totalClassified > 0 ? (totalFirst / totalClassified) * 100 : 0
       const secondIndex = totalClassified > 0 ? (totalSecond / totalClassified) * 100 : 0
       const brokenIndex = totalClassified > 0 ? (totalBroken / totalClassified) * 100 : 0
