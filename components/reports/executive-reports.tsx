@@ -13,12 +13,25 @@ import { useToast } from "@/hooks/use-toast"
 import html2canvas from "html2canvas"
 import jsPDF from "jspdf"
 
+// Paleta de colores corporativa - Gris y Rojo opaco
+const COLORS = {
+  primary: "#4a4a4a",      // Gris oscuro principal
+  secondary: "#6b6b6b",    // Gris medio
+  accent: "#8b3a3a",       // Rojo opaco/bordo
+  accentLight: "#a05050",  // Rojo opaco claro
+  light: "#f5f5f5",        // Gris muy claro
+  muted: "#9a9a9a",        // Gris para texto secundario
+  success: "#4a7c59",      // Verde opaco
+  warning: "#b08d57",      // Amarillo/dorado opaco
+  danger: "#8b3a3a",       // Rojo opaco (mismo que accent)
+}
+
 // Interfaces
 interface ReportData {
   dateFrom: string
   dateTo: string
   daysWorked: number
-  // Producción
+  // Produccion
   totalUnits: number
   totalWeightTn: number
   avgDailyUnits: number
@@ -55,6 +68,14 @@ interface ReportData {
 
 const PIPE_DIAMETERS = [300, 400, 500, 600, 800, 1000, 1200]
 
+// Peso por unidad segun diametro (kg)
+function getWeightPerUnit(diameter: number): number {
+  const weights: Record<number, number> = {
+    300: 85, 400: 120, 500: 180, 600: 250, 800: 420, 1000: 650, 1200: 950
+  }
+  return weights[diameter] || 100
+}
+
 export function ExecutiveReports() {
   const { toast } = useToast()
   const { selectedPlant } = usePlant()
@@ -78,8 +99,8 @@ export function ExecutiveReports() {
     try {
       const supabase = getSupabase()
       
-      // 1. Producción del parte diario
-      const { data: productionData } = await supabase
+      // 1. Produccion del parte diario
+      const { data: productionData, error: prodError } = await supabase
         .from("pipe_production")
         .select("*, pipe_downtime(id, downtime_reason_id, custom_reason, minutes, comments, downtime_reasons:downtime_reason_id(reason)), pipe_mold_breakage(id, diameter, reasons, comments)")
         .eq("plant", selectedPlant || "mercedes")
@@ -87,15 +108,26 @@ export function ExecutiveReports() {
         .lte("production_date", dateTo)
         .order("production_date", { ascending: true })
 
+      if (prodError) {
+        console.log("[v0] Error loading production:", prodError)
+      }
+
       // 2. Control de calidad
-      const { data: qualityData } = await supabase
+      const { data: qualityData, error: qualError } = await supabase
         .from("pipe_quality_control")
         .select("*, pipe_quality_defects(id, is_second, defect_reason)")
         .eq("plant", selectedPlant || "mercedes")
         .gte("control_date", dateFrom)
         .lte("control_date", dateTo)
 
-      // Filtrar solo días laborales (Lunes a Sábado)
+      if (qualError) {
+        console.log("[v0] Error loading quality:", qualError)
+      }
+
+      console.log("[v0] Production data loaded:", productionData?.length, "records")
+      console.log("[v0] Quality data loaded:", qualityData?.length, "records")
+
+      // Filtrar solo dias laborales (Lunes a Sabado)
       const weekdayProductionData = productionData?.filter(record => {
         const dayOfWeek = new Date(record.production_date + "T12:00:00").getDay()
         return dayOfWeek >= 1 && dayOfWeek <= 6
@@ -105,7 +137,7 @@ export function ExecutiveReports() {
       const uniqueDates = new Set(weekdayProductionData.map(r => r.production_date))
       const daysWorked = uniqueDates.size
 
-      // Producción por diámetro
+      // Produccion por diametro
       const byDiameter: Record<number, { produced: number; reprocessed: number; weightKg: number }> = {}
       PIPE_DIAMETERS.forEach(d => {
         byDiameter[d] = { produced: 0, reprocessed: 0, weightKg: 0 }
@@ -131,11 +163,11 @@ export function ExecutiveReports() {
       // Roturas de molde
       const moldBreakageData: Record<string, { count: number; reasons: string[]; comments: string[] }> = {}
 
-      // Producción diaria
+      // Produccion diaria
       const dailyProd: Record<string, number> = {}
 
       weekdayProductionData.forEach((record: any) => {
-        // Producción por diámetro
+        // Produccion por diametro
         PIPE_DIAMETERS.forEach(d => {
           const produced = record[`cc${d}_produced`] || 0
           const reproc = record[`cc${d}_reprocessed`] || 0
@@ -150,7 +182,7 @@ export function ExecutiveReports() {
           reprocessedUnits += reproc
         })
 
-        // Producción diaria
+        // Produccion diaria
         const date = record.production_date
         dailyProd[date] = (dailyProd[date] || 0) + PIPE_DIAMETERS.reduce((sum, d) => sum + (record[`cc${d}_produced`] || 0), 0)
 
@@ -269,13 +301,13 @@ export function ExecutiveReports() {
           comments: data.comments
         }))
 
-      // Producción diaria
+      // Produccion diaria
       const dailyProduction = Object.entries(dailyProd)
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([date, units]) => ({ date, units }))
 
-      // Cálculos de mantenimiento
-      const availableMinutes = daysWorked * 8 * 60 // 8 horas por día
+      // Calculos de mantenimiento
+      const availableMinutes = daysWorked * 8 * 60 // 8 horas por dia
       const effectiveMinutes = availableMinutes - totalDowntimeMinutes
       const availabilityIndex = availableMinutes > 0 ? (effectiveMinutes / availableMinutes) * 100 : 0
 
@@ -313,20 +345,12 @@ export function ExecutiveReports() {
 
       return true
     } catch (error) {
-      console.error("Error loading report data:", error)
+      console.log("[v0] Error loading report data:", error)
       toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" })
       return false
     } finally {
       setLoading(false)
     }
-  }
-
-  // Peso por unidad según diámetro
-  function getWeightPerUnit(diameter: number): number {
-    const weights: Record<number, number> = {
-      300: 80, 400: 140, 500: 220, 600: 320, 800: 560, 1000: 880, 1200: 1260
-    }
-    return weights[diameter] || 100
   }
 
   // Abrir preview
@@ -485,7 +509,7 @@ export function ExecutiveReports() {
 }
 
 // =============================================
-// INFORME DE PRODUCCIÓN
+// INFORME DE PRODUCCION
 // =============================================
 function ProductionReport({ data, formatDate, formatDateShort }: { 
   data: ReportData; 
@@ -495,119 +519,122 @@ function ProductionReport({ data, formatDate, formatDateShort }: {
   const activeDiameters = PIPE_DIAMETERS.filter(d => data.byDiameter[d]?.produced > 0)
   
   return (
-    <div className="space-y-4 text-sm">
+    <div className="space-y-4 text-sm" style={{ fontFamily: "Arial, sans-serif" }}>
       {/* Header */}
-      <div className="bg-[#1e3a5f] text-white p-4 rounded-lg">
+      <div style={{ backgroundColor: COLORS.primary }} className="text-white p-4 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">INFORME DE PRODUCCION</h1>
-            <p className="text-blue-200 text-xs mt-1">Planta Mercedes - Canos de Hormigon</p>
+            <h1 className="text-xl font-bold tracking-wide">INFORME DE PRODUCCION</h1>
+            <p style={{ color: "#b0b0b0" }} className="text-xs mt-1">Planta Mercedes - Canos de Hormigon</p>
           </div>
           <div className="text-right">
             <p className="text-lg font-semibold">{formatDate(data.dateFrom)} - {formatDate(data.dateTo)}</p>
-            <p className="text-blue-200 text-xs">{data.daysWorked} dias de produccion</p>
+            <p style={{ color: "#b0b0b0" }} className="text-xs">{data.daysWorked} dias de produccion</p>
           </div>
         </div>
       </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="border rounded-lg p-3 text-center bg-blue-50">
-          <p className="text-xs text-muted-foreground uppercase">Total Canos</p>
-          <p className="text-2xl font-bold text-[#1e3a5f]">{data.totalUnits.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground">unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Total Canos</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalUnits.toLocaleString()}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>unidades</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-blue-50">
-          <p className="text-xs text-muted-foreground uppercase">Toneladas</p>
-          <p className="text-2xl font-bold text-[#1e3a5f]">{data.totalWeightTn.toFixed(1)}</p>
-          <p className="text-xs text-muted-foreground">tn producidas</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Toneladas</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalWeightTn.toFixed(1)}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>tn producidas</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-blue-50">
-          <p className="text-xs text-muted-foreground uppercase">Promedio Diario</p>
-          <p className="text-2xl font-bold text-[#1e3a5f]">{data.avgDailyUnits}</p>
-          <p className="text-xs text-muted-foreground">canos/dia</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Promedio Diario</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.avgDailyUnits}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>canos/dia</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-amber-50">
-          <p className="text-xs text-muted-foreground uppercase">Reprocesados</p>
-          <p className="text-2xl font-bold text-amber-600">{data.reprocessedUnits}</p>
-          <p className="text-xs text-muted-foreground">unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Reprocesados</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.accent }}>{data.reprocessedUnits}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>unidades</p>
         </div>
       </div>
 
-      {/* Producción por diámetro */}
+      {/* Produccion por diametro */}
       <div className="border rounded-lg overflow-hidden">
-        <div className="bg-[#1e3a5f] text-white px-3 py-2">
-          <h3 className="font-semibold text-xs uppercase">Produccion por Diametro</h3>
+        <div style={{ backgroundColor: COLORS.primary }} className="text-white px-3 py-2">
+          <h3 className="font-semibold text-xs uppercase tracking-wide">Produccion por Diametro</h3>
         </div>
         <table className="w-full text-xs">
-          <thead className="bg-gray-50">
+          <thead style={{ backgroundColor: COLORS.light }}>
             <tr>
-              <th className="text-left py-2 px-3 font-medium">Diametro</th>
+              <th className="text-left py-2 px-3 font-medium">Concepto</th>
               {activeDiameters.map(d => (
                 <th key={d} className="text-center py-2 px-2 font-medium">CC{d}</th>
               ))}
-              <th className="text-center py-2 px-3 font-medium bg-blue-50">TOTAL</th>
+              <th className="text-center py-2 px-3 font-medium" style={{ backgroundColor: "#e8e8e8" }}>TOTAL</th>
             </tr>
           </thead>
           <tbody>
             <tr className="border-t">
-              <td className="py-2 px-3 font-medium">Unidades</td>
+              <td className="py-2 px-3 font-medium">Producidos</td>
               {activeDiameters.map(d => (
-                <td key={d} className="text-center py-2 px-2">{data.byDiameter[d].produced}</td>
+                <td key={d} className="py-2 px-2 text-center">{data.byDiameter[d].produced}</td>
               ))}
-              <td className="text-center py-2 px-3 font-bold bg-blue-50">{data.totalUnits}</td>
+              <td className="py-2 px-3 text-center font-bold" style={{ backgroundColor: "#e8e8e8" }}>{data.totalUnits}</td>
             </tr>
-            <tr className="border-t bg-gray-50">
+            <tr className="border-t" style={{ backgroundColor: COLORS.light }}>
               <td className="py-2 px-3 font-medium">Toneladas</td>
               {activeDiameters.map(d => (
-                <td key={d} className="text-center py-2 px-2">{(data.byDiameter[d].weightKg / 1000).toFixed(1)}</td>
+                <td key={d} className="py-2 px-2 text-center">{(data.byDiameter[d].weightKg / 1000).toFixed(1)}</td>
               ))}
-              <td className="text-center py-2 px-3 font-bold bg-blue-50">{data.totalWeightTn.toFixed(1)}</td>
+              <td className="py-2 px-3 text-center font-bold" style={{ backgroundColor: "#e8e8e8" }}>{data.totalWeightTn.toFixed(1)}</td>
             </tr>
             <tr className="border-t">
-              <td className="py-2 px-3 font-medium text-amber-600">Reprocesados</td>
+              <td className="py-2 px-3 font-medium" style={{ color: COLORS.accent }}>Reprocesados</td>
               {activeDiameters.map(d => (
-                <td key={d} className="text-center py-2 px-2 text-amber-600">{data.byDiameter[d].reprocessed || "-"}</td>
+                <td key={d} className="py-2 px-2 text-center" style={{ color: COLORS.accent }}>{data.byDiameter[d].reprocessed || "-"}</td>
               ))}
-              <td className="text-center py-2 px-3 font-bold text-amber-600 bg-amber-50">{data.reprocessedUnits}</td>
+              <td className="py-2 px-3 text-center font-bold" style={{ backgroundColor: "#e8e8e8", color: COLORS.accent }}>{data.reprocessedUnits}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* Evolución diaria */}
-      <div className="border rounded-lg overflow-hidden">
-        <div className="bg-[#1e3a5f] text-white px-3 py-2">
-          <h3 className="font-semibold text-xs uppercase">Evolucion Diaria</h3>
-        </div>
-        <div className="p-3">
-          <div className="flex items-end justify-between h-32 gap-1">
-            {data.dailyProduction.map((day, idx) => {
-              const maxUnits = Math.max(...data.dailyProduction.map(d => d.units))
-              const height = maxUnits > 0 ? (day.units / maxUnits) * 100 : 0
-              return (
-                <div key={idx} className="flex-1 flex flex-col items-center">
-                  <span className="text-[10px] text-muted-foreground mb-1">{day.units}</span>
-                  <div 
-                    className="w-full bg-[#1e3a5f] rounded-t"
-                    style={{ height: `${height}%`, minHeight: day.units > 0 ? "4px" : "0" }}
-                  />
-                  <span className="text-[9px] text-muted-foreground mt-1">{formatDateShort(day.date)}</span>
-                </div>
-              )
-            })}
+      {/* Evolucion diaria */}
+      {data.dailyProduction.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div style={{ backgroundColor: COLORS.primary }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Evolucion Diaria</h3>
           </div>
-          <div className="flex justify-center mt-2">
-            <div className="text-xs text-muted-foreground">
-              Promedio: <span className="font-semibold text-[#1e3a5f]">{data.avgDailyUnits} canos/dia</span>
+          <div className="p-3">
+            <div className="flex items-end gap-1 h-24">
+              {data.dailyProduction.map((day, idx) => {
+                const maxUnits = Math.max(...data.dailyProduction.map(d => d.units))
+                const height = maxUnits > 0 ? (day.units / maxUnits) * 100 : 0
+                return (
+                  <div key={idx} className="flex-1 flex flex-col items-center">
+                    <div 
+                      className="w-full rounded-t"
+                      style={{ 
+                        height: `${height}%`, 
+                        backgroundColor: COLORS.secondary,
+                        minHeight: day.units > 0 ? "4px" : "0"
+                      }}
+                    />
+                    <span className="text-[8px] mt-1" style={{ color: COLORS.muted }}>{formatDateShort(day.date)}</span>
+                    <span className="text-[9px] font-medium">{day.units}</span>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Footer */}
-      <div className="text-center text-[10px] text-muted-foreground pt-2 border-t">
-        Generado el {new Date().toLocaleDateString("es-AR")} a las {new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
+      <div className="text-center pt-2 border-t">
+        <p className="text-[10px]" style={{ color: COLORS.muted }}>
+          Generado el {new Date().toLocaleDateString("es-AR")} - Sistema de Control de Produccion
+        </p>
       </div>
     </div>
   )
@@ -622,198 +649,199 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
     return q && (q.first + q.second + q.broken) > 0
   })
 
+  const totalWasteBins = data.wasteBins.bin1Cinta.boxes + data.wasteBins.bin2Desmolde.boxes +
+                         data.wasteBins.bin3Cinta.boxes + data.wasteBins.bin4Rotos.boxes +
+                         data.wasteBins.bin5Mezcladora.boxes
+  
   return (
-    <div className="space-y-4 text-sm">
+    <div className="space-y-4 text-sm" style={{ fontFamily: "Arial, sans-serif" }}>
       {/* Header */}
-      <div className="bg-emerald-700 text-white p-4 rounded-lg">
+      <div style={{ backgroundColor: COLORS.accent }} className="text-white p-4 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">INFORME DE CALIDAD</h1>
-            <p className="text-emerald-200 text-xs mt-1">Planta Mercedes - Control de Calidad</p>
+            <h1 className="text-xl font-bold tracking-wide">INFORME DE CALIDAD</h1>
+            <p style={{ color: "#d4b0b0" }} className="text-xs mt-1">Planta Mercedes - Canos de Hormigon</p>
           </div>
           <div className="text-right">
             <p className="text-lg font-semibold">{formatDate(data.dateFrom)} - {formatDate(data.dateTo)}</p>
-            <p className="text-emerald-200 text-xs">{data.daysWorked} dias de produccion</p>
+            <p style={{ color: "#d4b0b0" }} className="text-xs">{data.daysWorked} dias de produccion</p>
           </div>
         </div>
       </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="border rounded-lg p-3 text-center bg-green-50">
-          <p className="text-xs text-muted-foreground uppercase">Indice Primera</p>
-          <p className="text-2xl font-bold text-green-600">{data.qualityIndex.toFixed(1)}%</p>
-          <p className="text-xs text-muted-foreground">{data.totalFirst} unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#eef5f0" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Primera</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(1)}%</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalFirst} canos</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-amber-50">
-          <p className="text-xs text-muted-foreground uppercase">Indice Segunda</p>
-          <p className="text-2xl font-bold text-amber-600">{data.secondIndex.toFixed(1)}%</p>
-          <p className="text-xs text-muted-foreground">{data.totalSecond} unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5f3ee" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Segunda</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex.toFixed(1)}%</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalSecond} canos</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-red-50">
-          <p className="text-xs text-muted-foreground uppercase">Indice Rotura</p>
-          <p className="text-2xl font-bold text-red-600">{data.brokenIndex.toFixed(1)}%</p>
-          <p className="text-xs text-muted-foreground">{data.totalBroken} unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Rotura</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex.toFixed(1)}%</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalBroken} canos</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-gray-50">
-          <p className="text-xs text-muted-foreground uppercase">Total Clasificado</p>
-          <p className="text-2xl font-bold text-gray-700">{data.totalClassified}</p>
-          <p className="text-xs text-muted-foreground">unidades</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Total Clasificado</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalClassified}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>canos</p>
         </div>
       </div>
 
-      {/* Calidad por diámetro */}
-      <div className="border rounded-lg overflow-hidden">
-        <div className="bg-emerald-700 text-white px-3 py-2">
-          <h3 className="font-semibold text-xs uppercase">Calidad por Diametro</h3>
+      {/* Calidad por diametro */}
+      {activeDiameters.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Calidad por Diametro</h3>
+          </div>
+          <table className="w-full text-xs">
+            <thead style={{ backgroundColor: COLORS.light }}>
+              <tr>
+                <th className="text-left py-2 px-3 font-medium">Diametro</th>
+                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.success }}>1ra</th>
+                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.warning }}>2da</th>
+                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.danger }}>Rotos</th>
+                <th className="text-center py-2 px-2 font-medium">Total</th>
+                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.success }}>% 1ra</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeDiameters.map((d, idx) => {
+                const q = data.byDiameterQuality[d]
+                const total = q.first + q.second + q.broken
+                const pct = total > 0 ? (q.first / total) * 100 : 0
+                return (
+                  <tr key={d} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                    <td className="py-2 px-3 font-medium">CC{d}</td>
+                    <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{q.first}</td>
+                    <td className="py-2 px-2 text-center" style={{ color: COLORS.warning }}>{q.second}</td>
+                    <td className="py-2 px-2 text-center" style={{ color: COLORS.danger }}>{q.broken}</td>
+                    <td className="py-2 px-2 text-center font-medium">{total}</td>
+                    <td className="py-2 px-2 text-center font-bold" style={{ color: pct >= 95 ? COLORS.success : pct >= 90 ? COLORS.warning : COLORS.danger }}>
+                      {pct.toFixed(1)}%
+                    </td>
+                  </tr>
+                )
+              })}
+              <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
+                <td className="py-2 px-3">TOTAL</td>
+                <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{data.totalFirst}</td>
+                <td className="py-2 px-2 text-center" style={{ color: COLORS.warning }}>{data.totalSecond}</td>
+                <td className="py-2 px-2 text-center" style={{ color: COLORS.danger }}>{data.totalBroken}</td>
+                <td className="py-2 px-2 text-center">{data.totalClassified}</td>
+                <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(1)}%</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-xs">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left py-2 px-3 font-medium">Diametro</th>
-              <th className="text-center py-2 px-2 font-medium text-green-600">1ra</th>
-              <th className="text-center py-2 px-2 font-medium text-amber-600">2da</th>
-              <th className="text-center py-2 px-2 font-medium text-red-600">Rotos</th>
-              <th className="text-center py-2 px-2 font-medium">Total</th>
-              <th className="text-center py-2 px-2 font-medium text-green-600">%1ra</th>
-            </tr>
-          </thead>
-          <tbody>
-            {activeDiameters.map((d, idx) => {
-              const q = data.byDiameterQuality[d]
-              const total = q.first + q.second + q.broken
-              const firstPct = total > 0 ? (q.first / total) * 100 : 0
-              return (
-                <tr key={d} className={idx % 2 === 1 ? "bg-gray-50" : ""}>
-                  <td className="py-2 px-3 font-medium">CC{d}</td>
-                  <td className="text-center py-2 px-2 text-green-600">{q.first}</td>
-                  <td className="text-center py-2 px-2 text-amber-600">{q.second}</td>
-                  <td className="text-center py-2 px-2 text-red-600">{q.broken}</td>
-                  <td className="text-center py-2 px-2 font-medium">{total}</td>
-                  <td className={`text-center py-2 px-2 font-bold ${firstPct >= 95 ? "text-green-600" : firstPct >= 90 ? "text-amber-600" : "text-red-600"}`}>
-                    {firstPct.toFixed(1)}%
-                  </td>
-                </tr>
-              )
-            })}
-            <tr className="border-t-2 bg-emerald-50 font-semibold">
-              <td className="py-2 px-3">TOTAL</td>
-              <td className="text-center py-2 px-2 text-green-600">{data.totalFirst}</td>
-              <td className="text-center py-2 px-2 text-amber-600">{data.totalSecond}</td>
-              <td className="text-center py-2 px-2 text-red-600">{data.totalBroken}</td>
-              <td className="text-center py-2 px-2">{data.totalClassified}</td>
-              <td className="text-center py-2 px-2 text-green-600">{data.qualityIndex.toFixed(1)}%</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      )}
 
       {/* Dos columnas: Defectos y Cajones */}
       <div className="grid grid-cols-2 gap-3">
-        {/* Top defectos */}
-        <div className="border rounded-lg overflow-hidden">
-          <div className="bg-amber-500 text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase">Top 5 Defectos</h3>
-          </div>
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left py-2 px-3 font-medium">Motivo</th>
-                <th className="text-center py-2 px-2 font-medium">Cant</th>
-                <th className="text-center py-2 px-2 font-medium">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.topDefects.length > 0 ? data.topDefects.map((def, idx) => (
-                <tr key={idx} className={idx % 2 === 1 ? "bg-gray-50" : ""}>
-                  <td className="py-1.5 px-3 truncate max-w-[120px]">{def.reason}</td>
-                  <td className="text-center py-1.5 px-2 font-medium">{def.count}</td>
-                  <td className="text-center py-1.5 px-2">{def.percentage.toFixed(1)}%</td>
+        {/* Top Defectos */}
+        {data.topDefects.length > 0 && (
+          <div className="border rounded-lg overflow-hidden">
+            <div style={{ backgroundColor: COLORS.secondary }} className="text-white px-3 py-2">
+              <h3 className="font-semibold text-xs uppercase tracking-wide">Top 5 Defectos</h3>
+            </div>
+            <table className="w-full text-xs">
+              <thead style={{ backgroundColor: COLORS.light }}>
+                <tr>
+                  <th className="text-left py-1.5 px-2 font-medium">Motivo</th>
+                  <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
+                  <th className="text-center py-1.5 px-2 font-medium">%</th>
                 </tr>
-              )) : (
-                <tr><td colSpan={3} className="text-center py-3 text-muted-foreground">Sin defectos registrados</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {data.topDefects.map((def, idx) => (
+                  <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                    <td className="py-1.5 px-2 truncate max-w-[120px]">{def.reason}</td>
+                    <td className="py-1.5 px-2 text-center font-medium">{def.count}</td>
+                    <td className="py-1.5 px-2 text-center">{def.percentage.toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-        {/* Cajones de desperdicio */}
+        {/* Cajones de Desperdicio */}
         <div className="border rounded-lg overflow-hidden">
-          <div className="bg-red-500 text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase">Cajones de Desperdicio</h3>
+          <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Cajones de Desperdicio</h3>
           </div>
           <table className="w-full text-xs">
-            <thead className="bg-gray-50">
+            <thead style={{ backgroundColor: COLORS.light }}>
               <tr>
-                <th className="text-left py-2 px-3 font-medium">Tipo</th>
-                <th className="text-center py-2 px-2 font-medium">Cajones</th>
-                <th className="text-center py-2 px-2 font-medium">Kg</th>
+                <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
+                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
+                <th className="text-center py-1.5 px-2 font-medium">Kg</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td className="py-1.5 px-3">C1-Cinta</td>
-                <td className="text-center py-1.5 px-2">{data.wasteBins.bin1Cinta.boxes}</td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.wasteBins.bin1Cinta.kg)}</td>
+              <tr className="border-t">
+                <td className="py-1.5 px-2">C1 - Cinta</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin1Cinta.boxes || "-"}</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin1Cinta.kg > 0 ? Math.round(data.wasteBins.bin1Cinta.kg) : "-"}</td>
               </tr>
-              <tr className="bg-gray-50">
-                <td className="py-1.5 px-3">C2-Desmolde</td>
-                <td className="text-center py-1.5 px-2">{data.wasteBins.bin2Desmolde.boxes}</td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.wasteBins.bin2Desmolde.kg)}</td>
+              <tr className="border-t" style={{ backgroundColor: COLORS.light }}>
+                <td className="py-1.5 px-2">C2 - Desmolde</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin2Desmolde.boxes || "-"}</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin2Desmolde.kg > 0 ? Math.round(data.wasteBins.bin2Desmolde.kg) : "-"}</td>
               </tr>
-              <tr>
-                <td className="py-1.5 px-3">C3-Cinta</td>
-                <td className="text-center py-1.5 px-2">{data.wasteBins.bin3Cinta.boxes}</td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.wasteBins.bin3Cinta.kg)}</td>
+              <tr className="border-t">
+                <td className="py-1.5 px-2">C3 - Cinta</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin3Cinta.boxes || "-"}</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin3Cinta.kg > 0 ? Math.round(data.wasteBins.bin3Cinta.kg) : "-"}</td>
               </tr>
-              <tr className="bg-gray-50">
-                <td className="py-1.5 px-3">C4-Rotos</td>
-                <td className="text-center py-1.5 px-2">{data.wasteBins.bin4Rotos.boxes}</td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.wasteBins.bin4Rotos.kg)}</td>
+              <tr className="border-t" style={{ backgroundColor: COLORS.light }}>
+                <td className="py-1.5 px-2">C4 - Rotos</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin4Rotos.boxes || "-"}</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin4Rotos.kg > 0 ? Math.round(data.wasteBins.bin4Rotos.kg) : "-"}</td>
               </tr>
-              <tr>
-                <td className="py-1.5 px-3">C5-Mezcla</td>
-                <td className="text-center py-1.5 px-2">{data.wasteBins.bin5Mezcladora.boxes}</td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.wasteBins.bin5Mezcladora.kg)}</td>
+              <tr className="border-t">
+                <td className="py-1.5 px-2">C5 - Mezcladora</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin5Mezcladora.boxes || "-"}</td>
+                <td className="py-1.5 px-2 text-center">{data.wasteBins.bin5Mezcladora.kg > 0 ? Math.round(data.wasteBins.bin5Mezcladora.kg) : "-"}</td>
               </tr>
-              <tr className="border-t-2 bg-red-50 font-semibold">
-                <td className="py-1.5 px-3">TOTAL</td>
-                <td className="text-center py-1.5 px-2">
-                  {data.wasteBins.bin1Cinta.boxes + data.wasteBins.bin2Desmolde.boxes + 
-                   data.wasteBins.bin3Cinta.boxes + data.wasteBins.bin4Rotos.boxes + data.wasteBins.bin5Mezcladora.boxes}
-                </td>
-                <td className="text-center py-1.5 px-2">{Math.round(data.totalWasteKg)}</td>
+              <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
+                <td className="py-1.5 px-2">TOTAL</td>
+                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>{totalWasteBins || "-"}</td>
+                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>{data.totalWasteKg > 0 ? `${(data.totalWasteKg / 1000).toFixed(2)} tn` : "-"}</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Roturas por molde */}
+      {/* Roturas por tipo de molde */}
       {data.moldBreakages.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
-          <div className="bg-red-700 text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase">Roturas por Tipo de Molde</h3>
+          <div style={{ backgroundColor: COLORS.danger }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Roturas por Tipo de Molde</h3>
           </div>
           <table className="w-full text-xs">
-            <thead className="bg-gray-50">
+            <thead style={{ backgroundColor: COLORS.light }}>
               <tr>
-                <th className="text-left py-2 px-3 font-medium">Diametro</th>
-                <th className="text-center py-2 px-2 font-medium">Cant</th>
-                <th className="text-left py-2 px-2 font-medium">Motivos</th>
-                <th className="text-left py-2 px-2 font-medium">Comentarios</th>
+                <th className="text-left py-1.5 px-2 font-medium">Diametro</th>
+                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
+                <th className="text-left py-1.5 px-2 font-medium">Motivos</th>
+                <th className="text-left py-1.5 px-2 font-medium">Comentarios</th>
               </tr>
             </thead>
             <tbody>
-              {data.moldBreakages.map((mb, idx) => (
-                <tr key={idx} className={idx % 2 === 1 ? "bg-gray-50" : ""}>
-                  <td className="py-1.5 px-3 font-medium">{mb.diameter}</td>
-                  <td className="text-center py-1.5 px-2 text-red-600 font-semibold">{mb.count}</td>
-                  <td className="py-1.5 px-2 text-muted-foreground truncate max-w-[150px]">
-                    {mb.reasons.length > 0 ? mb.reasons.slice(0, 2).join(", ") : "-"}
-                  </td>
-                  <td className="py-1.5 px-2 text-muted-foreground truncate max-w-[150px]">
-                    {mb.comments.length > 0 ? mb.comments[0] : "-"}
+              {data.moldBreakages.slice(0, 5).map((mb, idx) => (
+                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                  <td className="py-1.5 px-2 font-medium">{mb.diameter}</td>
+                  <td className="py-1.5 px-2 text-center font-bold" style={{ color: COLORS.danger }}>{mb.count}</td>
+                  <td className="py-1.5 px-2 text-xs truncate max-w-[100px]">{mb.reasons.join(", ") || "-"}</td>
+                  <td className="py-1.5 px-2 text-xs truncate max-w-[150px]" style={{ color: COLORS.muted }}>
+                    {mb.comments.slice(0, 2).join("; ") || "-"}
                   </td>
                 </tr>
               ))}
@@ -823,8 +851,10 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
       )}
 
       {/* Footer */}
-      <div className="text-center text-[10px] text-muted-foreground pt-2 border-t">
-        Generado el {new Date().toLocaleDateString("es-AR")} a las {new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
+      <div className="text-center pt-2 border-t">
+        <p className="text-[10px]" style={{ color: COLORS.muted }}>
+          Generado el {new Date().toLocaleDateString("es-AR")} - Sistema de Control de Produccion
+        </p>
       </div>
     </div>
   )
@@ -835,90 +865,120 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
 // =============================================
 function MaintenanceReport({ data, formatDate }: { data: ReportData; formatDate: (d: string) => string }) {
   return (
-    <div className="space-y-4 text-sm">
+    <div className="space-y-4 text-sm" style={{ fontFamily: "Arial, sans-serif" }}>
       {/* Header */}
-      <div className="bg-orange-600 text-white p-4 rounded-lg">
+      <div style={{ backgroundColor: COLORS.secondary }} className="text-white p-4 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">INFORME DE MANTENIMIENTO</h1>
-            <p className="text-orange-200 text-xs mt-1">Planta Mercedes - Paradas y Disponibilidad</p>
+            <h1 className="text-xl font-bold tracking-wide">INFORME DE MANTENIMIENTO</h1>
+            <p style={{ color: "#c0c0c0" }} className="text-xs mt-1">Planta Mercedes - Canos de Hormigon</p>
           </div>
           <div className="text-right">
             <p className="text-lg font-semibold">{formatDate(data.dateFrom)} - {formatDate(data.dateTo)}</p>
-            <p className="text-orange-200 text-xs">{data.daysWorked} dias de produccion</p>
+            <p style={{ color: "#c0c0c0" }} className="text-xs">{data.daysWorked} dias de produccion</p>
           </div>
         </div>
       </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="border rounded-lg p-3 text-center bg-red-50">
-          <p className="text-xs text-muted-foreground uppercase">Tiempo Parada</p>
-          <p className="text-2xl font-bold text-red-600">{data.totalDowntimeMinutes}</p>
-          <p className="text-xs text-muted-foreground">minutos totales</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Tiempo Parada</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.totalDowntimeMinutes}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>minutos</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-green-50">
-          <p className="text-xs text-muted-foreground uppercase">Disponibilidad</p>
-          <p className="text-2xl font-bold text-green-600">{data.availabilityIndex.toFixed(1)}%</p>
-          <p className="text-xs text-muted-foreground">tiempo efectivo</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#eef5f0" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Disponibilidad</p>
+          <p className="text-2xl font-bold" style={{ color: data.availabilityIndex >= 85 ? COLORS.success : COLORS.danger }}>
+            {data.availabilityIndex.toFixed(1)}%
+          </p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>del tiempo</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-orange-50">
-          <p className="text-xs text-muted-foreground uppercase">Promedio/Dia</p>
-          <p className="text-2xl font-bold text-orange-600">{data.avgDowntimePerDay}</p>
-          <p className="text-xs text-muted-foreground">min parada/dia</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Promedio/Dia</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.avgDowntimePerDay}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>min/dia</p>
         </div>
-        <div className="border rounded-lg p-3 text-center bg-blue-50">
-          <p className="text-xs text-muted-foreground uppercase">Horas Efectivas</p>
-          <p className="text-2xl font-bold text-blue-600">{data.effectiveHours.toFixed(1)}</p>
-          <p className="text-xs text-muted-foreground">horas trabajadas</p>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Horas Efectivas</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.effectiveHours.toFixed(1)}</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>horas</p>
         </div>
       </div>
 
-      {/* Top paradas */}
-      <div className="border rounded-lg overflow-hidden">
-        <div className="bg-orange-600 text-white px-3 py-2">
-          <h3 className="font-semibold text-xs uppercase">Top 5 Paradas</h3>
+      {/* Barra de disponibilidad */}
+      <div className="border rounded-lg p-3">
+        <div className="flex justify-between text-xs mb-2">
+          <span style={{ color: COLORS.muted }}>Distribucion del Tiempo</span>
+          <span className="font-medium">{data.daysWorked * 8} horas disponibles</span>
         </div>
-        <table className="w-full text-xs">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left py-2 px-3 font-medium">Motivo</th>
-              <th className="text-center py-2 px-2 font-medium">Min</th>
-              <th className="text-center py-2 px-2 font-medium">%</th>
-              <th className="text-left py-2 px-3 font-medium">Comentario frecuente</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.topDowntimes.length > 0 ? data.topDowntimes.map((dt, idx) => (
-              <tr key={idx} className={idx % 2 === 1 ? "bg-gray-50" : ""}>
-                <td className="py-2 px-3">{dt.reason}</td>
-                <td className="text-center py-2 px-2 font-semibold text-red-600">{dt.minutes}</td>
-                <td className="text-center py-2 px-2">{dt.percentage.toFixed(1)}%</td>
-                <td className="py-2 px-3 text-muted-foreground truncate max-w-[200px]">{dt.topComment || "-"}</td>
-              </tr>
-            )) : (
-              <tr><td colSpan={4} className="text-center py-4 text-muted-foreground">Sin paradas registradas</td></tr>
-            )}
-            {data.topDowntimes.length > 0 && (
-              <tr className="border-t-2 bg-orange-50 font-semibold">
-                <td className="py-2 px-3">TOTAL</td>
-                <td className="text-center py-2 px-2 text-red-600">{data.totalDowntimeMinutes}</td>
-                <td className="text-center py-2 px-2">100%</td>
-                <td className="py-2 px-3 text-muted-foreground">({(data.totalDowntimeMinutes / 60).toFixed(1)} horas)</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <div className="h-6 rounded-full overflow-hidden flex" style={{ backgroundColor: COLORS.light }}>
+          <div 
+            className="h-full flex items-center justify-center text-white text-xs font-medium"
+            style={{ 
+              width: `${data.availabilityIndex}%`, 
+              backgroundColor: COLORS.success 
+            }}
+          >
+            {data.availabilityIndex.toFixed(0)}% Efectivo
+          </div>
+          <div 
+            className="h-full flex items-center justify-center text-white text-xs font-medium"
+            style={{ 
+              width: `${100 - data.availabilityIndex}%`, 
+              backgroundColor: COLORS.danger 
+            }}
+          >
+            {(100 - data.availabilityIndex).toFixed(0)}% Parada
+          </div>
+        </div>
       </div>
+
+      {/* Top Paradas */}
+      {data.topDowntimes.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div style={{ backgroundColor: COLORS.danger }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Top 5 Motivos de Parada</h3>
+          </div>
+          <table className="w-full text-xs">
+            <thead style={{ backgroundColor: COLORS.light }}>
+              <tr>
+                <th className="text-left py-2 px-3 font-medium">Motivo</th>
+                <th className="text-center py-2 px-2 font-medium">Min</th>
+                <th className="text-center py-2 px-2 font-medium">%</th>
+                <th className="text-left py-2 px-2 font-medium">Comentario</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.topDowntimes.map((dt, idx) => (
+                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                  <td className="py-2 px-3">{dt.reason}</td>
+                  <td className="py-2 px-2 text-center font-bold" style={{ color: COLORS.danger }}>{dt.minutes}</td>
+                  <td className="py-2 px-2 text-center">{dt.percentage.toFixed(1)}%</td>
+                  <td className="py-2 px-2 truncate max-w-[200px]" style={{ color: COLORS.muted }}>
+                    {dt.topComment || "-"}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
+                <td className="py-2 px-3">TOTAL</td>
+                <td className="py-2 px-2 text-center" style={{ color: COLORS.danger }}>{data.totalDowntimeMinutes}</td>
+                <td className="py-2 px-2 text-center">100%</td>
+                <td className="py-2 px-2" style={{ color: COLORS.muted }}>({(data.totalDowntimeMinutes / 60).toFixed(1)} horas)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Roturas de molde */}
       {data.moldBreakages.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
-          <div className="bg-red-600 text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase">Roturas de Molde por Diametro</h3>
+          <div style={{ backgroundColor: COLORS.secondary }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Roturas de Molde por Diametro</h3>
           </div>
           <table className="w-full text-xs">
-            <thead className="bg-gray-50">
+            <thead style={{ backgroundColor: COLORS.light }}>
               <tr>
                 <th className="text-left py-2 px-3 font-medium">Diametro</th>
                 <th className="text-center py-2 px-2 font-medium">Cantidad</th>
@@ -928,49 +988,25 @@ function MaintenanceReport({ data, formatDate }: { data: ReportData; formatDate:
             </thead>
             <tbody>
               {data.moldBreakages.map((mb, idx) => (
-                <tr key={idx} className={idx % 2 === 1 ? "bg-gray-50" : ""}>
+                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
                   <td className="py-2 px-3 font-medium">{mb.diameter}</td>
-                  <td className="text-center py-2 px-2 text-red-600 font-semibold">{mb.count}</td>
-                  <td className="py-2 px-2 text-muted-foreground">{mb.reasons.join(", ") || "-"}</td>
-                  <td className="py-2 px-2 text-muted-foreground truncate max-w-[200px]">
-                    {mb.comments.length > 0 ? mb.comments[0] : "-"}
+                  <td className="py-2 px-2 text-center font-bold" style={{ color: COLORS.danger }}>{mb.count}</td>
+                  <td className="py-2 px-2 truncate max-w-[120px]">{mb.reasons.join(", ") || "-"}</td>
+                  <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: COLORS.muted }}>
+                    {mb.comments.slice(0, 2).join("; ") || "-"}
                   </td>
                 </tr>
               ))}
-              <tr className="border-t-2 bg-red-50 font-semibold">
-                <td className="py-2 px-3">TOTAL</td>
-                <td className="text-center py-2 px-2 text-red-600">
-                  {data.moldBreakages.reduce((sum, mb) => sum + mb.count, 0)}
-                </td>
-                <td colSpan={2}></td>
-              </tr>
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Resumen visual de disponibilidad */}
-      <div className="border rounded-lg p-4">
-        <h3 className="font-semibold text-xs uppercase mb-3 text-center">Distribucion del Tiempo</h3>
-        <div className="flex items-center gap-2">
-          <div 
-            className="h-8 bg-green-500 rounded-l flex items-center justify-center text-white text-xs font-medium"
-            style={{ width: `${data.availabilityIndex}%` }}
-          >
-            {data.availabilityIndex.toFixed(0)}% Efectivo
-          </div>
-          <div 
-            className="h-8 bg-red-500 rounded-r flex items-center justify-center text-white text-xs font-medium"
-            style={{ width: `${100 - data.availabilityIndex}%` }}
-          >
-            {(100 - data.availabilityIndex).toFixed(0)}% Parada
-          </div>
-        </div>
-      </div>
-
       {/* Footer */}
-      <div className="text-center text-[10px] text-muted-foreground pt-2 border-t">
-        Generado el {new Date().toLocaleDateString("es-AR")} a las {new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
+      <div className="text-center pt-2 border-t">
+        <p className="text-[10px]" style={{ color: COLORS.muted }}>
+          Generado el {new Date().toLocaleDateString("es-AR")} - Sistema de Control de Produccion
+        </p>
       </div>
     </div>
   )
