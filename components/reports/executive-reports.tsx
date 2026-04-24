@@ -173,10 +173,13 @@ export function ExecutiveReports() {
       const dailyProd: Record<string, number> = {}
 
       weekdayProductionData.forEach((record: any) => {
-        // Produccion por diametro
+        // Produccion por diametro (simples + armado = total producido)
         PIPE_DIAMETERS.forEach(d => {
-          const produced = record[`cc${d}_produced`] || 0
-          const reproc = record[`cc${d}_reprocessed`] || 0
+          const simple = record[`cc${d}_simples`] || 0
+          const armado = record[`cc${d}_armado`] || 0
+          const produced = simple + armado
+          // Reprocesados: columna "Rotura" del parte diario
+          const reproc = (record[`cc${d}_rotura`] || 0) + (record[`cc${d}_rotura_armado`] || 0)
           const weightPerUnit = getWeightPerUnit(d)
           
           byDiameter[d].produced += produced
@@ -190,7 +193,9 @@ export function ExecutiveReports() {
 
         // Produccion diaria
         const date = record.production_date
-        dailyProd[date] = (dailyProd[date] || 0) + PIPE_DIAMETERS.reduce((sum, d) => sum + (record[`cc${d}_produced`] || 0), 0)
+        dailyProd[date] = (dailyProd[date] || 0) + PIPE_DIAMETERS.reduce((sum, d) => {
+          return sum + (record[`cc${d}_simples`] || 0) + (record[`cc${d}_armado`] || 0)
+        }, 0)
 
         // Cajones de desperdicio (peso neto)
         const bin1 = record.waste_bin_1_cinta || 0
