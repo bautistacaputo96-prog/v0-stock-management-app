@@ -100,10 +100,11 @@ export function ExecutiveReports() {
       const supabase = getSupabase()
       
       // 1. Produccion del parte diario
+      const plantFilter = selectedPlant || "mercedes"
       const { data: productionData, error: prodError } = await supabase
         .from("pipe_production")
         .select("*, pipe_downtime(id, downtime_reason_id, custom_reason, minutes, comments, downtime_reasons:downtime_reason_id(reason)), pipe_mold_breakage(id, diameter, reasons, comments)")
-        .eq("plant", selectedPlant || "mercedes")
+        .or(`plant.is.null,plant.eq.${plantFilter}`)
         .gte("production_date", dateFrom)
         .lte("production_date", dateTo)
         .order("production_date", { ascending: true })
@@ -112,10 +113,19 @@ export function ExecutiveReports() {
         console.error("Error loading production:", prodError)
       }
 
-      // 2. Control de calidad con items
+      // 2. Control de calidad con items (usando misma estructura que unified-pipe-report)
       const { data: qualityData, error: qualError } = await supabase
         .from("pipe_quality_control")
-        .select("*, pipe_quality_items(id, diameter, first_quality, second_quality, broken), pipe_quality_defects(id, defect_type, defect_reason_id, pipe_defect_reasons:defect_reason_id(reason))")
+        .select(`
+          *,
+          items:pipe_quality_items(
+            *,
+            defects:pipe_quality_defects(
+              *,
+              reason:pipe_defect_reasons(reason, category)
+            )
+          )
+        `)
         .gte("control_date", dateFrom)
         .lte("control_date", dateTo)
 
@@ -239,9 +249,9 @@ export function ExecutiveReports() {
       })
       const defectCounts: Record<string, number> = {}
 
-      qualityData?.forEach((qc: any) => {
-        // Procesar items de calidad (cada item tiene diameter, first_quality, second_quality, broken)
-        qc.pipe_quality_items?.forEach((item: any) => {
+      qualityData?.forEach((control: any) => {
+        // Procesar items de calidad (alias: items)
+        control.items?.forEach((item: any) => {
           const diameter = item.diameter
           const first = item.first_quality || 0
           const second = item.second_quality || 0
@@ -256,12 +266,12 @@ export function ExecutiveReports() {
             byDiameterQuality[diameter].second += second
             byDiameterQuality[diameter].broken += broken
           }
-        })
-
-        // Procesar defectos
-        qc.pipe_quality_defects?.forEach((def: any) => {
-          const reason = def.pipe_defect_reasons?.reason || def.defect_type || "Otros"
-          defectCounts[reason] = (defectCounts[reason] || 0) + 1
+          
+          // Procesar defectos de cada item
+          item.defects?.forEach((def: any) => {
+            const reason = def.reason?.reason || "Otros"
+            defectCounts[reason] = (defectCounts[reason] || 0) + 1
+          })
         })
       })
 
