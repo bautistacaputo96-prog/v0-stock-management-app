@@ -1220,7 +1220,7 @@ export function UnifiedPipeReport() {
                     {currentPeriod.scrapIndex.toFixed(2)}%
                   </p>
                   <p className="text-xs font-medium uppercase mt-1 text-destructive">Cajones Desperdicio</p>
-                  <p className="text-sm font-semibold text-destructive">{currentPeriod.cajonesDesperdicioTn.toFixed(2)} Tn</p>
+                  <p className="text-sm font-semibold text-destructive">{currentPeriod.totalScrapTn.toFixed(2)} Tn</p>
                   <p className="text-[10px] text-muted-foreground">Desperdicio en produccion</p>
                   {previousPeriod && (
                     <DeltaIndicator 
