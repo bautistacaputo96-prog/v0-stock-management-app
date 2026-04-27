@@ -282,21 +282,35 @@ export function ExecutiveReports() {
 
       const totalClassified = totalFirst + totalSecond + totalBroken
       
-      // Calcular toneladas para índices (igual que unified-pipe-report)
-      const totalProducidoTn = totalWeightKg / 1000
+      // ============================================
+      // FÓRMULAS IDÉNTICAS AL INFORME UNIFICADO:
+      // - Primera = Caños a playa - Segunda - Rotos calidad
+      // - Total Producido = Caños a playa + Cajones desperdicio
+      // ============================================
+      
+      // Cajones de desperdicio en Tn
       const totalWasteKgCalc = wasteBins.bin1Cinta.kg + wasteBins.bin2Desmolde.kg + 
                               wasteBins.bin3Cinta.kg + wasteBins.bin4Rotos.kg + wasteBins.bin5Mezcladora.kg
       const cajonesDesperdicioTn = totalWasteKgCalc / 1000
       
+      // Caños a playa (del parte diario) = totalWeightKg
+      const canosPlayaTn = totalWeightKg / 1000
+      const canosPlayaUnits = totalUnits
+      
       // Calcular toneladas de segunda y rotos usando peso promedio por unidad
-      // Total producido en unidades / toneladas = peso promedio por unidad
-      const avgWeightPerUnit = totalUnits > 0 ? totalProducidoTn / totalUnits : 0
+      const avgWeightPerUnit = totalUnits > 0 ? canosPlayaTn / totalUnits : 0
       const segundaTn = totalSecond * avgWeightPerUnit
       const rotosCalidadTn = totalBroken * avgWeightPerUnit
-      const primeraTn = totalProducidoTn - segundaTn - rotosCalidadTn - cajonesDesperdicioTn
+      
+      // Primera = Caños a playa - Segunda - Rotos de calidad (NO resta cajones)
+      const primeraTn = Math.max(0, canosPlayaTn - segundaTn - rotosCalidadTn)
+      const primeraUnits = Math.max(0, canosPlayaUnits - totalSecond - totalBroken)
+      
+      // Total Producido = Caños a playa + Cajones (no es canosPlayaTn solamente!)
+      const totalProducidoTn = canosPlayaTn + cajonesDesperdicioTn
       
       // ÍNDICES sobre Total Producido (en Tn) - igual que informe unificado
-      const qualityIndex = totalProducidoTn > 0 ? (Math.max(0, primeraTn) / totalProducidoTn) * 100 : 0
+      const qualityIndex = totalProducidoTn > 0 ? (primeraTn / totalProducidoTn) * 100 : 100
       const secondIndex = totalProducidoTn > 0 ? (segundaTn / totalProducidoTn) * 100 : 0
       const brokenIndex = totalProducidoTn > 0 ? (rotosCalidadTn / totalProducidoTn) * 100 : 0
       const scrapIndex = totalProducidoTn > 0 ? (cajonesDesperdicioTn / totalProducidoTn) * 100 : 0
@@ -356,10 +370,21 @@ export function ExecutiveReports() {
         reprocessedUnits,
         byDiameter,
         dailyProduction,
+        // Índices (igual que informe unificado)
         qualityIndex,
         secondIndex,
         brokenIndex,
         scrapIndex,
+        // Toneladas por concepto
+        totalProducidoTn,
+        canosPlayaTn,
+        primeraTn,
+        segundaTn,
+        rotosCalidadTn,
+        cajonesDesperdicioTn,
+        // Unidades por concepto
+        canosPlayaUnits,
+        primeraUnits,
         totalClassified,
         totalFirst,
         totalSecond,
@@ -702,27 +727,31 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
         </div>
       </div>
 
-      {/* KPIs - Mismos indices que informe unificado */}
+      {/* KPIs - Mismos indices que informe unificado (sobre Total Producido en Tn) */}
       <div className="grid grid-cols-4 gap-3">
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#eef5f0" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Primera</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(2)}%</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalFirst} canos</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex?.toFixed(2) || "0.00"}%</p>
+          <p className="text-xs font-semibold" style={{ color: COLORS.success }}>{data.primeraTn?.toFixed(2) || "0.00"} Tn</p>
+          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.primeraUnits || 0} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5f3ee" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Segunda</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex.toFixed(2)}%</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalSecond} canos</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex?.toFixed(2) || "0.00"}%</p>
+          <p className="text-xs font-semibold" style={{ color: COLORS.warning }}>{data.segundaTn?.toFixed(2) || "0.00"} Tn</p>
+          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.totalSecond || 0} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Rotura</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex.toFixed(2)}%</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalBroken} canos</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex?.toFixed(2) || "0.00"}%</p>
+          <p className="text-xs font-semibold" style={{ color: COLORS.danger }}>{data.rotosCalidadTn?.toFixed(2) || "0.00"} Tn</p>
+          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.totalBroken || 0} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Cajones Desperdicio</p>
           <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.scrapIndex?.toFixed(2) || "0.00"}%</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{(data.totalWasteKg / 1000).toFixed(2)} tn</p>
+          <p className="text-xs font-semibold" style={{ color: COLORS.danger }}>{data.cajonesDesperdicioTn?.toFixed(2) || "0.00"} Tn</p>
+          <p className="text-[10px]" style={{ color: COLORS.muted }}>Desperdicio en produccion</p>
         </div>
       </div>
 
