@@ -256,7 +256,8 @@ export function ExecutiveReports() {
       PIPE_DIAMETERS.forEach(d => {
         byDiameterQuality[d] = { first: 0, second: 0, broken: 0 }
       })
-      const defectCounts: Record<string, number> = {}
+      // Defectos por diámetro: { "CC300 - Motivo": count }
+      const defectsByDiameter: Record<string, number> = {}
 
       qualityData?.forEach((control: any) => {
         control.items?.forEach((item: any) => {
@@ -282,10 +283,11 @@ export function ExecutiveReports() {
             byDiameterQuality[diameter].broken += broken
           }
           
-          // Procesar defectos
+          // Procesar defectos por diámetro
           item.defects?.forEach((def: any) => {
             const reason = def.reason?.reason || "Otros"
-            defectCounts[reason] = (defectCounts[reason] || 0) + 1
+            const key = `CC${diameter}|${reason}`
+            defectsByDiameter[key] = (defectsByDiameter[key] || 0) + 1
           })
         })
       })
@@ -322,16 +324,20 @@ export function ExecutiveReports() {
       const brokenIndex = totalProducidoTn > 0 ? (rotosCalidadTn / totalProducidoTn) * 100 : 0
       const scrapIndex = totalProducidoTn > 0 ? (cajonesDesperdicioTn / totalProducidoTn) * 100 : 0
 
-      // Top defectos
-      const totalDefects = Object.values(defectCounts).reduce((a, b) => a + b, 0)
-      const topDefects = Object.entries(defectCounts)
+      // Top defectos por diámetro
+      const totalDefects = Object.values(defectsByDiameter).reduce((a, b) => a + b, 0)
+      const topDefects = Object.entries(defectsByDiameter)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([reason, count]) => ({
-          reason,
-          count,
-          percentage: totalDefects > 0 ? (count / totalDefects) * 100 : 0
-        }))
+        .slice(0, 8)  // Más defectos para mostrar mejor el desglose
+        .map(([key, count]) => {
+          const [diameter, reason] = key.split("|")
+          return {
+            diameter,
+            reason,
+            count,
+            percentage: totalDefects > 0 ? (count / totalDefects) * 100 : 0
+          }
+        })
 
       // Top paradas
       const topDowntimes = Object.entries(downtimeByReason)
@@ -810,37 +816,37 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
         </div>
       )}
 
-      {/* Dos columnas: Defectos y Cajones */}
-      <div className="grid grid-cols-2 gap-3">
-        {/* Top Defectos */}
-        {data.topDefects.length > 0 && (
-          <div className="border rounded-lg overflow-hidden">
-            <div style={{ backgroundColor: COLORS.secondary }} className="text-white px-3 py-2">
-              <h3 className="font-semibold text-xs uppercase tracking-wide">Top 5 Defectos</h3>
-            </div>
-            <table className="w-full text-xs">
-              <thead style={{ backgroundColor: COLORS.light }}>
-                <tr>
-                  <th className="text-left py-1.5 px-2 font-medium">Motivo</th>
-                  <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
-                  <th className="text-center py-1.5 px-2 font-medium">%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.topDefects.map((def, idx) => (
-                  <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
-                    <td className="py-1.5 px-2 truncate max-w-[120px]">{def.reason}</td>
-                    <td className="py-1.5 px-2 text-center font-medium">{def.count}</td>
-                    <td className="py-1.5 px-2 text-center">{def.percentage.toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Cajones de Desperdicio - con porcentajes */}
+      {/* Defectos por tipo de caño */}
+      {data.topDefects.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
+          <div style={{ backgroundColor: COLORS.secondary }} className="text-white px-3 py-2">
+            <h3 className="font-semibold text-xs uppercase tracking-wide">Defectos por Tipo de Cano</h3>
+          </div>
+          <table className="w-full text-xs">
+            <thead style={{ backgroundColor: COLORS.light }}>
+              <tr>
+                <th className="text-left py-1.5 px-2 font-medium">Diametro</th>
+                <th className="text-left py-1.5 px-2 font-medium">Motivo</th>
+                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
+                <th className="text-center py-1.5 px-2 font-medium">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.topDefects.map((def, idx) => (
+                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
+                  <td className="py-1.5 px-2 font-medium">{def.diameter}</td>
+                  <td className="py-1.5 px-2 truncate max-w-[150px]">{def.reason}</td>
+                  <td className="py-1.5 px-2 text-center font-medium">{def.count}</td>
+                  <td className="py-1.5 px-2 text-center">{def.percentage.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Cajones de Desperdicio */}
+      <div className="border rounded-lg overflow-hidden">
           <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
             <h3 className="font-semibold text-xs uppercase tracking-wide">Cajones de Desperdicio</h3>
           </div>
@@ -879,7 +885,6 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
             </tbody>
           </table>
         </div>
-      </div>
 
       {/* Footer */}
       <div className="text-center pt-2 border-t">
