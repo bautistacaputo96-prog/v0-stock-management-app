@@ -12,6 +12,7 @@ import { Eye, FileDown, Loader2, Factory, CheckCircle, Wrench } from "lucide-rea
 import { useToast } from "@/hooks/use-toast"
 import html2canvas from "html2canvas"
 import jsPDF from "jspdf"
+import { PipeQualityExecutiveReport } from "@/components/reports/pipe-quality-executive-report"
 
 // Paleta de colores corporativa - Gris y Rojo opaco
 const COLORS = {
@@ -712,187 +713,57 @@ function ProductionReport({ data, formatDate, formatDateShort }: {
 }
 
 // =============================================
-// INFORME DE CALIDAD
+// INFORME DE CALIDAD (usa PipeQualityExecutiveReport)
 // =============================================
 function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d: string) => string }) {
-  const activeDiameters = PIPE_DIAMETERS.filter(d => {
-    const q = data.byDiameterQuality[d]
-    return q && (q.first + q.second + q.broken) > 0
-  })
+  // Preparar datos de calidad para el componente
+  const qualityReportData = {
+    byDiameter: Object.fromEntries(
+      PIPE_DIAMETERS.map(d => [d, {
+        first: data.byDiameterQuality[d]?.first || 0,
+        second: data.byDiameterQuality[d]?.second || 0,
+        broken: data.byDiameterQuality[d]?.broken || 0,
+        total: (data.byDiameterQuality[d]?.first || 0) + 
+               (data.byDiameterQuality[d]?.second || 0) + 
+               (data.byDiameterQuality[d]?.broken || 0)
+      }])
+    ) as Record<number, { first: number; second: number; broken: number; total: number }>,
+    byReason: data.topDefects.map(def => ({
+      reason: def.reason,
+      category: "produccion" as const,
+      total: def.count,
+      byDiameter: Object.fromEntries(PIPE_DIAMETERS.map(d => [d, 0])) as Record<number, number>
+    })),
+    totals: {
+      first: data.totalFirst,
+      second: data.totalSecond,
+      broken: data.totalBroken,
+      total: data.totalClassified
+    }
+  }
 
-  const totalWasteBins = data.wasteBins.bin1Cinta.boxes + data.wasteBins.bin2Desmolde.boxes +
-                         data.wasteBins.bin3Cinta.boxes + data.wasteBins.bin4Rotos.boxes +
-                         data.wasteBins.bin5Mezcladora.boxes
-  
+  // Preparar datos de producción para los índices sobre toneladas
+  const productionData = {
+    canosPlayaTn: data.canosPlayaTn || 0,
+    canosPlayaUnits: data.canosPlayaUnits || 0,
+    segundaTn: data.segundaTn || 0,
+    rotosCalidadTn: data.rotosCalidadTn || 0,
+    cajonesDesperdicioTn: data.cajonesDesperdicioTn || 0,
+    totalProducidoTn: data.totalProducidoTn || 0,
+    qualityIndex: data.qualityIndex || 0,
+    secondIndex: data.secondIndex || 0,
+    brokenIndex: data.brokenIndex || 0,
+    scrapIndex: data.scrapIndex || 0
+  }
+
   return (
-    <div className="space-y-4 text-sm" style={{ fontFamily: "Arial, sans-serif" }}>
-      {/* Header */}
-      <div style={{ backgroundColor: COLORS.accent }} className="text-white p-4 rounded-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-wide">INFORME DE CALIDAD</h1>
-            <p style={{ color: "#d4b0b0" }} className="text-xs mt-1">Planta Mercedes - Canos de Hormigon</p>
-          </div>
-          <div className="text-right">
-            <p className="text-lg font-semibold">{formatDate(data.dateFrom)} - {formatDate(data.dateTo)}</p>
-            <p style={{ color: "#d4b0b0" }} className="text-xs">{data.daysWorked} dias de produccion</p>
-          </div>
-        </div>
-      </div>
-
-      {/* KPIs - Mismos indices que informe unificado (sobre Total Producido en Tn) */}
-      <div className="grid grid-cols-4 gap-3">
-        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#eef5f0" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Primera</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex?.toFixed(2) || "0.00"}%</p>
-          <p className="text-xs font-semibold" style={{ color: COLORS.success }}>{data.primeraTn?.toFixed(2) || "0.00"} Tn</p>
-          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.primeraUnits || 0} canos</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5f3ee" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Segunda</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex?.toFixed(2) || "0.00"}%</p>
-          <p className="text-xs font-semibold" style={{ color: COLORS.warning }}>{data.segundaTn?.toFixed(2) || "0.00"} Tn</p>
-          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.totalSecond || 0} canos</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Rotura</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex?.toFixed(2) || "0.00"}%</p>
-          <p className="text-xs font-semibold" style={{ color: COLORS.danger }}>{data.rotosCalidadTn?.toFixed(2) || "0.00"} Tn</p>
-          <p className="text-[10px]" style={{ color: COLORS.muted }}>{data.totalBroken || 0} canos</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Cajones Desperdicio</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.scrapIndex?.toFixed(2) || "0.00"}%</p>
-          <p className="text-xs font-semibold" style={{ color: COLORS.danger }}>{data.cajonesDesperdicioTn?.toFixed(2) || "0.00"} Tn</p>
-          <p className="text-[10px]" style={{ color: COLORS.muted }}>Desperdicio en produccion</p>
-        </div>
-      </div>
-
-      {/* Calidad por diametro */}
-      {activeDiameters.length > 0 && (
-        <div className="border rounded-lg overflow-hidden">
-          <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase tracking-wide">Calidad por Diametro</h3>
-          </div>
-          <table className="w-full text-xs">
-            <thead style={{ backgroundColor: COLORS.light }}>
-              <tr>
-                <th className="text-left py-2 px-3 font-medium">Diametro</th>
-                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.success }}>1ra</th>
-                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.warning }}>2da</th>
-                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.danger }}>Rotos</th>
-                <th className="text-center py-2 px-2 font-medium">Total</th>
-                <th className="text-center py-2 px-2 font-medium" style={{ color: COLORS.success }}>% 1ra</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeDiameters.map((d, idx) => {
-                const q = data.byDiameterQuality[d]
-                const total = q.first + q.second + q.broken
-                const pct = total > 0 ? (q.first / total) * 100 : 0
-                return (
-                  <tr key={d} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
-                    <td className="py-2 px-3 font-medium">CC{d}</td>
-                    <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{q.first}</td>
-                    <td className="py-2 px-2 text-center" style={{ color: COLORS.warning }}>{q.second}</td>
-                    <td className="py-2 px-2 text-center" style={{ color: COLORS.danger }}>{q.broken}</td>
-                    <td className="py-2 px-2 text-center font-medium">{total}</td>
-                    <td className="py-2 px-2 text-center font-bold" style={{ color: pct >= 95 ? COLORS.success : pct >= 90 ? COLORS.warning : COLORS.danger }}>
-                      {pct.toFixed(1)}%
-                    </td>
-                  </tr>
-                )
-              })}
-              <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
-                <td className="py-2 px-3">TOTAL</td>
-                <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{data.totalFirst}</td>
-                <td className="py-2 px-2 text-center" style={{ color: COLORS.warning }}>{data.totalSecond}</td>
-                <td className="py-2 px-2 text-center" style={{ color: COLORS.danger }}>{data.totalBroken}</td>
-                <td className="py-2 px-2 text-center">{data.totalClassified}</td>
-                <td className="py-2 px-2 text-center" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(1)}%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Defectos por tipo de caño */}
-      {data.topDefects.length > 0 && (
-        <div className="border rounded-lg overflow-hidden">
-          <div style={{ backgroundColor: COLORS.secondary }} className="text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase tracking-wide">Defectos por Tipo de Cano</h3>
-          </div>
-          <table className="w-full text-xs">
-            <thead style={{ backgroundColor: COLORS.light }}>
-              <tr>
-                <th className="text-left py-1.5 px-2 font-medium">Diametro</th>
-                <th className="text-left py-1.5 px-2 font-medium">Motivo</th>
-                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
-                <th className="text-center py-1.5 px-2 font-medium">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.topDefects.map((def, idx) => (
-                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
-                  <td className="py-1.5 px-2 font-medium">{def.diameter}</td>
-                  <td className="py-1.5 px-2 truncate max-w-[150px]">{def.reason}</td>
-                  <td className="py-1.5 px-2 text-center font-medium">{def.count}</td>
-                  <td className="py-1.5 px-2 text-center">{def.percentage.toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Cajones de Desperdicio */}
-      <div className="border rounded-lg overflow-hidden">
-          <div style={{ backgroundColor: COLORS.accent }} className="text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase tracking-wide">Cajones de Desperdicio</h3>
-          </div>
-          <table className="w-full text-xs">
-            <thead style={{ backgroundColor: COLORS.light }}>
-              <tr>
-                <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
-                <th className="text-center py-1.5 px-2 font-medium">Kg</th>
-                <th className="text-center py-1.5 px-2 font-medium">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                { name: "C1 - Cinta", kg: data.wasteBins.bin1Cinta.kg },
-                { name: "C2 - Desmolde", kg: data.wasteBins.bin2Desmolde.kg },
-                { name: "C3 - Cinta", kg: data.wasteBins.bin3Cinta.kg },
-                { name: "C4 - Rotos", kg: data.wasteBins.bin4Rotos.kg },
-                { name: "C5 - Mezcladora", kg: data.wasteBins.bin5Mezcladora.kg }
-              ].map((bin, idx) => {
-                const pct = data.totalWasteKg > 0 ? (bin.kg / data.totalWasteKg) * 100 : 0
-                return (
-                  <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
-                    <td className="py-1.5 px-2">{bin.name}</td>
-                    <td className="py-1.5 px-2 text-center">{bin.kg > 0 ? Math.round(bin.kg) : "-"}</td>
-                    <td className="py-1.5 px-2 text-center font-medium" style={{ color: pct > 30 ? COLORS.danger : COLORS.primary }}>
-                      {bin.kg > 0 ? `${pct.toFixed(1)}%` : "-"}
-                    </td>
-                  </tr>
-                )
-              })}
-              <tr className="border-t-2 font-semibold" style={{ backgroundColor: "#e8e8e8" }}>
-                <td className="py-1.5 px-2">TOTAL</td>
-                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>{data.totalWasteKg > 0 ? `${(data.totalWasteKg / 1000).toFixed(2)} tn` : "-"}</td>
-                <td className="py-1.5 px-2 text-center" style={{ color: COLORS.accent }}>100%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-      {/* Footer */}
-      <div className="text-center pt-2 border-t">
-        <p className="text-[10px]" style={{ color: COLORS.muted }}>
-          Generado el {new Date().toLocaleDateString("es-AR")} - Sistema de Control de Produccion
-        </p>
-      </div>
-    </div>
+    <PipeQualityExecutiveReport
+      fromDate={data.dateFrom}
+      toDate={data.dateTo}
+      reportData={qualityReportData}
+      controlsCount={data.daysWorked}
+      productionData={productionData}
+    />
   )
 }
 
