@@ -702,27 +702,27 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs - Mismos indices que informe unificado */}
       <div className="grid grid-cols-4 gap-3">
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#eef5f0" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Primera</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(1)}%</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.success }}>{data.qualityIndex.toFixed(2)}%</p>
           <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalFirst} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5f3ee" }}>
           <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Segunda</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex.toFixed(1)}%</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.warning }}>{data.secondIndex.toFixed(2)}%</p>
           <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalSecond} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Desp. Produccion</p>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Rotura</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex.toFixed(2)}%</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalBroken} canos</p>
+        </div>
+        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Cajones Desperdicio</p>
           <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.scrapIndex?.toFixed(2) || "0.00"}%</p>
           <p className="text-xs" style={{ color: COLORS.muted }}>{(data.totalWasteKg / 1000).toFixed(2)} tn</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Total Producido</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalWeightTn?.toFixed(2) || 0} tn</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalUnits} canos</p>
         </div>
       </div>
 
@@ -844,37 +844,6 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
           </table>
         </div>
       </div>
-
-      {/* Roturas por tipo de molde */}
-      {data.moldBreakages.length > 0 && (
-        <div className="border rounded-lg overflow-hidden">
-          <div style={{ backgroundColor: COLORS.danger }} className="text-white px-3 py-2">
-            <h3 className="font-semibold text-xs uppercase tracking-wide">Roturas por Tipo de Molde</h3>
-          </div>
-          <table className="w-full text-xs">
-            <thead style={{ backgroundColor: COLORS.light }}>
-              <tr>
-                <th className="text-left py-1.5 px-2 font-medium">Diametro</th>
-                <th className="text-center py-1.5 px-2 font-medium">Cant.</th>
-                <th className="text-left py-1.5 px-2 font-medium">Motivos</th>
-                <th className="text-left py-1.5 px-2 font-medium">Comentarios</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.moldBreakages.slice(0, 5).map((mb, idx) => (
-                <tr key={idx} className="border-t" style={{ backgroundColor: idx % 2 === 1 ? COLORS.light : "white" }}>
-                  <td className="py-1.5 px-2 font-medium">{mb.diameter}</td>
-                  <td className="py-1.5 px-2 text-center font-bold" style={{ color: COLORS.danger }}>{mb.count}</td>
-                  <td className="py-1.5 px-2 text-xs truncate max-w-[100px]">{mb.reasons.join(", ") || "-"}</td>
-                  <td className="py-1.5 px-2 text-xs truncate max-w-[150px]" style={{ color: COLORS.muted }}>
-                    {mb.comments.slice(0, 2).join("; ") || "-"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* Footer */}
       <div className="text-center pt-2 border-t">
