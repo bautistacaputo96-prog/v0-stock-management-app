@@ -247,7 +247,11 @@ export function ExecutiveReports() {
       })
 
       // Procesar calidad desde pipe_quality_items
+      // ============================================
+      // PROCESAR CONTROL DE CALIDAD (idéntico a unified-pipe-report)
+      // ============================================
       let totalFirst = 0, totalSecond = 0, totalBroken = 0
+      let firstTn = 0, secondTn = 0, brokenTn = 0  // Toneladas por concepto
       const byDiameterQuality: Record<number, { first: number; second: number; broken: number }> = {}
       PIPE_DIAMETERS.forEach(d => {
         byDiameterQuality[d] = { first: 0, second: 0, broken: 0 }
@@ -255,16 +259,22 @@ export function ExecutiveReports() {
       const defectCounts: Record<string, number> = {}
 
       qualityData?.forEach((control: any) => {
-        // Procesar items de calidad (alias: items)
         control.items?.forEach((item: any) => {
           const diameter = item.diameter
+          const weight = getWeightPerUnit(diameter)  // Peso real por diámetro
           const first = item.first_quality || 0
           const second = item.second_quality || 0
           const broken = item.broken || 0
           
+          // Sumar unidades
           totalFirst += first
           totalSecond += second
           totalBroken += broken
+          
+          // Sumar toneladas (usando peso real por diámetro)
+          firstTn += (first * weight) / 1000
+          secondTn += (second * weight) / 1000
+          brokenTn += (broken * weight) / 1000
           
           if (byDiameterQuality[diameter]) {
             byDiameterQuality[diameter].first += first
@@ -272,7 +282,7 @@ export function ExecutiveReports() {
             byDiameterQuality[diameter].broken += broken
           }
           
-          // Procesar defectos de cada item
+          // Procesar defectos
           item.defects?.forEach((def: any) => {
             const reason = def.reason?.reason || "Otros"
             defectCounts[reason] = (defectCounts[reason] || 0) + 1
@@ -283,33 +293,30 @@ export function ExecutiveReports() {
       const totalClassified = totalFirst + totalSecond + totalBroken
       
       // ============================================
-      // FÓRMULAS IDÉNTICAS AL INFORME UNIFICADO:
-      // - Primera = Caños a playa - Segunda - Rotos calidad
-      // - Total Producido = Caños a playa + Cajones desperdicio
+      // FÓRMULAS IDÉNTICAS AL INFORME UNIFICADO
       // ============================================
       
-      // Cajones de desperdicio en Tn
+      // Cajones de desperdicio en Tn (del parte diario)
       const totalWasteKgCalc = wasteBins.bin1Cinta.kg + wasteBins.bin2Desmolde.kg + 
                               wasteBins.bin3Cinta.kg + wasteBins.bin4Rotos.kg + wasteBins.bin5Mezcladora.kg
       const cajonesDesperdicioTn = totalWasteKgCalc / 1000
       
-      // Caños a playa (del parte diario) = totalWeightKg
+      // Caños a playa (del parte diario)
       const canosPlayaTn = totalWeightKg / 1000
       const canosPlayaUnits = totalUnits
       
-      // Calcular toneladas de segunda y rotos usando peso promedio por unidad
-      const avgWeightPerUnit = totalUnits > 0 ? canosPlayaTn / totalUnits : 0
-      const segundaTn = totalSecond * avgWeightPerUnit
-      const rotosCalidadTn = totalBroken * avgWeightPerUnit
+      // Segunda y Rotos en Tn (del control de calidad - ya calculados arriba)
+      const segundaTn = secondTn
+      const rotosCalidadTn = brokenTn
       
-      // Primera = Caños a playa - Segunda - Rotos de calidad (NO resta cajones)
+      // Primera = Caños a playa - Segunda - Rotos de calidad
       const primeraTn = Math.max(0, canosPlayaTn - segundaTn - rotosCalidadTn)
       const primeraUnits = Math.max(0, canosPlayaUnits - totalSecond - totalBroken)
       
-      // Total Producido = Caños a playa + Cajones (no es canosPlayaTn solamente!)
+      // Total Producido = Caños a playa + Cajones desperdicio
       const totalProducidoTn = canosPlayaTn + cajonesDesperdicioTn
       
-      // ÍNDICES sobre Total Producido (en Tn) - igual que informe unificado
+      // ÍNDICES sobre Total Producido (en Tn)
       const qualityIndex = totalProducidoTn > 0 ? (primeraTn / totalProducidoTn) * 100 : 100
       const secondIndex = totalProducidoTn > 0 ? (segundaTn / totalProducidoTn) * 100 : 0
       const brokenIndex = totalProducidoTn > 0 ? (rotosCalidadTn / totalProducidoTn) * 100 : 0
