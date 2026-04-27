@@ -96,7 +96,6 @@ export function ExecutiveReports() {
   // Cargar datos para los informes
   async function loadReportData() {
     setLoading(true)
-    console.log("[v0] Loading report data - dateFrom:", dateFrom, "dateTo:", dateTo, "plant:", selectedPlant)
     try {
       const supabase = getSupabase()
       
@@ -255,9 +254,7 @@ export function ExecutiveReports() {
       })
       const defectCounts: Record<string, number> = {}
 
-      console.log("[v0] Quality records:", qualityData?.length)
       qualityData?.forEach((control: any) => {
-        console.log("[v0] Control items:", control.items?.length, "items")
         // Procesar items de calidad (alias: items)
         control.items?.forEach((item: any) => {
           const diameter = item.diameter
@@ -284,10 +281,25 @@ export function ExecutiveReports() {
       })
 
       const totalClassified = totalFirst + totalSecond + totalBroken
-      console.log("[v0] Quality totals - First:", totalFirst, "Second:", totalSecond, "Broken:", totalBroken, "Total:", totalClassified)
-      const qualityIndex = totalClassified > 0 ? (totalFirst / totalClassified) * 100 : 0
-      const secondIndex = totalClassified > 0 ? (totalSecond / totalClassified) * 100 : 0
-      const brokenIndex = totalClassified > 0 ? (totalBroken / totalClassified) * 100 : 0
+      
+      // Calcular toneladas para índices (igual que unified-pipe-report)
+      const totalProducidoTn = totalWeightKg / 1000
+      const totalWasteKgCalc = wasteBins.bin1Cinta.kg + wasteBins.bin2Desmolde.kg + 
+                              wasteBins.bin3Cinta.kg + wasteBins.bin4Rotos.kg + wasteBins.bin5Mezcladora.kg
+      const cajonesDesperdicioTn = totalWasteKgCalc / 1000
+      
+      // Calcular toneladas de segunda y rotos usando peso promedio por unidad
+      // Total producido en unidades / toneladas = peso promedio por unidad
+      const avgWeightPerUnit = totalUnits > 0 ? totalProducidoTn / totalUnits : 0
+      const segundaTn = totalSecond * avgWeightPerUnit
+      const rotosCalidadTn = totalBroken * avgWeightPerUnit
+      const primeraTn = totalProducidoTn - segundaTn - rotosCalidadTn - cajonesDesperdicioTn
+      
+      // ÍNDICES sobre Total Producido (en Tn) - igual que informe unificado
+      const qualityIndex = totalProducidoTn > 0 ? (Math.max(0, primeraTn) / totalProducidoTn) * 100 : 0
+      const secondIndex = totalProducidoTn > 0 ? (segundaTn / totalProducidoTn) * 100 : 0
+      const brokenIndex = totalProducidoTn > 0 ? (rotosCalidadTn / totalProducidoTn) * 100 : 0
+      const scrapIndex = totalProducidoTn > 0 ? (cajonesDesperdicioTn / totalProducidoTn) * 100 : 0
 
       // Top defectos
       const totalDefects = Object.values(defectCounts).reduce((a, b) => a + b, 0)
@@ -347,6 +359,7 @@ export function ExecutiveReports() {
         qualityIndex,
         secondIndex,
         brokenIndex,
+        scrapIndex,
         totalClassified,
         totalFirst,
         totalSecond,
@@ -365,7 +378,7 @@ export function ExecutiveReports() {
 
       return true
     } catch (error) {
-      console.log("[v0] Error loading report data:", error)
+      console.error("Error loading report data:", error)
       toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" })
       return false
     } finally {
@@ -702,14 +715,14 @@ function QualityReport({ data, formatDate }: { data: ReportData; formatDate: (d:
           <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalSecond} canos</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: "#f5eded" }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Indice Rotura</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.brokenIndex.toFixed(1)}%</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalBroken} canos</p>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Desp. Produccion</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.danger }}>{data.scrapIndex?.toFixed(2) || "0.00"}%</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{(data.totalWasteKg / 1000).toFixed(2)} tn</p>
         </div>
         <div className="border rounded-lg p-3 text-center" style={{ backgroundColor: COLORS.light }}>
-          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Total Clasificado</p>
-          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalClassified}</p>
-          <p className="text-xs" style={{ color: COLORS.muted }}>canos</p>
+          <p className="text-xs uppercase" style={{ color: COLORS.muted }}>Total Producido</p>
+          <p className="text-2xl font-bold" style={{ color: COLORS.primary }}>{data.totalWeightTn?.toFixed(2) || 0} tn</p>
+          <p className="text-xs" style={{ color: COLORS.muted }}>{data.totalUnits} canos</p>
         </div>
       </div>
 
