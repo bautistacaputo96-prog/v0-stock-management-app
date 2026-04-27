@@ -1214,18 +1214,18 @@ export function UnifiedPipeReport() {
                   )}
                 </div>
 
-                {/* Desperdicio Total */}
+                {/* Cajones Desperdicio */}
                 <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/30">
                   <p className="text-2xl font-bold text-destructive">
-                    {currentPeriod.wasteIndex.toFixed(2)}%
+                    {currentPeriod.scrapIndex.toFixed(2)}%
                   </p>
-                  <p className="text-xs font-medium uppercase mt-1 text-destructive">Desperdicio Total</p>
-                  <p className="text-sm font-semibold text-destructive">{currentPeriod.totalDesperdicioTn.toFixed(2)} Tn</p>
-                  <p className="text-[10px] text-muted-foreground">2da + Rotos + Cajones</p>
+                  <p className="text-xs font-medium uppercase mt-1 text-destructive">Cajones Desperdicio</p>
+                  <p className="text-sm font-semibold text-destructive">{currentPeriod.cajonesDesperdicioTn.toFixed(2)} Tn</p>
+                  <p className="text-[10px] text-muted-foreground">Desperdicio en produccion</p>
                   {previousPeriod && (
                     <DeltaIndicator 
-                      current={currentPeriod.wasteIndex} 
-                      previous={previousPeriod.wasteIndex}
+                      current={currentPeriod.scrapIndex} 
+                      previous={previousPeriod.scrapIndex}
                       invert
                       showPP
                     />
