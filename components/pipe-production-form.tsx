@@ -305,11 +305,27 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         .order("name", { ascending: true })
       
       if (data) {
-        const grouped: Record<string, string[]> = {}
+        // Categorizar materiales por tipo base
+        const categorize = (materialType: string): string => {
+          const mt = materialType.toLowerCase()
+          if (mt.includes("arena")) return "Arena"
+          if (mt.includes("piedra")) return "Piedra"
+          if (mt.includes("cemento") || mt.includes("cpc")) return "Cemento"
+          if (mt.includes("aditivo") || mt.includes("mark") || mt.includes("darac")) return "Aditivo"
+          return materialType
+        }
+        
+        const grouped: Record<string, string[]> = {
+          Cemento: [],
+          Arena: [],
+          Piedra: []
+        }
+        
         data.forEach((s: { material_type: string; name: string }) => {
-          if (!grouped[s.material_type]) grouped[s.material_type] = []
-          if (!grouped[s.material_type].includes(s.name)) {
-            grouped[s.material_type].push(s.name)
+          const category = categorize(s.material_type)
+          const displayValue = `${s.material_type} - ${s.name}`
+          if (grouped[category] && !grouped[category].includes(displayValue)) {
+            grouped[category].push(displayValue)
           }
         })
         setIngredientSuppliers(grouped)

@@ -1,14 +1,25 @@
 import { createClient } from "@/lib/supabase"
 import { NextResponse } from "next/server"
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const plant = searchParams.get("plant")
+    
     const supabase = createClient()
-    const { data, error } = await supabase
+    let query = supabase
       .from("suppliers")
       .select("*")
       .eq("is_active", true)
-      .order("name", { ascending: true })
+    
+    // Filter by plant if provided
+    if (plant) {
+      // Convert plant format (villa-rosa -> villa_rosa)
+      const plantValue = plant === "villa-rosa" ? "villa_rosa" : plant
+      query = query.eq("plant", plantValue)
+    }
+    
+    const { data, error } = await query.order("name", { ascending: true })
 
     if (error) throw error
     return NextResponse.json(data)
