@@ -47,23 +47,36 @@ const PRODUCTION_LINES = [
 interface DynamicSandRestriction {
   minSand: number
   message: string
-  level: "high" | "moderate" | "low"
+  level: "high" | "moderate" | "low" | "no-data"
 }
 
-function calculateDynamicSandMinimum(stonePassing236: number | null): DynamicSandRestriction {
-  if (stonePassing236 === null) {
-    // Sin datos de piedra, usar restriccion por defecto
+// Paso 1: Verificar si hay ensayo de piedra cargado
+// Paso 2: Si hay ensayo, leer el % pasante en tamiz 2,36 mm
+function calculateDynamicSandMinimum(hasPiedraTest: boolean, stonePassing236: number | null): DynamicSandRestriction {
+  // Paso 1: Si NO hay ensayo de piedra cargado
+  if (!hasPiedraTest) {
     return {
       minSand: 25,
-      message: "Sin datos de granulometria de piedra. Se aplica minimo por defecto de 25% arena.",
-      level: "high"
+      message: "No hay ensayo de piedra disponible. Se aplica restriccion por defecto de 25% de arena hasta que se cargue un ensayo granulometrico de la piedra.",
+      level: "no-data"
     }
   }
   
+  // Paso 2: Hay ensayo de piedra, leer % pasante 2.36mm
+  if (stonePassing236 === null || stonePassing236 === undefined) {
+    // Hay ensayo pero no se pudo leer el dato - esto es un error
+    return {
+      minSand: 25,
+      message: "Error al leer el ensayo de piedra. Se aplica restriccion por defecto de 25% de arena. Verifique que el ensayo tenga datos validos en el tamiz 2,36 mm.",
+      level: "no-data"
+    }
+  }
+  
+  // Evaluar segun % pasante 2.36mm
   if (stonePassing236 < 40) {
     return {
       minSand: 25,
-      message: "La piedra disponible tiene bajo contenido de finos. Se requiere un minimo de 25% de arena para garantizar cohesion de la mezcla semiseca, acabado superficial cerrado y llenado completo del molde durante el vibro-prensado.",
+      message: "La piedra tiene bajo contenido de finos. Se requiere minimo 25% de arena para cohesion y acabado superficial.",
       level: "high"
     }
   }
@@ -71,7 +84,7 @@ function calculateDynamicSandMinimum(stonePassing236: number | null): DynamicSan
   if (stonePassing236 >= 40 && stonePassing236 <= 60) {
     return {
       minSand: 10,
-      message: "La piedra disponible tiene contenido moderado de finos, lo que reduce parcialmente la necesidad de arena para cohesion y acabado superficial. El minimo de arena se ajusta a 10%.",
+      message: "La piedra tiene contenido moderado de finos. El minimo de arena se ajusta a 10%.",
       level: "moderate"
     }
   }
@@ -79,7 +92,7 @@ function calculateDynamicSandMinimum(stonePassing236: number | null): DynamicSan
   // stonePassing236 > 60
   return {
     minSand: 0,
-    message: `La piedra disponible tiene alto contenido de finos de trituracion (${stonePassing236.toFixed(1)}% pasa tamiz 2,36 mm). Este material ya esta aportando la fraccion fina necesaria para cohesion de la mezcla semiseca y acabado superficial del adoquin. El optimizador puede sugerir proporciones de arena entre 0% y 25% segun lo que minimice el RMS. Si sugiere 0%, validar con probetas que el acabado superficial y la resistencia al desgaste cumplan IRAM 1534.`,
+    message: `La piedra tiene alto contenido de finos de trituracion (${stonePassing236.toFixed(1)}% pasa 2,36 mm). Aporta la fraccion fina necesaria para cohesion y acabado superficial. El optimizador puede sugerir entre 0% y 25% de arena segun el RMS.`,
     level: "low"
   }
 }
@@ -510,16 +523,13 @@ function generateRecommendation(
     parts.push("Curva dentro de límites IRAM pero alejada de Fuller. El formuleo es aceptable pero puede optimizarse ajustando la proporción.")
   }
   
-  // MF fuera de rango
-  if (mf < mfMin) {
-    parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por debajo del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de piedra.`)
-  } else if (mf > mfMax) {
-    parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por encima del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de arena.`)
-  }
+  // Nota: El MF de mezcla combinada NO se evalua aqui porque no tiene sentido tecnico.
+  // El MF se calcula y evalua solo para aridos individuales (arena y piedra por separado).
+  // El indicador de calidad de la mezcla es exclusivamente el RMS vs Fuller.
   
-  // Si todo está bien
-  if (parts.length === 1 && allWithinRange && currentRMS <= 5 && mf >= mfMin && mf <= mfMax) {
-    parts.push("La mezcla está dentro de especificación IRAM 1627 y próxima a la curva Fuller. Formuleo óptimo.")
+  // Si todo está bien (solo verificamos RMS, no MF de mezcla)
+  if (parts.length === 1 && allWithinRange && currentRMS <= 5) {
+  parts.push("La mezcla esta dentro de especificacion IRAM 1627 y proxima a la curva Fuller. Formuleo optimo.")
   }
   
   return parts.join(" ")
@@ -834,9 +844,10 @@ export default function MezclasGranulometriaPage() {
   // Para adoquines (Ranchos), calcular sandMin dinamico basado en % pasante 2.36mm de la piedra
   let effectiveSandMin = currentLine.sandMin
   if (currentLine.hasDynamicSandRestriction) {
-    const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
-    const dynamicRestriction = calculateDynamicSandMinimum(stonePassing236)
-    effectiveSandMin = dynamicRestriction.minSand
+  const hasPiedraTest = stockpileData.piedra !== null
+  const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+  const dynamicRestriction = calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
+  effectiveSandMin = dynamicRestriction.minSand
   }
   return findOptimalProportion(sandPassing, stonePassing, currentLine.tma, effectiveSandMin, currentLine.sandMax)
   }, [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax, currentLine.hasDynamicSandRestriction, stockpileData.piedra]
@@ -926,10 +937,11 @@ export default function MezclasGranulometriaPage() {
                 </SelectContent>
               </Select>
               {(() => {
-                // Calcular restriccion dinamica para adoquines
+              // Calcular restriccion dinamica para adoquines
+                const hasPiedraTest = stockpileData.piedra !== null
                 const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
-                const dynamicRestriction = currentLine.hasDynamicSandRestriction 
-                  ? calculateDynamicSandMinimum(stonePassing236)
+                const dynamicRestriction = currentLine.hasDynamicSandRestriction
+                  ? calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
                   : null
                 const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
                 
@@ -1280,31 +1292,22 @@ export default function MezclasGranulometriaPage() {
             </CardContent>
           </Card>
           
-          {/* Panel de resultados KPI */}
+          {/* Panel de resultados KPI - Solo RMS (unico indicador valido para mezcla) */}
           <div className="space-y-4">
-            {/* Índice de desviación RMS */}
+            {/* Índice de desviación RMS - UNICO indicador de calidad de mezcla */}
             <Card>
               <CardContent className="py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="text-center p-4 rounded-lg bg-muted/50">
-                    <div className="text-xs text-muted-foreground mb-1">Desviación Fuller</div>
-                    <div className="text-3xl font-bold">{currentRMS.toFixed(1)}</div>
-                    <Badge className={`mt-2 ${rmsStatus.color}`}>
-                      <rmsStatus.icon className="h-3 w-3 mr-1" />
-                      {rmsStatus.label}
-                    </Badge>
-                  </div>
-                  <div className="text-center p-4 rounded-lg bg-muted/50">
-                    <div className="text-xs text-muted-foreground mb-1">Módulo de Finura</div>
-                    <div className="text-3xl font-bold">{blendMF.toFixed(2)}</div>
-                    <Badge className={`mt-2 ${mfInRange ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                      {mfInRange ? (
-                        <><CheckCircle2 className="h-3 w-3 mr-1" />En rango</>
-                      ) : (
-                        <><AlertTriangle className="h-3 w-3 mr-1" />Fuera</>
-                      )}
-                    </Badge>
-                  </div>
+                <div className="text-center p-4 rounded-lg bg-muted/50">
+                  <div className="text-xs text-muted-foreground mb-1">Desviacion vs Fuller (RMS)</div>
+                  <div className="text-3xl font-bold">{currentRMS.toFixed(1)}</div>
+                  <Badge className={`mt-2 ${rmsStatus.color}`}>
+                    <rmsStatus.icon className="h-3 w-3 mr-1" />
+                    {rmsStatus.label}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    El RMS es el unico indicador de calidad para la mezcla combinada.
+                    El MF se evalua solo para cada arido individual.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -1312,9 +1315,10 @@ export default function MezclasGranulometriaPage() {
             {/* Optimizador */}
             {(() => {
               // Calcular restriccion dinamica para adoquines (Ranchos)
+              const hasPiedraTest = stockpileData.piedra !== null
               const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
               const dynamicRestriction = currentLine.hasDynamicSandRestriction 
-                ? calculateDynamicSandMinimum(stonePassing236)
+                ? calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
                 : null
               const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
               
