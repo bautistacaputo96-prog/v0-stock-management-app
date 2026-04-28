@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import React, { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Navigation } from "@/components/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -243,6 +243,15 @@ const dataToSave = {
       .from("suppliers")
       .update({ is_active: false })
       .eq("id", id)
+    loadSuppliers()
+  }
+
+  const toggleSupplierActive = async (supplier: Supplier) => {
+    const supabase = getSupabase()
+    await supabase
+      .from("suppliers")
+      .update({ is_active: !supplier.is_active })
+      .eq("id", supplier.id)
     loadSuppliers()
   }
 
@@ -674,43 +683,77 @@ setSupplierForm({
                         </TableCell>
                       </TableRow>
                     ) : (
-                      suppliers.map(supplier => (
-                        <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
-                          <TableCell className="font-medium">{supplier.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{supplier.material_type}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">
-                              {supplier.plant === "villa_rosa" ? "Villa Rosa" : 
-                               supplier.plant === "mercedes" ? "Mercedes" : 
-                               supplier.plant === "ranchos" ? "Ranchos" : supplier.plant}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {supplier.line_type === "canos" && "Canos"}
-                            {supplier.line_type === "bloques" && "Bloques"}
-                            {supplier.line_type === "ambos" && "Ambos"}
-                            {!supplier.line_type && "-"}
-                          </TableCell>
-                          <TableCell>
-                            {supplier.density ? `${supplier.density} kg/L` : "-"}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={supplier.is_active ? "default" : "secondary"}>
-                              {supplier.is_active ? "Activo" : "Inactivo"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
-                              {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      // Agrupar por planta y luego por proveedor
+                      (() => {
+                        const plantOrder = ["mercedes", "villa_rosa", "ranchos"]
+                        const plantNames: Record<string, string> = {
+                          mercedes: "Mercedes",
+                          villa_rosa: "Villa Rosa",
+                          ranchos: "Ranchos"
+                        }
+                        
+                        // Agrupar proveedores por planta
+                        const byPlant = suppliers.reduce((acc, s) => {
+                          const plant = s.plant || "otros"
+                          if (!acc[plant]) acc[plant] = []
+                          acc[plant].push(s)
+                          return acc
+                        }, {} as Record<string, Supplier[]>)
+                        
+                        // Ordenar cada grupo por nombre de proveedor
+                        Object.keys(byPlant).forEach(plant => {
+                          byPlant[plant].sort((a, b) => a.name.localeCompare(b.name))
+                        })
+                        
+                        return plantOrder.filter(p => byPlant[p]?.length > 0).map(plant => (
+                          <React.Fragment key={plant}>
+                            {/* Header de planta */}
+                            <TableRow className="bg-muted/50">
+                              <TableCell colSpan={7} className="font-semibold text-sm py-2">
+                                {plantNames[plant] || plant}
+                                <span className="ml-2 text-muted-foreground font-normal">
+                                  ({byPlant[plant].length} proveedores)
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                            {/* Proveedores de esta planta */}
+                            {byPlant[plant].map(supplier => (
+                              <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
+                                <TableCell className="font-medium pl-6">{supplier.name}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{supplier.material_type}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary">{plantNames[supplier.plant] || supplier.plant}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  {supplier.line_type === "canos" && "Canos"}
+                                  {supplier.line_type === "bloques" && "Bloques"}
+                                  {supplier.line_type === "ambos" && "Ambos"}
+                                  {supplier.line_type === "adoquines" && "Adoquines"}
+                                  {!supplier.line_type && "-"}
+                                </TableCell>
+                                <TableCell>
+                                  {supplier.density ? `${supplier.density} kg/L` : "-"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={supplier.is_active ? "default" : "secondary"}>
+                                    {supplier.is_active ? "Activo" : "Inactivo"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
+                                    {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </React.Fragment>
+                        ))
+                      })()
                     )}
                   </TableBody>
                 </Table>
