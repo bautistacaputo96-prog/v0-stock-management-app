@@ -31,6 +31,7 @@ interface Supplier {
   name: string
   material_type: string
   product_detail: string | null
+  plant: string
   line_type: string
   is_active: boolean
   created_at: string
@@ -106,9 +107,11 @@ function MateriaPrimaContent() {
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [showSupplierDialog, setShowSupplierDialog] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
+  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "mercedes", "villa_rosa", "ranchos"
   const [supplierForm, setSupplierForm] = useState({
     name: "",
     material_type: "",
+    plant: "mercedes",  // Nueva: planta del proveedor
     line_type: "ambos",
     density: "",
     unit: "kg"
@@ -137,10 +140,10 @@ function MateriaPrimaContent() {
     aditivo: true,
   })
 
-  // Load suppliers when plant changes
+  // Load suppliers when filter changes
   useEffect(() => {
     loadSuppliers()
-  }, [selectedPlant])
+  }, [supplierPlantFilter])
 
   // Load carriers when plant changes
   useEffect(() => {
@@ -167,14 +170,18 @@ function MateriaPrimaContent() {
   }
 
   const loadSuppliers = async () => {
-    if (!selectedPlant) return
     setLoadingSuppliers(true)
     const supabase = getSupabase()
-    const { data } = await supabase
+    let query = supabase
       .from("suppliers")
       .select("*")
-      .eq("plant", selectedPlant)
-      .order("name")
+    
+    // Filtrar por planta si no es "all"
+    if (supplierPlantFilter !== "all") {
+      query = query.eq("plant", supplierPlantFilter)
+    }
+    
+    const { data } = await query.order("plant").order("name")
     
     if (data) {
       setSuppliers(data)
@@ -204,6 +211,7 @@ function MateriaPrimaContent() {
 const dataToSave = {
   name: supplierForm.name,
   material_type: supplierForm.material_type,
+  plant: supplierForm.plant,
   line_type: supplierForm.line_type,
   is_active: true,
   density: supplierForm.density ? parseFloat(supplierForm.density) : null,
@@ -281,6 +289,7 @@ const dataToSave = {
 setSupplierForm({
   name: supplier.name,
   material_type: supplier.material_type,
+  plant: supplier.plant || "mercedes",
   line_type: supplier.line_type || "ambos",
   density: supplier.density?.toString() || "",
   unit: supplier.unit || "kg"
@@ -515,13 +524,27 @@ setSupplierForm({
           {/* PROVEEDORES */}
           <TabsContent value="proveedores" className="space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+                <Select value={supplierPlantFilter} onValueChange={setSupplierPlantFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filtrar por planta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las plantas</SelectItem>
+                    <SelectItem value="mercedes">Mercedes</SelectItem>
+                    <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+                    <SelectItem value="ranchos">Ranchos</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
                 <DialogTrigger asChild>
                   <Button onClick={() => {
                     setEditingSupplier(null)
                     const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-                    setSupplierForm({ name: "", material_type: "", line_type: defaultLineType, density: "", unit: "kg" })
+                    const defaultPlant = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+                    setSupplierForm({ name: "", material_type: "", plant: defaultPlant, line_type: defaultLineType, density: "", unit: "kg" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Proveedor
@@ -548,6 +571,22 @@ setSupplierForm({
                         placeholder="Ej: Piedra 06, Piedra 010, CPC-40, Arena Especial"
                       />
                       <p className="text-xs text-muted-foreground mt-1">Nombre completo del material que provee</p>
+                    </div>
+                    <div>
+                      <Label>Planta</Label>
+                      <Select
+                        value={supplierForm.plant}
+                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, plant: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar planta" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mercedes">Mercedes</SelectItem>
+                          <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+                          <SelectItem value="ranchos">Ranchos</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div>
                       <Label>Linea de Produccion</Label>
@@ -614,6 +653,7 @@ setSupplierForm({
                     <TableRow>
                       <TableHead>Proveedor</TableHead>
                       <TableHead>Material</TableHead>
+                      <TableHead>Planta</TableHead>
                       <TableHead>Linea</TableHead>
                       <TableHead>Densidad</TableHead>
                       <TableHead>Estado</TableHead>
@@ -623,13 +663,13 @@ setSupplierForm({
                   <TableBody>
                     {loadingSuppliers ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           Cargando proveedores...
                         </TableCell>
                       </TableRow>
                     ) : suppliers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No hay proveedores registrados
                         </TableCell>
                       </TableRow>
@@ -639,6 +679,13 @@ setSupplierForm({
                           <TableCell className="font-medium">{supplier.name}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{supplier.material_type}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">
+                              {supplier.plant === "villa_rosa" ? "Villa Rosa" : 
+                               supplier.plant === "mercedes" ? "Mercedes" : 
+                               supplier.plant === "ranchos" ? "Ranchos" : supplier.plant}
+                            </Badge>
                           </TableCell>
                           <TableCell>
                             {supplier.line_type === "canos" && "Canos"}
