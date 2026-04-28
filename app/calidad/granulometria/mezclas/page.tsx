@@ -34,8 +34,8 @@ const IRAM_1627_ZONA_II = {
 const PRODUCTION_LINES = [
   // Ranchos - Adoquines (restriccion DINAMICA de arena segun % pasante 2.36mm de la piedra)
   { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 0, sandMax: 45, materials: ["arena", "piedra_0_6"], hasDynamicSandRestriction: true },
-  // Mercedes/Silke - Canos chicos (300-600) - SIN restriccion minima de arena (vibracion garantiza compactacion)
-  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
+  // Silke (Mercedes) - Canos chicos (300-600) - SIN restriccion minima de arena (vibracion garantiza compactacion)
+  { id: "canos_pequenos_silke", name: "Canos DN 300-600", plant: "silke", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
   // Villa Rosa - Canos grandes (800, 1000, 1200) - SIN restriccion minima de arena (vibracion garantiza compactacion)
   { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
 ]
@@ -89,16 +89,16 @@ const ADOQUINES_SAND_RESTRICTION_NOTE = `La restriccion minima de arena en adoqu
 
 // Helper para obtener líneas filtradas por planta
 function getProductionLinesForPlant(plant: string | null): typeof PRODUCTION_LINES {
-  if (!plant) return PRODUCTION_LINES.filter(l => l.plant === "mercedes")
+  if (!plant) return PRODUCTION_LINES.filter(l => l.plant === "silke")
   return PRODUCTION_LINES.filter(l => l.plant === plant)
 }
 
 // Helper para mapear planta del selector al valor en la base de datos
-// El selector usa "mercedes" pero en la DB es "silke", "villa-rosa" -> "villa_rosa"
+// El contexto usa "silke", "ranchos", "villa-rosa" y en la DB es igual excepto villa-rosa -> villa_rosa
 function mapPlantToDb(plant: string | null): string {
-  if (!plant || plant === "mercedes") return "silke"
+  if (!plant) return "silke"
   if (plant === "villa-rosa") return "villa_rosa"
-  return plant // ranchos se mantiene igual
+  return plant // silke y ranchos se mantienen igual
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -587,10 +587,10 @@ export default function MezclasGranulometriaPage() {
       return PRODUCTION_LINES.find(l => l.plant === "ranchos") || PRODUCTION_LINES[0]
     }
     if (selectedPlant === "villa-rosa") {
-      return PRODUCTION_LINES.find(l => l.plant === "villa-rosa") || PRODUCTION_LINES[1]
+      return PRODUCTION_LINES.find(l => l.plant === "villa-rosa") || PRODUCTION_LINES[2]
     }
-    // Mercedes/Silke por defecto
-    return PRODUCTION_LINES.find(l => l.plant === "mercedes") || PRODUCTION_LINES[1]
+    // Silke por defecto
+    return PRODUCTION_LINES.find(l => l.plant === "silke") || PRODUCTION_LINES[1]
   }, [selectedLine, availableLines, selectedPlant])
   
   useEffect(() => {
@@ -612,7 +612,7 @@ export default function MezclasGranulometriaPage() {
       const arenaTest = data.find((t: any) => t.material_type.toLowerCase().includes("arena"))
       const piedraTest = data.find((t: any) => t.material_type.toLowerCase().includes("piedra"))
       
-      // Helper para crear passing_percentages como objeto {tamaño: porcentaje}
+      // Helper para crear passing_percentages como objeto {tamano: porcentaje}
       const createPassingPercentages = (passing: number[]) => {
         const result: Record<string, number> = {}
         SIEVE_SIZES_MM.forEach((size, i) => {
@@ -1312,15 +1312,10 @@ export default function MezclasGranulometriaPage() {
             {/* Optimizador */}
             {(() => {
               // Calcular restriccion dinamica para adoquines (Ranchos)
-              console.log("[v0] stockpileData.piedra:", stockpileData.piedra)
-              console.log("[v0] stockpileData.piedra?.passing_percentages:", stockpileData.piedra?.passing_percentages)
-              console.log("[v0] stockpileData.piedra?.passing:", stockpileData.piedra?.passing)
               const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
-              console.log("[v0] stonePassing236:", stonePassing236)
               const dynamicRestriction = currentLine.hasDynamicSandRestriction 
                 ? calculateDynamicSandMinimum(stonePassing236)
                 : null
-              console.log("[v0] dynamicRestriction:", dynamicRestriction)
               const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
               
               return (
