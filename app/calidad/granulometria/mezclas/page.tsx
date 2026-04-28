@@ -1312,10 +1312,15 @@ export default function MezclasGranulometriaPage() {
             {/* Optimizador */}
             {(() => {
               // Calcular restriccion dinamica para adoquines (Ranchos)
+              console.log("[v0] stockpileData.piedra:", stockpileData.piedra)
+              console.log("[v0] stockpileData.piedra?.passing_percentages:", stockpileData.piedra?.passing_percentages)
+              console.log("[v0] stockpileData.piedra?.passing:", stockpileData.piedra?.passing)
               const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+              console.log("[v0] stonePassing236:", stonePassing236)
               const dynamicRestriction = currentLine.hasDynamicSandRestriction 
                 ? calculateDynamicSandMinimum(stonePassing236)
                 : null
+              console.log("[v0] dynamicRestriction:", dynamicRestriction)
               const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
               
               return (
