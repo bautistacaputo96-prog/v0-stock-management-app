@@ -27,15 +27,26 @@ const IRAM_1627_ZONA_II = {
   max: [100, 100, 100, 90, 70, 34, 15]
 }
 
-// Líneas de producción con restricciones de optimización
-// Adoquines: semiseco, vibro-prensado
-// Caños DN 300-600: semiseco, centrifugado o vibrado
-// Caños DN 800-1200: semiseco, vibrado interno
+// Líneas de producción con restricciones de optimización por planta
+// Adoquines: semiseco, vibro-prensado (solo Ranchos)
+// Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke y Villa Rosa)
+// Caños DN 800-1200: semiseco, vibrado interno (Mercedes/Silke y Villa Rosa)
 const PRODUCTION_LINES = [
-  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
-  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
-  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
+  // Ranchos - Adoquines
+  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
+  // Mercedes/Silke - Caños
+  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
+  { id: "canos_grandes_mercedes", name: "Canos DN 800-1200", plant: "mercedes", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
+  // Villa Rosa - Caños
+  { id: "canos_pequenos_villa_rosa", name: "Canos DN 300-600", plant: "villa-rosa", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
+  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
 ]
+
+// Helper para obtener líneas filtradas por planta
+function getProductionLinesForPlant(plant: string | null): typeof PRODUCTION_LINES {
+  if (!plant) return PRODUCTION_LINES.filter(l => l.plant === "mercedes")
+  return PRODUCTION_LINES.filter(l => l.plant === plant)
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // LÍMITES CALIBRADOS PARA EL MERCADO DE BUENOS AIRES
@@ -410,7 +421,10 @@ function generateRecommendation(
 export default function MezclasGranulometriaPage() {
   const supabase = createClient()
   const { selectedPlant } = usePlant()
-  const [selectedLine, setSelectedLine] = useState(PRODUCTION_LINES[0].id)
+  
+  // Líneas de producción filtradas por planta
+  const availableLines = useMemo(() => getProductionLinesForPlant(selectedPlant), [selectedPlant])
+  const [selectedLine, setSelectedLine] = useState(availableLines[0]?.id || "")
   const [tests, setTests] = useState<GranulometryTest[]>([])
   const [loading, setLoading] = useState(true)
   
@@ -445,7 +459,15 @@ export default function MezclasGranulometriaPage() {
     rms: number
   } | null>(null)
   
-  const currentLine = PRODUCTION_LINES.find(l => l.id === selectedLine) || PRODUCTION_LINES[0]
+  // Cuando cambia la planta, auto-seleccionar la primera línea disponible
+  useEffect(() => {
+    const linesForPlant = getProductionLinesForPlant(selectedPlant)
+    if (linesForPlant.length > 0 && !linesForPlant.find(l => l.id === selectedLine)) {
+      setSelectedLine(linesForPlant[0].id)
+    }
+  }, [selectedPlant])
+  
+  const currentLine = availableLines.find(l => l.id === selectedLine) || availableLines[0] || PRODUCTION_LINES[0]
   
   useEffect(() => {
     loadTests()
@@ -745,9 +767,9 @@ export default function MezclasGranulometriaPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PRODUCTION_LINES.map(line => (
-                    <SelectItem key={line.id} value={line.id}>{line.name}</SelectItem>
-                  ))}
+{availableLines.map(line => (
+  <SelectItem key={line.id} value={line.id}>{line.name}</SelectItem>
+  ))}
                 </SelectContent>
               </Select>
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
