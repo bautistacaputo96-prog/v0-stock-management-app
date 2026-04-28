@@ -538,8 +538,7 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
                   <TableRow>
                     <TableHead>Fecha</TableHead>
                     <TableHead>Operario</TableHead>
-                    <TableHead>Área</TableHead>
-                    <TableHead>Sección</TableHead>
+                    <TableHead>Área / Equipo</TableHead>
                     <TableHead className="text-center">Items</TableHead>
                     <TableHead className="text-center">Acciones</TableHead>
                   </TableRow>
@@ -561,9 +560,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
                           <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
                           {parte.area}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {parte.section?.name || "-"}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant="secondary">
@@ -615,10 +611,6 @@ export function ParteDiarioModule({ plant }: ParteDiarioModuleProps) {
                 <div>
                   <p className="text-sm text-muted-foreground">Área / Equipo</p>
                   <p className="font-medium">{selectedParte.area}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Sección</p>
-                  <p className="font-medium">{selectedParte.section?.name || "-"}</p>
                 </div>
               </div>
               
