@@ -12,7 +12,10 @@ import { useAuth, isRouteAllowed } from "@/lib/auth-context"
 // Calidad children for pipes (Mercedes, Silke, Villa Rosa)
 const CALIDAD_CHILDREN_PIPES = [
   { title: "Panel General", href: "/calidad" },
+  { title: "Ensayos Pendientes", href: "/calidad/pendientes" },
   { title: "Control Canos", href: "/calidad/canos" },
+  { title: "Resultados Roturas", href: "/calidad/roturas" },
+  { title: "Dosificaciones", href: "/calidad/dosificaciones" },
   { title: "Granulometria", href: "/calidad/granulometria" },
   { title: "Humedad", href: "/calidad/humedad" },
   { title: "Ensayos", href: "/calidad/ensayos" },
@@ -22,7 +25,9 @@ const CALIDAD_CHILDREN_PIPES = [
 // Calidad children for pavers (Ranchos)
 const CALIDAD_CHILDREN_PAVERS = [
   { title: "Panel General", href: "/calidad" },
+  { title: "Ensayos Pendientes", href: "/calidad/pendientes" },
   { title: "Control Adoquines", href: "/calidad/adoquines" },
+  { title: "Resultados Roturas", href: "/calidad/roturas" },
   { title: "Granulometria", href: "/calidad/granulometria" },
   { title: "Humedad", href: "/calidad/humedad" },
   { title: "Ensayos", href: "/calidad/ensayos" },
@@ -230,7 +235,7 @@ export function Navigation() {
               <button
                 onClick={logout}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-red-100 hover:text-red-600 transition-colors ml-2"
-                title={`Cerrar sesión (${user.name})`}
+                title={`Cerrar sesión (${user.username})`}
               >
                 <LogOut className="h-3.5 w-3.5" />
                 Salir

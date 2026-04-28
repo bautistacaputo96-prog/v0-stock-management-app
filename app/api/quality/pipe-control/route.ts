@@ -6,6 +6,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const from = searchParams.get("from")
     const to = searchParams.get("to")
+    const plant = searchParams.get("plant")
 
     const supabase = createClient()
     let query = supabase
@@ -13,6 +14,7 @@ export async function GET(request: Request) {
       .select("*, items:pipe_quality_items(*, defects:pipe_quality_defects(*, reason:pipe_defect_reasons(*)))")
       .order("control_date", { ascending: false })
 
+    if (plant) query = query.eq("plant", plant)
     if (from) query = query.gte("control_date", from)
     if (to) query = query.lte("control_date", to)
 
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
         production_responsible_id: body.production_responsible_id,
         logistics_responsible_id: body.logistics_responsible_id,
         observations: body.observations || null,
+        plant: body.plant || "mercedes",
       })
       .select()
       .single()

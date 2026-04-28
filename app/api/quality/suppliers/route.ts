@@ -1,15 +1,21 @@
 import { createClient } from "@/lib/supabase"
 import { NextResponse } from "next/server"
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const plant = searchParams.get("plant")
+
     const supabase = createClient()
-    const { data, error } = await supabase
+    let query = supabase
       .from("suppliers")
       .select("*")
       .eq("is_active", true)
       .order("name", { ascending: true })
 
+    if (plant) query = query.eq("plant", plant)
+
+    const { data, error } = await query
     if (error) throw error
     return NextResponse.json(data)
   } catch {
@@ -29,6 +35,7 @@ export async function POST(request: Request) {
         material_type: body.material_type,
         product_detail: body.product_detail || body.material_type,
         line_type: body.line_type || "ambas",
+        plant: body.plant || "mercedes",
         is_active: true,
       })
       .select()
