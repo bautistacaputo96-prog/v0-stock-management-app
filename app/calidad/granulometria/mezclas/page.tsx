@@ -95,6 +95,140 @@ function evaluateStone010MF(mf: number): MFEvaluation {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// SUGERENCIAS DE ARIDO ALTERNATIVO
+// ══════════════════════════════════════════════════════════════════════════════
+const ALTERNATIVE_AGGREGATE_FOOTER = `Cualquier cambio de proveedor, tipo de arido o granulometria debe validarse con ensayo granulometrico del nuevo material y probetas de resistencia antes de implementarse en produccion. Los cambios de formuleo deben quedar registrados en el sistema con fecha, motivo y resultado de los ensayos de validacion.`
+
+interface AlternativeSuggestion {
+  title: string
+  message: string
+  recommendations: string[]
+}
+
+// CANOS - Piedra 0/10 sugerencias (Silke y Villa Rosa)
+function getStone010Suggestion(mf: number | null, passing236: number | null, tma: number): AlternativeSuggestion | null {
+  if (mf !== null && mf > 5.00) {
+    return {
+      title: "Piedra muy gruesa para canos",
+      message: `La piedra actual es muy gruesa para el TMA de esta linea (MF = ${mf.toFixed(2)}). Puede generar segregacion durante el vibrado y dificultar el llenado uniforme del molde.`,
+      recommendations: [
+        "Evaluar una piedra con MF entre 3,50 y 5,00",
+        "O incorporar una proporcion de arena para compensar el deficit de finos en la mezcla"
+      ]
+    }
+  }
+  
+  if ((mf !== null && mf < 3.50) || (passing236 !== null && passing236 > 25)) {
+    return {
+      title: "Piedra con exceso de finos para canos",
+      message: `La piedra actual tiene exceso de finos para canos fabricados por vibracion (MF = ${mf?.toFixed(2) ?? "N/D"}, % pasante 2,36 mm = ${passing236?.toFixed(1) ?? "N/D"}%). Una granulometria mas limpia permitiria acercarse mejor a la curva Fuller para TMA ${tma} mm y reducir el contenido de cemento manteniendo H-25.`,
+      recommendations: [
+        "MF entre 3,50 y 5,00",
+        "% pasante en 4,75 mm: entre 85% y 100%",
+        "% pasante en 2,36 mm: menor al 25%",
+        "% pasante en 1,18 mm: menor al 10%",
+        "% pasante en 0,15 mm: menor al 5%",
+        "Una piedra con este perfil reduciria los vacios en la fraccion media, mejoraria el RMS vs Fuller y permitiria una reduccion estimada de 5%-15% en el contenido de cemento sujeta a validacion con probetas segun IRAM 11503/11513"
+      ]
+    }
+  }
+  
+  return null
+}
+
+// CANOS - Arena sugerencias (Silke y Villa Rosa)
+function getSandSuggestionForCanos(mf: number | null, rms: number): AlternativeSuggestion | null {
+  if (mf !== null && mf < 1.50 && rms > 8) {
+    return {
+      title: "Arena muy fina para canos",
+      message: `La arena disponible es muy fina (MF = ${mf.toFixed(2)}) y su incorporacion empeora la curva granulometrica.`,
+      recommendations: [
+        "Evaluar reducir o eliminar la arena segun lo sugerido por el optimizador",
+        "O buscar una arena con MF entre 1,80 y 2,20 que aporte fraccion media sin sobrecargar los tamices finos",
+        "En el mercado local esto puede conseguirse con arena de trituracion granitica o basaltica, que suele tener MF entre 2,20 y 3,00 y mejor distribucion en tamices gruesos"
+      ]
+    }
+  }
+  return null
+}
+
+// ADOQUINES - Piedra 0/6 sugerencias (Ranchos)
+function getStone06Suggestion(mf: number | null, passing236: number | null): AlternativeSuggestion | null {
+  if (mf !== null && mf < 3.00) {
+    return {
+      title: "Piedra 0/6 con MF bajo",
+      message: `La piedra 0/6 tiene MF bajo para su tipo (MF = ${mf.toFixed(2)}), lo que indica exceso de polvo fino. Esto puede aumentar la demanda de pasta cementicia y dificultar el acabado superficial del adoquin.`,
+      recommendations: [
+        "Evaluar material lavado del mismo proveedor",
+        "O cambiar a una piedra con MF entre 3,20 y 4,20"
+      ]
+    }
+  }
+  
+  if (passing236 !== null && passing236 > 60) {
+    return {
+      title: "Piedra 0/6 con alto contenido de finos",
+      message: `La piedra 0/6 actual tiene alto contenido de finos de trituracion (% pasante 2,36 mm = ${passing236.toFixed(1)}%). Esto indica que el material no fue correctamente cribado en cantera.`,
+      recommendations: [
+        "Solicitar al proveedor actual material lavado y cribado - reduce el polvo sin cambiar de proveedor y puede mejorar el RMS significativamente",
+        "O evaluar una piedra 0/6 con MF entre 3,20 y 4,20 y % pasante en 2,36 mm menor al 25%",
+        "O evaluar una piedra 0/10 como sustituto - su mayor tamano nominal puede compensar mejor el deficit de fraccion gruesa generado por las arenas finas disponibles en el mercado local. En ese caso revisar la restriccion minima de arena dinamicamente segun el % pasante en 2,36 mm de la nueva piedra"
+      ]
+    }
+  }
+  
+  if (passing236 !== null && passing236 >= 40 && passing236 <= 60) {
+    return {
+      title: "Piedra 0/6 con contenido moderado de finos",
+      message: `La piedra 0/6 tiene contenido moderado de finos (% pasante 2,36 mm = ${passing236.toFixed(1)}%).`,
+      recommendations: [
+        "Solicitar al proveedor material con mejor cribado, apuntando a % pasante en 2,36 mm menor al 25%"
+      ]
+    }
+  }
+  
+  return null
+}
+
+// ADOQUINES - Arena sugerencias (Ranchos)
+function getSandSuggestionForAdoquines(mf: number | null, stonePassing236: number | null): AlternativeSuggestion | null {
+  if (mf !== null && mf < 1.50) {
+    const message = `La arena disponible es muy fina (MF = ${mf.toFixed(2)}). En adoquines por vibro-prensado esto puede aumentar la demanda de cemento y agua.`
+    
+    if (stonePassing236 !== null && stonePassing236 > 60) {
+      return {
+        title: "Arena muy fina (con piedra alta en finos)",
+        message,
+        recommendations: [
+          "El contenido de finos de la piedra es alto (% pasante 2,36 mm > 60%)",
+          "Considerar reducir la proporcion de arena al minimo dinamico calculado por el sistema"
+        ]
+      }
+    }
+    
+    if (stonePassing236 !== null && stonePassing236 < 40) {
+      return {
+        title: "Arena muy fina (con piedra baja en finos)",
+        message,
+        recommendations: [
+          "El contenido de finos de la piedra es bajo (% pasante 2,36 mm < 40%)",
+          "Mantener el minimo de 25% de arena y monitorear la resistencia de probetas segun IRAM 1534"
+        ]
+      }
+    }
+    
+    return {
+      title: "Arena muy fina para adoquines",
+      message,
+      recommendations: [
+        "Evaluar una arena con MF entre 1,80 y 2,20"
+      ]
+    }
+  }
+  return null
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RESTRICCION DINAMICA DE ARENA PARA ADOQUINES (RANCHOS)
 // El minimo de arena se determina segun el contenido de finos de la piedra 0/6
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1178,6 +1312,35 @@ export default function MezclasGranulometriaPage() {
                                 )}
                               </div>
                             )}
+                            
+                            {/* Sugerencia de arena alternativa */}
+                            {(() => {
+                              const sandMF = stockpileData.arena?.modulo_finura ?? null
+                              const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+                              const isRanchos = selectedPlant === "ranchos"
+                              
+                              // Obtener sugerencia segun planta
+                              const suggestion = isRanchos 
+                                ? getSandSuggestionForAdoquines(sandMF, stonePassing236)
+                                : getSandSuggestionForCanos(sandMF, currentRMS)
+                              
+                              if (!suggestion) return null
+                              
+                              return (
+                                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                                  <div className="font-semibold text-blue-800 mb-1">{suggestion.title}</div>
+                                  <p className="text-blue-700 mb-2">{suggestion.message}</p>
+                                  <ul className="space-y-1 text-blue-700">
+                                    {suggestion.recommendations.map((rec, i) => (
+                                      <li key={i}>• {rec}</li>
+                                    ))}
+                                  </ul>
+                                  <p className="mt-2 pt-2 border-t border-blue-200 text-[10px] text-blue-600 italic">
+                                    {ALTERNATIVE_AGGREGATE_FOOTER}
+                                  </p>
+                                </div>
+                              )
+                            })()}
                           </div>
                         )
                       })()}
@@ -1279,6 +1442,35 @@ export default function MezclasGranulometriaPage() {
                                 )}
                               </div>
                             )}
+                            
+                            {/* Sugerencia de piedra alternativa */}
+                            {(() => {
+                              const stoneMF = stockpileData.piedra?.modulo_finura ?? null
+                              const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+                              
+                              // Obtener sugerencia segun planta
+                              const suggestion = isRanchos 
+                                ? getStone06Suggestion(stoneMF, stonePassing236)
+                                : getStone010Suggestion(stoneMF, stonePassing236, currentLine.tma)
+                              
+                              if (!suggestion) return null
+                              
+                              return (
+                                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                                  <div className="font-semibold text-blue-800 mb-1">{suggestion.title}</div>
+                                  <p className="text-blue-700 mb-2">{suggestion.message}</p>
+                                  <div className="text-blue-800 font-medium mb-1">Recomendaciones:</div>
+                                  <ul className="space-y-1 text-blue-700">
+                                    {suggestion.recommendations.map((rec, i) => (
+                                      <li key={i}>• {rec}</li>
+                                    ))}
+                                  </ul>
+                                  <p className="mt-2 pt-2 border-t border-blue-200 text-[10px] text-blue-600 italic">
+                                    {ALTERNATIVE_AGGREGATE_FOOTER}
+                                  </p>
+                                </div>
+                              )
+                            })()}
                           </div>
                         )
                       })()}
