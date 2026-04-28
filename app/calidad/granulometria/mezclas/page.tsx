@@ -1113,13 +1113,64 @@ export default function MezclasGranulometriaPage() {
                   </div>
                   <div className="flex-1 space-y-3">
                     <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Óptimo Práctico (Recomendado)</h4>
+                      <h4 className="font-medium text-sm text-muted-foreground">Optimo Practico (Recomendado)</h4>
                       <p className="text-2xl font-bold text-primary">
                         {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        RMS: {optimalResult.rms.toFixed(1)} | Restricción: {currentLine.sandMin}-{currentLine.sandMax}% arena
+                        RMS: {optimalResult.rms.toFixed(1)} | Restriccion: {currentLine.sandMin}-{currentLine.sandMax}% arena
                       </p>
+                      
+                      {/* Kilogramos por pastón - desde formuleo */}
+                      {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
+                        const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
+                        const optSandKg = Math.round((optimalResult.proportion / 100) * totalAgg)
+                        const optStoneKg = Math.round(((100 - optimalResult.proportion) / 100) * totalAgg)
+                        const currentSandKg = currentPastonFormula.sand_kg
+                        const currentStoneKg = currentPastonFormula.stone_kg
+                        const diffSandKg = optSandKg - currentSandKg
+                        const diffStoneKg = optStoneKg - currentStoneKg
+                        
+                        return (
+                          <div className="mt-3 p-3 bg-white border border-primary/20 rounded-lg">
+                            <h5 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                              Sugerencia para Paston (Total agregados: {totalAgg} kg)
+                            </h5>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-sm text-muted-foreground">Arena</p>
+                                <p className="text-xl font-bold text-primary">{optSandKg} kg</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Actual: {currentSandKg} kg
+                                  {diffSandKg !== 0 && (
+                                    <span className={diffSandKg > 0 ? "text-green-600 ml-1" : "text-red-600 ml-1"}>
+                                      ({diffSandKg > 0 ? "+" : ""}{diffSandKg} kg)
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">Piedra</p>
+                                <p className="text-xl font-bold text-primary">{optStoneKg} kg</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Actual: {currentStoneKg} kg
+                                  {diffStoneKg !== 0 && (
+                                    <span className={diffStoneKg > 0 ? "text-green-600 ml-1" : "text-red-600 ml-1"}>
+                                      ({diffStoneKg > 0 ? "+" : ""}{diffStoneKg} kg)
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                            {(diffSandKg !== 0 || diffStoneKg !== 0) && (
+                              <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                                Ajuste sugerido: {diffSandKg > 0 ? "aumentar" : "reducir"} arena en {Math.abs(diffSandKg)} kg 
+                                y {diffStoneKg > 0 ? "aumentar" : "reducir"} piedra en {Math.abs(diffStoneKg)} kg
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                     
                     {/* Óptimo teórico si es diferente del práctico */}
@@ -1127,7 +1178,7 @@ export default function MezclasGranulometriaPage() {
                       <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                         <h4 className="font-medium text-sm text-amber-800 flex items-center gap-1">
                           <Lightbulb className="h-4 w-4" />
-                          Óptimo Teórico (Referencia)
+                          Optimo Teorico (Referencia)
                         </h4>
                         <p className="text-lg font-semibold text-amber-700">
                           {optimalResult.theoretical.proportion}% arena / {100 - optimalResult.theoretical.proportion}% piedra
@@ -1136,16 +1187,29 @@ export default function MezclasGranulometriaPage() {
                           RMS: {optimalResult.theoretical.rms.toFixed(1)} | 
                           Diferencia: +{(optimalResult.rms - optimalResult.theoretical.rms).toFixed(1)} puntos
                         </p>
+                        
+                        {/* Kilogramos teóricos */}
+                        {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
+                          const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
+                          const theoSandKg = Math.round((optimalResult.theoretical.proportion / 100) * totalAgg)
+                          const theoStoneKg = Math.round(((100 - optimalResult.theoretical.proportion) / 100) * totalAgg)
+                          return (
+                            <p className="text-xs text-amber-700 mt-1">
+                              En kg: {theoSandKg} kg arena / {theoStoneKg} kg piedra
+                            </p>
+                          )
+                        })()}
+                        
                         <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                          La proporción óptima teórica queda fuera del rango operativo para este producto. 
-                          Se recomienda la proporción práctica para garantizar cohesión y trabajabilidad de la mezcla.
+                          La proporcion optima teorica queda fuera del rango operativo para este producto. 
+                          Se recomienda la proporcion practica para garantizar cohesion y trabajabilidad de la mezcla.
                         </p>
                       </div>
                     )}
                     
                     {optimalResult.rms < currentRMS && (
                       <p className="text-sm text-green-600">
-                        Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporción actual
+                        Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporcion actual
                       </p>
                     )}
                   </div>
