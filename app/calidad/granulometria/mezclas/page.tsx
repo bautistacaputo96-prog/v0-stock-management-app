@@ -41,6 +41,60 @@ const PRODUCTION_LINES = [
 ]
 
 // ══════════════════════════════════════════════════════════════════════════════
+// RANGOS DE MF POR TIPO DE ARIDO (Correccion 3)
+// ══════════════════════════════════════════════════════════════════════════════
+// Arena: MF < 1.40 → rojo | 1.40–1.50 → naranja | 1.50–1.80 → amarillo | 1.80–2.20 → verde | 2.20–3.20 → amarillo | > 3.20 → rojo
+// Piedra 0/6: MF < 3.00 → amarillo | 3.00–4.20 → verde | > 4.20 → amarillo
+// Piedra 0/10: MF < 3.50 → amarillo | 3.50–5.00 → verde | > 5.00 → amarillo
+
+type MFAlertLevel = "green" | "yellow" | "orange" | "red"
+
+interface MFEvaluation {
+  level: MFAlertLevel
+  message: string
+  rangeLabel: string
+}
+
+function evaluateSandMF(mf: number): MFEvaluation {
+  if (mf < 1.40) {
+    return { level: "red", message: "MF muy bajo, arena fina inaceptable", rangeLabel: "< 1.40" }
+  }
+  if (mf < 1.50) {
+    return { level: "orange", message: "MF bajo, requiere atencion", rangeLabel: "1.40 - 1.50" }
+  }
+  if (mf < 1.80) {
+    return { level: "yellow", message: "MF aceptable pero bajo", rangeLabel: "1.50 - 1.80" }
+  }
+  if (mf <= 2.20) {
+    return { level: "green", message: "MF optimo", rangeLabel: "1.80 - 2.20" }
+  }
+  if (mf <= 3.20) {
+    return { level: "yellow", message: "MF aceptable pero alto", rangeLabel: "2.20 - 3.20" }
+  }
+  return { level: "red", message: "MF muy alto, arena gruesa inaceptable", rangeLabel: "> 3.20" }
+}
+
+function evaluateStone06MF(mf: number): MFEvaluation {
+  if (mf < 3.00) {
+    return { level: "yellow", message: "MF bajo para piedra 0/6", rangeLabel: "< 3.00" }
+  }
+  if (mf <= 4.20) {
+    return { level: "green", message: "MF optimo para piedra 0/6", rangeLabel: "3.00 - 4.20" }
+  }
+  return { level: "yellow", message: "MF alto para piedra 0/6", rangeLabel: "> 4.20" }
+}
+
+function evaluateStone010MF(mf: number): MFEvaluation {
+  if (mf < 3.50) {
+    return { level: "yellow", message: "MF bajo para piedra 0/10", rangeLabel: "< 3.50" }
+  }
+  if (mf <= 5.00) {
+    return { level: "green", message: "MF optimo para piedra 0/10", rangeLabel: "3.50 - 5.00" }
+  }
+  return { level: "yellow", message: "MF alto para piedra 0/10", rangeLabel: "> 5.00" }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RESTRICCION DINAMICA DE ARENA PARA ADOQUINES (RANCHOS)
 // El minimo de arena se determina segun el contenido de finos de la piedra 0/6
 // ══════════════════════════════════════════════════════════════════════════════
@@ -118,7 +172,7 @@ function mapPlantToDb(plant: string | null): string {
 // LÍMITES CALIBRADOS PARA EL MERCADO DE BUENOS AIRES
 // ══════════════════════════════════════════════════════════════════════════════
 // Las arenas disponibles en Buenos Aires son de río/médano con MF entre 1.70-2.00
-// No existe oferta local de arena de trituración con MF > 2.30
+// No existe oferta local de arena de trituraci��n con MF > 2.30
 
 // MF de arena - límites ajustados al mercado local
 const SAND_MF_LIMITS = {
@@ -190,36 +244,39 @@ interface GranulometryTest {
 // FUNCIONES DE EVALUACIÓN DE ALERTAS
 // ═════════════════════════════════���════════════════════════════════════════════
 
-// Evaluar estado de arena según límites del mercado local
+// Evaluar estado de arena segun limites del mercado local
 function evaluateSandAlert(mf: number | null, clayContent: number | null, passing060: number | null, passing030: number | null): {
   status: "green" | "yellow" | "orange" | "red"
   messages: string[]
+  mfEval: MFEvaluation | null
 } {
   const messages: string[] = []
   let status: "green" | "yellow" | "orange" | "red" = "green"
+  let mfEval: MFEvaluation | null = null
+  
+  // Evaluar MF segun rangos de arena
+  if (mf !== null) {
+    mfEval = evaluateSandMF(mf)
+    if (mfEval.level === "red") {
+      status = "red"
+    } else if (mfEval.level === "orange" && status !== "red") {
+      status = "orange"
+    } else if (mfEval.level === "yellow" && status === "green") {
+      status = "yellow"
+    }
+    if (mfEval.level !== "green") {
+      messages.push(`MF = ${mf.toFixed(2)} - ${mfEval.message}`)
+    }
+  }
   
   // Evaluar contenido de arcilla
   if (clayContent !== null) {
     if (clayContent > SAND_LIMITS.maxClayContentYellow) {
       status = "red"
-      messages.push(`C.A = ${clayContent.toFixed(1)}% excede el límite máximo (>${SAND_LIMITS.maxClayContentYellow}%)`)
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede limite maximo (>${SAND_LIMITS.maxClayContentYellow}%)`)
     } else if (clayContent > SAND_LIMITS.maxClayContent) {
       if (status !== "red") status = "yellow"
       messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${SAND_LIMITS.maxClayContent}%)`)
-    }
-  }
-  
-  // Evaluar MF
-  if (mf !== null) {
-    if (mf < SAND_MF_LIMITS.reject.max) {
-      status = "red"
-      messages.push(`MF = ${mf.toFixed(2)} muy bajo (<${SAND_MF_LIMITS.reject.max})`)
-    } else if (mf < SAND_MF_LIMITS.attention.min) {
-      if (status !== "red") status = "orange"
-      messages.push(`MF = ${mf.toFixed(2)} requiere atención`)
-    } else if (mf < SAND_MF_LIMITS.acceptable.min) {
-      if (status !== "red" && status !== "orange") status = "yellow"
-      messages.push(`MF = ${mf.toFixed(2)} aceptable pero bajo`)
     }
   }
   
@@ -230,7 +287,7 @@ function evaluateSandAlert(mf: number | null, clayContent: number | null, passin
       messages.push(`Pasante 0.60mm = ${passing060.toFixed(1)}% elevado`)
     } else if (passing060 > SAND_LIMITS.maxPassing060) {
       if (status !== "red" && status !== "orange") status = "yellow"
-      messages.push(`Pasante 0.60mm = ${passing060.toFixed(1)}% en límite`)
+      messages.push(`Pasante 0.60mm = ${passing060.toFixed(1)}% en limite`)
     }
   }
   
@@ -238,29 +295,42 @@ function evaluateSandAlert(mf: number | null, clayContent: number | null, passin
   if (passing030 !== null) {
     if (passing030 > SAND_LIMITS.maxPassing030Red) {
       status = "red"
-      messages.push(`Pasante 0.30mm = ${passing030.toFixed(1)}% excede límite (>${SAND_LIMITS.maxPassing030Red}%)`)
+      messages.push(`Pasante 0.30mm = ${passing030.toFixed(1)}% excede limite (>${SAND_LIMITS.maxPassing030Red}%)`)
     } else if (passing030 > SAND_LIMITS.maxPassing030) {
       if (status !== "red") status = "yellow"
       messages.push(`Pasante 0.30mm = ${passing030.toFixed(1)}% elevado`)
     }
   }
   
-  return { status, messages }
+  return { status, messages, mfEval }
 }
 
 // Evaluar estado de piedra 0/6
-function evaluateStone06Alert(clayContent: number | null, passing236: number | null, passing118: number | null): {
+function evaluateStone06Alert(mf: number | null, clayContent: number | null, passing236: number | null, passing118: number | null): {
   status: "green" | "yellow" | "red"
   messages: string[]
+  mfEval: MFEvaluation | null
 } {
   const messages: string[] = []
   let status: "green" | "yellow" | "red" = "green"
+  let mfEval: MFEvaluation | null = null
+  
+  // Evaluar MF segun rangos de piedra 0/6
+  if (mf !== null) {
+    mfEval = evaluateStone06MF(mf)
+    if (mfEval.level === "yellow" && status === "green") {
+      status = "yellow"
+    }
+    if (mfEval.level !== "green") {
+      messages.push(`MF = ${mf.toFixed(2)} - ${mfEval.message}`)
+    }
+  }
   
   // Evaluar contenido de arcilla/polvo
   if (clayContent !== null) {
     if (clayContent > STONE_06_LIMITS.maxClayContentYellow) {
       status = "red"
-      messages.push(`C.A = ${clayContent.toFixed(1)}% excede límite (>${STONE_06_LIMITS.maxClayContentYellow}%)`)
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede limite (>${STONE_06_LIMITS.maxClayContentYellow}%)`)
     } else if (clayContent > STONE_06_LIMITS.maxClayContent) {
       if (status !== "red") status = "yellow"
       messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${STONE_06_LIMITS.maxClayContent}%)`)
@@ -271,7 +341,7 @@ function evaluateStone06Alert(clayContent: number | null, passing236: number | n
   if (passing236 !== null) {
     if (passing236 > STONE_06_LIMITS.maxPassing236Yellow) {
       status = "red"
-      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% excede límite`)
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% excede limite`)
     } else if (passing236 > STONE_06_LIMITS.maxPassing236) {
       if (status !== "red") status = "yellow"
       messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% con exceso de finos`)
@@ -282,23 +352,36 @@ function evaluateStone06Alert(clayContent: number | null, passing236: number | n
   if (passing118 !== null) {
     if (passing118 > STONE_06_LIMITS.maxPassing118Red) {
       status = "red"
-      messages.push(`Pasante 1.18mm = ${passing118.toFixed(1)}% excede límite`)
+      messages.push(`Pasante 1.18mm = ${passing118.toFixed(1)}% excede limite`)
     } else if (passing118 > STONE_06_LIMITS.maxPassing118) {
       if (status !== "red") status = "yellow"
       messages.push(`Pasante 1.18mm = ${passing118.toFixed(1)}% elevado`)
     }
   }
   
-  return { status, messages }
+  return { status, messages, mfEval }
 }
 
 // Evaluar estado de piedra 0/10 (para canos - Mercedes/Silke y Villa Rosa)
-function evaluateStone010Alert(clayContent: number | null, passing475: number | null, passing236: number | null): {
+function evaluateStone010Alert(mf: number | null, clayContent: number | null, passing475: number | null, passing236: number | null): {
   status: "green" | "yellow" | "red"
   messages: string[]
+  mfEval: MFEvaluation | null
 } {
   const messages: string[] = []
   let status: "green" | "yellow" | "red" = "green"
+  let mfEval: MFEvaluation | null = null
+  
+  // Evaluar MF segun rangos de piedra 0/10
+  if (mf !== null) {
+    mfEval = evaluateStone010MF(mf)
+    if (mfEval.level === "yellow" && status === "green") {
+      status = "yellow"
+    }
+    if (mfEval.level !== "green") {
+      messages.push(`MF = ${mf.toFixed(2)} - ${mfEval.message}`)
+    }
+  }
   
   // Evaluar contenido de arcilla/polvo
   if (clayContent !== null) {
@@ -333,7 +416,7 @@ function evaluateStone010Alert(clayContent: number | null, passing475: number | 
     }
   }
   
-  return { status, messages }
+  return { status, messages, mfEval }
 }
 
 // Detectar perfil tipico de arena local (deficiencia en fraccion gruesa)
@@ -1071,6 +1154,30 @@ export default function MezclasGranulometriaPage() {
                                 ))}
                               </div>
                             )}
+                            
+                            {/* Analisis tecnico de arena (Correccion 4) */}
+                            {stockpileData.arena && sandAlert.mfEval && (
+                              <div className={`mt-3 p-2 rounded text-xs ${
+                                sandAlert.mfEval.level === "red" ? "bg-red-100 text-red-800" :
+                                sandAlert.mfEval.level === "orange" ? "bg-orange-100 text-orange-800" :
+                                sandAlert.mfEval.level === "yellow" ? "bg-amber-100 text-amber-800" :
+                                "bg-green-100 text-green-800"
+                              }`}>
+                                <div className="font-medium mb-1">
+                                  MF {stockpileData.arena.modulo_finura?.toFixed(2)} - {sandAlert.mfEval.message}
+                                </div>
+                                <div className="text-[10px] opacity-80">
+                                  Rango optimo arena: 1.80 - 2.20 | Aceptable: 1.50 - 3.20
+                                </div>
+                                {sandAlert.messages.length > 0 && (
+                                  <ul className="mt-1 space-y-0.5">
+                                    {sandAlert.messages.filter(m => !m.startsWith("MF")).map((msg, i) => (
+                                      <li key={i}>• {msg}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )
                       })()}
@@ -1090,12 +1197,13 @@ export default function MezclasGranulometriaPage() {
                         const passing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
                         const passing118 = stockpileData.piedra?.passing_percentages?.["1.18"] ?? null
                         
-                        // Usar la funcion de evaluacion correcta segun la planta
-                        const stoneAlert = stockpileData.piedra 
-                          ? (isRanchos 
-                              ? evaluateStone06Alert(clayContent, passing236, passing118)
-                              : evaluateStone010Alert(clayContent, passing475, passing236))
-                          : { status: "green" as const, messages: [] }
+  // Usar la funcion de evaluacion correcta segun la planta
+  const stoneMF = stockpileData.piedra?.modulo_finura ?? null
+  const stoneAlert = stockpileData.piedra
+  ? (isRanchos
+  ? evaluateStone06Alert(stoneMF, clayContent, passing236, passing118)
+  : evaluateStone010Alert(stoneMF, clayContent, passing475, passing236))
+  : { status: "green" as const, messages: [], mfEval: null }
                         
                         const borderColor = stoneAlert.status === "red" ? "border-red-300 bg-red-50/50" 
                           : stoneAlert.status === "yellow" ? "border-amber-300 bg-amber-50/50"
@@ -1144,6 +1252,31 @@ export default function MezclasGranulometriaPage() {
                                     <div>{stockpileData.piedra.passing[i]?.toFixed(1)}%</div>
                                   </div>
                                 ))}
+                              </div>
+                            )}
+                            
+                            {/* Analisis tecnico de piedra (Correccion 4) */}
+                            {stockpileData.piedra && stoneAlert.mfEval && (
+                              <div className={`mt-3 p-2 rounded text-xs ${
+                                stoneAlert.mfEval.level === "yellow" ? "bg-amber-100 text-amber-800" :
+                                "bg-green-100 text-green-800"
+                              }`}>
+                                <div className="font-medium mb-1">
+                                  MF {stockpileData.piedra.modulo_finura?.toFixed(2)} - {stoneAlert.mfEval.message}
+                                </div>
+                                <div className="text-[10px] opacity-80">
+                                  {isRanchos 
+                                    ? "Rango optimo piedra 0/6: 3.00 - 4.20"
+                                    : "Rango optimo piedra 0/10: 3.50 - 5.00"
+                                  }
+                                </div>
+                                {stoneAlert.messages.length > 0 && (
+                                  <ul className="mt-1 space-y-0.5">
+                                    {stoneAlert.messages.filter(m => !m.startsWith("MF")).map((msg, i) => (
+                                      <li key={i}>• {msg}</li>
+                                    ))}
+                                  </ul>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1568,12 +1701,13 @@ export default function MezclasGranulometriaPage() {
             
             {/* Alerta de Piedra 0/6 */}
             {stockpileData.piedra_0_6 && (() => {
-              const clayContent = stockpileData.piedra_0_6.peso_humedo_g && stockpileData.piedra_0_6.peso_seco_g
-                ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
-                : null
-              const passing236 = stockpileData.piedra_0_6.passing_percentages?.["2.36"] ?? null
-              const passing118 = stockpileData.piedra_0_6.passing_percentages?.["1.18"] ?? null
-              const stoneAlert = evaluateStone06Alert(clayContent, passing236, passing118)
+  const clayContent = stockpileData.piedra_0_6.peso_humedo_g && stockpileData.piedra_0_6.peso_seco_g
+  ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
+  : null
+  const stoneMF = stockpileData.piedra_0_6.modulo_finura ?? null
+  const passing236 = stockpileData.piedra_0_6.passing_percentages?.["2.36"] ?? null
+  const passing118 = stockpileData.piedra_0_6.passing_percentages?.["1.18"] ?? null
+  const stoneAlert = evaluateStone06Alert(stoneMF, clayContent, passing236, passing118)
               
               if (stoneAlert.status === "red") {
                 return (
