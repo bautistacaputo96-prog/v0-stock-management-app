@@ -28,17 +28,64 @@ const IRAM_1627_ZONA_II = {
 }
 
 // Líneas de producción con restricciones de optimización por planta
-// Adoquines: semiseco, vibro-prensado (solo Ranchos)
+// Adoquines: semiseco, vibro-prensado (solo Ranchos) - restriccion dinamica segun finos de piedra
 // Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke)
 // Caños DN 800-1200: semiseco, vibrado interno (Villa Rosa)
 const PRODUCTION_LINES = [
-  // Ranchos - Adoquines (mantiene restriccion de 25% minimo de arena por cohesion en vibro-prensado)
-  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"], hasMinSandRestriction: true },
+  // Ranchos - Adoquines (restriccion DINAMICA de arena segun % pasante 2.36mm de la piedra)
+  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 0, sandMax: 45, materials: ["arena", "piedra_0_6"], hasDynamicSandRestriction: true },
   // Mercedes/Silke - Canos chicos (300-600) - SIN restriccion minima de arena (vibracion garantiza compactacion)
-  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasMinSandRestriction: false },
+  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
   // Villa Rosa - Canos grandes (800, 1000, 1200) - SIN restriccion minima de arena (vibracion garantiza compactacion)
-  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasMinSandRestriction: false },
+  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
 ]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RESTRICCION DINAMICA DE ARENA PARA ADOQUINES (RANCHOS)
+// El minimo de arena se determina segun el contenido de finos de la piedra 0/6
+// ══════════════════════════════════════════════════════════════════════════════
+interface DynamicSandRestriction {
+  minSand: number
+  message: string
+  level: "high" | "moderate" | "low"
+}
+
+function calculateDynamicSandMinimum(stonePassing236: number | null): DynamicSandRestriction {
+  if (stonePassing236 === null) {
+    // Sin datos de piedra, usar restriccion por defecto
+    return {
+      minSand: 25,
+      message: "Sin datos de granulometria de piedra. Se aplica minimo por defecto de 25% arena.",
+      level: "high"
+    }
+  }
+  
+  if (stonePassing236 < 40) {
+    return {
+      minSand: 25,
+      message: "La piedra disponible tiene bajo contenido de finos. Se requiere un minimo de 25% de arena para garantizar cohesion de la mezcla semiseca, acabado superficial cerrado y llenado completo del molde durante el vibro-prensado.",
+      level: "high"
+    }
+  }
+  
+  if (stonePassing236 >= 40 && stonePassing236 <= 60) {
+    return {
+      minSand: 10,
+      message: "La piedra disponible tiene contenido moderado de finos, lo que reduce parcialmente la necesidad de arena para cohesion y acabado superficial. El minimo de arena se ajusta a 10%.",
+      level: "moderate"
+    }
+  }
+  
+  // stonePassing236 > 60
+  return {
+    minSand: 0,
+    message: `La piedra disponible tiene alto contenido de finos de trituracion (${stonePassing236.toFixed(1)}% pasa tamiz 2,36 mm). Este material ya esta aportando la fraccion fina necesaria para cohesion de la mezcla semiseca y acabado superficial del adoquin. El optimizador puede sugerir proporciones de arena entre 0% y 25% segun lo que minimice el RMS. Si sugiere 0%, validar con probetas que el acabado superficial y la resistencia al desgaste cumplan IRAM 1534.`,
+    level: "low"
+  }
+}
+
+// Fundamento tecnico para mostrar en la UI
+const ADOQUINES_SAND_RESTRICTION_NOTE = `La restriccion minima de arena en adoquines por vibro-prensado responde a tres factores: (1) Cohesion de la mezcla semiseca: la arena aporta friccion interna que permite el desmolde sin deformacion de la pieza. Cuando la piedra tiene alto contenido de finos de trituracion, estos cumplen el mismo rol. (2) Acabado superficial: sin fraccion fina suficiente la cara vista del adoquin queda abierta y porosa, comprometiendo la resistencia al desgaste y el cumplimiento de absorcion segun IRAM 1534. (3) Llenado de molde: la fraccion fina facilita el flujo de la mezcla hacia bordes y esquinas durante el prensado. Cuando la piedra ya aporta esta fraccion, la arena puede reducirse o eliminarse sin comprometer estos aspectos.`
 
 // Helper para obtener líneas filtradas por planta
 function getProductionLinesForPlant(plant: string | null): typeof PRODUCTION_LINES {
@@ -128,7 +175,7 @@ interface GranulometryTest {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // FUNCIONES DE EVALUACIÓN DE ALERTAS
-// ══════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════���════════════════════════════════════════════
 
 // Evaluar estado de arena según límites del mercado local
 function evaluateSandAlert(mf: number | null, clayContent: number | null, passing060: number | null, passing030: number | null): {
@@ -763,9 +810,16 @@ export default function MezclasGranulometriaPage() {
     return calculateRMS(blendPassing, iramMid)
   }, [blendPassing])
   
-  const optimalResult = useMemo(() =>
-  findOptimalProportion(sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax),
-  [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax]
+  const optimalResult = useMemo(() => {
+  // Para adoquines (Ranchos), calcular sandMin dinamico basado en % pasante 2.36mm de la piedra
+  let effectiveSandMin = currentLine.sandMin
+  if (currentLine.hasDynamicSandRestriction) {
+    const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+    const dynamicRestriction = calculateDynamicSandMinimum(stonePassing236)
+    effectiveSandMin = dynamicRestriction.minSand
+  }
+  return findOptimalProportion(sandPassing, stonePassing, currentLine.tma, effectiveSandMin, currentLine.sandMax)
+  }, [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax, currentLine.hasDynamicSandRestriction, stockpileData.piedra]
   )
   
   // Alias for clearer naming in formula suggestion section
@@ -851,15 +905,29 @@ export default function MezclasGranulometriaPage() {
   ))}
                 </SelectContent>
               </Select>
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
-                <span>TMA: <strong>{currentLine.tma}mm</strong></span>
-                <span>MF óptimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
-                {currentLine.hasMinSandRestriction ? (
-                    <span className="text-amber-600">Arena: <strong>{currentLine.sandMin} - {currentLine.sandMax}%</strong></span>
-                  ) : (
-                    <span className="text-green-600">Arena: <strong>Sin restriccion (0-100%)</strong></span>
-                  )}
-              </div>
+              {(() => {
+                // Calcular restriccion dinamica para adoquines
+                const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+                const dynamicRestriction = currentLine.hasDynamicSandRestriction 
+                  ? calculateDynamicSandMinimum(stonePassing236)
+                  : null
+                const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
+                
+                return (
+                  <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
+                    <span>TMA: <strong>{currentLine.tma}mm</strong></span>
+                    <span>MF optimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
+                    {currentLine.hasDynamicSandRestriction ? (
+                      <span className={dynamicRestriction?.level === "low" ? "text-green-600" : dynamicRestriction?.level === "moderate" ? "text-amber-600" : "text-orange-600"}>
+                        Arena min: <strong>{effectiveSandMin}%</strong>
+                        {dynamicRestriction?.level === "low" && " (dinamico)"}
+                      </span>
+                    ) : (
+                      <span className="text-green-600">Arena: <strong>Sin restriccion (0-100%)</strong></span>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           </CardContent>
         </Card>
@@ -1222,6 +1290,15 @@ export default function MezclasGranulometriaPage() {
             </Card>
             
             {/* Optimizador */}
+            {(() => {
+              // Calcular restriccion dinamica para adoquines (Ranchos)
+              const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+              const dynamicRestriction = currentLine.hasDynamicSandRestriction 
+                ? calculateDynamicSandMinimum(stonePassing236)
+                : null
+              const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
+              
+              return (
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="py-4">
                 <div className="flex items-start gap-3">
@@ -1239,8 +1316,30 @@ export default function MezclasGranulometriaPage() {
                         Diferencia: {(currentRMS - optimalResult.rms).toFixed(1)} puntos
                       </p>
                       
+                      {/* Mensaje dinamico para adoquines segun contenido de finos de la piedra */}
+                      {currentLine.hasDynamicSandRestriction && dynamicRestriction && (
+                        <div className={`mt-3 p-3 rounded-lg border ${
+                          dynamicRestriction.level === "low" ? "bg-green-50 border-green-200" :
+                          dynamicRestriction.level === "moderate" ? "bg-amber-50 border-amber-200" :
+                          "bg-orange-50 border-orange-200"
+                        }`}>
+                          <p className={`text-sm leading-relaxed ${
+                            dynamicRestriction.level === "low" ? "text-green-800" :
+                            dynamicRestriction.level === "moderate" ? "text-amber-800" :
+                            "text-orange-800"
+                          }`}>
+                            {dynamicRestriction.message}
+                          </p>
+                          {dynamicRestriction.level === "low" && optimalResult.proportion < 25 && (
+                            <p className="text-xs text-green-700 mt-2 pt-2 border-t border-green-200">
+                              Cualquier cambio debe validarse con probetas segun IRAM 1534.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      
                       {/* Mensajes especiales para canos (sin restriccion de arena) */}
-                      {!currentLine.hasMinSandRestriction && (
+                      {!currentLine.hasDynamicSandRestriction && (
                         <>
                           {/* Mensaje cuando optimo es 0% arena */}
                           {optimalResult.proportion === 0 && (
@@ -1326,36 +1425,11 @@ export default function MezclasGranulometriaPage() {
                       })()}
                     </div>
                     
-                    {/* Optimo teorico solo para adoquines (con restricciones) */}
-                    {currentLine.hasMinSandRestriction && optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                        <h4 className="font-medium text-sm text-amber-800 flex items-center gap-1">
-                          <Lightbulb className="h-4 w-4" />
-                          Optimo Teorico (Referencia)
-                        </h4>
-                        <p className="text-lg font-semibold text-amber-700">
-                          {optimalResult.theoretical.proportion}% arena / {100 - optimalResult.theoretical.proportion}% piedra
-                        </p>
-                        <p className="text-sm text-amber-600">
-                          RMS: {optimalResult.theoretical.rms.toFixed(1)} | 
-                          Diferencia: +{(optimalResult.rms - optimalResult.theoretical.rms).toFixed(1)} puntos
-                        </p>
-                        
-                        {/* Kilogramos teoricos */}
-                        {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
-                          const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
-                          const theoSandKg = Math.round((optimalResult.theoretical.proportion / 100) * totalAgg)
-                          const theoStoneKg = Math.round(((100 - optimalResult.theoretical.proportion) / 100) * totalAgg)
-                          return (
-                            <p className="text-xs text-amber-700 mt-1">
-                              En kg: {theoSandKg} kg arena / {theoStoneKg} kg piedra
-                            </p>
-                          )
-                        })()}
-                        
-                        <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                          La proporcion optima teorica queda fuera del rango operativo para este producto. 
-                          Se recomienda la proporcion practica para garantizar cohesion y trabajabilidad de la mezcla.
+                    {/* Nota tecnica para adoquines */}
+                    {currentLine.hasDynamicSandRestriction && (
+                      <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                        <p className="text-xs text-slate-600 leading-relaxed">
+                          <strong>Fundamento tecnico:</strong> {ADOQUINES_SAND_RESTRICTION_NOTE}
                         </p>
                       </div>
                     )}
@@ -1369,6 +1443,8 @@ export default function MezclasGranulometriaPage() {
                 </div>
               </CardContent>
             </Card>
+              )
+            })()}
             
             {/* ══════════════════════════════════════════════════════════════════════════════
                 ALERTAS DE CALIDAD - CALIBRADAS PARA MERCADO DE BUENOS AIRES
