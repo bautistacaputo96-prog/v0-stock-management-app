@@ -163,10 +163,14 @@ export function GranulometryDashboardWidget() {
       // Procesar datos de agregados
       const now = new Date()
       const aggData: AggregateData[] = config.aggregates.map((agg) => {
-        const test = (stockpileData || []).find((t: any) => 
-          t.material_type?.toLowerCase().includes(agg.dbType.replace("_", " ").toLowerCase()) ||
-          t.material_type?.toLowerCase().includes(agg.dbType.replace("_0_", "").toLowerCase())
-        )
+        // Buscar ensayo por material_type - comparacion directa o parcial
+        const test = (stockpileData || []).find((t: any) => {
+          const mt = t.material_type?.toLowerCase() || ""
+          const dt = agg.dbType.toLowerCase()
+          // Coincidencia exacta (ej: "piedra_0_6" === "piedra_0_6")
+          // O coincidencia parcial para arena (ej: "arena" includes "arena")
+          return mt === dt || mt.includes(dt) || dt.includes(mt)
+        })
 
         if (!test) {
           return {
