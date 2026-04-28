@@ -107,6 +107,33 @@ function findOptimalProportion(sandPassing: number[], stonePassing: number[], tm
   return best
 }
 
+// Convertir gramos retenidos a % pasante acumulado (MISMA LOGICA QUE MODULO DE MEZCLAS)
+function getPassingFromStockpile(test: any): number[] {
+  const sieveColumnMapping: Record<number, string> = {
+    9.5: "sieve_9500",
+    4.75: "sieve_4750",
+    2.36: "sieve_2360",
+    1.18: "sieve_1180",
+    0.60: "sieve_600",
+    0.30: "sieve_300",
+    0.15: "sieve_150",
+  }
+  
+  const totalWeight = parseFloat(test.total_sample_weight_g) || 500
+  let cumulativeRetained = 0
+  const passing: number[] = []
+  
+  for (const size of SIEVE_SIZES_MM) {
+    const colName = sieveColumnMapping[size]
+    const retained = colName ? (parseFloat(test[colName]) || 0) : 0
+    cumulativeRetained += retained
+    const passingPct = ((totalWeight - cumulativeRetained) / totalWeight) * 100
+    passing.push(Math.max(0, Math.min(100, passingPct)))
+  }
+  
+  return passing
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
@@ -194,23 +221,9 @@ export function GranulometryDashboardWidget() {
         const testDate = new Date(test.test_date)
         const daysSince = Math.floor((now.getTime() - testDate.getTime()) / (1000 * 60 * 60 * 24))
 
-        // Extraer pasantes
-        const passing = [
-          test.sieve_9500 ?? 100,
-          test.sieve_4750 ?? 100,
-          test.sieve_2360 ?? 100,
-          test.sieve_1180 ?? 100,
-          test.sieve_600 ?? 100,
-          test.sieve_300 ?? 100,
-          test.sieve_150 ?? 100,
-        ].map((v: number) => {
-          if (test.total_sample_weight_g && test.total_sample_weight_g > 0) {
-            // Si los valores son pesos retenidos, convertir a % pasante acumulado
-            // Asumimos que ya estan como % pasante si son <= 100
-            return v > 100 ? 100 : v
-          }
-          return v
-        })
+        // Extraer pasantes - USAR MISMA LOGICA QUE MODULO DE MEZCLAS
+        // Los valores sieve_XXXX son gramos retenidos, NO % pasante
+        const passing = getPassingFromStockpile(test)
 
         // Determinar el tipo real de piedra del ensayo (puede ser diferente al esperado)
         let actualType = agg.type
@@ -287,16 +300,8 @@ export function GranulometryDashboardWidget() {
     }
     // Para Silke y Villa Rosa (canos), sandMin=0, sandMax=100 - sin restriccion
 
-    // DEBUG: Log para diagnosticar problema de formula
-    console.log("[v0] Widget calc - plant:", selectedPlant, "sandMin:", sandMin, "sandMax:", sandMax)
-    console.log("[v0] Widget calc - sandPassing:", sandAgg.passing)
-    console.log("[v0] Widget calc - stonePassing:", stoneAgg.passing)
-    console.log("[v0] Widget calc - TMA:", config.tma)
-
     const currentRMS = calculateRMS(sandAgg.passing, stoneAgg.passing, currentFormula.sandPct, config.tma)
     const optimal = findOptimalProportion(sandAgg.passing, stoneAgg.passing, config.tma, sandMin, sandMax)
-    
-    console.log("[v0] Widget calc - optimal result:", optimal)
     const totalKg = currentFormula.sandKg + currentFormula.stoneKg
 
     return {
