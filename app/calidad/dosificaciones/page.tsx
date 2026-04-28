@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Plus, Edit2, History, FileText, AlertTriangle, CheckCircle2, ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
+import { usePlant } from "@/lib/plant-context"
 
 const PIPE_DIAMETERS = [300, 400, 500, 600, 800, 1000, 1200]
 
@@ -50,6 +51,7 @@ interface MixHistory {
 
 export default function DosificacionesPage() {
   const supabase = createClient()
+  const { selectedPlant } = usePlant()
   const [mixDesigns, setMixDesigns] = useState<MixDesign[]>([])
   const [history, setHistory] = useState<MixHistory[]>([])
   const [loading, setLoading] = useState(true)
@@ -74,13 +76,14 @@ export default function DosificacionesPage() {
 
   useEffect(() => {
     loadMixDesigns()
-  }, [])
+  }, [selectedPlant])
 
   async function loadMixDesigns() {
     setLoading(true)
     const { data, error } = await supabase
       .from("pipe_mix_designs")
       .select("*")
+      .eq("plant", selectedPlant || "mercedes")
       .order("diameter", { ascending: true })
       .order("version", { ascending: false })
 
@@ -119,6 +122,7 @@ export default function DosificacionesPage() {
           diameter: editingMix.diameter,
           version: editingMix.version + 1,
           is_active: true,
+          plant: selectedPlant || "mercedes",
           cement_kg: formData.cement_kg,
           sand_kg: formData.sand_kg,
           stone_0_10_kg: formData.stone_0_10_kg,
@@ -183,6 +187,7 @@ export default function DosificacionesPage() {
         diameter: formData.diameter,
         version: maxVersion + 1,
         is_active: true,
+        plant: selectedPlant || "mercedes",
         cement_kg: formData.cement_kg,
         sand_kg: formData.sand_kg,
         stone_0_10_kg: formData.stone_0_10_kg,

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Search, Loader2, FlaskConical, X } from "lucide-react"
 import Link from "next/link"
 import { getSupabase } from "@/lib/supabase"
+import { usePlant } from "@/lib/plant-context"
 
 interface CylinderResult {
   id: string
@@ -37,6 +38,7 @@ interface CylinderResult {
 
 export default function ResultadosRoturasPage() {
   const supabase = getSupabase()
+  const { selectedPlant } = usePlant()
 
   const [results, setResults] = useState<CylinderResult[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,6 +74,7 @@ export default function ResultadosRoturasPage() {
             remito,
             sample_number,
             actual_slump_cm,
+            plant,
             formula:formula_id (
               id,
               name,
@@ -85,7 +88,8 @@ export default function ResultadosRoturasPage() {
 
       if (error) throw error
 
-      const rows = (data || []) as unknown as CylinderResult[]
+      const rows = ((data || []) as unknown as CylinderResult[])
+        .filter(r => !selectedPlant || !r.dispatch?.plant || r.dispatch.plant === selectedPlant)
       setResults(rows)
 
       // Build filter options
@@ -102,7 +106,7 @@ export default function ResultadosRoturasPage() {
 
   useEffect(() => {
     loadResults()
-  }, [loadResults])
+  }, [loadResults, selectedPlant])
 
   // Filter logic
   const filtered = results.filter(r => {

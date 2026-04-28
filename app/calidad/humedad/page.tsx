@@ -14,11 +14,13 @@ import { Plus, ArrowLeft, AlertTriangle, CheckCircle2, Droplets, TrendingUp, Tre
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts"
 import Link from "next/link"
 import { toast } from "sonner"
+import { usePlant } from "@/lib/plant-context"
 
-const MATERIAL_TYPES = [
-  { value: "arena", label: "Arena", targetMin: 3, targetMax: 6, color: "#f59e0b" },
-  { value: "piedra_0_10", label: "Piedra 0-10", targetMin: 0, targetMax: 2, color: "#6b7280" },
-  { value: "piedra_0_20", label: "Piedra 0-20", targetMin: 0, targetMax: 2, color: "#374151" },
+const ALL_MATERIAL_TYPES = [
+  { value: "arena", label: "Arena", targetMin: 3, targetMax: 6, color: "#f59e0b", plants: ["mercedes", "silke", "ranchos"] },
+  { value: "piedra_0_6", label: "Piedra 0/6", targetMin: 0, targetMax: 2, color: "#78716c", plants: ["ranchos"] },
+  { value: "piedra_0_10", label: "Piedra 0/10", targetMin: 0, targetMax: 2, color: "#6b7280", plants: ["mercedes", "silke"] },
+  { value: "piedra_0_20", label: "Piedra 0/20", targetMin: 0, targetMax: 2, color: "#374151", plants: ["mercedes", "silke"] },
 ]
 
 interface HumidityTest {
@@ -37,6 +39,8 @@ interface HumidityTest {
 
 export default function HumedadPage() {
   const supabase = createClient()
+  const { selectedPlant } = usePlant()
+  const MATERIAL_TYPES = ALL_MATERIAL_TYPES.filter(m => m.plants.includes(selectedPlant || "mercedes"))
   const [tests, setTests] = useState<HumidityTest[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedMaterial, setSelectedMaterial] = useState<string>("all")
@@ -69,13 +73,14 @@ export default function HumedadPage() {
     if (dateRange.start && dateRange.end) {
       loadTests()
     }
-  }, [dateRange])
+  }, [dateRange, selectedPlant])
 
   async function loadTests() {
     setLoading(true)
     const { data, error } = await supabase
       .from("humidity_tests")
       .select("*")
+      .eq("plant", selectedPlant || "mercedes")
       .gte("test_date", dateRange.start)
       .lte("test_date", dateRange.end)
       .order("test_date", { ascending: false })
@@ -111,6 +116,7 @@ export default function HumedadPage() {
       lot_number: formData.lot_number || null,
       observations: formData.observations || null,
       is_within_spec: isWithinSpec,
+      plant: selectedPlant || "mercedes",
     }
 
     let error
