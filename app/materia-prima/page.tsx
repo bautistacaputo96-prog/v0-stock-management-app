@@ -72,14 +72,6 @@ interface StockData {
   }[]
 }
 
-const MATERIAL_TYPES = [
-  "Arena",
-  "Piedra",
-  "Cemento",
-  "Aditivo",
-  "Otro"
-]
-
 // Line types per plant
 const LINE_TYPES_PIPES = [
   { value: "canos", label: "Canos" },
@@ -117,7 +109,6 @@ function MateriaPrimaContent() {
   const [supplierForm, setSupplierForm] = useState({
     name: "",
     material_type: "",
-    product_detail: "",
     line_type: "ambos",
     density: "",
     unit: "kg"
@@ -210,13 +201,12 @@ function MateriaPrimaContent() {
   const saveSupplier = async () => {
     const supabase = getSupabase()
     
-    const dataToSave = {
-      name: supplierForm.name,
-      material_type: supplierForm.material_type,
-      product_detail: supplierForm.product_detail || null,
-      line_type: supplierForm.line_type,
-      is_active: true,
-      density: supplierForm.density ? parseFloat(supplierForm.density) : null,
+const dataToSave = {
+  name: supplierForm.name,
+  material_type: supplierForm.material_type,
+  line_type: supplierForm.line_type,
+  is_active: true,
+  density: supplierForm.density ? parseFloat(supplierForm.density) : null,
       unit: supplierForm.unit || "kg",
       plant: selectedPlant
     }
@@ -235,7 +225,7 @@ function MateriaPrimaContent() {
     setShowSupplierDialog(false)
     setEditingSupplier(null)
     const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
+    setSupplierForm({ name: "", material_type: "", line_type: defaultLineType, density: "", unit: "kg" })
     loadSuppliers()
   }
 
@@ -288,14 +278,13 @@ function MateriaPrimaContent() {
 
   const openEditSupplier = (supplier: Supplier) => {
     setEditingSupplier(supplier)
-    setSupplierForm({
-      name: supplier.name,
-      material_type: supplier.material_type,
-      product_detail: supplier.product_detail || "",
-      line_type: supplier.line_type || "ambos",
-      density: supplier.density?.toString() || "",
-      unit: supplier.unit || "kg"
-    })
+setSupplierForm({
+  name: supplier.name,
+  material_type: supplier.material_type,
+  line_type: supplier.line_type || "ambos",
+  density: supplier.density?.toString() || "",
+  unit: supplier.unit || "kg"
+})
     setShowSupplierDialog(true)
   }
 
@@ -532,7 +521,7 @@ function MateriaPrimaContent() {
                   <Button onClick={() => {
                     setEditingSupplier(null)
                     const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
+                    setSupplierForm({ name: "", material_type: "", line_type: defaultLineType, density: "", unit: "kg" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Proveedor
@@ -552,28 +541,13 @@ function MateriaPrimaContent() {
                       />
                     </div>
                     <div>
-                      <Label>Tipo de Material</Label>
-                      <Select
-                        value={supplierForm.material_type}
-                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, material_type: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar tipo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MATERIAL_TYPES.map(type => (
-                            <SelectItem key={type} value={type}>{type}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Detalle del Producto (opcional)</Label>
+                      <Label>Material</Label>
                       <Input
-                        value={supplierForm.product_detail}
-                        onChange={(e) => setSupplierForm(prev => ({ ...prev, product_detail: e.target.value }))}
-                        placeholder="Ej: Arena de trituracion, Piedra 0/10, CPC40"
+                        value={supplierForm.material_type}
+                        onChange={(e) => setSupplierForm(prev => ({ ...prev, material_type: e.target.value }))}
+                        placeholder="Ej: Piedra 06, Piedra 010, CPC-40, Arena Especial"
                       />
+                      <p className="text-xs text-muted-foreground mt-1">Nombre completo del material que provee</p>
                     </div>
                     <div>
                       <Label>Linea de Produccion</Label>
@@ -592,7 +566,7 @@ function MateriaPrimaContent() {
                       </Select>
                     </div>
                     
-                    {supplierForm.material_type === "Aditivo" && (
+                    {supplierForm.material_type.toLowerCase().includes("aditivo") && (
                       <>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -639,8 +613,7 @@ function MateriaPrimaContent() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Proveedor</TableHead>
-                      <TableHead>Tipo Material</TableHead>
-                      <TableHead>Producto</TableHead>
+                      <TableHead>Material</TableHead>
                       <TableHead>Linea</TableHead>
                       <TableHead>Densidad</TableHead>
                       <TableHead>Estado</TableHead>
@@ -650,13 +623,13 @@ function MateriaPrimaContent() {
                   <TableBody>
                     {loadingSuppliers ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                           Cargando proveedores...
                         </TableCell>
                       </TableRow>
                     ) : suppliers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                           No hay proveedores registrados
                         </TableCell>
                       </TableRow>
@@ -667,7 +640,6 @@ function MateriaPrimaContent() {
                           <TableCell>
                             <Badge variant="outline">{supplier.material_type}</Badge>
                           </TableCell>
-                          <TableCell>{supplier.product_detail || "-"}</TableCell>
                           <TableCell>
                             {supplier.line_type === "canos" && "Canos"}
                             {supplier.line_type === "bloques" && "Bloques"}
