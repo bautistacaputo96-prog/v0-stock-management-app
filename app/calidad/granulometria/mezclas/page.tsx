@@ -29,16 +29,14 @@ const IRAM_1627_ZONA_II = {
 
 // Líneas de producción con restricciones de optimización por planta
 // Adoquines: semiseco, vibro-prensado (solo Ranchos)
-// Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke y Villa Rosa)
-// Caños DN 800-1200: semiseco, vibrado interno (Mercedes/Silke y Villa Rosa)
+// Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke)
+// Caños DN 800-1200: semiseco, vibrado interno (Villa Rosa)
 const PRODUCTION_LINES = [
   // Ranchos - Adoquines
   { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
-  // Mercedes/Silke - Caños
+  // Mercedes/Silke - Caños chicos (300-600)
   { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
-  { id: "canos_grandes_mercedes", name: "Canos DN 800-1200", plant: "mercedes", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
-  // Villa Rosa - Caños
-  { id: "canos_pequenos_villa_rosa", name: "Canos DN 300-600", plant: "villa-rosa", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
+  // Villa Rosa - Caños grandes (800, 1000, 1200)
   { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
 ]
 
