@@ -612,9 +612,29 @@ export default function MezclasGranulometriaPage() {
       const arenaTest = data.find((t: any) => t.material_type.toLowerCase().includes("arena"))
       const piedraTest = data.find((t: any) => t.material_type.toLowerCase().includes("piedra"))
       
+      // Helper para crear passing_percentages como objeto {tamaño: porcentaje}
+      const createPassingPercentages = (passing: number[]) => {
+        const result: Record<string, number> = {}
+        SIEVE_SIZES_MM.forEach((size, i) => {
+          result[size.toString()] = passing[i] ?? 0
+        })
+        return result
+      }
+      
+      const arenaPassingArray = arenaTest ? getPassingFromStockpile(arenaTest) : []
+      const piedraPassingArray = piedraTest ? getPassingFromStockpile(piedraTest) : []
+      
       setStockpileData({
-        arena: arenaTest ? { ...arenaTest, passing: getPassingFromStockpile(arenaTest) } : null,
-        piedra: piedraTest ? { ...piedraTest, passing: getPassingFromStockpile(piedraTest) } : null,
+        arena: arenaTest ? { 
+          ...arenaTest, 
+          passing: arenaPassingArray,
+          passing_percentages: createPassingPercentages(arenaPassingArray)
+        } : null,
+        piedra: piedraTest ? { 
+          ...piedraTest, 
+          passing: piedraPassingArray,
+          passing_percentages: createPassingPercentages(piedraPassingArray)
+        } : null,
         loaded: true,
       })
     }
