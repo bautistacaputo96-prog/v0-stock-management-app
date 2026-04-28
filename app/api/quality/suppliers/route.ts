@@ -11,11 +11,14 @@ export async function GET(request: Request) {
       .from("suppliers")
       .select("*")
       .eq("is_active", true)
-      .order("name", { ascending: true })
 
-    if (plant) query = query.eq("plant", plant)
+    if (plant) {
+      // Convert plant format (villa-rosa -> villa_rosa)
+      const plantValue = plant === "villa-rosa" ? "villa_rosa" : plant
+      query = query.eq("plant", plantValue)
+    }
 
-    const { data, error } = await query
+    const { data, error } = await query.order("name", { ascending: true })
     if (error) throw error
     return NextResponse.json(data)
   } catch {

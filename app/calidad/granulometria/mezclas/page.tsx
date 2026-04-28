@@ -27,15 +27,92 @@ const IRAM_1627_ZONA_II = {
   max: [100, 100, 100, 90, 70, 34, 15]
 }
 
-// Líneas de producción con restricciones de optimización
-// Adoquines: semiseco, vibro-prensado
-// Caños DN 300-600: semiseco, centrifugado o vibrado
-// Caños DN 800-1200: semiseco, vibrado interno
+// Líneas de producción con restricciones de optimización por planta
+// Adoquines: semiseco, vibro-prensado (solo Ranchos) - restriccion dinamica segun finos de piedra
+// Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke)
+// Caños DN 800-1200: semiseco, vibrado interno (Villa Rosa)
 const PRODUCTION_LINES = [
-  { id: "adoquines", name: "Línea 1 - Adoquines", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
-  { id: "canos_pequenos", name: "Línea 2 - Caños DN 300-600", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
-  { id: "canos_grandes", name: "Línea 2 - Caños DN 800-1200", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
+  // Ranchos - Adoquines (restriccion DINAMICA de arena segun % pasante 2.36mm de la piedra)
+  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 0, sandMax: 45, materials: ["arena", "piedra_0_6"], hasDynamicSandRestriction: true },
+  // Silke (Mercedes) - Canos chicos (300-600) - SIN restriccion minima de arena (vibracion garantiza compactacion)
+  { id: "canos_pequenos_silke", name: "Canos DN 300-600", plant: "silke", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
+  // Villa Rosa - Canos grandes (800, 1000, 1200) - SIN restriccion minima de arena (vibracion garantiza compactacion)
+  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasDynamicSandRestriction: false },
 ]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RESTRICCION DINAMICA DE ARENA PARA ADOQUINES (RANCHOS)
+// El minimo de arena se determina segun el contenido de finos de la piedra 0/6
+// ══════════════════════════════════════════════════════════════════════════════
+interface DynamicSandRestriction {
+  minSand: number
+  message: string
+  level: "high" | "moderate" | "low" | "no-data"
+}
+
+// Paso 1: Verificar si hay ensayo de piedra cargado
+// Paso 2: Si hay ensayo, leer el % pasante en tamiz 2,36 mm
+function calculateDynamicSandMinimum(hasPiedraTest: boolean, stonePassing236: number | null): DynamicSandRestriction {
+  // Paso 1: Si NO hay ensayo de piedra cargado
+  if (!hasPiedraTest) {
+    return {
+      minSand: 25,
+      message: "No hay ensayo de piedra disponible. Se aplica restriccion por defecto de 25% de arena hasta que se cargue un ensayo granulometrico de la piedra.",
+      level: "no-data"
+    }
+  }
+  
+  // Paso 2: Hay ensayo de piedra, leer % pasante 2.36mm
+  if (stonePassing236 === null || stonePassing236 === undefined) {
+    // Hay ensayo pero no se pudo leer el dato - esto es un error
+    return {
+      minSand: 25,
+      message: "Error al leer el ensayo de piedra. Se aplica restriccion por defecto de 25% de arena. Verifique que el ensayo tenga datos validos en el tamiz 2,36 mm.",
+      level: "no-data"
+    }
+  }
+  
+  // Evaluar segun % pasante 2.36mm
+  if (stonePassing236 < 40) {
+    return {
+      minSand: 25,
+      message: "La piedra tiene bajo contenido de finos. Se requiere minimo 25% de arena para cohesion y acabado superficial.",
+      level: "high"
+    }
+  }
+  
+  if (stonePassing236 >= 40 && stonePassing236 <= 60) {
+    return {
+      minSand: 10,
+      message: "La piedra tiene contenido moderado de finos. El minimo de arena se ajusta a 10%.",
+      level: "moderate"
+    }
+  }
+  
+  // stonePassing236 > 60
+  return {
+    minSand: 0,
+    message: `La piedra tiene alto contenido de finos de trituracion (${stonePassing236.toFixed(1)}% pasa 2,36 mm). Aporta la fraccion fina necesaria para cohesion y acabado superficial. El optimizador puede sugerir entre 0% y 25% de arena segun el RMS.`,
+    level: "low"
+  }
+}
+
+// Fundamento tecnico para mostrar en la UI
+const ADOQUINES_SAND_RESTRICTION_NOTE = `La restriccion minima de arena en adoquines por vibro-prensado responde a tres factores: (1) Cohesion de la mezcla semiseca: la arena aporta friccion interna que permite el desmolde sin deformacion de la pieza. Cuando la piedra tiene alto contenido de finos de trituracion, estos cumplen el mismo rol. (2) Acabado superficial: sin fraccion fina suficiente la cara vista del adoquin queda abierta y porosa, comprometiendo la resistencia al desgaste y el cumplimiento de absorcion segun IRAM 1534. (3) Llenado de molde: la fraccion fina facilita el flujo de la mezcla hacia bordes y esquinas durante el prensado. Cuando la piedra ya aporta esta fraccion, la arena puede reducirse o eliminarse sin comprometer estos aspectos.`
+
+// Helper para obtener líneas filtradas por planta
+function getProductionLinesForPlant(plant: string | null): typeof PRODUCTION_LINES {
+  if (!plant) return PRODUCTION_LINES.filter(l => l.plant === "silke")
+  return PRODUCTION_LINES.filter(l => l.plant === plant)
+}
+
+// Helper para mapear planta del selector al valor en la base de datos
+// El contexto usa "silke", "ranchos", "villa-rosa" y en la DB es igual excepto villa-rosa -> villa_rosa
+function mapPlantToDb(plant: string | null): string {
+  if (!plant) return "silke"
+  if (plant === "villa-rosa") return "villa_rosa"
+  return plant // silke y ranchos se mantienen igual
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // LÍMITES CALIBRADOS PARA EL MERCADO DE BUENOS AIRES
@@ -61,7 +138,7 @@ const SAND_LIMITS = {
   maxPassing030Red: 50,          // % pasante 0.30mm > 50% roja
 }
 
-// Alertas de piedra 0/6 - énfasis en polvo de trituración
+// Alertas de piedra 0/6 - énfasis en polvo de trituración (RANCHOS - Adoquines)
 const STONE_06_LIMITS = {
   maxPassing236: 25,             // % pasante 2.36mm ≤ 25% para verde
   maxPassing236Yellow: 40,       // % pasante 2.36mm 25-40% amarilla, >40% roja
@@ -69,6 +146,16 @@ const STONE_06_LIMITS = {
   maxPassing118Red: 20,          // % pasante 1.18mm > 20% roja
   maxClayContent: 1.0,           // C.A ≤ 1% para verde
   maxClayContentYellow: 3.0,     // C.A 1-3% amarilla, >3% roja
+}
+
+// Alertas de piedra 0/10 - para caños (MERCEDES/SILKE y VILLA ROSA)
+const STONE_010_LIMITS = {
+  maxPassing475: 30,             // % pasante 4.75mm (N°4) ≤ 30% para verde
+  maxPassing475Yellow: 45,       // % pasante 4.75mm 30-45% amarilla, >45% roja
+  maxPassing236: 5,              // % pasante 2.36mm (N°8) ≤ 5% para verde
+  maxPassing236Yellow: 10,       // % pasante 2.36mm 5-10% amarilla, >10% roja
+  maxClayContent: 1.0,           // C.A ≤ 1% para verde
+  maxClayContentYellow: 2.0,     // C.A 1-2% amarilla, >2% roja
 }
 
 // Nota del mercado local
@@ -101,7 +188,7 @@ interface GranulometryTest {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // FUNCIONES DE EVALUACIÓN DE ALERTAS
-// ══════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════���════════════════════════════════════════════
 
 // Evaluar estado de arena según límites del mercado local
 function evaluateSandAlert(mf: number | null, clayContent: number | null, passing060: number | null, passing030: number | null): {
@@ -205,7 +292,51 @@ function evaluateStone06Alert(clayContent: number | null, passing236: number | n
   return { status, messages }
 }
 
-// Detectar perfil típico de arena local (deficiencia en fracción gruesa)
+// Evaluar estado de piedra 0/10 (para canos - Mercedes/Silke y Villa Rosa)
+function evaluateStone010Alert(clayContent: number | null, passing475: number | null, passing236: number | null): {
+  status: "green" | "yellow" | "red"
+  messages: string[]
+} {
+  const messages: string[] = []
+  let status: "green" | "yellow" | "red" = "green"
+  
+  // Evaluar contenido de arcilla/polvo
+  if (clayContent !== null) {
+    if (clayContent > STONE_010_LIMITS.maxClayContentYellow) {
+      status = "red"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede limite (>${STONE_010_LIMITS.maxClayContentYellow}%)`)
+    } else if (clayContent > STONE_010_LIMITS.maxClayContent) {
+      if (status !== "red") status = "yellow"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${STONE_010_LIMITS.maxClayContent}%)`)
+    }
+  }
+  
+  // Evaluar % pasante 4.75mm (N4)
+  if (passing475 !== null) {
+    if (passing475 > STONE_010_LIMITS.maxPassing475Yellow) {
+      status = "red"
+      messages.push(`Pasante 4.75mm = ${passing475.toFixed(1)}% excede limite`)
+    } else if (passing475 > STONE_010_LIMITS.maxPassing475) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 4.75mm = ${passing475.toFixed(1)}% con exceso de finos`)
+    }
+  }
+  
+  // Evaluar % pasante 2.36mm (N8)
+  if (passing236 !== null) {
+    if (passing236 > STONE_010_LIMITS.maxPassing236Yellow) {
+      status = "red"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% excede limite`)
+    } else if (passing236 > STONE_010_LIMITS.maxPassing236) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% elevado`)
+    }
+  }
+  
+  return { status, messages }
+}
+
+// Detectar perfil tipico de arena local (deficiencia en fraccion gruesa)
 function isTypicalLocalSandProfile(passingPercentages: Record<string, number> | null): boolean {
   if (!passingPercentages) return false
   const passing118 = passingPercentages["1.18"] ?? passingPercentages["1.18mm"]
@@ -392,16 +523,13 @@ function generateRecommendation(
     parts.push("Curva dentro de límites IRAM pero alejada de Fuller. El formuleo es aceptable pero puede optimizarse ajustando la proporción.")
   }
   
-  // MF fuera de rango
-  if (mf < mfMin) {
-    parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por debajo del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de piedra.`)
-  } else if (mf > mfMax) {
-    parts.push(`El MF de la mezcla (${mf.toFixed(2)}) está por encima del óptimo (${mfMin}-${mfMax}). Se recomienda aumentar la proporción de arena.`)
-  }
+  // Nota: El MF de mezcla combinada NO se evalua aqui porque no tiene sentido tecnico.
+  // El MF se calcula y evalua solo para aridos individuales (arena y piedra por separado).
+  // El indicador de calidad de la mezcla es exclusivamente el RMS vs Fuller.
   
-  // Si todo está bien
-  if (parts.length === 1 && allWithinRange && currentRMS <= 5 && mf >= mfMin && mf <= mfMax) {
-    parts.push("La mezcla está dentro de especificación IRAM 1627 y próxima a la curva Fuller. Formuleo óptimo.")
+  // Si todo está bien (solo verificamos RMS, no MF de mezcla)
+  if (parts.length === 1 && allWithinRange && currentRMS <= 5) {
+  parts.push("La mezcla esta dentro de especificacion IRAM 1627 y proxima a la curva Fuller. Formuleo optimo.")
   }
   
   return parts.join(" ")
@@ -410,9 +538,19 @@ function generateRecommendation(
 export default function MezclasGranulometriaPage() {
   const supabase = createClient()
   const { selectedPlant } = usePlant()
-  const [selectedLine, setSelectedLine] = useState(PRODUCTION_LINES[0].id)
+  
+  // Líneas de producción filtradas por planta
+  const availableLines = useMemo(() => getProductionLinesForPlant(selectedPlant), [selectedPlant])
+  const [selectedLine, setSelectedLine] = useState<string>("")
   const [tests, setTests] = useState<GranulometryTest[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Auto-seleccionar la primera línea disponible cuando cambia la planta o al montar
+  useEffect(() => {
+    if (availableLines.length > 0 && (!selectedLine || !availableLines.find(l => l.id === selectedLine))) {
+      setSelectedLine(availableLines[0].id)
+    }
+  }, [availableLines, selectedLine])
   
   // Datos de entrada manual
   const [sandWeight, setSandWeight] = useState(500)
@@ -445,7 +583,25 @@ export default function MezclasGranulometriaPage() {
     rms: number
   } | null>(null)
   
-  const currentLine = PRODUCTION_LINES.find(l => l.id === selectedLine) || PRODUCTION_LINES[0]
+  // Obtener la línea actual - NUNCA usar PRODUCTION_LINES[0] como fallback ya que es adoquines
+  const currentLine = useMemo(() => {
+    // Si hay línea seleccionada y existe en las disponibles, usarla
+    if (selectedLine) {
+      const found = availableLines.find(l => l.id === selectedLine)
+      if (found) return found
+    }
+    // Si no, usar la primera línea disponible para esta planta
+    if (availableLines.length > 0) return availableLines[0]
+    // Último recurso: línea por defecto según planta
+    if (selectedPlant === "ranchos") {
+      return PRODUCTION_LINES.find(l => l.plant === "ranchos") || PRODUCTION_LINES[0]
+    }
+    if (selectedPlant === "villa-rosa") {
+      return PRODUCTION_LINES.find(l => l.plant === "villa-rosa") || PRODUCTION_LINES[2]
+    }
+    // Silke por defecto
+    return PRODUCTION_LINES.find(l => l.plant === "silke") || PRODUCTION_LINES[1]
+  }, [selectedLine, availableLines, selectedPlant])
   
   useEffect(() => {
     loadTests()
@@ -455,19 +611,40 @@ export default function MezclasGranulometriaPage() {
   
   // Load current stockpile granulometry data
   async function loadStockpileData() {
+    const dbPlant = mapPlantToDb(selectedPlant)
     const { data, error } = await supabase
       .from("stockpile_granulometry")
       .select("*")
-      .eq("plant", selectedPlant || "mercedes")
+      .eq("plant", dbPlant)
       .order("test_date", { ascending: false })
     
     if (!error && data) {
       const arenaTest = data.find((t: any) => t.material_type.toLowerCase().includes("arena"))
       const piedraTest = data.find((t: any) => t.material_type.toLowerCase().includes("piedra"))
       
+      // Helper para crear passing_percentages como objeto {tamano: porcentaje}
+      const createPassingPercentages = (passing: number[]) => {
+        const result: Record<string, number> = {}
+        SIEVE_SIZES_MM.forEach((size, i) => {
+          result[size.toString()] = passing[i] ?? 0
+        })
+        return result
+      }
+      
+      const arenaPassingArray = arenaTest ? getPassingFromStockpile(arenaTest) : []
+      const piedraPassingArray = piedraTest ? getPassingFromStockpile(piedraTest) : []
+      
       setStockpileData({
-        arena: arenaTest ? { ...arenaTest, passing: getPassingFromStockpile(arenaTest) } : null,
-        piedra: piedraTest ? { ...piedraTest, passing: getPassingFromStockpile(piedraTest) } : null,
+        arena: arenaTest ? { 
+          ...arenaTest, 
+          passing: arenaPassingArray,
+          passing_percentages: createPassingPercentages(arenaPassingArray)
+        } : null,
+        piedra: piedraTest ? { 
+          ...piedraTest, 
+          passing: piedraPassingArray,
+          passing_percentages: createPassingPercentages(piedraPassingArray)
+        } : null,
         loaded: true,
       })
     }
@@ -475,10 +652,11 @@ export default function MezclasGranulometriaPage() {
   
   // Load current paston formula
   async function loadPastonFormula() {
+    const dbPlant = mapPlantToDb(selectedPlant)
     const { data, error } = await supabase
       .from("paston_formulas")
       .select("*")
-      .eq("plant", selectedPlant || "mercedes")
+      .eq("plant", dbPlant)
       .eq("is_active", true)
       .single()
     
@@ -662,9 +840,17 @@ export default function MezclasGranulometriaPage() {
     return calculateRMS(blendPassing, iramMid)
   }, [blendPassing])
   
-  const optimalResult = useMemo(() =>
-  findOptimalProportion(sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax),
-  [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax]
+  const optimalResult = useMemo(() => {
+  // Para adoquines (Ranchos), calcular sandMin dinamico basado en % pasante 2.36mm de la piedra
+  let effectiveSandMin = currentLine.sandMin
+  if (currentLine.hasDynamicSandRestriction) {
+  const hasPiedraTest = stockpileData.piedra !== null
+  const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+  const dynamicRestriction = calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
+  effectiveSandMin = dynamicRestriction.minSand
+  }
+  return findOptimalProportion(sandPassing, stonePassing, currentLine.tma, effectiveSandMin, currentLine.sandMax)
+  }, [sandPassing, stonePassing, currentLine.tma, currentLine.sandMin, currentLine.sandMax, currentLine.hasDynamicSandRestriction, stockpileData.piedra]
   )
   
   // Alias for clearer naming in formula suggestion section
@@ -745,16 +931,35 @@ export default function MezclasGranulometriaPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PRODUCTION_LINES.map(line => (
-                    <SelectItem key={line.id} value={line.id}>{line.name}</SelectItem>
-                  ))}
+{availableLines.map(line => (
+  <SelectItem key={line.id} value={line.id}>{line.name}</SelectItem>
+  ))}
                 </SelectContent>
               </Select>
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
-                <span>TMA: <strong>{currentLine.tma}mm</strong></span>
-                <span>MF óptimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
-                <span className="text-amber-600">Arena: <strong>{currentLine.sandMin} - {currentLine.sandMax}%</strong></span>
-              </div>
+              {(() => {
+              // Calcular restriccion dinamica para adoquines
+                const hasPiedraTest = stockpileData.piedra !== null
+                const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+                const dynamicRestriction = currentLine.hasDynamicSandRestriction
+                  ? calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
+                  : null
+                const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
+                
+                return (
+                  <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
+                    <span>TMA: <strong>{currentLine.tma}mm</strong></span>
+                    <span>MF optimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
+                    {currentLine.hasDynamicSandRestriction ? (
+                      <span className={dynamicRestriction?.level === "low" ? "text-green-600" : dynamicRestriction?.level === "moderate" ? "text-amber-600" : "text-orange-600"}>
+                        Arena min: <strong>{effectiveSandMin}%</strong>
+                        {dynamicRestriction?.level === "low" && " (dinamico)"}
+                      </span>
+                    ) : (
+                      <span className="text-green-600">Arena: <strong>Sin restriccion (0-100%)</strong></span>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           </CardContent>
         </Card>
@@ -872,14 +1077,26 @@ export default function MezclasGranulometriaPage() {
                       
                       {/* Piedra Stockpile */}
                       {(() => {
-                        const clayContent = stockpileData.piedra_0_6?.peso_humedo_g && stockpileData.piedra_0_6?.peso_seco_g
-                          ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
+                        const isRanchos = selectedPlant === "ranchos"
+                        const stoneType = isRanchos ? "0/6" : "0/10"
+                        const stoneLimits = isRanchos ? STONE_06_LIMITS : STONE_010_LIMITS
+                        
+                        const clayContent = stockpileData.piedra?.peso_humedo_g && stockpileData.piedra?.peso_seco_g
+                          ? ((stockpileData.piedra.peso_humedo_g - stockpileData.piedra.peso_seco_g) / stockpileData.piedra.peso_humedo_g * 100)
                           : null
+                        
+                        // Obtener valores pasantes segun el tipo de piedra
+                        const passing475 = stockpileData.piedra?.passing_percentages?.["4.75"] ?? null
                         const passing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
                         const passing118 = stockpileData.piedra?.passing_percentages?.["1.18"] ?? null
-                        const stoneAlert = stockpileData.piedra_0_6 
-                          ? evaluateStone06Alert(clayContent, passing236, passing118)
+                        
+                        // Usar la funcion de evaluacion correcta segun la planta
+                        const stoneAlert = stockpileData.piedra 
+                          ? (isRanchos 
+                              ? evaluateStone06Alert(clayContent, passing236, passing118)
+                              : evaluateStone010Alert(clayContent, passing475, passing236))
                           : { status: "green" as const, messages: [] }
+                        
                         const borderColor = stoneAlert.status === "red" ? "border-red-300 bg-red-50/50" 
                           : stoneAlert.status === "yellow" ? "border-amber-300 bg-amber-50/50"
                           : stockpileData.piedra ? "border-green-200 bg-green-50/50" : "border-yellow-200 bg-yellow-50/50"
@@ -892,7 +1109,7 @@ export default function MezclasGranulometriaPage() {
                             <div className="flex justify-between items-start mb-2">
                               <div>
                                 <h4 className="font-medium flex items-center gap-2">
-                                  Piedra {selectedPlant === "ranchos" ? "0/6" : "0/10"}
+                                  Piedra {stoneType}
                                   {stockpileData.piedra ? (
                                     stoneAlert.status === "green" ? <CheckCircle2 className={`h-4 w-4 ${iconColor}`} /> : <AlertTriangle className={`h-4 w-4 ${iconColor}`} />
                                   ) : (
@@ -904,11 +1121,11 @@ export default function MezclasGranulometriaPage() {
                                     <span>MF: {stockpileData.piedra.modulo_finura?.toFixed(2)}</span>
                                     {clayContent !== null && (
                                       <span className={`ml-2 font-medium ${
-                                        clayContent > STONE_06_LIMITS.maxClayContentYellow ? "text-red-600" 
-                                        : clayContent > STONE_06_LIMITS.maxClayContent ? "text-amber-600" : "text-green-600"
+                                        clayContent > stoneLimits.maxClayContentYellow ? "text-red-600" 
+                                        : clayContent > stoneLimits.maxClayContent ? "text-amber-600" : "text-green-600"
                                       }`}>
                                         | C.A: {clayContent.toFixed(1)}%
-                                        {clayContent > STONE_06_LIMITS.maxClayContent && " (!)"}
+                                        {clayContent > stoneLimits.maxClayContent && " (!)"}
                                       </span>
                                     )}
                                     <span className="block">Ensayado: {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} por {stockpileData.piedra.tested_by}</span>
@@ -1075,36 +1292,37 @@ export default function MezclasGranulometriaPage() {
             </CardContent>
           </Card>
           
-          {/* Panel de resultados KPI */}
+          {/* Panel de resultados KPI - Solo RMS (unico indicador valido para mezcla) */}
           <div className="space-y-4">
-            {/* Índice de desviación RMS */}
+            {/* Índice de desviación RMS - UNICO indicador de calidad de mezcla */}
             <Card>
               <CardContent className="py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="text-center p-4 rounded-lg bg-muted/50">
-                    <div className="text-xs text-muted-foreground mb-1">Desviación Fuller</div>
-                    <div className="text-3xl font-bold">{currentRMS.toFixed(1)}</div>
-                    <Badge className={`mt-2 ${rmsStatus.color}`}>
-                      <rmsStatus.icon className="h-3 w-3 mr-1" />
-                      {rmsStatus.label}
-                    </Badge>
-                  </div>
-                  <div className="text-center p-4 rounded-lg bg-muted/50">
-                    <div className="text-xs text-muted-foreground mb-1">Módulo de Finura</div>
-                    <div className="text-3xl font-bold">{blendMF.toFixed(2)}</div>
-                    <Badge className={`mt-2 ${mfInRange ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                      {mfInRange ? (
-                        <><CheckCircle2 className="h-3 w-3 mr-1" />En rango</>
-                      ) : (
-                        <><AlertTriangle className="h-3 w-3 mr-1" />Fuera</>
-                      )}
-                    </Badge>
-                  </div>
+                <div className="text-center p-4 rounded-lg bg-muted/50">
+                  <div className="text-xs text-muted-foreground mb-1">Desviacion vs Fuller (RMS)</div>
+                  <div className="text-3xl font-bold">{currentRMS.toFixed(1)}</div>
+                  <Badge className={`mt-2 ${rmsStatus.color}`}>
+                    <rmsStatus.icon className="h-3 w-3 mr-1" />
+                    {rmsStatus.label}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    El RMS es el unico indicador de calidad para la mezcla combinada.
+                    El MF se evalua solo para cada arido individual.
+                  </p>
                 </div>
               </CardContent>
             </Card>
             
             {/* Optimizador */}
+            {(() => {
+              // Calcular restriccion dinamica para adoquines (Ranchos)
+              const hasPiedraTest = stockpileData.piedra !== null
+              const stonePassing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
+              const dynamicRestriction = currentLine.hasDynamicSandRestriction 
+                ? calculateDynamicSandMinimum(hasPiedraTest, stonePassing236)
+                : null
+              const effectiveSandMin = dynamicRestriction?.minSand ?? currentLine.sandMin
+              
+              return (
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="py-4">
                 <div className="flex items-start gap-3">
@@ -1113,45 +1331,144 @@ export default function MezclasGranulometriaPage() {
                   </div>
                   <div className="flex-1 space-y-3">
                     <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Óptimo Práctico (Recomendado)</h4>
+                      <h4 className="font-medium text-sm text-muted-foreground">Proporcion Optima Sugerida</h4>
                       <p className="text-2xl font-bold text-primary">
                         {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        RMS: {optimalResult.rms.toFixed(1)} | Restricción: {currentLine.sandMin}-{currentLine.sandMax}% arena
+                        RMS optimo: {optimalResult.rms.toFixed(1)} | RMS actual: {currentRMS.toFixed(1)} | 
+                        Diferencia: {(currentRMS - optimalResult.rms).toFixed(1)} puntos
                       </p>
+                      
+                      {/* Mensaje dinamico para adoquines segun contenido de finos de la piedra */}
+                      {currentLine.hasDynamicSandRestriction && dynamicRestriction && (
+                        <div className={`mt-3 p-3 rounded-lg border ${
+                          dynamicRestriction.level === "low" ? "bg-green-50 border-green-200" :
+                          dynamicRestriction.level === "moderate" ? "bg-amber-50 border-amber-200" :
+                          "bg-orange-50 border-orange-200"
+                        }`}>
+                          <p className={`text-sm leading-relaxed ${
+                            dynamicRestriction.level === "low" ? "text-green-800" :
+                            dynamicRestriction.level === "moderate" ? "text-amber-800" :
+                            "text-orange-800"
+                          }`}>
+                            {dynamicRestriction.message}
+                          </p>
+                          {dynamicRestriction.level === "low" && optimalResult.proportion < 25 && (
+                            <p className="text-xs text-green-700 mt-2 pt-2 border-t border-green-200">
+                              Cualquier cambio debe validarse con probetas segun IRAM 1534.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Mensajes especiales para canos (sin restriccion de arena) */}
+                      {!currentLine.hasDynamicSandRestriction && (
+                        <>
+                          {/* Mensaje cuando optimo es 0% arena */}
+                          {optimalResult.proportion === 0 && (
+                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                              <p className="text-sm text-blue-800 leading-relaxed">
+                                <strong>El optimizador sugiere trabajar unicamente con piedra 0/10 (0% arena).</strong> Con la arena disponible actualmente, su incorporacion empeora la curva granulometrica en lugar de mejorarla. La vibracion garantiza la compactacion sin necesidad de arena como agente de cohesion. Se recomienda validar con probetas antes de implementar el cambio.
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Mensaje cuando optimo es mayor a 0% pero menor a 10% */}
+                          {optimalResult.proportion > 0 && optimalResult.proportion < 10 && (
+                            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                              <p className="text-sm text-amber-800 leading-relaxed">
+                                <strong>La proporcion optima sugerida es baja ({optimalResult.proportion}% arena).</strong> Esto indica que la arena disponible tiene una granulometria que aporta poco a la curva ideal. Si operativamente es dificil trabajar con tan poca arena, se recomienda evaluar la eliminacion completa antes que mantener una proporcion intermedia que no mejora significativamente la curva.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      
+                      {/* Alerta cuando la proporcion actual difiere mas de 10 puntos del optimo */}
+                      {Math.abs(sandProportion - optimalResult.proportion) > 10 && (
+                        <div className="mt-3 p-3 bg-amber-100 border border-amber-300 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm text-amber-800 leading-relaxed">
+                              <strong>La proporcion actual ({sandProportion}% arena) se aleja significativamente del optimo ({optimalResult.proportion}% arena).</strong> Ajustar la mezcla puede mejorar la curva y reducir el contenido de cemento.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Kilogramos por paston - desde formuleo */}
+                      {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
+                        const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
+                        const optSandKg = Math.round((optimalResult.proportion / 100) * totalAgg)
+                        const optStoneKg = Math.round(((100 - optimalResult.proportion) / 100) * totalAgg)
+                        const currentSandKg = currentPastonFormula.sand_kg
+                        const currentStoneKg = currentPastonFormula.stone_kg
+                        const diffSandKg = optSandKg - currentSandKg
+                        const diffStoneKg = optStoneKg - currentStoneKg
+                        
+                        return (
+                          <div className="mt-3 p-3 bg-white border border-primary/20 rounded-lg">
+                            <h5 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                              Sugerencia para Paston (Total agregados: {totalAgg} kg)
+                            </h5>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-sm text-muted-foreground">Arena</p>
+                                <p className="text-xl font-bold text-primary">{optSandKg} kg</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Actual: {currentSandKg} kg
+                                  {diffSandKg !== 0 && (
+                                    <span className={diffSandKg > 0 ? "text-green-600 ml-1" : "text-red-600 ml-1"}>
+                                      ({diffSandKg > 0 ? "+" : ""}{diffSandKg} kg)
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">Piedra</p>
+                                <p className="text-xl font-bold text-primary">{optStoneKg} kg</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Actual: {currentStoneKg} kg
+                                  {diffStoneKg !== 0 && (
+                                    <span className={diffStoneKg > 0 ? "text-green-600 ml-1" : "text-red-600 ml-1"}>
+                                      ({diffStoneKg > 0 ? "+" : ""}{diffStoneKg} kg)
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                            {(diffSandKg !== 0 || diffStoneKg !== 0) && (
+                              <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                                Ajuste sugerido: {diffSandKg > 0 ? "aumentar" : "reducir"} arena en {Math.abs(diffSandKg)} kg 
+                                y {diffStoneKg > 0 ? "aumentar" : "reducir"} piedra en {Math.abs(diffStoneKg)} kg
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                     
-                    {/* Óptimo teórico si es diferente del práctico */}
-                    {optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                        <h4 className="font-medium text-sm text-amber-800 flex items-center gap-1">
-                          <Lightbulb className="h-4 w-4" />
-                          Óptimo Teórico (Referencia)
-                        </h4>
-                        <p className="text-lg font-semibold text-amber-700">
-                          {optimalResult.theoretical.proportion}% arena / {100 - optimalResult.theoretical.proportion}% piedra
-                        </p>
-                        <p className="text-sm text-amber-600">
-                          RMS: {optimalResult.theoretical.rms.toFixed(1)} | 
-                          Diferencia: +{(optimalResult.rms - optimalResult.theoretical.rms).toFixed(1)} puntos
-                        </p>
-                        <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                          La proporción óptima teórica queda fuera del rango operativo para este producto. 
-                          Se recomienda la proporción práctica para garantizar cohesión y trabajabilidad de la mezcla.
+                    {/* Nota tecnica para adoquines */}
+                    {currentLine.hasDynamicSandRestriction && (
+                      <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                        <p className="text-xs text-slate-600 leading-relaxed">
+                          <strong>Fundamento tecnico:</strong> {ADOQUINES_SAND_RESTRICTION_NOTE}
                         </p>
                       </div>
                     )}
                     
-                    {optimalResult.rms < currentRMS && (
+                    {optimalResult.rms < currentRMS && Math.abs(sandProportion - optimalResult.proportion) <= 10 && (
                       <p className="text-sm text-green-600">
-                        Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporción actual
+                        Mejora potencial de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporcion actual
                       </p>
                     )}
                   </div>
                 </div>
               </CardContent>
             </Card>
+              )
+            })()}
             
             {/* ══════════════════════════════════════════════════════════════════════════════
                 ALERTAS DE CALIDAD - CALIBRADAS PARA MERCADO DE BUENOS AIRES

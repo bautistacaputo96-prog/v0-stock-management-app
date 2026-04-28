@@ -10,11 +10,27 @@ interface PipeQualityData {
   totals: { first: number; second: number; broken: number; total: number }
 }
 
+// Datos de producción para calcular índices sobre toneladas
+interface ProductionData {
+  canosPlayaTn: number        // Toneladas de caños a playa (simples + armado)
+  canosPlayaUnits: number     // Unidades de caños a playa
+  segundaTn: number           // Toneladas de segunda calidad
+  rotosCalidadTn: number      // Toneladas de rotos en calidad
+  cajonesDesperdicioTn: number // Toneladas de cajones de desperdicio
+  totalProducidoTn: number    // Total = caños a playa + cajones desperdicio
+  // Índices calculados sobre toneladas
+  qualityIndex: number        // (primeraTn / totalProducidoTn) * 100
+  secondIndex: number         // (segundaTn / totalProducidoTn) * 100
+  brokenIndex: number         // (rotosCalidadTn / totalProducidoTn) * 100
+  scrapIndex: number          // (cajonesDesperdicioTn / totalProducidoTn) * 100
+}
+
 interface PipeQualityExecutiveReportProps {
   fromDate: string
   toDate: string
   reportData: PipeQualityData
   controlsCount: number
+  productionData?: ProductionData  // Opcional para mantener compatibilidad
 }
 
 const MONTHS = [
@@ -23,13 +39,20 @@ const MONTHS = [
 ]
 
 export const PipeQualityExecutiveReport = forwardRef<HTMLDivElement, PipeQualityExecutiveReportProps>(
-  function PipeQualityExecutiveReport({ fromDate, toDate, reportData, controlsCount }, ref) {
-    if (reportData.totals.total === 0) return null
+  function PipeQualityExecutiveReport({ fromDate, toDate, reportData, controlsCount, productionData }, ref) {
+    if (reportData.totals.total === 0 && !productionData) return null
 
-    // Cálculos
-    const qualityIndex = (reportData.totals.first / reportData.totals.total) * 100
-    const secondPercent = (reportData.totals.second / reportData.totals.total) * 100
-    const brokenPercent = (reportData.totals.broken / reportData.totals.total) * 100
+    // Cálculos sobre unidades (para compatibilidad con módulo de calidad)
+    const qualityIndexUnits = reportData.totals.total > 0 ? (reportData.totals.first / reportData.totals.total) * 100 : 0
+    const secondPercentUnits = reportData.totals.total > 0 ? (reportData.totals.second / reportData.totals.total) * 100 : 0
+    const brokenPercentUnits = reportData.totals.total > 0 ? (reportData.totals.broken / reportData.totals.total) * 100 : 0
+    
+    // Si hay datos de producción, usar índices sobre toneladas
+    const hasProductionData = !!productionData
+    const qualityIndex = hasProductionData ? productionData.qualityIndex : qualityIndexUnits
+    const secondPercent = hasProductionData ? productionData.secondIndex : secondPercentUnits
+    const brokenPercent = hasProductionData ? productionData.brokenIndex : brokenPercentUnits
+    const scrapPercent = hasProductionData ? productionData.scrapIndex : 0
 
     // Estado general
     const estadoGeneral = qualityIndex >= 95 ? "Excelente" : qualityIndex >= 90 ? "Aceptable" : "En Revisión"
@@ -148,9 +171,50 @@ export const PipeQualityExecutiveReport = forwardRef<HTMLDivElement, PipeQuality
           </tbody>
         </table>
 
-        {/* Indicadores de Calidad */}
+        {/* Índices sobre Toneladas (solo si hay datos de producción) */}
+        {hasProductionData && productionData && (
+          <>
+            <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#111827', marginBottom: '3mm', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e5e7eb', paddingBottom: '2mm' }}>
+              Índices sobre Toneladas Producidas
+            </div>
+            
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '6mm' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '25%', padding: '3mm', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', textAlign: 'center' }}>
+                    <div style={{ fontSize: '8pt', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Índice Primera</div>
+                    <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#166534' }}>{productionData.qualityIndex.toFixed(2)}%</div>
+                    <div style={{ fontSize: '8pt', color: '#166534' }}>{(productionData.canosPlayaTn - productionData.segundaTn - productionData.rotosCalidadTn).toFixed(2)} Tn</div>
+                  </td>
+                  <td style={{ width: '25%', padding: '3mm', backgroundColor: '#fefce8', border: '1px solid #fef08a', textAlign: 'center' }}>
+                    <div style={{ fontSize: '8pt', color: '#a16207', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Índice Segunda</div>
+                    <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#a16207' }}>{productionData.secondIndex.toFixed(2)}%</div>
+                    <div style={{ fontSize: '8pt', color: '#a16207' }}>{productionData.segundaTn.toFixed(2)} Tn</div>
+                  </td>
+                  <td style={{ width: '25%', padding: '3mm', backgroundColor: '#fef2f2', border: '1px solid #fecaca', textAlign: 'center' }}>
+                    <div style={{ fontSize: '8pt', color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Índice Rotura</div>
+                    <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#dc2626' }}>{productionData.brokenIndex.toFixed(2)}%</div>
+                    <div style={{ fontSize: '8pt', color: '#dc2626' }}>{productionData.rotosCalidadTn.toFixed(2)} Tn</div>
+                  </td>
+                  <td style={{ width: '25%', padding: '3mm', backgroundColor: '#fef2f2', border: '1px solid #fecaca', textAlign: 'center' }}>
+                    <div style={{ fontSize: '8pt', color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cajones Desperdicio</div>
+                    <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#dc2626' }}>{productionData.scrapIndex.toFixed(2)}%</div>
+                    <div style={{ fontSize: '8pt', color: '#dc2626' }}>{productionData.cajonesDesperdicioTn.toFixed(2)} Tn</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            
+            <div style={{ fontSize: '7pt', color: '#6b7280', marginBottom: '4mm', padding: '2mm', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb' }}>
+              <strong>Fórmulas:</strong> Primera = Caños a playa - Segunda - Rotos calidad = {(productionData.canosPlayaTn - productionData.segundaTn - productionData.rotosCalidadTn).toFixed(2)} Tn | 
+              Total Producido = Caños a playa + Cajones desperdicio = {productionData.totalProducidoTn.toFixed(2)} Tn
+            </div>
+          </>
+        )}
+
+        {/* Indicadores de Calidad (sobre unidades) */}
         <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#111827', marginBottom: '3mm', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e5e7eb', paddingBottom: '2mm' }}>
-          Indicadores de Calidad
+          Indicadores de Calidad {hasProductionData ? '(sobre unidades)' : ''}
         </div>
         
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '6mm', fontSize: '9pt' }}>

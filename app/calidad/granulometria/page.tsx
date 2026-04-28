@@ -171,13 +171,14 @@ const [stockpileFormData, setStockpileFormData] = useState({
   useEffect(() => {
     loadTests()
     loadStockpileTests()
-  }, [])
+  }, [selectedPlant])
 
-  // Load latest stockpile tests for each material type
+  // Load latest stockpile tests for each material type (filtered by plant)
   async function loadStockpileTests() {
     const { data, error } = await supabase
       .from("stockpile_granulometry")
       .select("*")
+      .eq("plant", selectedPlant || "mercedes")
       .order("test_date", { ascending: false })
     
     if (!error && data) {

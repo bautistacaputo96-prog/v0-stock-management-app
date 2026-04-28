@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import React, { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Navigation } from "@/components/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,6 +31,7 @@ interface Supplier {
   name: string
   material_type: string
   product_detail: string | null
+  plant: string
   line_type: string
   is_active: boolean
   created_at: string
@@ -72,14 +73,6 @@ interface StockData {
   }[]
 }
 
-const MATERIAL_TYPES = [
-  "Arena",
-  "Piedra",
-  "Cemento",
-  "Aditivo",
-  "Otro"
-]
-
 // Line types per plant
 const LINE_TYPES_PIPES = [
   { value: "canos", label: "Canos" },
@@ -114,10 +107,11 @@ function MateriaPrimaContent() {
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [showSupplierDialog, setShowSupplierDialog] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
+  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "mercedes", "villa_rosa", "ranchos"
   const [supplierForm, setSupplierForm] = useState({
     name: "",
     material_type: "",
-    product_detail: "",
+    plant: "mercedes",  // Nueva: planta del proveedor
     line_type: "ambos",
     density: "",
     unit: "kg"
@@ -146,10 +140,10 @@ function MateriaPrimaContent() {
     aditivo: true,
   })
 
-  // Load suppliers when plant changes
+  // Load suppliers when filter changes
   useEffect(() => {
     loadSuppliers()
-  }, [selectedPlant])
+  }, [supplierPlantFilter])
 
   // Load carriers when plant changes
   useEffect(() => {
@@ -176,14 +170,18 @@ function MateriaPrimaContent() {
   }
 
   const loadSuppliers = async () => {
-    if (!selectedPlant) return
     setLoadingSuppliers(true)
     const supabase = getSupabase()
-    const { data } = await supabase
+    let query = supabase
       .from("suppliers")
       .select("*")
-      .eq("plant", selectedPlant)
-      .order("name")
+    
+    // Filtrar por planta si no es "all"
+    if (supplierPlantFilter !== "all") {
+      query = query.eq("plant", supplierPlantFilter)
+    }
+    
+    const { data } = await query.order("plant").order("name")
     
     if (data) {
       setSuppliers(data)
@@ -210,13 +208,13 @@ function MateriaPrimaContent() {
   const saveSupplier = async () => {
     const supabase = getSupabase()
     
-    const dataToSave = {
-      name: supplierForm.name,
-      material_type: supplierForm.material_type,
-      product_detail: supplierForm.product_detail || null,
-      line_type: supplierForm.line_type,
-      is_active: true,
-      density: supplierForm.density ? parseFloat(supplierForm.density) : null,
+const dataToSave = {
+  name: supplierForm.name,
+  material_type: supplierForm.material_type,
+  plant: supplierForm.plant,
+  line_type: supplierForm.line_type,
+  is_active: true,
+  density: supplierForm.density ? parseFloat(supplierForm.density) : null,
       unit: supplierForm.unit || "kg",
       plant: selectedPlant
     }
@@ -235,7 +233,7 @@ function MateriaPrimaContent() {
     setShowSupplierDialog(false)
     setEditingSupplier(null)
     const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
+    setSupplierForm({ name: "", material_type: "", line_type: defaultLineType, density: "", unit: "kg" })
     loadSuppliers()
   }
 
@@ -245,6 +243,15 @@ function MateriaPrimaContent() {
       .from("suppliers")
       .update({ is_active: false })
       .eq("id", id)
+    loadSuppliers()
+  }
+
+  const toggleSupplierActive = async (supplier: Supplier) => {
+    const supabase = getSupabase()
+    await supabase
+      .from("suppliers")
+      .update({ is_active: !supplier.is_active })
+      .eq("id", supplier.id)
     loadSuppliers()
   }
 
@@ -288,14 +295,14 @@ function MateriaPrimaContent() {
 
   const openEditSupplier = (supplier: Supplier) => {
     setEditingSupplier(supplier)
-    setSupplierForm({
-      name: supplier.name,
-      material_type: supplier.material_type,
-      product_detail: supplier.product_detail || "",
-      line_type: supplier.line_type || "ambos",
-      density: supplier.density?.toString() || "",
-      unit: supplier.unit || "kg"
-    })
+setSupplierForm({
+  name: supplier.name,
+  material_type: supplier.material_type,
+  plant: supplier.plant || "mercedes",
+  line_type: supplier.line_type || "ambos",
+  density: supplier.density?.toString() || "",
+  unit: supplier.unit || "kg"
+})
     setShowSupplierDialog(true)
   }
 
@@ -526,13 +533,27 @@ function MateriaPrimaContent() {
           {/* PROVEEDORES */}
           <TabsContent value="proveedores" className="space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+                <Select value={supplierPlantFilter} onValueChange={setSupplierPlantFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filtrar por planta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las plantas</SelectItem>
+                    <SelectItem value="mercedes">Mercedes</SelectItem>
+                    <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+                    <SelectItem value="ranchos">Ranchos</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
                 <DialogTrigger asChild>
                   <Button onClick={() => {
                     setEditingSupplier(null)
                     const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-                    setSupplierForm({ name: "", material_type: "", product_detail: "", line_type: defaultLineType, density: "", unit: "kg" })
+                    const defaultPlant = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+                    setSupplierForm({ name: "", material_type: "", plant: defaultPlant, line_type: defaultLineType, density: "", unit: "kg" })
                   }}>
                     <Plus className="w-4 h-4 mr-2" />
                     Agregar Proveedor
@@ -552,28 +573,29 @@ function MateriaPrimaContent() {
                       />
                     </div>
                     <div>
-                      <Label>Tipo de Material</Label>
-                      <Select
+                      <Label>Material</Label>
+                      <Input
                         value={supplierForm.material_type}
-                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, material_type: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar tipo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MATERIAL_TYPES.map(type => (
-                            <SelectItem key={type} value={type}>{type}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        onChange={(e) => setSupplierForm(prev => ({ ...prev, material_type: e.target.value }))}
+                        placeholder="Ej: Piedra 06, Piedra 010, CPC-40, Arena Especial"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Nombre completo del material que provee</p>
                     </div>
                     <div>
-                      <Label>Detalle del Producto (opcional)</Label>
-                      <Input
-                        value={supplierForm.product_detail}
-                        onChange={(e) => setSupplierForm(prev => ({ ...prev, product_detail: e.target.value }))}
-                        placeholder="Ej: Arena de trituracion, Piedra 0/10, CPC40"
-                      />
+                      <Label>Planta</Label>
+                      <Select
+                        value={supplierForm.plant}
+                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, plant: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar planta" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mercedes">Mercedes</SelectItem>
+                          <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+                          <SelectItem value="ranchos">Ranchos</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div>
                       <Label>Linea de Produccion</Label>
@@ -592,7 +614,7 @@ function MateriaPrimaContent() {
                       </Select>
                     </div>
                     
-                    {supplierForm.material_type === "Aditivo" && (
+                    {supplierForm.material_type.toLowerCase().includes("aditivo") && (
                       <>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -639,8 +661,8 @@ function MateriaPrimaContent() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Proveedor</TableHead>
-                      <TableHead>Tipo Material</TableHead>
-                      <TableHead>Producto</TableHead>
+                      <TableHead>Material</TableHead>
+                      <TableHead>Planta</TableHead>
                       <TableHead>Linea</TableHead>
                       <TableHead>Densidad</TableHead>
                       <TableHead>Estado</TableHead>
@@ -661,37 +683,77 @@ function MateriaPrimaContent() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      suppliers.map(supplier => (
-                        <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
-                          <TableCell className="font-medium">{supplier.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{supplier.material_type}</Badge>
-                          </TableCell>
-                          <TableCell>{supplier.product_detail || "-"}</TableCell>
-                          <TableCell>
-                            {supplier.line_type === "canos" && "Canos"}
-                            {supplier.line_type === "bloques" && "Bloques"}
-                            {supplier.line_type === "ambos" && "Ambos"}
-                            {!supplier.line_type && "-"}
-                          </TableCell>
-                          <TableCell>
-                            {supplier.density ? `${supplier.density} kg/L` : "-"}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={supplier.is_active ? "default" : "secondary"}>
-                              {supplier.is_active ? "Activo" : "Inactivo"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
-                              {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      // Agrupar por planta y luego por proveedor
+                      (() => {
+                        const plantOrder = ["mercedes", "villa_rosa", "ranchos"]
+                        const plantNames: Record<string, string> = {
+                          mercedes: "Mercedes",
+                          villa_rosa: "Villa Rosa",
+                          ranchos: "Ranchos"
+                        }
+                        
+                        // Agrupar proveedores por planta
+                        const byPlant = suppliers.reduce((acc, s) => {
+                          const plant = s.plant || "otros"
+                          if (!acc[plant]) acc[plant] = []
+                          acc[plant].push(s)
+                          return acc
+                        }, {} as Record<string, Supplier[]>)
+                        
+                        // Ordenar cada grupo por nombre de proveedor
+                        Object.keys(byPlant).forEach(plant => {
+                          byPlant[plant].sort((a, b) => a.name.localeCompare(b.name))
+                        })
+                        
+                        return plantOrder.filter(p => byPlant[p]?.length > 0).map(plant => (
+                          <React.Fragment key={plant}>
+                            {/* Header de planta */}
+                            <TableRow className="bg-muted/50">
+                              <TableCell colSpan={7} className="font-semibold text-sm py-2">
+                                {plantNames[plant] || plant}
+                                <span className="ml-2 text-muted-foreground font-normal">
+                                  ({byPlant[plant].length} proveedores)
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                            {/* Proveedores de esta planta */}
+                            {byPlant[plant].map(supplier => (
+                              <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
+                                <TableCell className="font-medium pl-6">{supplier.name}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{supplier.material_type}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary">{plantNames[supplier.plant] || supplier.plant}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  {supplier.line_type === "canos" && "Canos"}
+                                  {supplier.line_type === "bloques" && "Bloques"}
+                                  {supplier.line_type === "ambos" && "Ambos"}
+                                  {supplier.line_type === "adoquines" && "Adoquines"}
+                                  {!supplier.line_type && "-"}
+                                </TableCell>
+                                <TableCell>
+                                  {supplier.density ? `${supplier.density} kg/L` : "-"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={supplier.is_active ? "default" : "secondary"}>
+                                    {supplier.is_active ? "Activo" : "Inactivo"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
+                                    {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </React.Fragment>
+                        ))
+                      })()
                     )}
                   </TableBody>
                 </Table>

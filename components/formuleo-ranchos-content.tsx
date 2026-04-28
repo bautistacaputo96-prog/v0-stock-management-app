@@ -557,9 +557,9 @@ export function FormuleoRanchosContent() {
                     <SelectContent>
                       {sandSuppliers.length > 0 ? (
                         sandSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
@@ -588,9 +588,9 @@ export function FormuleoRanchosContent() {
                     <SelectContent>
                       {stoneSuppliers.length > 0 ? (
                         stoneSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
@@ -619,9 +619,9 @@ export function FormuleoRanchosContent() {
                     <SelectContent>
                       {cementSuppliers.length > 0 ? (
                         cementSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>

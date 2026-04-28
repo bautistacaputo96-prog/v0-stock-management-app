@@ -193,21 +193,21 @@ export function FormuleoContent() {
         setOperators([...OPERATORS, ...customOps])
       }
       
-      // Load suppliers from materia prima - all active suppliers
+      // Load suppliers from materia prima - filtered by plant
       const { data: suppliersData, error: suppliersError } = await supabase
         .from("suppliers")
         .select("*")
         .eq("is_active", true)
+        .eq("plant", plantValue)
       
 
       
       if (suppliersData) {
         setSuppliers(suppliersData)
-        // Filter by material type or product detail - case insensitive
+        // Filter by material type - case insensitive
         const matchesMaterial = (s: Supplier, keywords: string[]) => {
           const type = s.material_type?.toLowerCase() || ""
-          const detail = s.product_detail?.toLowerCase() || ""
-          return keywords.some(k => type.includes(k) || detail.includes(k))
+          return keywords.some(k => type.includes(k))
         }
         
         const sand = suppliersData.filter((s: Supplier) => 
@@ -707,9 +707,9 @@ export function FormuleoContent() {
                     <SelectContent>
                       {sandSuppliers.length > 0 ? (
                         sandSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
@@ -738,9 +738,9 @@ export function FormuleoContent() {
                     <SelectContent>
                       {stoneSuppliers.length > 0 ? (
                         stoneSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>
@@ -769,9 +769,9 @@ export function FormuleoContent() {
                     <SelectContent>
                       {cementSuppliers.length > 0 ? (
                         cementSuppliers.map((s) => (
-                          <SelectItem key={s.id} value={`${s.product_detail || s.material_type} - ${s.name}`}>
-                            {s.product_detail || s.material_type} - {s.name}
-                          </SelectItem>
+<SelectItem key={s.id} value={`${s.material_type} - ${s.name}`}>
+{s.material_type} - {s.name}
+</SelectItem>
                         ))
                       ) : (
                         <SelectItem value="sin-proveedor" disabled>No hay proveedores cargados</SelectItem>

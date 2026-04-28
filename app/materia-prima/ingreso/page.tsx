@@ -229,7 +229,8 @@ export default function IngresoMPPage() {
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch(`/api/quality/suppliers?plant=${selectedPlant}`)
+      const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+      const res = await fetch(`/api/quality/suppliers?plant=${plantValue}`)
       if (res.ok) setSuppliers(await res.json())
     } catch { /* ignore */ }
   }, [selectedPlant])

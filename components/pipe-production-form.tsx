@@ -305,11 +305,27 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         .order("name", { ascending: true })
       
       if (data) {
-        const grouped: Record<string, string[]> = {}
+        // Categorizar materiales por tipo base
+        const categorize = (materialType: string): string => {
+          const mt = materialType.toLowerCase()
+          if (mt.includes("arena")) return "Arena"
+          if (mt.includes("piedra")) return "Piedra"
+          if (mt.includes("cemento") || mt.includes("cpc")) return "Cemento"
+          if (mt.includes("aditivo") || mt.includes("mark") || mt.includes("darac")) return "Aditivo"
+          return materialType
+        }
+        
+        const grouped: Record<string, string[]> = {
+          Cemento: [],
+          Arena: [],
+          Piedra: []
+        }
+        
         data.forEach((s: { material_type: string; name: string }) => {
-          if (!grouped[s.material_type]) grouped[s.material_type] = []
-          if (!grouped[s.material_type].includes(s.name)) {
-            grouped[s.material_type].push(s.name)
+          const category = categorize(s.material_type)
+          const displayValue = `${s.material_type} - ${s.name}`
+          if (grouped[category] && !grouped[category].includes(displayValue)) {
+            grouped[category].push(displayValue)
           }
         })
         setIngredientSuppliers(grouped)
@@ -642,12 +658,15 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   waste_bin_3_cinta: Number.parseFloat(formData.wasteBin3Cinta) || 0,
   waste_bin_4_rotos: Number.parseFloat(formData.wasteBin4Rotos) || 0,
   waste_bin_5_mezcladora: Number.parseFloat(formData.wasteBin5Mezcladora) || 0,
+  // Peso NETO del material (bruto - tara del tacho vacío)
+  // Tara: C1=133.3kg, C2=127.6kg, C3=108.5kg, C4=232.5kg, C5=133.3kg
+  // Neto: C1=576.7kg, C2=528.4kg, C3=601.5kg, C4=1074.5kg, C5=576.7kg
   total_waste_kg: (
-    (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
-    (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
-    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
-    (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
-    (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
+    (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
+    (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
+    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+    (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
+    (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
   ),
   total_downtime_minutes: totalDowntimeMinutes,
   observations: observationsComments || null,
@@ -1008,40 +1027,46 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
           </div>
 
           {/* Fila 4: Cajones de Desperdicio */}
-          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/30 p-2">
-            <Label className="text-[10px] font-semibold text-amber-700">Cajones de Desperdicio (0.5 precisión)</Label>
-            <div className="grid grid-cols-5 gap-2">
-              <div className="space-y-1">
-                <Label className="text-[10px]">C1-Cinta (710kg)</Label>
-                <Input type="number" min="0" step="0.5" value={formData.wasteBin1Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin1Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px]">C2-Desmolde (656kg)</Label>
-                <Input type="number" min="0" step="0.5" value={formData.wasteBin2Desmolde || ""} onChange={(e) => setFormData({ ...formData, wasteBin2Desmolde: e.target.value })} className="h-7 text-xs" placeholder="0" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px]">C3-Cinta (710kg)</Label>
-                <Input type="number" min="0" step="0.5" value={formData.wasteBin3Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin3Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px]">C4-Rotos (1307kg)</Label>
-                <Input type="number" min="0" step="0.5" value={formData.wasteBin4Rotos || ""} onChange={(e) => setFormData({ ...formData, wasteBin4Rotos: e.target.value })} className="h-7 text-xs" placeholder="0" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px]">C5-Mezcla (710kg)</Label>
-                <Input type="number" min="0" step="0.5" value={formData.wasteBin5Mezcladora || ""} onChange={(e) => setFormData({ ...formData, wasteBin5Mezcladora: e.target.value })} className="h-7 text-xs" placeholder="0" />
-              </div>
-            </div>
-            {/* Total desperdicio calculado */}
+  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/30 p-2">
+  <Label className="text-[10px] font-semibold text-amber-700">Cajones de Desperdicio (0.5 precision) - Peso Neto Material</Label>
+  <div className="grid grid-cols-5 gap-2">
+  <div className="space-y-1">
+  <Label className="text-[10px]">C1-Cinta (577kg)</Label>
+  <Input type="number" min="0" step="0.5" value={formData.wasteBin1Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin1Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
+  </div>
+  <div className="space-y-1">
+  <Label className="text-[10px]">C2-Desmolde (528kg)</Label>
+  <Input type="number" min="0" step="0.5" value={formData.wasteBin2Desmolde || ""} onChange={(e) => setFormData({ ...formData, wasteBin2Desmolde: e.target.value })} className="h-7 text-xs" placeholder="0" />
+  </div>
+  <div className="space-y-1">
+  <Label className="text-[10px]">C3-Cinta (602kg)</Label>
+  <Input type="number" min="0" step="0.5" value={formData.wasteBin3Cinta || ""} onChange={(e) => setFormData({ ...formData, wasteBin3Cinta: e.target.value })} className="h-7 text-xs" placeholder="0" />
+  </div>
+  <div className="space-y-1">
+  <Label className="text-[10px]">C4-Rotos (1075kg)</Label>
+  <Input type="number" min="0" step="0.5" value={formData.wasteBin4Rotos || ""} onChange={(e) => setFormData({ ...formData, wasteBin4Rotos: e.target.value })} className="h-7 text-xs" placeholder="0" />
+  </div>
+  <div className="space-y-1">
+  <Label className="text-[10px]">C5-Mezcla (577kg)</Label>
+  <Input type="number" min="0" step="0.5" value={formData.wasteBin5Mezcladora || ""} onChange={(e) => setFormData({ ...formData, wasteBin5Mezcladora: e.target.value })} className="h-7 text-xs" placeholder="0" />
+  </div>
+  </div>
+            {/* Total desperdicio calculado - peso neto material */}
             {(Number.parseFloat(formData.wasteBin1Cinta) || Number.parseFloat(formData.wasteBin2Desmolde) || Number.parseFloat(formData.wasteBin3Cinta) || Number.parseFloat(formData.wasteBin4Rotos) || Number.parseFloat(formData.wasteBin5Mezcladora)) ? (
               <div className="text-[10px] text-amber-700 font-medium text-right">
                 Total: {(
-                  (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
-                  (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
-                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
-                  (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
-                  (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
-                ).toLocaleString()} kg
+                  (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
+                  (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
+                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+                  (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
+                  (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
+                ).toLocaleString()} kg ({(
+                  (Number.parseFloat(formData.wasteBin1Cinta) || 0) +
+                  (Number.parseFloat(formData.wasteBin2Desmolde) || 0) +
+                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) +
+                  (Number.parseFloat(formData.wasteBin4Rotos) || 0) +
+                  (Number.parseFloat(formData.wasteBin5Mezcladora) || 0)
+                )} cajones)
               </div>
             ) : null}
           </div>
