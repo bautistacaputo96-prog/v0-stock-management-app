@@ -163,13 +163,20 @@ export function GranulometryDashboardWidget() {
       // Procesar datos de agregados
       const now = new Date()
       const aggData: AggregateData[] = config.aggregates.map((agg) => {
-        // Buscar ensayo por material_type - comparacion directa o parcial
+        // Buscar ensayo por material_type
+        // Para arena: buscar exactamente "arena"
+        // Para piedra: buscar cualquier tipo de piedra (piedra_0_6 o piedra_0_10)
         const test = (stockpileData || []).find((t: any) => {
           const mt = t.material_type?.toLowerCase() || ""
           const dt = agg.dbType.toLowerCase()
-          // Coincidencia exacta (ej: "piedra_0_6" === "piedra_0_6")
-          // O coincidencia parcial para arena (ej: "arena" includes "arena")
-          return mt === dt || mt.includes(dt) || dt.includes(mt)
+          
+          if (dt === "arena") {
+            // Coincidencia exacta para arena
+            return mt === "arena"
+          } else {
+            // Para piedra, buscar cualquier tipo de piedra disponible
+            return mt.startsWith("piedra")
+          }
         })
 
         if (!test) {
@@ -205,9 +212,19 @@ export function GranulometryDashboardWidget() {
           return v
         })
 
+        // Determinar el tipo real de piedra del ensayo (puede ser diferente al esperado)
+        let actualType = agg.type
+        if (test.material_type?.toLowerCase().includes("piedra")) {
+          actualType = test.material_type.toLowerCase().includes("0_6") ? "piedra_0_6" : "piedra_0_10"
+        }
+
+        // Nombre a mostrar basado en el tipo real
+        const displayName = actualType === "arena" ? "Arena" : 
+          actualType === "piedra_0_6" ? "Piedra 0/6" : "Piedra 0/10"
+
         return {
-          name: agg.name,
-          type: agg.type,
+          name: displayName,
+          type: actualType,
           mf: test.modulo_finura,
           testDate: test.test_date,
           testedBy: test.tested_by,
