@@ -32,12 +32,12 @@ const IRAM_1627_ZONA_II = {
 // Caños DN 300-600: semiseco, centrifugado o vibrado (Mercedes/Silke)
 // Caños DN 800-1200: semiseco, vibrado interno (Villa Rosa)
 const PRODUCTION_LINES = [
-  // Ranchos - Adoquines
-  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"] },
-  // Mercedes/Silke - Caños chicos (300-600)
-  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 10, sandMax: 20, materials: ["arena", "piedra_0_10"] },
-  // Villa Rosa - Caños grandes (800, 1000, 1200)
-  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 12, sandMax: 22, materials: ["arena", "piedra_0_10"] },
+  // Ranchos - Adoquines (mantiene restriccion de 25% minimo de arena por cohesion en vibro-prensado)
+  { id: "adoquines_ranchos", name: "Adoquines", plant: "ranchos", tma: 6.3, mfMin: 2.8, mfMax: 3.2, sandMin: 25, sandMax: 45, materials: ["arena", "piedra_0_6"], hasMinSandRestriction: true },
+  // Mercedes/Silke - Canos chicos (300-600) - SIN restriccion minima de arena (vibracion garantiza compactacion)
+  { id: "canos_pequenos_mercedes", name: "Canos DN 300-600", plant: "mercedes", tma: 9.5, mfMin: 3.0, mfMax: 3.5, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasMinSandRestriction: false },
+  // Villa Rosa - Canos grandes (800, 1000, 1200) - SIN restriccion minima de arena (vibracion garantiza compactacion)
+  { id: "canos_grandes_villa_rosa", name: "Canos DN 800-1200", plant: "villa-rosa", tma: 19, mfMin: 4.5, mfMax: 5.2, sandMin: 0, sandMax: 100, materials: ["arena", "piedra_0_10"], hasMinSandRestriction: false },
 ]
 
 // Helper para obtener líneas filtradas por planta
@@ -854,7 +854,11 @@ export default function MezclasGranulometriaPage() {
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
                 <span>TMA: <strong>{currentLine.tma}mm</strong></span>
                 <span>MF óptimo: <strong>{currentLine.mfMin} - {currentLine.mfMax}</strong></span>
-                <span className="text-amber-600">Arena: <strong>{currentLine.sandMin} - {currentLine.sandMax}%</strong></span>
+                {currentLine.hasMinSandRestriction ? (
+                    <span className="text-amber-600">Arena: <strong>{currentLine.sandMin} - {currentLine.sandMax}%</strong></span>
+                  ) : (
+                    <span className="text-green-600">Arena: <strong>Sin restriccion (0-100%)</strong></span>
+                  )}
               </div>
             </div>
           </CardContent>
@@ -1226,15 +1230,51 @@ export default function MezclasGranulometriaPage() {
                   </div>
                   <div className="flex-1 space-y-3">
                     <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Optimo Practico (Recomendado)</h4>
+                      <h4 className="font-medium text-sm text-muted-foreground">Proporcion Optima Sugerida</h4>
                       <p className="text-2xl font-bold text-primary">
                         {optimalResult.proportion}% arena / {100 - optimalResult.proportion}% piedra
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        RMS: {optimalResult.rms.toFixed(1)} | Restriccion: {currentLine.sandMin}-{currentLine.sandMax}% arena
+                        RMS optimo: {optimalResult.rms.toFixed(1)} | RMS actual: {currentRMS.toFixed(1)} | 
+                        Diferencia: {(currentRMS - optimalResult.rms).toFixed(1)} puntos
                       </p>
                       
-                      {/* Kilogramos por pastón - desde formuleo */}
+                      {/* Mensajes especiales para canos (sin restriccion de arena) */}
+                      {!currentLine.hasMinSandRestriction && (
+                        <>
+                          {/* Mensaje cuando optimo es 0% arena */}
+                          {optimalResult.proportion === 0 && (
+                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                              <p className="text-sm text-blue-800 leading-relaxed">
+                                <strong>El optimizador sugiere trabajar unicamente con piedra 0/10 (0% arena).</strong> Con la arena disponible actualmente, su incorporacion empeora la curva granulometrica en lugar de mejorarla. La vibracion garantiza la compactacion sin necesidad de arena como agente de cohesion. Se recomienda validar con probetas antes de implementar el cambio.
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Mensaje cuando optimo es mayor a 0% pero menor a 10% */}
+                          {optimalResult.proportion > 0 && optimalResult.proportion < 10 && (
+                            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                              <p className="text-sm text-amber-800 leading-relaxed">
+                                <strong>La proporcion optima sugerida es baja ({optimalResult.proportion}% arena).</strong> Esto indica que la arena disponible tiene una granulometria que aporta poco a la curva ideal. Si operativamente es dificil trabajar con tan poca arena, se recomienda evaluar la eliminacion completa antes que mantener una proporcion intermedia que no mejora significativamente la curva.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      
+                      {/* Alerta cuando la proporcion actual difiere mas de 10 puntos del optimo */}
+                      {Math.abs(sandProportion - optimalResult.proportion) > 10 && (
+                        <div className="mt-3 p-3 bg-amber-100 border border-amber-300 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm text-amber-800 leading-relaxed">
+                              <strong>La proporcion actual ({sandProportion}% arena) se aleja significativamente del optimo ({optimalResult.proportion}% arena).</strong> Ajustar la mezcla puede mejorar la curva y reducir el contenido de cemento.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Kilogramos por paston - desde formuleo */}
                       {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
                         const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
                         const optSandKg = Math.round((optimalResult.proportion / 100) * totalAgg)
@@ -1286,8 +1326,8 @@ export default function MezclasGranulometriaPage() {
                       })()}
                     </div>
                     
-                    {/* Óptimo teórico si es diferente del práctico */}
-                    {optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
+                    {/* Optimo teorico solo para adoquines (con restricciones) */}
+                    {currentLine.hasMinSandRestriction && optimalResult.theoretical && Math.abs(optimalResult.theoretical.proportion - optimalResult.proportion) > 1 && (
                       <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                         <h4 className="font-medium text-sm text-amber-800 flex items-center gap-1">
                           <Lightbulb className="h-4 w-4" />
@@ -1301,7 +1341,7 @@ export default function MezclasGranulometriaPage() {
                           Diferencia: +{(optimalResult.rms - optimalResult.theoretical.rms).toFixed(1)} puntos
                         </p>
                         
-                        {/* Kilogramos teóricos */}
+                        {/* Kilogramos teoricos */}
                         {currentPastonFormula && (currentPastonFormula.sand_kg > 0 || currentPastonFormula.stone_kg > 0) && (() => {
                           const totalAgg = currentPastonFormula.sand_kg + currentPastonFormula.stone_kg
                           const theoSandKg = Math.round((optimalResult.theoretical.proportion / 100) * totalAgg)
@@ -1320,9 +1360,9 @@ export default function MezclasGranulometriaPage() {
                       </div>
                     )}
                     
-                    {optimalResult.rms < currentRMS && (
+                    {optimalResult.rms < currentRMS && Math.abs(sandProportion - optimalResult.proportion) <= 10 && (
                       <p className="text-sm text-green-600">
-                        Mejora de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporcion actual
+                        Mejora potencial de {(currentRMS - optimalResult.rms).toFixed(1)} puntos vs proporcion actual
                       </p>
                     )}
                   </div>
