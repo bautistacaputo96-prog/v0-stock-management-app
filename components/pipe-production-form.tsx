@@ -147,6 +147,7 @@ interface PipeProductionFormProps {
 
 
 export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeSizes = DEFAULT_PIPE_SIZES, plantName = "SILKE", selectedPlant = "silke" }: PipeProductionFormProps) {
+  console.log("[v0] PipeProductionForm rendering with props:", { editingRecord: !!editingRecord, pipeSizes, plantName, selectedPlant })
   const PIPE_SIZES = pipeSizes
   const { toast } = useToast()
   const formRef = useRef<HTMLFormElement>(null)

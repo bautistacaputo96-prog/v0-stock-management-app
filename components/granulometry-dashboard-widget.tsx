@@ -254,7 +254,8 @@ export function GranulometryDashboardWidget() {
   }
 
   // Calcular RMS y formula sugerida
-  // Aplicar restriccion dinamica de arena para Ranchos (piedra con alto contenido de finos)
+  // CANOS (Silke/Villa Rosa): sin restriccion de arena - optimizador puede sugerir 0% a 100%
+  // ADOQUINES (Ranchos): restriccion dinamica segun contenido de finos de la piedra
   const { currentRMS, suggestedFormula, hasEnoughData } = useMemo(() => {
     const sandAgg = aggregates.find((a) => a.type === "arena")
     const stoneAgg = aggregates.find((a) => a.type !== "arena")
@@ -263,11 +264,12 @@ export function GranulometryDashboardWidget() {
       return { currentRMS: null, suggestedFormula: null, hasEnoughData: false }
     }
 
-    // Calcular restriccion de arena segun planta y contenido de finos de la piedra
+    // Calcular restriccion de arena segun planta
     let sandMin = 0
     let sandMax = 100
     
-    // Para Ranchos (adoquines), aplicar restriccion dinamica segun % pasante 2.36mm de piedra
+    // SOLO para Ranchos (adoquines) aplicar restriccion dinamica
+    // Para canos (Silke/Villa Rosa) NO hay restriccion - el optimizador puede sugerir 0%
     if (selectedPlant === "ranchos") {
       const stonePassing236 = stoneAgg.passing[2] // indice 2 = tamiz 2.36mm
       if (stonePassing236 !== undefined) {
@@ -283,6 +285,7 @@ export function GranulometryDashboardWidget() {
       }
       sandMax = 45 // Maximo para adoquines
     }
+    // Para Silke y Villa Rosa (canos), sandMin=0, sandMax=100 - sin restriccion
 
     const currentRMS = calculateRMS(sandAgg.passing, stoneAgg.passing, currentFormula.sandPct, config.tma)
     const optimal = findOptimalProportion(sandAgg.passing, stoneAgg.passing, config.tma, sandMin, sandMax)
