@@ -484,9 +484,16 @@ export default function MezclasGranulometriaPage() {
   
   // Líneas de producción filtradas por planta
   const availableLines = useMemo(() => getProductionLinesForPlant(selectedPlant), [selectedPlant])
-  const [selectedLine, setSelectedLine] = useState(availableLines[0]?.id || "")
+  const [selectedLine, setSelectedLine] = useState<string>("")
   const [tests, setTests] = useState<GranulometryTest[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Auto-seleccionar la primera línea disponible cuando cambia la planta o al montar
+  useEffect(() => {
+    if (availableLines.length > 0 && (!selectedLine || !availableLines.find(l => l.id === selectedLine))) {
+      setSelectedLine(availableLines[0].id)
+    }
+  }, [availableLines, selectedLine])
   
   // Datos de entrada manual
   const [sandWeight, setSandWeight] = useState(500)
@@ -518,14 +525,6 @@ export default function MezclasGranulometriaPage() {
     mfMezcla: number
     rms: number
   } | null>(null)
-  
-  // Cuando cambia la planta, auto-seleccionar la primera línea disponible
-  useEffect(() => {
-    const linesForPlant = getProductionLinesForPlant(selectedPlant)
-    if (linesForPlant.length > 0 && !linesForPlant.find(l => l.id === selectedLine)) {
-      setSelectedLine(linesForPlant[0].id)
-    }
-  }, [selectedPlant])
   
   const currentLine = availableLines.find(l => l.id === selectedLine) || availableLines[0] || PRODUCTION_LINES[0]
   
