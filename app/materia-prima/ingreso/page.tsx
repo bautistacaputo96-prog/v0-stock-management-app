@@ -229,10 +229,10 @@ export default function IngresoMPPage() {
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch("/api/quality/suppliers")
+      const res = await fetch(`/api/quality/suppliers?plant=${selectedPlant}`)
       if (res.ok) setSuppliers(await res.json())
     } catch { /* ignore */ }
-  }, [])
+  }, [selectedPlant])
 
   const fetchCarriers = useCallback(async () => {
     try {
@@ -269,6 +269,7 @@ export default function IngresoMPPage() {
           material_type: newSupplierMaterialType.trim(),
           product_detail: newSupplierProductDetail.trim() || newSupplierMaterialType.trim(),
           line_type: "ambas",
+          plant: selectedPlant,
         }),
       })
       if (res.ok) {

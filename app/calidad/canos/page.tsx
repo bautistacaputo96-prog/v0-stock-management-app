@@ -189,7 +189,7 @@ export default function PipeQualityPage() {
   const fetchControls = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/quality/pipe-control`)
+      const res = await fetch(`/api/quality/pipe-control?plant=${selectedPlant}`)
       if (res.ok) setControls(await res.json())
     } catch { /* ignore */ }
     setLoading(false)
@@ -712,6 +712,7 @@ export default function PipeQualityPage() {
           items: activeItems,
           defects: activeDefects,
           observations,
+          plant: selectedPlant,
         }),
       })
       if (res.ok) {
