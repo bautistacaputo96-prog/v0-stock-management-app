@@ -377,161 +377,90 @@ export function GranulometryDashboardWidget() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <FlaskConical className="h-4 w-4" />
-          Granulometria - {config.product}
-        </CardTitle>
+    <Card className="h-fit">
+      <CardHeader className="pb-2 pt-3 px-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+            <FlaskConical className="h-3.5 w-3.5" />
+            Granulometria - {config.product}
+          </CardTitle>
+          <Link href="/calidad/granulometria/mezclas">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 px-2">
+              Ver detalle <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* SECCION 1: Estado de acopios */}
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Estado de Acopios</div>
+      <CardContent className="px-3 pb-3 pt-0">
+        <div className="flex flex-wrap gap-2">
+          {/* Aridos con MF */}
           {aggregates.map((agg) => {
             const mfEval = agg.mf !== null ? getMFEvaluation(agg.type, agg.mf) : null
+            const isMissing = agg.mf === null
             const isOutdated = agg.daysSinceTest !== null && agg.daysSinceTest > 7
             const isCritical = agg.daysSinceTest !== null && agg.daysSinceTest > 15
-            const isMissing = agg.mf === null
 
             return (
               <div
                 key={agg.name}
-                className={`flex items-center justify-between p-2 rounded-lg border ${
-                  isMissing ? "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900" :
-                  isCritical ? "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900" :
-                  isOutdated ? "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900" :
-                  "bg-card border-border"
+                className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs ${
+                  isMissing ? "bg-red-50 border-red-200 text-red-700" :
+                  isCritical ? "bg-red-50 border-red-200" :
+                  isOutdated ? "bg-amber-50 border-amber-200" :
+                  "bg-muted/50 border-border"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{agg.name}</span>
-                  {mfEval && (
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] ${
-                        mfEval.level === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-300" :
-                        mfEval.level === "yellow" ? "bg-amber-100 text-amber-700 border-amber-300" :
-                        mfEval.level === "orange" ? "bg-orange-100 text-orange-700 border-orange-300" :
-                        "bg-red-100 text-red-700 border-red-300"
-                      }`}
-                    >
-                      MF {agg.mf?.toFixed(2)}
-                    </Badge>
-                  )}
-                </div>
-                <div className="text-right">
-                  {isMissing ? (
-                    <span className="text-xs text-red-600 font-medium">Sin ensayo disponible</span>
-                  ) : (
-                    <>
-                      <div className={`text-xs flex items-center gap-1 ${isCritical ? "text-red-600" : isOutdated ? "text-amber-600" : "text-muted-foreground"}`}>
-                        <Clock className="h-3 w-3" />
-                        {agg.testDate ? new Date(agg.testDate).toLocaleDateString("es-AR") : "-"}
-                      </div>
-                      {agg.testedBy && (
-                        <div className="text-[10px] text-muted-foreground flex items-center gap-1 justify-end">
-                          <User className="h-2.5 w-2.5" />
-                          {agg.testedBy}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
+                <span className="font-medium">{agg.name}</span>
+                {mfEval ? (
+                  <Badge
+                    variant="outline"
+                    className={`text-[9px] h-4 px-1 ${
+                      mfEval.level === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-300" :
+                      mfEval.level === "yellow" ? "bg-amber-100 text-amber-700 border-amber-300" :
+                      mfEval.level === "orange" ? "bg-orange-100 text-orange-700 border-orange-300" :
+                      "bg-red-100 text-red-700 border-red-300"
+                    }`}
+                  >
+                    MF {agg.mf?.toFixed(2)}
+                  </Badge>
+                ) : (
+                  <span className="text-[10px] text-red-600">Sin ensayo</span>
+                )}
               </div>
             )
           })}
           
-          {/* Alertas de ensayo desactualizado */}
-          {hasCriticallyOutdatedTest && (
-            <div className="text-xs text-red-600 bg-red-50 dark:bg-red-950/30 p-2 rounded border border-red-200">
-              Sin ensayo reciente - actualizar antes de producir.
+          {/* Formula sugerida compacta */}
+          {hasEnoughData && currentFormula && suggestedFormula && (
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs ${
+              showOptimalBadge ? "bg-emerald-50 border-emerald-200" :
+              showAdjustWarning ? "bg-amber-50 border-amber-200" :
+              "bg-muted/50 border-border"
+            }`}>
+              <span className="text-muted-foreground">Sugerido:</span>
+              <span className="font-medium">{suggestedFormula.sandPct}% arena</span>
+              <span className="text-muted-foreground">/</span>
+              <span className="font-medium">{suggestedFormula.stonePct}% piedra</span>
+              {showAdjustWarning && <AlertTriangle className="h-3 w-3 text-amber-600" />}
+              {showOptimalBadge && <CheckCircle2 className="h-3 w-3 text-emerald-600" />}
             </div>
           )}
-          {hasOutdatedTest && !hasCriticallyOutdatedTest && (
-            <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-2 rounded border border-amber-200">
-              Ensayo desactualizado - se recomienda nuevo muestreo.
+          
+          {!hasEnoughData && (
+            <div className="text-[10px] text-muted-foreground">
+              Sin datos suficientes para sugerir formula.
             </div>
           )}
         </div>
-
-        {/* SECCION 2: Formula actual vs sugerida */}
-        {hasEnoughData && currentFormula && suggestedFormula ? (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Formula Actual vs Sugerida</div>
-            <div className={`grid grid-cols-2 gap-2 p-2 rounded-lg border ${
-              showOptimalBadge ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900" :
-              showAdjustWarning ? "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900" :
-              "bg-card border-border"
-            }`}>
-              {/* Columna actual */}
-              <div className="space-y-1">
-                <div className="text-[10px] font-medium text-muted-foreground uppercase">Actual</div>
-                <div className="text-sm">
-                  <span className="font-semibold">{currentFormula.sandKg}</span>
-                  <span className="text-muted-foreground text-xs"> kg arena</span>
-                </div>
-                <div className="text-sm">
-                  <span className="font-semibold">{currentFormula.stoneKg}</span>
-                  <span className="text-muted-foreground text-xs"> kg piedra</span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {currentFormula.sandPct}% / {currentFormula.stonePct}%
-                </div>
-                {currentRMS !== null && (
-                  <div className="text-xs">
-                    RMS: <span className="font-mono font-medium">{currentRMS.toFixed(1)}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Columna sugerida */}
-              <div className="space-y-1">
-                <div className="text-[10px] font-medium text-muted-foreground uppercase">Sugerida</div>
-                <div className="text-sm">
-                  <span className="font-semibold">{suggestedFormula.sandKg}</span>
-                  <span className="text-muted-foreground text-xs"> kg arena</span>
-                </div>
-                <div className="text-sm">
-                  <span className="font-semibold">{suggestedFormula.stoneKg}</span>
-                  <span className="text-muted-foreground text-xs"> kg piedra</span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {suggestedFormula.sandPct}% / {suggestedFormula.stonePct}%
-                </div>
-                <div className="text-xs">
-                  RMS: <span className="font-mono font-medium">{suggestedFormula.rms.toFixed(1)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Mensaje de estado */}
-            {showOptimalBadge && (
-              <div className="flex items-center gap-1 text-xs text-emerald-600">
-                <CheckCircle2 className="h-3 w-3" />
-                Proporcion actual optima.
-              </div>
-            )}
-            {showAdjustWarning && (
-              <div className="flex items-center gap-1 text-xs text-amber-600">
-                <AlertTriangle className="h-3 w-3" />
-                Ajuste de proporcion recomendado.
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-            Sin datos suficientes para sugerir formula.
+        
+        {/* Alertas compactas */}
+        {(hasCriticallyOutdatedTest || (hasOutdatedTest && !hasCriticallyOutdatedTest)) && (
+          <div className={`mt-2 text-[10px] px-2 py-1 rounded ${
+            hasCriticallyOutdatedTest ? "text-red-600 bg-red-50" : "text-amber-600 bg-amber-50"
+          }`}>
+            {hasCriticallyOutdatedTest ? "Ensayo desactualizado (+15 dias)" : "Ensayo antiguo (+7 dias)"}
           </div>
         )}
-
-        {/* SECCION 3: Acceso rapido */}
-        <Link href="/calidad/granulometria/mezclas">
-          <Button variant="outline" size="sm" className="w-full gap-2">
-            Ver analisis completo
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        </Link>
       </CardContent>
     </Card>
   )

@@ -1258,6 +1258,11 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
               </div>
             )}
 
+            {/* ── Granulometria de Acopios (compacto) ── */}
+            <div className="mb-4">
+              <GranulometryDashboardWidget />
+            </div>
+
             {/* ── Seccion 2: KPIs del mes ── */}
             {cmPipeStats && (
               <section className="mb-6">
@@ -1928,12 +1933,7 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
             </>
             )}
 
-            {/* ── Seccion 7: Widget de Granulometria ── */}
-            <div className="mb-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <GranulometryDashboardWidget />
-              </div>
-            </div>
+
             
             {/* ═══ PRODUCCIÓN DIARIA ═════════════���════════════════════════════ */}
         {activeLine === "produccion-diaria" && <DailyProductionModal />}

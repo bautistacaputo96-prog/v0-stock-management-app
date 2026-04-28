@@ -800,18 +800,23 @@ export function RanchosDashboardContent() {
         </div>
       ) : (
         <>
-          {/* ═══ SECCION 1 — Alertas ═══════════════════════════════════════ */}
-          {alerts.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-5 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
-              <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
-              <span className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Alertas activas:</span>
-              {alerts.map((a, i) => (
-                <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-600 text-white">
-                  {a}
-                </span>
-              ))}
+            {/* ═══ SECCION 1 — Alertas ═══════════════════════════════════════ */}
+            {alerts.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-5 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Alertas activas:</span>
+                {alerts.map((a, i) => (
+                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-600 text-white">
+                    {a}
+                  </span>
+                ))}
+              </div>
+            )}
+            
+            {/* ═══ Granulometria de Acopios (compacto) ═══ */}
+            <div className="mb-4">
+              <GranulometryDashboardWidget />
             </div>
-          )}
 
           {/* ═══ SECCION 2 — KPIs Header ══════════════════════════════════ */}
           <div className="mb-6">
@@ -981,28 +986,23 @@ export function RanchosDashboardContent() {
             </div>
           </div>
 
-          {/* ═══ SECCION 4 — Widget de Granulometria ═══════════════════════════ */}
+          {/* ═══ SECCION 4 — Metricas de Flexion ═══════════════════════════ */}
           <div className="mb-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <GranulometryDashboardWidget />
-              
-              {/* Metricas de flexion */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
-                  <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-                    Flexion - Ultimos ensayos
-                  </h2>
+            <div className="flex items-center gap-2 mb-3">
+              <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
+              <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
+                Flexion - Ultimos ensayos
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {flexionData && (
+                <FlexionCard metric={flexionData} />
+              )}
+              {!flexionData && (
+                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 flex items-center justify-center text-muted-foreground text-xs">
+                  Sin ensayos de flexion registrados
                 </div>
-                {flexionData && (
-                  <FlexionCard metric={flexionData} />
-                )}
-                {!flexionData && (
-                  <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 flex items-center justify-center text-muted-foreground text-xs">
-                    Sin ensayos de flexion registrados
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
 
