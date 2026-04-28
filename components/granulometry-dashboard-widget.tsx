@@ -254,6 +254,7 @@ export function GranulometryDashboardWidget() {
   }
 
   // Calcular RMS y formula sugerida
+  // Aplicar restriccion dinamica de arena para Ranchos (piedra con alto contenido de finos)
   const { currentRMS, suggestedFormula, hasEnoughData } = useMemo(() => {
     const sandAgg = aggregates.find((a) => a.type === "arena")
     const stoneAgg = aggregates.find((a) => a.type !== "arena")
@@ -262,8 +263,29 @@ export function GranulometryDashboardWidget() {
       return { currentRMS: null, suggestedFormula: null, hasEnoughData: false }
     }
 
+    // Calcular restriccion de arena segun planta y contenido de finos de la piedra
+    let sandMin = 0
+    let sandMax = 100
+    
+    // Para Ranchos (adoquines), aplicar restriccion dinamica segun % pasante 2.36mm de piedra
+    if (selectedPlant === "ranchos") {
+      const stonePassing236 = stoneAgg.passing[2] // indice 2 = tamiz 2.36mm
+      if (stonePassing236 !== undefined) {
+        if (stonePassing236 < 40) {
+          sandMin = 25 // Piedra baja en finos - requiere mas arena
+        } else if (stonePassing236 <= 60) {
+          sandMin = 10 // Piedra moderada en finos
+        } else {
+          sandMin = 0 // Piedra alta en finos (>60%) - puede usar menos arena
+        }
+      } else {
+        sandMin = 25 // Sin datos, usar defecto conservador
+      }
+      sandMax = 45 // Maximo para adoquines
+    }
+
     const currentRMS = calculateRMS(sandAgg.passing, stoneAgg.passing, currentFormula.sandPct, config.tma)
-    const optimal = findOptimalProportion(sandAgg.passing, stoneAgg.passing, config.tma, 0, 100)
+    const optimal = findOptimalProportion(sandAgg.passing, stoneAgg.passing, config.tma, sandMin, sandMax)
     const totalKg = currentFormula.sandKg + currentFormula.stoneKg
 
     return {
@@ -277,7 +299,7 @@ export function GranulometryDashboardWidget() {
       },
       hasEnoughData: true,
     }
-  }, [aggregates, currentFormula, config.tma])
+  }, [aggregates, currentFormula, config.tma, selectedPlant])
 
   // Determinar si hay diferencia significativa
   const proportionDiff = currentFormula && suggestedFormula 

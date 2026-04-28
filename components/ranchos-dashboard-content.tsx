@@ -293,9 +293,9 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
 
 export function RanchosDashboardContent() {
   const now = new Date()
-  // Default to January 2025 where we have paver production data
-  const [selectedMonthIdx, setSelectedMonthIdx] = useState(0) // January
-  const [selectedYear, setSelectedYear] = useState(2025)
+  // Default to current month - will find latest month with data on first load
+  const [selectedMonthIdx, setSelectedMonthIdx] = useState(now.getMonth())
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [loading, setLoading] = useState(true)
   const [records, setRecords] = useState<any[]>([])
   const [prevRecords, setPrevRecords] = useState<any[]>([])
@@ -304,8 +304,38 @@ export function RanchosDashboardContent() {
   const [granulometryData, setGranulometryData] = useState<QualityMetric[]>([])
   const [flexionData, setFlexionData] = useState<FlexionMetric | null>(null)
   const [pastonFormula, setPastonFormula] = useState<any>(null)
+  const [hasInitialized, setHasInitialized] = useState(false)
+
+  // On first load, find the latest month with production data
+  useEffect(() => {
+    if (hasInitialized) return
+    
+    async function findLatestMonth() {
+      try {
+        const supabase = getSupabase()
+        const { data } = await supabase
+          .from("paver_production")
+          .select("production_date")
+          .order("production_date", { ascending: false })
+          .limit(1)
+        
+        if (data && data.length > 0) {
+          const latestDate = new Date(data[0].production_date)
+          setSelectedMonthIdx(latestDate.getMonth())
+          setSelectedYear(latestDate.getFullYear())
+        }
+      } catch {
+        // Keep default (current month)
+      }
+      setHasInitialized(true)
+    }
+    
+    findLatestMonth()
+  }, [hasInitialized])
 
   useEffect(() => {
+    if (!hasInitialized) return
+    
     let retries = 0
     const attempt = () => {
       loadData(selectedMonthIdx, selectedYear).catch(() => {
@@ -313,7 +343,7 @@ export function RanchosDashboardContent() {
       })
     }
     attempt()
-  }, [selectedMonthIdx, selectedYear])
+  }, [selectedMonthIdx, selectedYear, hasInitialized])
 
   async function loadData(monthIdx: number, year: number) {
     setLoading(true)
