@@ -526,7 +526,25 @@ export default function MezclasGranulometriaPage() {
     rms: number
   } | null>(null)
   
-  const currentLine = availableLines.find(l => l.id === selectedLine) || availableLines[0] || PRODUCTION_LINES[0]
+  // Obtener la línea actual - NUNCA usar PRODUCTION_LINES[0] como fallback ya que es adoquines
+  const currentLine = useMemo(() => {
+    // Si hay línea seleccionada y existe en las disponibles, usarla
+    if (selectedLine) {
+      const found = availableLines.find(l => l.id === selectedLine)
+      if (found) return found
+    }
+    // Si no, usar la primera línea disponible para esta planta
+    if (availableLines.length > 0) return availableLines[0]
+    // Último recurso: línea por defecto según planta
+    if (selectedPlant === "ranchos") {
+      return PRODUCTION_LINES.find(l => l.plant === "ranchos") || PRODUCTION_LINES[0]
+    }
+    if (selectedPlant === "villa-rosa") {
+      return PRODUCTION_LINES.find(l => l.plant === "villa-rosa") || PRODUCTION_LINES[1]
+    }
+    // Mercedes/Silke por defecto
+    return PRODUCTION_LINES.find(l => l.plant === "mercedes") || PRODUCTION_LINES[1]
+  }, [selectedLine, availableLines, selectedPlant])
   
   useEffect(() => {
     loadTests()
