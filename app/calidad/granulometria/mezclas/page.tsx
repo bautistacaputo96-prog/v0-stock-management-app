@@ -78,7 +78,7 @@ const SAND_LIMITS = {
   maxPassing030Red: 50,          // % pasante 0.30mm > 50% roja
 }
 
-// Alertas de piedra 0/6 - énfasis en polvo de trituración
+// Alertas de piedra 0/6 - énfasis en polvo de trituración (RANCHOS - Adoquines)
 const STONE_06_LIMITS = {
   maxPassing236: 25,             // % pasante 2.36mm ≤ 25% para verde
   maxPassing236Yellow: 40,       // % pasante 2.36mm 25-40% amarilla, >40% roja
@@ -86,6 +86,16 @@ const STONE_06_LIMITS = {
   maxPassing118Red: 20,          // % pasante 1.18mm > 20% roja
   maxClayContent: 1.0,           // C.A ≤ 1% para verde
   maxClayContentYellow: 3.0,     // C.A 1-3% amarilla, >3% roja
+}
+
+// Alertas de piedra 0/10 - para caños (MERCEDES/SILKE y VILLA ROSA)
+const STONE_010_LIMITS = {
+  maxPassing475: 30,             // % pasante 4.75mm (N°4) ≤ 30% para verde
+  maxPassing475Yellow: 45,       // % pasante 4.75mm 30-45% amarilla, >45% roja
+  maxPassing236: 5,              // % pasante 2.36mm (N°8) ≤ 5% para verde
+  maxPassing236Yellow: 10,       // % pasante 2.36mm 5-10% amarilla, >10% roja
+  maxClayContent: 1.0,           // C.A ≤ 1% para verde
+  maxClayContentYellow: 2.0,     // C.A 1-2% amarilla, >2% roja
 }
 
 // Nota del mercado local
@@ -222,7 +232,51 @@ function evaluateStone06Alert(clayContent: number | null, passing236: number | n
   return { status, messages }
 }
 
-// Detectar perfil típico de arena local (deficiencia en fracción gruesa)
+// Evaluar estado de piedra 0/10 (para canos - Mercedes/Silke y Villa Rosa)
+function evaluateStone010Alert(clayContent: number | null, passing475: number | null, passing236: number | null): {
+  status: "green" | "yellow" | "red"
+  messages: string[]
+} {
+  const messages: string[] = []
+  let status: "green" | "yellow" | "red" = "green"
+  
+  // Evaluar contenido de arcilla/polvo
+  if (clayContent !== null) {
+    if (clayContent > STONE_010_LIMITS.maxClayContentYellow) {
+      status = "red"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% excede limite (>${STONE_010_LIMITS.maxClayContentYellow}%)`)
+    } else if (clayContent > STONE_010_LIMITS.maxClayContent) {
+      if (status !== "red") status = "yellow"
+      messages.push(`C.A = ${clayContent.toFixed(1)}% elevado (>${STONE_010_LIMITS.maxClayContent}%)`)
+    }
+  }
+  
+  // Evaluar % pasante 4.75mm (N4)
+  if (passing475 !== null) {
+    if (passing475 > STONE_010_LIMITS.maxPassing475Yellow) {
+      status = "red"
+      messages.push(`Pasante 4.75mm = ${passing475.toFixed(1)}% excede limite`)
+    } else if (passing475 > STONE_010_LIMITS.maxPassing475) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 4.75mm = ${passing475.toFixed(1)}% con exceso de finos`)
+    }
+  }
+  
+  // Evaluar % pasante 2.36mm (N8)
+  if (passing236 !== null) {
+    if (passing236 > STONE_010_LIMITS.maxPassing236Yellow) {
+      status = "red"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% excede limite`)
+    } else if (passing236 > STONE_010_LIMITS.maxPassing236) {
+      if (status !== "red") status = "yellow"
+      messages.push(`Pasante 2.36mm = ${passing236.toFixed(1)}% elevado`)
+    }
+  }
+  
+  return { status, messages }
+}
+
+// Detectar perfil tipico de arena local (deficiencia en fraccion gruesa)
 function isTypicalLocalSandProfile(passingPercentages: Record<string, number> | null): boolean {
   if (!passingPercentages) return false
   const passing118 = passingPercentages["1.18"] ?? passingPercentages["1.18mm"]
@@ -902,14 +956,26 @@ export default function MezclasGranulometriaPage() {
                       
                       {/* Piedra Stockpile */}
                       {(() => {
-                        const clayContent = stockpileData.piedra_0_6?.peso_humedo_g && stockpileData.piedra_0_6?.peso_seco_g
-                          ? ((stockpileData.piedra_0_6.peso_humedo_g - stockpileData.piedra_0_6.peso_seco_g) / stockpileData.piedra_0_6.peso_humedo_g * 100)
+                        const isRanchos = selectedPlant === "ranchos"
+                        const stoneType = isRanchos ? "0/6" : "0/10"
+                        const stoneLimits = isRanchos ? STONE_06_LIMITS : STONE_010_LIMITS
+                        
+                        const clayContent = stockpileData.piedra?.peso_humedo_g && stockpileData.piedra?.peso_seco_g
+                          ? ((stockpileData.piedra.peso_humedo_g - stockpileData.piedra.peso_seco_g) / stockpileData.piedra.peso_humedo_g * 100)
                           : null
+                        
+                        // Obtener valores pasantes segun el tipo de piedra
+                        const passing475 = stockpileData.piedra?.passing_percentages?.["4.75"] ?? null
                         const passing236 = stockpileData.piedra?.passing_percentages?.["2.36"] ?? null
                         const passing118 = stockpileData.piedra?.passing_percentages?.["1.18"] ?? null
-                        const stoneAlert = stockpileData.piedra_0_6 
-                          ? evaluateStone06Alert(clayContent, passing236, passing118)
+                        
+                        // Usar la funcion de evaluacion correcta segun la planta
+                        const stoneAlert = stockpileData.piedra 
+                          ? (isRanchos 
+                              ? evaluateStone06Alert(clayContent, passing236, passing118)
+                              : evaluateStone010Alert(clayContent, passing475, passing236))
                           : { status: "green" as const, messages: [] }
+                        
                         const borderColor = stoneAlert.status === "red" ? "border-red-300 bg-red-50/50" 
                           : stoneAlert.status === "yellow" ? "border-amber-300 bg-amber-50/50"
                           : stockpileData.piedra ? "border-green-200 bg-green-50/50" : "border-yellow-200 bg-yellow-50/50"
@@ -922,7 +988,7 @@ export default function MezclasGranulometriaPage() {
                             <div className="flex justify-between items-start mb-2">
                               <div>
                                 <h4 className="font-medium flex items-center gap-2">
-                                  Piedra {selectedPlant === "ranchos" ? "0/6" : "0/10"}
+                                  Piedra {stoneType}
                                   {stockpileData.piedra ? (
                                     stoneAlert.status === "green" ? <CheckCircle2 className={`h-4 w-4 ${iconColor}`} /> : <AlertTriangle className={`h-4 w-4 ${iconColor}`} />
                                   ) : (
@@ -934,11 +1000,11 @@ export default function MezclasGranulometriaPage() {
                                     <span>MF: {stockpileData.piedra.modulo_finura?.toFixed(2)}</span>
                                     {clayContent !== null && (
                                       <span className={`ml-2 font-medium ${
-                                        clayContent > STONE_06_LIMITS.maxClayContentYellow ? "text-red-600" 
-                                        : clayContent > STONE_06_LIMITS.maxClayContent ? "text-amber-600" : "text-green-600"
+                                        clayContent > stoneLimits.maxClayContentYellow ? "text-red-600" 
+                                        : clayContent > stoneLimits.maxClayContent ? "text-amber-600" : "text-green-600"
                                       }`}>
                                         | C.A: {clayContent.toFixed(1)}%
-                                        {clayContent > STONE_06_LIMITS.maxClayContent && " (!)"}
+                                        {clayContent > stoneLimits.maxClayContent && " (!)"}
                                       </span>
                                     )}
                                     <span className="block">Ensayado: {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} por {stockpileData.piedra.tested_by}</span>
