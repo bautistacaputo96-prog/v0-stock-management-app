@@ -287,8 +287,16 @@ export function GranulometryDashboardWidget() {
     }
     // Para Silke y Villa Rosa (canos), sandMin=0, sandMax=100 - sin restriccion
 
+    // DEBUG: Log para diagnosticar problema de formula
+    console.log("[v0] Widget calc - plant:", selectedPlant, "sandMin:", sandMin, "sandMax:", sandMax)
+    console.log("[v0] Widget calc - sandPassing:", sandAgg.passing)
+    console.log("[v0] Widget calc - stonePassing:", stoneAgg.passing)
+    console.log("[v0] Widget calc - TMA:", config.tma)
+
     const currentRMS = calculateRMS(sandAgg.passing, stoneAgg.passing, currentFormula.sandPct, config.tma)
     const optimal = findOptimalProportion(sandAgg.passing, stoneAgg.passing, config.tma, sandMin, sandMax)
+    
+    console.log("[v0] Widget calc - optimal result:", optimal)
     const totalKg = currentFormula.sandKg + currentFormula.stoneKg
 
     return {
