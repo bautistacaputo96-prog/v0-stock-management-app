@@ -376,92 +376,84 @@ export function GranulometryDashboardWidget() {
     )
   }
 
+  // Calcular si la formula actual coincide con la sugerida
+  const formulaMatch = currentFormula && suggestedFormula && 
+    Math.abs(currentFormula.sandPct - suggestedFormula.sandPct) <= 5
+
   return (
-    <Card className="h-fit">
-      <CardHeader className="pb-2 pt-3 px-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-xs font-medium flex items-center gap-1.5">
-            <FlaskConical className="h-3.5 w-3.5" />
-            Granulometria - {config.product}
-          </CardTitle>
-          <Link href="/calidad/granulometria/mezclas">
-            <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 px-2">
-              Ver detalle <ArrowRight className="h-3 w-3" />
-            </Button>
-          </Link>
+    <div className="rounded-lg border bg-card text-card-foreground">
+      {/* Header compacto */}
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+        <div className="flex items-center gap-1.5 text-xs font-medium">
+          <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
+          <span>Granulometria</span>
+          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">{config.product}</span>
         </div>
-      </CardHeader>
-      <CardContent className="px-3 pb-3 pt-0">
-        <div className="flex flex-wrap gap-2">
-          {/* Aridos con MF */}
+        <Link href="/calidad/granulometria/mezclas" className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
+          Ver analisis <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+      
+      {/* Contenido en una fila */}
+      <div className="px-3 py-2 flex items-center gap-4 text-xs">
+        {/* Acopios */}
+        <div className="flex items-center gap-3">
           {aggregates.map((agg) => {
             const mfEval = agg.mf !== null ? getMFEvaluation(agg.type, agg.mf) : null
             const isMissing = agg.mf === null
-            const isOutdated = agg.daysSinceTest !== null && agg.daysSinceTest > 7
             const isCritical = agg.daysSinceTest !== null && agg.daysSinceTest > 15
+            const isOutdated = agg.daysSinceTest !== null && agg.daysSinceTest > 7
+            const daysAgo = agg.daysSinceTest !== null ? (agg.daysSinceTest === 0 ? "hoy" : `hace ${agg.daysSinceTest}d`) : null
 
             return (
-              <div
-                key={agg.name}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs ${
-                  isMissing ? "bg-red-50 border-red-200 text-red-700" :
-                  isCritical ? "bg-red-50 border-red-200" :
-                  isOutdated ? "bg-amber-50 border-amber-200" :
-                  "bg-muted/50 border-border"
-                }`}
-              >
-                <span className="font-medium">{agg.name}</span>
-                {mfEval ? (
-                  <Badge
-                    variant="outline"
-                    className={`text-[9px] h-4 px-1 ${
-                      mfEval.level === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-300" :
-                      mfEval.level === "yellow" ? "bg-amber-100 text-amber-700 border-amber-300" :
-                      mfEval.level === "orange" ? "bg-orange-100 text-orange-700 border-orange-300" :
-                      "bg-red-100 text-red-700 border-red-300"
-                    }`}
-                  >
-                    MF {agg.mf?.toFixed(2)}
-                  </Badge>
+              <div key={agg.name} className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">{agg.name}:</span>
+                {isMissing ? (
+                  <span className="text-red-600 font-medium">Sin datos</span>
                 ) : (
-                  <span className="text-[10px] text-red-600">Sin ensayo</span>
+                  <>
+                    <span className={`font-semibold ${
+                      mfEval?.level === "green" ? "text-emerald-600" :
+                      mfEval?.level === "yellow" ? "text-amber-600" :
+                      mfEval?.level === "orange" ? "text-orange-600" :
+                      "text-red-600"
+                    }`}>
+                      {agg.mf?.toFixed(2)}
+                    </span>
+                    <span className={`text-[10px] ${isCritical ? "text-red-500" : isOutdated ? "text-amber-500" : "text-muted-foreground"}`}>
+                      ({daysAgo})
+                    </span>
+                  </>
                 )}
               </div>
             )
           })}
-          
-          {/* Formula sugerida compacta */}
-          {hasEnoughData && currentFormula && suggestedFormula && (
-            <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs ${
-              showOptimalBadge ? "bg-emerald-50 border-emerald-200" :
-              showAdjustWarning ? "bg-amber-50 border-amber-200" :
-              "bg-muted/50 border-border"
-            }`}>
-              <span className="text-muted-foreground">Sugerido:</span>
-              <span className="font-medium">{suggestedFormula.sandPct}% arena</span>
-              <span className="text-muted-foreground">/</span>
-              <span className="font-medium">{suggestedFormula.stonePct}% piedra</span>
-              {showAdjustWarning && <AlertTriangle className="h-3 w-3 text-amber-600" />}
-              {showOptimalBadge && <CheckCircle2 className="h-3 w-3 text-emerald-600" />}
-            </div>
-          )}
-          
-          {!hasEnoughData && (
-            <div className="text-[10px] text-muted-foreground">
-              Sin datos suficientes para sugerir formula.
-            </div>
-          )}
         </div>
-        
-        {/* Alertas compactas */}
-        {(hasCriticallyOutdatedTest || (hasOutdatedTest && !hasCriticallyOutdatedTest)) && (
-          <div className={`mt-2 text-[10px] px-2 py-1 rounded ${
-            hasCriticallyOutdatedTest ? "text-red-600 bg-red-50" : "text-amber-600 bg-amber-50"
-          }`}>
-            {hasCriticallyOutdatedTest ? "Ensayo desactualizado (+15 dias)" : "Ensayo antiguo (+7 dias)"}
+
+        {/* Separador */}
+        <div className="h-4 w-px bg-border" />
+
+        {/* Formula */}
+        {hasEnoughData && currentFormula && suggestedFormula ? (
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Formula:</span>
+            <span className="font-medium">{currentFormula.sandPct}%/{currentFormula.stonePct}%</span>
+            {!formulaMatch && (
+              <>
+                <ArrowRight className="h-3 w-3 text-amber-500" />
+                <span className="font-medium text-amber-600">{suggestedFormula.sandPct}%/{suggestedFormula.stonePct}%</span>
+                <span className="text-[10px] text-amber-500">(sugerido)</span>
+              </>
+            )}
+            {formulaMatch && (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            )}
           </div>
+        ) : (
+          <span className="text-muted-foreground">Sin datos para calcular formula</span>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
