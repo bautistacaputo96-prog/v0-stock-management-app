@@ -46,6 +46,14 @@ function getProductionLinesForPlant(plant: string | null): typeof PRODUCTION_LIN
   return PRODUCTION_LINES.filter(l => l.plant === plant)
 }
 
+// Helper para mapear planta del selector al valor en la base de datos
+// El selector usa "mercedes" pero en la DB es "silke", "villa-rosa" -> "villa_rosa"
+function mapPlantToDb(plant: string | null): string {
+  if (!plant || plant === "mercedes") return "silke"
+  if (plant === "villa-rosa") return "villa_rosa"
+  return plant // ranchos se mantiene igual
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // LÍMITES CALIBRADOS PARA EL MERCADO DE BUENOS AIRES
 // ══════════════════════════════════════════════════════════════════════════════
@@ -475,10 +483,11 @@ export default function MezclasGranulometriaPage() {
   
   // Load current stockpile granulometry data
   async function loadStockpileData() {
+    const dbPlant = mapPlantToDb(selectedPlant)
     const { data, error } = await supabase
       .from("stockpile_granulometry")
       .select("*")
-      .eq("plant", selectedPlant || "mercedes")
+      .eq("plant", dbPlant)
       .order("test_date", { ascending: false })
     
     if (!error && data) {
@@ -495,10 +504,11 @@ export default function MezclasGranulometriaPage() {
   
   // Load current paston formula
   async function loadPastonFormula() {
+    const dbPlant = mapPlantToDb(selectedPlant)
     const { data, error } = await supabase
       .from("paston_formulas")
       .select("*")
-      .eq("plant", selectedPlant || "mercedes")
+      .eq("plant", dbPlant)
       .eq("is_active", true)
       .single()
     
