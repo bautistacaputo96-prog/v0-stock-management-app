@@ -24,6 +24,7 @@ import { ProductionPlanning } from "@/components/production-planning"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DailyProductionModal } from "@/components/daily-production-modal"
+import { GranulometryDashboardWidget } from "@/components/granulometry-dashboard-widget"
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -1927,131 +1928,10 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
             </>
             )}
 
-            {/* ── Seccion 7: Granulometría de Acopios ── */}
+            {/* ── Seccion 7: Widget de Granulometria ── */}
             <div className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
-                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Granulometría de Acopios</h2>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                {/* Arena MF */}
-                <div 
-                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    stockpileData.arena 
-                      ? (stockpileData.arena.mf >= MF_LIMITS.arena.min && stockpileData.arena.mf <= MF_LIMITS.arena.max)
-                        ? "border-green-200 bg-green-50/50" 
-                        : "border-yellow-200 bg-yellow-50/50"
-                      : "border-border"
-                  }`}
-                  onClick={() => stockpileData.arena && setSelectedStockpileDetail({ 
-                    type: "arena", 
-                    label: "Arena",
-                    ...stockpileData.arena,
-                    limits: MF_LIMITS.arena
-                  })}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">Arena</div>
-                    {stockpileData.arena && (
-                      stockpileData.arena.mf >= MF_LIMITS.arena.min && stockpileData.arena.mf <= MF_LIMITS.arena.max
-                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                    )}
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    MF: {stockpileData.arena?.mf?.toFixed(2) || "-"}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    Rango: {MF_LIMITS.arena.min} - {MF_LIMITS.arena.max}
-                  </div>
-                  {stockpileData.arena && (
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      {new Date(stockpileData.arena.test_date).toLocaleDateString("es-AR")} • {stockpileData.arena.tested_by}
-                    </div>
-                  )}
-                </div>
-
-                {/* Piedra MF */}
-                <div 
-                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    stockpileData.piedra 
-                      ? (() => {
-                          const limits = selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
-                          return (stockpileData.piedra.mf >= limits.min && stockpileData.piedra.mf <= limits.max)
-                            ? "border-green-200 bg-green-50/50" 
-                            : "border-yellow-200 bg-yellow-50/50"
-                        })()
-                      : "border-border"
-                  }`}
-                  onClick={() => stockpileData.piedra && setSelectedStockpileDetail({ 
-                    type: "piedra", 
-                    label: stockpileData.piedra.label,
-                    ...stockpileData.piedra,
-                    limits: selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
-                  })}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
-                      {selectedPlant === "ranchos" ? "Piedra 0/6" : "Piedra 0/10"}
-                    </div>
-                    {stockpileData.piedra && (() => {
-                      const limits = selectedPlant === "ranchos" ? MF_LIMITS.piedra_06 : MF_LIMITS.piedra_010
-                      return stockpileData.piedra.mf >= limits.min && stockpileData.piedra.mf <= limits.max
-                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                    })()}
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    MF: {stockpileData.piedra?.mf?.toFixed(2) || "-"}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    Rango: {selectedPlant === "ranchos" ? `${MF_LIMITS.piedra_06.min} - ${MF_LIMITS.piedra_06.max}` : `${MF_LIMITS.piedra_010.min} - ${MF_LIMITS.piedra_010.max}`}
-                  </div>
-                  {stockpileData.piedra && (
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      {new Date(stockpileData.piedra.test_date).toLocaleDateString("es-AR")} • {stockpileData.piedra.tested_by}
-                    </div>
-                  )}
-                </div>
-
-                {/* Mezcla MF */}
-                <div 
-                  className={`bg-card rounded-lg border p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    stockpileData.mezcla 
-                      ? (stockpileData.mezcla.mf >= MF_LIMITS.mezcla.min && stockpileData.mezcla.mf <= MF_LIMITS.mezcla.max)
-                        ? "border-green-200 bg-green-50/50" 
-                        : "border-yellow-200 bg-yellow-50/50"
-                      : "border-border"
-                  }`}
-                  onClick={() => stockpileData.mezcla && setSelectedStockpileDetail({ 
-                    type: "mezcla", 
-                    label: "Mezcla del Pastón",
-                    ...stockpileData.mezcla,
-                    limits: MF_LIMITS.mezcla,
-                    arenaData: stockpileData.arena,
-                    piedraData: stockpileData.piedra
-                  })}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">MF Mezcla</div>
-                    {stockpileData.mezcla && (
-                      stockpileData.mezcla.mf >= MF_LIMITS.mezcla.min && stockpileData.mezcla.mf <= MF_LIMITS.mezcla.max
-                        ? <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        : <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                    )}
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    MF: {stockpileData.mezcla?.mf?.toFixed(2) || "-"}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    Rango: {MF_LIMITS.mezcla.min} - {MF_LIMITS.mezcla.max}
-                  </div>
-                  {stockpileData.mezcla && (
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      Dosif: {stockpileData.mezcla.arenaPct}% arena / {stockpileData.mezcla.piedraPct}% piedra
-                    </div>
-                  )}
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <GranulometryDashboardWidget />
               </div>
             </div>
             

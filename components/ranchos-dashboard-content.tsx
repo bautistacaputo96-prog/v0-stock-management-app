@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { getSupabase } from "@/lib/supabase"
 import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight, Package, Boxes, FlaskConical, Target } from "lucide-react"
+import { GranulometryDashboardWidget } from "@/components/granulometry-dashboard-widget"
 import {
   ResponsiveContainer,
   AreaChart,
@@ -950,26 +951,28 @@ export function RanchosDashboardContent() {
             </div>
           </div>
 
-          {/* ═══ SECCION 4 — Metricas de Calidad ══════════════════════════════ */}
+          {/* ═══ SECCION 4 — Widget de Granulometria ═══════════════════════════ */}
           <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
-              <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-                Metricas de Calidad — Ultimos ensayos
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {granulometryData.map(metric => (
-                <QualityCard key={metric.material} metric={metric} />
-              ))}
-              {flexionData && (
-                <FlexionCard metric={flexionData} />
-              )}
-              {!flexionData && granulometryData.length < 3 && (
-                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-3 flex items-center justify-center text-muted-foreground text-xs">
-                  Sin ensayos de flexion registrados
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <GranulometryDashboardWidget />
+              
+              {/* Metricas de flexion */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
+                  <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
+                    Flexion - Ultimos ensayos
+                  </h2>
                 </div>
-              )}
+                {flexionData && (
+                  <FlexionCard metric={flexionData} />
+                )}
+                {!flexionData && (
+                  <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 flex items-center justify-center text-muted-foreground text-xs">
+                    Sin ensayos de flexion registrados
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
