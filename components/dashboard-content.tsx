@@ -115,18 +115,32 @@ function OeeGauge({ label, value, target = 85 }: { label: string; value: number;
   )
 }
 
-// ── MP Card ────────────────────────────────────────────────────────────────
+// ── MP Card (Balance de Masa) ──────────────────────────────────────────────
 
-function MpCard({ name, stockTn }: { name: string; stockTn: number }) {
+function MpCard({ name, ingresoTn, consumoTn, balanceTn }: { name: string; ingresoTn: number; consumoTn: number; balanceTn: number }) {
+  const hasData = ingresoTn > 0 || consumoTn > 0
   return (
-    <div className="bg-card rounded-lg border border-border p-4">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">{name}</div>
-      {stockTn > 0 ? (
-        <div className="text-xl font-bold text-foreground">
-          {stockTn.toFixed(1)}<span className="text-sm font-normal text-muted-foreground ml-1">tn</span>
+    <div className="bg-card rounded-lg border border-border p-3">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2 font-medium">{name}</div>
+      {hasData ? (
+        <div className="space-y-1">
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-muted-foreground">Ingreso:</span>
+            <span className="font-medium text-emerald-600">+{ingresoTn.toFixed(1)} tn</span>
+          </div>
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-muted-foreground">Consumo:</span>
+            <span className="font-medium text-red-500">-{consumoTn.toFixed(1)} tn</span>
+          </div>
+          <div className="flex justify-between items-center text-xs pt-1 border-t border-border">
+            <span className="text-muted-foreground font-medium">Balance:</span>
+            <span className={`font-bold ${balanceTn >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {balanceTn >= 0 ? "+" : ""}{balanceTn.toFixed(1)} tn
+            </span>
+          </div>
         </div>
       ) : (
-        <div className="text-xs text-muted-foreground mt-2">Sin datos de stock</div>
+        <div className="text-xs text-muted-foreground">Sin datos</div>
       )}
     </div>
   )
@@ -163,7 +177,7 @@ export function DashboardContent() {
   const [prevMonth, setPrevMonth] = useState<MonthData | null>(null)
   const [pipeWeights, setPipeWeights] = useState<Record<string, number>>(PIPE_WEIGHTS_DEFAULT)
   const [showCumplimientoDetail, setShowCumplimientoDetail] = useState(false)
-  const [mpData, setMpData] = useState<{ name: string; stockTn: number }[]>([])
+  const [mpData, setMpData] = useState<{ name: string; ingresoTn: number; consumoTn: number; balanceTn: number }[]>([])
   const [qualityData, setQualityData] = useState<{
     totals: { first: number; second: number; broken: number; total: number }
     totalsTn: { first: number; second: number; broken: number; total: number }
@@ -385,11 +399,12 @@ export function DashboardContent() {
     setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes, dailyTargetTotal, pipeDailyPlanBySize))
     setPrevMonth(processMonthData(pmBlocks.data || [], pmPipes.data || [], weights, {}, {}, []))
 
-    // Independent mp_receipts fetch — graceful fallback
+    // Independent mp_receipts fetch + consumption calc — graceful fallback
     const SILKE_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const VR_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const materialNames = selectedPlant === "villa-rosa" ? VR_MATERIALS : SILKE_MATERIALS
     try {
+      // Fetch ingresos
       const { data: mpResult } = await supabase
         .from("mp_receipts")
         .select("material_name, quantity_tn, receipt_date")
@@ -397,17 +412,32 @@ export function DashboardContent() {
         .gte("receipt_date", cmStart)
         .lte("receipt_date", cmEnd)
 
+      const ingresoMap: Record<string, number> = {}
       if (mpResult && mpResult.length > 0) {
-        const stockMap: Record<string, number> = {}
         mpResult.forEach((r: any) => {
-          stockMap[r.material_name] = (stockMap[r.material_name] || 0) + (r.quantity_tn || 0)
+          ingresoMap[r.material_name] = (ingresoMap[r.material_name] || 0) + (r.quantity_tn || 0)
         })
-        setMpData(materialNames.map(name => ({ name, stockTn: stockMap[name] || 0 })))
-      } else {
-        setMpData(materialNames.map(name => ({ name, stockTn: 0 })))
       }
+
+      // Calcular consumos desde pipe_production
+      const consumoMap: Record<string, number> = { "Arena": 0, "Piedra 0/10": 0, "Cemento": 0, "Aditivos": 0 }
+      if (cmPipes.data && cmPipes.data.length > 0) {
+        cmPipes.data.forEach((r: any) => {
+          consumoMap["Arena"] += (r.sand_kg || 0) / 1000
+          consumoMap["Piedra 0/10"] += ((r.stone_0_10_kg || 0) + (r.stone_0_20_kg || 0)) / 1000
+          consumoMap["Cemento"] += (r.cement_kg || 0) / 1000
+          consumoMap["Aditivos"] += ((r.additive_1_kg || 0) + (r.additive_2_kg || 0)) / 1000
+        })
+      }
+
+      setMpData(materialNames.map(name => ({
+        name,
+        ingresoTn: ingresoMap[name] || 0,
+        consumoTn: consumoMap[name] || 0,
+        balanceTn: (ingresoMap[name] || 0) - (consumoMap[name] || 0)
+      })))
     } catch {
-      setMpData(materialNames.map(name => ({ name, stockTn: 0 })))
+      setMpData(materialNames.map(name => ({ name, ingresoTn: 0, consumoTn: 0, balanceTn: 0 })))
     }
 
     // Independent quality fetch — graceful fallback
@@ -813,7 +843,14 @@ export function DashboardContent() {
     const avgCanos = totalUnits / days
     const avgTnTotal = totalTn / days
     const avgTnHora = tnPerHour
-    return { days, avgDowntime, tnPerHour, totalDowntime, totalTn, totalUnits, avgCanos, avgTnTotal, avgTnHora }
+    // Produccion por tipo de cano
+    const productionBySize: Record<string, number> = {}
+    d.forEach(x => {
+      Object.entries(x.productionBySize).forEach(([size, qty]) => {
+        productionBySize[size] = (productionBySize[size] || 0) + qty
+      })
+    })
+    return { days, avgDowntime, tnPerHour, totalDowntime, totalTn, totalUnits, avgCanos, avgTnTotal, avgTnHora, productionBySize }
   }, [currentMonth])
 
   const pmPipeStats = useMemo(() => {
@@ -824,7 +861,15 @@ export function DashboardContent() {
     const totalAvailH = d.reduce((s, x) => s + x.availableMinutes, 0) / 60
     const avgDowntime = d.reduce((s, x) => s + x.downtimeMin, 0) / days
     const tnPerHour = totalAvailH > 0 ? totalTn / totalAvailH : 0
-    return { days, avgDowntime, tnPerHour, totalTn }
+    const totalUnits = d.reduce((s, x) => s + x.totalUnits, 0)
+    // Produccion por tipo de cano (mes anterior)
+    const productionBySize: Record<string, number> = {}
+    d.forEach(x => {
+      Object.entries(x.productionBySize).forEach(([size, qty]) => {
+        productionBySize[size] = (productionBySize[size] || 0) + qty
+      })
+    })
+    return { days, avgDowntime, tnPerHour, totalTn, totalUnits, productionBySize }
   }, [prevMonth])
 
   // ── Filtered pipe averages (for reference lines based on visible data) ──
@@ -1298,11 +1343,36 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                   <ComparisonCard
                     label="Canos totales"
                     current={cmPipeStats.totalUnits}
-                    previous={0}
+                    previous={pmPipeStats?.totalUnits || 0}
                     unit="un."
                     decimals={0}
                   />
                 </div>
+                {/* Desglose por tipo de cano */}
+                {Object.keys(cmPipeStats.productionBySize || {}).length > 0 && (
+                  <div className="bg-card rounded-lg border border-border p-4">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2 font-medium">Produccion por diametro</div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(cmPipeStats.productionBySize || {})
+                        .sort((a, b) => Number(a[0]) - Number(b[0]))
+                        .map(([size, qty]) => {
+                          const prevQty = pmPipeStats?.productionBySize?.[size] || 0
+                          const diff = prevQty > 0 ? ((qty - prevQty) / prevQty * 100) : 0
+                          return (
+                            <div key={size} className="flex items-center gap-1.5 bg-muted/50 rounded px-2 py-1">
+                              <span className="text-xs font-medium">CC{size}:</span>
+                              <span className="text-xs font-bold">{qty}</span>
+                              {prevQty > 0 && (
+                                <span className={`text-[10px] ${diff >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                                  {diff >= 0 ? "+" : ""}{diff.toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 
@@ -1424,40 +1494,7 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
               </div>
             )}
 
-            {/* ── Seccion 3: Tendencia semanal ── */}
-            {weeklyPipeData.some(w => w.current > 0) && (
-              <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
-                <h3 className="text-sm font-semibold text-foreground mb-4">Tendencia semanal — canos producidos</h3>
-                <div className="h-48 mb-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={weeklyPipeData} barGap={4}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.length) return null
-                          return (
-                            <div className="bg-card border border-border rounded-lg shadow-lg p-3 text-[11px]">
-                              <div className="font-semibold mb-1">{payload[0]?.payload?.label}</div>
-                              <div className="text-muted-foreground">Esta semana: <span className="font-bold text-foreground">{payload[0]?.value}</span></div>
-                              {payload[1] && <div className="text-muted-foreground">Semana ant.: <span className="font-bold text-foreground">{payload[1]?.value}</span></div>}
-                            </div>
-                          )
-                        }}
-                      />
-                      <Bar dataKey="current" name="Esta semana" fill="#1e3a5f" radius={[3, 3, 0, 0]} barSize={22} />
-                      <Bar dataKey="previous" name="Semana ant." fill="#94a3b8" radius={[3, 3, 0, 0]} barSize={22} fillOpacity={0.6} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid grid-cols-4 gap-2 pt-3 border-t border-border">
-                  {weeklyPipeData.map(w => (
-                    <WeekTrend key={w.label} label={w.label} current={w.current} previous={w.previous} />
-                  ))}
-                </div>
-              </div>
-            )}
+
 
             {/* ── Seccion 4: OEE gauges ── */}
             {oeeData && (
@@ -1912,24 +1949,24 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
               )}
             </div>
 
-            {/* ── Seccion 6: Materia prima ── */}
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground" />
-                <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Materia prima — ingresos del mes</h2>
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {mpData.length > 0 ? (
-                  mpData.map(mp => <MpCard key={mp.name} name={mp.name} stockTn={mp.stockTn} />)
-                ) : (
-                  <>
-                    {["Arena", "Piedra 0/10", "Cemento", "Aditivos"].map(name => (
-                      <MpCard key={name} name={name} stockTn={0} />
-                    ))}
-                  </>
-                )}
-            </div>
-            </div>
+  {/* ── Seccion 6: Materia prima - Balance de masa ── */}
+  <div className="mb-6">
+  <div className="flex items-center gap-2 mb-3">
+  <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground" />
+  <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Materia prima — Balance de masa del mes</h2>
+  </div>
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  {mpData.length > 0 ? (
+  mpData.map(mp => <MpCard key={mp.name} name={mp.name} ingresoTn={mp.ingresoTn} consumoTn={mp.consumoTn} balanceTn={mp.balanceTn} />)
+  ) : (
+  <>
+  {["Arena", "Piedra 0/10", "Cemento", "Aditivos"].map(name => (
+  <MpCard key={name} name={name} ingresoTn={0} consumoTn={0} balanceTn={0} />
+  ))}
+  </>
+  )}
+  </div>
+  </div>
             </>
             )}
 
