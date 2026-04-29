@@ -726,9 +726,10 @@ export function DashboardContent() {
     if (!currentMonth) return []
     let data = currentMonth.pipeDailyData
     
-    // Aplicar filtros de operarios y molde
+    // Aplicar filtros de operarios
     if (pipeFilter !== "todos") data = data.filter(d => d.operatorsCount === Number(pipeFilter))
-    if (pipeMoldFilter !== "todos") data = data.filter(d => d.productionBySize[pipeMoldFilter] != null)
+    // Filtrar solo dias que tienen el diametro seleccionado
+    if (pipeMoldFilter !== "todos") data = data.filter(d => d.productionBySize[pipeMoldFilter] != null && d.productionBySize[pipeMoldFilter] > 0)
     
     // Si el turno es "todos", agrupar por día
     if (pipeShiftFilter === "todos") {
@@ -757,13 +758,16 @@ export function DashboardContent() {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(d => {
           const availHours = d.availableMinutes / 60
-          // Para "todos", usar el total diario de cajones
           const scrapBoxes = scrapData?.byDate[d.date] || 0
+          // Si hay filtro de molde, mostrar solo los canos de ese diametro
+          const filteredUnits = pipeMoldFilter !== "todos" 
+            ? (d.productionBySize[pipeMoldFilter] || 0) 
+            : d.totalUnits
           return {
             date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
             rawDate: d.date,
             tnHora: availHours > 0 ? Number((d.totalWeightTn / availHours).toFixed(2)) : 0,
-            canos: d.totalUnits,
+            canos: filteredUnits,
             tnTotal: Number(d.totalWeightTn.toFixed(2)),
             paradas: d.downtimeMin,
             desperdicio: scrapBoxes,
@@ -779,13 +783,16 @@ export function DashboardContent() {
 
     return data.map(d => {
       const availHours = d.availableMinutes / 60
-      // Para turno específico, usar el dato de ese turno
       const scrapBoxes = scrapData?.byDateShift[d.date]?.[d.shift] || 0
+      // Si hay filtro de molde, mostrar solo los canos de ese diametro
+      const filteredUnits = pipeMoldFilter !== "todos" 
+        ? (d.productionBySize[pipeMoldFilter] || 0) 
+        : d.totalUnits
       return {
         date: new Date(d.date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
         rawDate: d.date,
         tnHora: availHours > 0 ? Number((d.totalWeightTn / availHours).toFixed(2)) : 0,
-        canos: d.totalUnits,
+        canos: filteredUnits,
         tnTotal: Number(d.totalWeightTn.toFixed(2)),
         paradas: d.downtimeMin,
         desperdicio: scrapBoxes,
