@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { getSupabase } from "@/lib/supabase"
 import { LayoutGrid, Clock, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle, Truck, ArrowUpRight, ArrowDownRight, Package, Boxes, FlaskConical, Target } from "lucide-react"
+import { GranulometryDashboardWidget } from "@/components/granulometry-dashboard-widget"
 import {
   ResponsiveContainer,
   AreaChart,
@@ -292,9 +293,9 @@ function WeekTrend({ label, current, previous }: { label: string; current: numbe
 
 export function RanchosDashboardContent() {
   const now = new Date()
-  // Default to January 2025 where we have paver production data
-  const [selectedMonthIdx, setSelectedMonthIdx] = useState(0) // January
-  const [selectedYear, setSelectedYear] = useState(2025)
+  // Default to current month - will find latest month with data on first load
+  const [selectedMonthIdx, setSelectedMonthIdx] = useState(now.getMonth())
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [loading, setLoading] = useState(true)
   const [records, setRecords] = useState<any[]>([])
   const [prevRecords, setPrevRecords] = useState<any[]>([])
@@ -303,8 +304,38 @@ export function RanchosDashboardContent() {
   const [granulometryData, setGranulometryData] = useState<QualityMetric[]>([])
   const [flexionData, setFlexionData] = useState<FlexionMetric | null>(null)
   const [pastonFormula, setPastonFormula] = useState<any>(null)
+  const [hasInitialized, setHasInitialized] = useState(false)
+
+  // On first load, find the latest month with production data
+  useEffect(() => {
+    if (hasInitialized) return
+    
+    async function findLatestMonth() {
+      try {
+        const supabase = getSupabase()
+        const { data } = await supabase
+          .from("paver_production")
+          .select("production_date")
+          .order("production_date", { ascending: false })
+          .limit(1)
+        
+        if (data && data.length > 0) {
+          const latestDate = new Date(data[0].production_date)
+          setSelectedMonthIdx(latestDate.getMonth())
+          setSelectedYear(latestDate.getFullYear())
+        }
+      } catch {
+        // Keep default (current month)
+      }
+      setHasInitialized(true)
+    }
+    
+    findLatestMonth()
+  }, [hasInitialized])
 
   useEffect(() => {
+    if (!hasInitialized) return
+    
     let retries = 0
     const attempt = () => {
       loadData(selectedMonthIdx, selectedYear).catch(() => {
@@ -312,7 +343,7 @@ export function RanchosDashboardContent() {
       })
     }
     attempt()
-  }, [selectedMonthIdx, selectedYear])
+  }, [selectedMonthIdx, selectedYear, hasInitialized])
 
   async function loadData(monthIdx: number, year: number) {
     setLoading(true)
@@ -769,18 +800,23 @@ export function RanchosDashboardContent() {
         </div>
       ) : (
         <>
-          {/* ═══ SECCION 1 — Alertas ═══════════════════════════════════════ */}
-          {alerts.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-5 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
-              <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
-              <span className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Alertas activas:</span>
-              {alerts.map((a, i) => (
-                <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-600 text-white">
-                  {a}
-                </span>
-              ))}
+            {/* ═══ SECCION 1 — Alertas ═══════════════════════════════════════ */}
+            {alerts.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-5 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Alertas activas:</span>
+                {alerts.map((a, i) => (
+                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-600 text-white">
+                    {a}
+                  </span>
+                ))}
+              </div>
+            )}
+            
+            {/* ═══ Granulometria de Acopios (compacto) ═══ */}
+            <div className="mb-4">
+              <GranulometryDashboardWidget />
             </div>
-          )}
 
           {/* ═══ SECCION 2 — KPIs Header ══════════════════════════════════ */}
           <div className="mb-6">
@@ -950,23 +986,20 @@ export function RanchosDashboardContent() {
             </div>
           </div>
 
-          {/* ═══ SECCION 4 — Metricas de Calidad ══════════════════════════════ */}
+          {/* ═══ SECCION 4 — Metricas de Flexion ═══════════════════════════ */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
               <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-                Metricas de Calidad — Ultimos ensayos
+                Flexion - Ultimos ensayos
               </h2>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {granulometryData.map(metric => (
-                <QualityCard key={metric.material} metric={metric} />
-              ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {flexionData && (
                 <FlexionCard metric={flexionData} />
               )}
-              {!flexionData && granulometryData.length < 3 && (
-                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-3 flex items-center justify-center text-muted-foreground text-xs">
+              {!flexionData && (
+                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 flex items-center justify-center text-muted-foreground text-xs">
                   Sin ensayos de flexion registrados
                 </div>
               )}
