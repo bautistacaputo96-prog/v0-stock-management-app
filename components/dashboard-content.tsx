@@ -403,11 +403,22 @@ export function DashboardContent() {
     const SILKE_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const VR_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const materialNames = selectedPlant === "villa-rosa" ? VR_MATERIALS : SILKE_MATERIALS
+    
+    // Funcion para normalizar nombres de materiales
+    const normalizeMaterial = (mat: string): string => {
+      const lower = (mat || "").toLowerCase()
+      if (lower.includes("arena")) return "Arena"
+      if (lower.includes("piedra") || lower.includes("canto")) return "Piedra 0/10"
+      if (lower.includes("cemento") || lower.includes("cpc") || lower.includes("cpf")) return "Cemento"
+      if (lower.includes("aditivo") || lower.includes("plastificante") || lower.includes("hidrófugo")) return "Aditivos"
+      return mat // fallback
+    }
+    
     try {
       // Fetch ingresos
       const { data: mpResult } = await supabase
         .from("mp_receipts")
-        .select("material_name, quantity_tn, receipt_date")
+        .select("material_type, quantity_tn, receipt_date")
         .eq("plant", plantValue)
         .gte("receipt_date", cmStart)
         .lte("receipt_date", cmEnd)
@@ -415,7 +426,8 @@ export function DashboardContent() {
       const ingresoMap: Record<string, number> = {}
       if (mpResult && mpResult.length > 0) {
         mpResult.forEach((r: any) => {
-          ingresoMap[r.material_name] = (ingresoMap[r.material_name] || 0) + (r.quantity_tn || 0)
+          const normalized = normalizeMaterial(r.material_type)
+          ingresoMap[normalized] = (ingresoMap[normalized] || 0) + Number(r.quantity_tn || 0)
         })
       }
 
