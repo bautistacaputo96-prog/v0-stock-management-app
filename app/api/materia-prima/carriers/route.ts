@@ -1,14 +1,24 @@
 import { createClient } from "@/lib/supabase"
 import { NextResponse } from "next/server"
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = createClient()
-    const { data, error } = await supabase
+    const { searchParams } = new URL(request.url)
+    const plant = searchParams.get("plant")
+    
+    let query = supabase
       .from("carriers")
       .select("*")
       .eq("is_active", true)
       .order("name", { ascending: true })
+    
+    // Filtrar por planta si se especifica
+    if (plant) {
+      query = query.eq("plant", plant)
+    }
+    
+    const { data, error } = await query
     if (error) throw error
     return NextResponse.json(data || [])
   } catch {
@@ -31,6 +41,7 @@ export async function POST(request: Request) {
         license_plate: body.license_plate?.trim() || null,
         company: body.company?.trim() || null,
         contact: body.contact?.trim() || null,
+        plant: body.plant || "silke",
         is_active: true
       })
       .select()

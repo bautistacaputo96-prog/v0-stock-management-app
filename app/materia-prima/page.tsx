@@ -107,11 +107,11 @@ function MateriaPrimaContent() {
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [showSupplierDialog, setShowSupplierDialog] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
-  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "mercedes", "villa_rosa", "ranchos"
+  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "silke", "villa_rosa", "ranchos"
   const [supplierForm, setSupplierForm] = useState({
-    name: "",
-    material_type: "",
-    plant: "mercedes",  // Nueva: planta del proveedor
+  name: "",
+  material_type: "",
+  plant: "silke",  // Nueva: planta del proveedor
     line_type: "ambos",
     density: "",
     unit: "kg"
@@ -298,7 +298,7 @@ const dataToSave = {
 setSupplierForm({
   name: supplier.name,
   material_type: supplier.material_type,
-  plant: supplier.plant || "mercedes",
+  plant: supplier.plant || "silke",
   line_type: supplier.line_type || "ambos",
   density: supplier.density?.toString() || "",
   unit: supplier.unit || "kg"
@@ -539,12 +539,12 @@ setSupplierForm({
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Filtrar por planta" />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas las plantas</SelectItem>
-                    <SelectItem value="mercedes">Mercedes</SelectItem>
-                    <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
-                    <SelectItem value="ranchos">Ranchos</SelectItem>
-                  </SelectContent>
+  <SelectContent>
+  <SelectItem value="all">Todas las plantas</SelectItem>
+  <SelectItem value="silke">Silke</SelectItem>
+  <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+  <SelectItem value="ranchos">Ranchos</SelectItem>
+  </SelectContent>
                 </Select>
               </div>
               <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
@@ -588,13 +588,13 @@ setSupplierForm({
                         onValueChange={(value) => setSupplierForm(prev => ({ ...prev, plant: value }))}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar planta" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mercedes">Mercedes</SelectItem>
-                          <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
-                          <SelectItem value="ranchos">Ranchos</SelectItem>
-                        </SelectContent>
+  <SelectValue placeholder="Seleccionar planta" />
+  </SelectTrigger>
+  <SelectContent>
+  <SelectItem value="silke">Silke</SelectItem>
+  <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+  <SelectItem value="ranchos">Ranchos</SelectItem>
+  </SelectContent>
                       </Select>
                     </div>
                     <div>
@@ -685,12 +685,12 @@ setSupplierForm({
                     ) : (
                       // Agrupar por planta y luego por proveedor
                       (() => {
-                        const plantOrder = ["mercedes", "villa_rosa", "ranchos"]
-                        const plantNames: Record<string, string> = {
-                          mercedes: "Mercedes",
-                          villa_rosa: "Villa Rosa",
-                          ranchos: "Ranchos"
-                        }
+  const plantOrder = ["silke", "villa_rosa", "ranchos"]
+  const plantNames: Record<string, string> = {
+  silke: "Silke",
+  villa_rosa: "Villa Rosa",
+  ranchos: "Ranchos"
+  }
                         
                         // Agrupar proveedores por planta
                         const byPlant = suppliers.reduce((acc, s) => {

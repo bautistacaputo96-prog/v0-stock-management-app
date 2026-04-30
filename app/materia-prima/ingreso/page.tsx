@@ -237,10 +237,11 @@ export default function IngresoMPPage() {
 
   const fetchCarriers = useCallback(async () => {
     try {
-      const res = await fetch("/api/materia-prima/carriers")
+      const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+      const res = await fetch(`/api/materia-prima/carriers?plant=${plantValue}`)
       if (res.ok) setCarriers(await res.json())
     } catch { /* ignore */ }
-  }, [])
+  }, [selectedPlant])
 
   const fetchReceipts = useCallback(async () => {
     setLoading(true)
@@ -290,6 +291,7 @@ export default function IngresoMPPage() {
     if (!newCarrierName.trim()) return
     setSavingCarrier(true)
     try {
+      const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
       const res = await fetch("/api/materia-prima/carriers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -298,6 +300,7 @@ export default function IngresoMPPage() {
           phone: newCarrierPhone.trim() || null,
           license_plate: newCarrierPlate.trim() || null,
           company: newCarrierCompany.trim() || null,
+          plant: plantValue,
         }),
       })
       if (res.ok) {
