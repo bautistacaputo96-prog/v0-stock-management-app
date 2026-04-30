@@ -57,8 +57,7 @@ const getNavItems = (plantId: string) => [
     children: [
       { title: "Control de Stock", href: "/materia-prima" },
       { title: "Ingreso MP", href: "/materia-prima/ingreso" },
-      { title: "Proveedores", href: "/materia-prima?tab=proveedores" },
-      { title: "Fletes", href: "/materia-prima?tab=fletes" },
+      { title: "Proveedores y Fletes", href: "/materia-prima?tab=materiales" },
     ],
   },
   {

@@ -33,7 +33,11 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Package,
+  ClipboardList,
+  Building2,
 } from "lucide-react"
+import Link from "next/link"
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -484,6 +488,22 @@ export default function IngresoMPPage() {
     <div className="min-h-screen bg-background">
       <Navigation />
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        {/* Tabs de navegación */}
+        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+          <Link href="/materia-prima" className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md text-muted-foreground hover:bg-background hover:text-foreground transition-colors">
+            <Package className="w-4 h-4" />
+            Stock
+          </Link>
+          <div className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-background text-foreground shadow-sm">
+            <ClipboardList className="w-4 h-4" />
+            Ingreso
+          </div>
+          <Link href="/materia-prima?tab=materiales" className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md text-muted-foreground hover:bg-background hover:text-foreground transition-colors">
+            <Building2 className="w-4 h-4" />
+            Proveedores y Fletes
+          </Link>
+        </div>
 
         {/* Header */}
         <div className="flex items-center justify-between">
