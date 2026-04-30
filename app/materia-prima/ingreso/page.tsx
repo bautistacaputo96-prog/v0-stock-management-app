@@ -326,9 +326,9 @@ export default function IngresoMPPage() {
         setSelectedSupplierId(supplierEntries[0].id.toString())
         setSelectedMaterial(supplierEntries[0].material_type)
       } else {
-        // Multiple materials - select first as supplier reference but clear material
+        // Multiple materials - auto-select the first one to avoid confusion
         setSelectedSupplierId(supplierEntries[0].id.toString())
-        setSelectedMaterial("")
+        setSelectedMaterial(supplierEntries[0].material_type)
       }
     }
     setLabSampleTaken(null)
