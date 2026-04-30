@@ -19,7 +19,10 @@ export async function GET(request: Request) {
     if (to) query = query.lte("control_date", to)
 
     const { data, error } = await query
-    if (error) throw error
+    if (error) {
+      console.log("[v0] pipe-control GET error:", error)
+      throw error
+    }
     return NextResponse.json(data)
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Error al obtener controles"
