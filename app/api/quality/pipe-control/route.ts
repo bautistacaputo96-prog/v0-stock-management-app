@@ -42,7 +42,7 @@ export async function POST(request: Request) {
         production_responsible_id: body.production_responsible_id,
         logistics_responsible_id: body.logistics_responsible_id,
         observations: body.observations || null,
-        plant: body.plant || "mercedes",
+        plant: body.plant || "silke",
       })
       .select()
       .single()
