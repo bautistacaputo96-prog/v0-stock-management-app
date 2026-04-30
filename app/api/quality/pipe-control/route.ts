@@ -19,10 +19,7 @@ export async function GET(request: Request) {
     if (to) query = query.lte("control_date", to)
 
     const { data, error } = await query
-    if (error) {
-      console.log("[v0] pipe-control GET error:", error)
-      throw error
-    }
+    if (error) throw error
     return NextResponse.json(data)
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Error al obtener controles"
@@ -45,7 +42,7 @@ export async function POST(request: Request) {
         production_responsible_id: body.production_responsible_id,
         logistics_responsible_id: body.logistics_responsible_id,
         observations: body.observations || null,
-        plant: body.plant || "mercedes",
+        plant: body.plant || "silke",
       })
       .select()
       .single()
