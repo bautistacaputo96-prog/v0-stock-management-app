@@ -190,8 +190,6 @@ export default function IngresoMPPage() {
   ? suppliers.filter(s => s.name === selectedSupplier.name)
   : []
   
-  console.log("[v0] selectedSupplierId:", selectedSupplierId, "selectedSupplier:", selectedSupplier?.name, "supplierMaterials:", supplierMaterials.map(s => ({id: s.id, mat: s.material_type})))
-  
   const isCemento = selectedMaterial?.toLowerCase().includes("cemento")
   const isArena = selectedMaterial?.toLowerCase().includes("arena")
   const isPiedra = selectedMaterial?.toLowerCase().includes("piedra")
@@ -344,14 +342,11 @@ export default function IngresoMPPage() {
   }
 
   const handleMaterialChange = (materialId: string) => {
-  console.log("[v0] handleMaterialChange called with:", materialId)
   // Find the supplier entry for this material
   const supplierEntry = suppliers.find(s => s.id.toString() === materialId)
-  console.log("[v0] supplierEntry found:", supplierEntry)
   if (supplierEntry) {
   setSelectedSupplierId(materialId)
   setSelectedMaterial(supplierEntry.material_type)
-  console.log("[v0] Set selectedSupplierId to:", materialId, "and selectedMaterial to:", supplierEntry.material_type)
   }
     setLabSampleTaken(null)
     setShowGranulometry(false)

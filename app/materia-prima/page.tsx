@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Navigation } from "@/components/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -92,15 +92,25 @@ const getLineTypes = (plant: string) => {
 function MateriaPrimaContent() {
   const { selectedPlant } = usePlant()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const tabParam = searchParams.get("tab")
   const [activeTab, setActiveTab] = useState(tabParam || "stock")
   
   // Update tab when URL changes
   useEffect(() => {
-    if (tabParam) {
-      setActiveTab(tabParam)
-    }
+  if (tabParam) {
+  setActiveTab(tabParam)
+  }
   }, [tabParam])
+  
+  // Handle tab change - redirect to ingreso page if ingreso tab selected
+  const handleTabChange = (value: string) => {
+  if (value === "ingreso") {
+  router.push("/materia-prima/ingreso")
+  } else {
+  setActiveTab(value)
+  }
+  }
   
   // Suppliers state
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -117,13 +127,16 @@ function MateriaPrimaContent() {
     unit: "kg"
   })
   
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: "supplier" | "carrier"; id: number; name: string } | null>(null)
+  
   // Carriers state
   const [carriers, setCarriers] = useState<Carrier[]>([])
   const [loadingCarriers, setLoadingCarriers] = useState(true)
   const [showCarrierDialog, setShowCarrierDialog] = useState(false)
   const [editingCarrier, setEditingCarrier] = useState<Carrier | null>(null)
   const [carrierForm, setCarrierForm] = useState({
-    name: "",
+  name: "",
     phone: "",
     license_plate: "",
     company: ""
@@ -238,14 +251,19 @@ const dataToSave = {
   }
 
   const deleteSupplier = async (id: number) => {
-    const supabase = getSupabase()
-    await supabase
-      .from("suppliers")
-      .update({ is_active: false })
-      .eq("id", id)
-    loadSuppliers()
+  const supabase = getSupabase()
+  const { error } = await supabase
+  .from("suppliers")
+  .delete()
+  .eq("id", id)
+  if (error) {
+  alert("No se puede eliminar el proveedor porque tiene ingresos asociados. Puede desactivarlo en su lugar.")
+  } else {
+  loadSuppliers()
   }
-
+  setDeleteConfirm(null)
+  }
+  
   const toggleSupplierActive = async (supplier: Supplier) => {
     const supabase = getSupabase()
     await supabase
@@ -285,12 +303,17 @@ const dataToSave = {
   }
 
   const deleteCarrier = async (id: number) => {
-    const supabase = getSupabase()
-    await supabase
-      .from("carriers")
-      .update({ is_active: false })
-      .eq("id", id)
-    loadCarriers()
+  const supabase = getSupabase()
+  const { error } = await supabase
+  .from("carriers")
+  .delete()
+  .eq("id", id)
+  if (error) {
+  alert("No se puede eliminar el flete porque tiene ingresos asociados.")
+  } else {
+  loadCarriers()
+  }
+  setDeleteConfirm(null)
   }
 
   const openEditSupplier = (supplier: Supplier) => {
@@ -329,7 +352,7 @@ setSupplierForm({
           <p className="text-muted-foreground">Gestión de proveedores, transportistas e ingresos de materia prima</p>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
             <TabsTrigger value="stock" className="gap-2">
               <Package className="w-4 h-4" />
@@ -349,19 +372,10 @@ setSupplierForm({
             </TabsTrigger>
           </TabsList>
 
-          {/* INGRESO - Redirect to existing page */}
-          <TabsContent value="ingreso">
-            <Card>
-              <CardContent className="py-8 text-center">
-                <ClipboardList className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Registro de Ingresos</h3>
-                <p className="text-muted-foreground mb-4">Registrá los ingresos de materia prima con remito y pesaje</p>
-                <Link href="/materia-prima/ingreso">
-                  <Button>Ir a Registro de Ingresos</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          </TabsContent>
+      {/* INGRESO - Redirects automatically via handleTabChange */}
+      <TabsContent value="ingreso">
+      <div className="py-8 text-center text-muted-foreground">Redirigiendo...</div>
+      </TabsContent>
 
           {/* STOCK - Dashboard integrado */}
           <TabsContent value="stock" className="space-y-6">
@@ -748,6 +762,9 @@ setSupplierForm({
                                   <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
                                     {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
                                   </Button>
+                                  <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteConfirm({ type: "supplier", id: supplier.id, name: supplier.name })}>
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -865,6 +882,9 @@ setSupplierForm({
                             <Button variant="ghost" size="sm" onClick={() => toggleCarrierActive(carrier)}>
                               {carrier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
                             </Button>
+                            <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteConfirm({ type: "carrier", id: carrier.id, name: carrier.name })}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -875,6 +895,45 @@ setSupplierForm({
             </Card>
           </TabsContent>
         </Tabs>
+        
+        {/* Delete Confirmation Dialog */}
+        {deleteConfirm && (
+          <Dialog open={true} onOpenChange={() => setDeleteConfirm(null)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-red-600">
+                  <AlertTriangle className="w-5 h-5" />
+                  Confirmar Eliminación
+                </DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <p className="text-sm text-muted-foreground mb-4">
+                  ¿Estás seguro que querés eliminar <span className="font-semibold text-foreground">{deleteConfirm.name}</span>?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Esta acción no se puede deshacer. Si el {deleteConfirm.type === "supplier" ? "proveedor" : "flete"} tiene ingresos asociados, no podrá ser eliminado.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  onClick={() => {
+                    if (deleteConfirm.type === "supplier") {
+                      deleteSupplier(deleteConfirm.id)
+                    } else {
+                      deleteCarrier(deleteConfirm.id)
+                    }
+                  }}
+                >
+                  Eliminar
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
       </main>
     </div>
   )
