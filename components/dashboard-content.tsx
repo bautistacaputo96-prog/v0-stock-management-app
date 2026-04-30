@@ -34,8 +34,8 @@ interface MonthData {
   blockMetrics: ReportMetrics[]
   pipeMetrics: PipeReportMetrics | null
   pipeDailyData: { date: string; shift: number; totalUnits: number; totalWeightTn: number; downtimeMin: number; operatorsCount: number; availableMinutes: number; effectiveMinutes: number; productionBySize: Record<string, number> }[]
-  blockDowntimes: { reason: string; minutes: number }[]
-  pipeDowntimes: { reason: string; minutes: number }[]
+  blockDowntimes: { reason: string; minutes: number; description?: string }[]
+  pipeDowntimes: { reason: string; minutes: number; description?: string }[]
   pipeTargets: Record<string, number>
   pipeDailyTargets: Record<number, number> // day -> objetivo diario total
   dailyTargetTotal: number // Objetivo diario definido por el operario
@@ -671,25 +671,42 @@ export function DashboardContent() {
       }
     })
 
-    // Block downtimes aggregated
-    const blockDtMap = new Map<string, number>()
-    blockRecords.forEach(r => {
-      (r.block_downtime || []).forEach((dt: any) => {
-        const reason = dt.custom_reason || "Sin especificar"
-        blockDtMap.set(reason, (blockDtMap.get(reason) || 0) + (dt.minutes || 0))
-      })
-    })
-    const blockDowntimes = Array.from(blockDtMap.entries()).map(([reason, minutes]) => ({ reason, minutes })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
+  // Block downtimes aggregated (con descripcion)
+  const blockDtMap = new Map<string, { minutes: number; description: string }>()
+  blockRecords.forEach(r => {
+  (r.block_downtime || []).forEach((dt: any) => {
+  const reason = dt.custom_reason || "Sin especificar"
+  const existing = blockDtMap.get(reason)
+  if (existing) {
+  existing.minutes += (dt.minutes || 0)
+  if (dt.comments && dt.comments.length > (existing.description?.length || 0)) {
+  existing.description = dt.comments
+  }
+  } else {
+  blockDtMap.set(reason, { minutes: dt.minutes || 0, description: dt.comments || "" })
+  }
+  })
+  })
+  const blockDowntimes = Array.from(blockDtMap.entries()).map(([reason, data]) => ({ reason, minutes: data.minutes, description: data.description })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
 
-    // Pipe downtimes aggregated
-    const pipeDtMap = new Map<string, number>()
-    pipeRecords.forEach(r => {
-      (r.pipe_downtime || []).forEach((dt: any) => {
-        const reason = dt.custom_reason || "Sin especificar"
-        pipeDtMap.set(reason, (pipeDtMap.get(reason) || 0) + (dt.minutes || 0))
-      })
-    })
-    const pipeDowntimes = Array.from(pipeDtMap.entries()).map(([reason, minutes]) => ({ reason, minutes })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
+  // Pipe downtimes aggregated (con descripcion)
+  const pipeDtMap = new Map<string, { minutes: number; description: string }>()
+  pipeRecords.forEach(r => {
+  (r.pipe_downtime || []).forEach((dt: any) => {
+  const reason = dt.custom_reason || "Sin especificar"
+  const existing = pipeDtMap.get(reason)
+  if (existing) {
+  existing.minutes += (dt.minutes || 0)
+  // Mantener la descripcion mas larga/reciente
+  if (dt.comments && dt.comments.length > (existing.description?.length || 0)) {
+  existing.description = dt.comments
+  }
+  } else {
+  pipeDtMap.set(reason, { minutes: dt.minutes || 0, description: dt.comments || "" })
+  }
+  })
+  })
+  const pipeDowntimes = Array.from(pipeDtMap.entries()).map(([reason, data]) => ({ reason, minutes: data.minutes, description: data.description })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
 
     return { blockRecords, pipeRecords, blockMetrics, pipeMetrics, pipeDailyData, blockDowntimes, pipeDowntimes, pipeTargets, pipeDailyTargets, dailyTargetTotal, pipeDailyPlanBySize }
   }
@@ -1280,7 +1297,10 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                       <div key={idx} className="flex items-center justify-between">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           <span className="w-5 h-5 rounded-md bg-destructive/10 text-destructive text-[10px] flex items-center justify-center font-semibold flex-shrink-0">{idx + 1}</span>
-                          <span className="text-[11px] text-foreground truncate">{dt.reason}</span>
+                          <div className="min-w-0">
+                            <span className="text-[11px] text-foreground truncate block">{dt.reason}</span>
+                            {dt.description && <span className="text-[9px] text-muted-foreground truncate block">{dt.description}</span>}
+                          </div>
                         </div>
                         <span className="text-[11px] font-semibold text-foreground ml-2 font-mono">{dt.minutes}m</span>
                       </div>
@@ -1788,7 +1808,10 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
                             <div className="flex items-center justify-between mb-0.5">
                               <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <span className="w-5 h-5 rounded-md bg-destructive/10 text-destructive text-[10px] flex items-center justify-center font-semibold flex-shrink-0">{idx + 1}</span>
-                                <span className="text-[11px] text-foreground truncate">{dt.reason}</span>
+                                <div className="min-w-0">
+                                  <span className="text-[11px] text-foreground truncate block">{dt.reason}</span>
+                                  {dt.description && <span className="text-[9px] text-muted-foreground truncate block">{dt.description}</span>}
+                                </div>
                               </div>
                               <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
                                 <span className="text-[11px] font-semibold text-foreground font-mono">{dt.minutes}m</span>

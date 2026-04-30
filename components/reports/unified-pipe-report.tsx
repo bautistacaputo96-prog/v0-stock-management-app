@@ -1374,6 +1374,57 @@ export function UnifiedPipeReport() {
           )}
 
           {/* ========================================== */}
+          {/* SECCIÓN 4b: PARADAS DE PRODUCCION */}
+          {/* ========================================== */}
+          {currentPeriod.topDowntimes && currentPeriod.topDowntimes.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm uppercase tracking-wide">Paradas de Produccion</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-4 mb-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Total:</span>
+                    <span className="font-bold text-red-600">{currentPeriod.totalDowntimeMinutes} min</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Promedio/dia:</span>
+                    <span className="font-medium">{currentPeriod.avgDowntimePerDay.toFixed(0)} min</span>
+                  </div>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-red-50">
+                      <th className="text-left py-2 px-2 font-medium">Motivo</th>
+                      <th className="text-center py-2 px-2 font-medium">Minutos</th>
+                      <th className="text-center py-2 px-2 font-medium">%</th>
+                      <th className="text-left py-2 px-2 font-medium">Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentPeriod.topDowntimes.map((dt, idx) => (
+                      <tr key={idx} className={idx % 2 === 1 ? "bg-muted/30" : ""}>
+                        <td className="py-2 px-2 font-medium">{dt.reason}</td>
+                        <td className="py-2 px-2 text-center text-red-600 font-semibold">{dt.minutes}</td>
+                        <td className="py-2 px-2 text-center">{dt.percentage.toFixed(1)}%</td>
+                        <td className="py-2 px-2 text-muted-foreground text-xs max-w-[300px] truncate">
+                          {dt.topComment || "-"}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 bg-red-50 font-semibold">
+                      <td className="py-2 px-2">TOTAL</td>
+                      <td className="py-2 px-2 text-center text-red-600">{currentPeriod.totalDowntimeMinutes}</td>
+                      <td className="py-2 px-2 text-center">100%</td>
+                      <td className="py-2 px-2"></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ========================================== */}
           {/* SECCIÓN 5: ROTURAS POR TIPO DE MOLDE */}
           {/* ========================================== */}
           {currentPeriod.moldBreakages && currentPeriod.moldBreakages.length > 0 && (
