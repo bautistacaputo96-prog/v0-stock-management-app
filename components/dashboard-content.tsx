@@ -415,13 +415,11 @@ export function DashboardContent() {
     }
     
     try {
-      // Fetch ingresos
+      // Fetch ALL ingresos (acumulativo - sin filtro de fecha) para calcular stock real
       const { data: mpResult } = await supabase
         .from("mp_receipts")
         .select("material_type, quantity_tn, receipt_date")
         .eq("plant", plantValue)
-        .gte("receipt_date", cmStart)
-        .lte("receipt_date", cmEnd)
 
       const ingresoMap: Record<string, number> = {}
       if (mpResult && mpResult.length > 0) {
@@ -431,10 +429,15 @@ export function DashboardContent() {
         })
       }
 
-      // Calcular consumos desde pipe_production
+      // Calcular consumos desde ALL pipe_production (acumulativo)
+      const { data: allPipes } = await supabase
+        .from("pipe_production")
+        .select("sand_kg, stone_0_10_kg, stone_0_20_kg, cement_kg, additive_1_kg, additive_2_kg")
+        .eq("plant", plantValue)
+      
       const consumoMap: Record<string, number> = { "Arena": 0, "Piedra 0/10": 0, "Cemento": 0, "Aditivos": 0 }
-      if (cmPipes.data && cmPipes.data.length > 0) {
-        cmPipes.data.forEach((r: any) => {
+      if (allPipes && allPipes.length > 0) {
+        allPipes.forEach((r: any) => {
           consumoMap["Arena"] += (r.sand_kg || 0) / 1000
           consumoMap["Piedra 0/10"] += ((r.stone_0_10_kg || 0) + (r.stone_0_20_kg || 0)) / 1000
           consumoMap["Cemento"] += (r.cement_kg || 0) / 1000
