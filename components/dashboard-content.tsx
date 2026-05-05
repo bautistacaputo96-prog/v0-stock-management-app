@@ -429,19 +429,60 @@ export function DashboardContent() {
         })
       }
 
-      // Calcular consumos desde ALL pipe_production (acumulativo)
+      // Obtener pesos de cada diámetro de caño desde pipe_mix_designs
+      const { data: mixDesigns } = await supabase
+        .from("pipe_mix_designs")
+        .select("diameter, cement_kg, sand_kg, stone_kg, additive_liters")
+        .eq("plant", plantValue)
+        .eq("is_active", true)
+      
+      // Crear mapa de consumos por diámetro
+      const consumosPorDiametro: Record<number, { cement: number; sand: number; stone: number; additive: number }> = {}
+      if (mixDesigns) {
+        mixDesigns.forEach((d: any) => {
+          consumosPorDiametro[d.diameter] = {
+            cement: Number(d.cement_kg) || 0,
+            sand: Number(d.sand_kg) || 0,
+            stone: Number(d.stone_kg) || 0,
+            additive: Number(d.additive_liters) || 0
+          }
+        })
+      }
+      
+      // Calcular consumos desde ALL pipe_production basado en unidades producidas
       const { data: allPipes } = await supabase
         .from("pipe_production")
-        .select("sand_kg, stone_0_10_kg, stone_0_20_kg, cement_kg, additive_1_kg, additive_2_kg")
+        .select("cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, total_waste_kg")
         .eq("plant", plantValue)
       
       const consumoMap: Record<string, number> = { "Arena": 0, "Piedra 0/10": 0, "Cemento": 0, "Aditivos": 0 }
       if (allPipes && allPipes.length > 0) {
         allPipes.forEach((r: any) => {
-          consumoMap["Arena"] += (r.sand_kg || 0) / 1000
-          consumoMap["Piedra 0/10"] += ((r.stone_0_10_kg || 0) + (r.stone_0_20_kg || 0)) / 1000
-          consumoMap["Cemento"] += (r.cement_kg || 0) / 1000
-          consumoMap["Aditivos"] += ((r.additive_1_kg || 0) + (r.additive_2_kg || 0)) / 1000
+          // Calcular consumo por cada diámetro producido
+          const diameters = [300, 400, 500, 600, 800, 1000]
+          const unitFields = ["cc300_units", "cc400_units", "cc500_units", "cc600_units", "cc800_units", "cc1000_units"]
+          
+          diameters.forEach((diam, idx) => {
+            const units = Number(r[unitFields[idx]]) || 0
+            const consumos = consumosPorDiametro[diam]
+            if (units > 0 && consumos) {
+              consumoMap["Cemento"] += (units * consumos.cement) / 1000
+              consumoMap["Arena"] += (units * consumos.sand) / 1000
+              consumoMap["Piedra 0/10"] += (units * consumos.stone) / 1000
+              consumoMap["Aditivos"] += (units * consumos.additive) / 1000
+            }
+          })
+          
+          // Agregar desperdicio (se distribuye proporcionalmente, asumimos que es mezcla)
+          // El desperdicio es mezcla completa, lo distribuimos según proporciones típicas
+          const wasteKg = Number(r.total_waste_kg) || 0
+          if (wasteKg > 0) {
+            // Proporción típica de mezcla: ~8.5% cemento, ~12% arena, ~79% piedra, ~0.5% aditivos
+            consumoMap["Cemento"] += (wasteKg * 0.085) / 1000
+            consumoMap["Arena"] += (wasteKg * 0.12) / 1000
+            consumoMap["Piedra 0/10"] += (wasteKg * 0.79) / 1000
+            consumoMap["Aditivos"] += (wasteKg * 0.005) / 1000
+          }
         })
       }
 
@@ -1538,7 +1579,7 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
 
 
 
-            {/* ── Seccion 4: OEE gauges ── */}
+            {/* ── Seccion 4: OEE gauges ─�� */}
             {oeeData && (
               <div className="grid grid-cols-3 gap-3 mb-6">
                 <OeeGauge label="ID — Disponibilidad" value={oeeData.id} target={85} />
