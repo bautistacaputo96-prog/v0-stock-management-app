@@ -415,11 +415,14 @@ export function DashboardContent() {
     }
     
     try {
+      console.log("[v0] Starting MP fetch for plant:", plantValue)
       // Fetch ALL ingresos (acumulativo - sin filtro de fecha) para calcular stock real
-      const { data: mpResult } = await supabase
+      const { data: mpResult, error: mpError } = await supabase
         .from("mp_receipts")
         .select("material_type, quantity_tn, receipt_date")
         .eq("plant", plantValue)
+      
+      console.log("[v0] MP receipts result:", mpResult?.length, "error:", mpError)
 
       const ingresoMap: Record<string, number> = {}
       if (mpResult && mpResult.length > 0) {
@@ -430,11 +433,13 @@ export function DashboardContent() {
       }
 
       // Obtener pesos de cada diámetro de caño desde pipe_mix_designs
-      const { data: mixDesigns } = await supabase
+      const { data: mixDesigns, error: mixError } = await supabase
         .from("pipe_mix_designs")
         .select("diameter, cement_kg, sand_kg, stone_kg, additive_liters")
         .eq("plant", plantValue)
         .eq("is_active", true)
+      
+      console.log("[v0] Mix designs result:", mixDesigns?.length, "error:", mixError)
       
       // Crear mapa de consumos por diámetro
       const consumosPorDiametro: Record<number, { cement: number; sand: number; stone: number; additive: number }> = {}
@@ -486,13 +491,17 @@ export function DashboardContent() {
         })
       }
 
+      console.log("[v0] Final ingresoMap:", ingresoMap)
+      console.log("[v0] Final consumoMap:", consumoMap)
+      
       setMpData(materialNames.map(name => ({
         name,
         ingresoTn: ingresoMap[name] || 0,
         consumoTn: consumoMap[name] || 0,
         balanceTn: (ingresoMap[name] || 0) - (consumoMap[name] || 0)
       })))
-    } catch {
+    } catch (err) {
+      console.log("[v0] MP fetch error:", err)
       setMpData(materialNames.map(name => ({ name, ingresoTn: 0, consumoTn: 0, balanceTn: 0 })))
     }
 
