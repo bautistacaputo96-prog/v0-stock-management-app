@@ -215,15 +215,17 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     const loadData = async () => {
       try {
         const supabase = getSupabase()
-        const [prodRes, allSupRes, curSupRes] = await Promise.all([
-          supabase.from("paver_product_types").select("*").eq("active", true).order("product_code"),
-          supabase.from("paver_suppliers").select("id, ingredient_name, supplier_name").eq("active", true).order("ingredient_name").order("supplier_name"),
-          supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
-        ])
-        if (prodRes.data) setProductTypes(prodRes.data)
-        if (allSupRes.data) setAllSuppliers(allSupRes.data)
-        if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
-      } catch {}
+      const [prodRes, allSupRes, curSupRes] = await Promise.all([
+        supabase.from("paver_product_types").select("*").eq("active", true).order("product_code"),
+        supabase.from("paver_suppliers").select("id, ingredient_name, supplier_name").eq("active", true).order("ingredient_name").order("supplier_name"),
+        supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
+      ])
+      console.log("[v0] allSupRes:", allSupRes)
+      console.log("[v0] curSupRes:", curSupRes)
+      if (prodRes.data) setProductTypes(prodRes.data)
+      if (allSupRes.data) setAllSuppliers(allSupRes.data)
+      if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
+    } catch (err) { console.log("[v0] Error loading paver data:", err) }
     }
     loadData()
   }, [])
@@ -956,6 +958,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
             {["Cemento", "Arena", "Piedra (0-6)"].map(ingredient => {
               const current = getCurrentSupplier(ingredient)
               const options = allSuppliers.filter(s => s.ingredient_name === ingredient)
+              console.log("[v0] Supplier select for", ingredient, "current:", current, "options:", options, "allSuppliers:", allSuppliers)
               return (
                 <div key={ingredient} className="flex items-center gap-3">
                   <span className="text-xs font-medium w-24 shrink-0">{ingredient}</span>
