@@ -33,7 +33,6 @@ interface DayData {
   shift1: ShiftData
   shift2: ShiftData
   planning: Record<string, number>
-  dailyTargetTotal: number | null // Objetivo diario definido por el operario
 }
 
 interface ShiftObjectives {
@@ -47,25 +46,12 @@ function formatDate(dateStr: string) {
   return `${d}/${m}/${y}`
 }
 
-function calcObjectives(planning: Record<string, number>, dailyTargetTotal: number | null): ShiftObjectives {
+function calcObjectives(planning: Record<string, number>): ShiftObjectives {
   const result: ShiftObjectives = {}
   
-  // Calculate total planificado for the day
-  const totalPlanificado = Object.values(planning).reduce((sum, val) => sum + val, 0)
-  
-  // If dailyTargetTotal is defined, distribute it proportionally
-  // Otherwise, fall back to the old 1.2x logic
-  const useCustomTarget = dailyTargetTotal && dailyTargetTotal > 0 && totalPlanificado > 0
-  
+  // El objetivo diario es directamente lo planificado para cada medida
   for (const [size, planned] of Object.entries(planning)) {
-    let daily: number
-    if (useCustomTarget) {
-      // Distribute dailyTargetTotal proportionally based on planning
-      daily = Math.round((planned / totalPlanificado) * dailyTargetTotal)
-    } else {
-      // Fallback to old logic (1.2x)
-      daily = Math.round(planned * 1.2)
-    }
+    const daily = planned
     const t1 = Math.round(daily * (SHIFT_MINUTES[1] / SHIFT_MINUTES.total))
     const t2 = daily - t1
     result[size] = { t1, t2, daily }
@@ -140,19 +126,14 @@ export function DailyProductionModal() {
     const [y, m, d] = date.split("-").map(Number)
     const { data: planRows } = await supabase
       .from("production_planning")
-      .select(`pipe_size, day_${d}, daily_target_total`)
+      .select(`pipe_size, day_${d}`)
       .eq("year", y)
       .eq("month", m)
-
+    
     const planning: Record<string, number> = {}
-    let dailyTargetTotal: number | null = null
     for (const row of planRows || []) {
       const val = (row as any)[`day_${d}`] || 0
       if (val > 0) planning[row.pipe_size] = val
-      // Get daily_target_total from any row (they all share the same value)
-      if ((row as any).daily_target_total && !dailyTargetTotal) {
-        dailyTargetTotal = (row as any).daily_target_total
-      }
     }
 
     // Buscar fecha anterior y siguiente filtrando por planta
@@ -179,7 +160,7 @@ export function DailyProductionModal() {
     const prevDate = (prevRecord as any)?.production_date ?? null
     const nextDate = (nextRecord as any)?.production_date ?? null
 
-    return { shift1, shift2, planning, dailyTargetTotal, prevDate, nextDate }
+    return { shift1, shift2, planning, prevDate, nextDate }
   }, [supabase])
 
   const loadLastDay = useCallback(async () => {
@@ -207,9 +188,9 @@ export function DailyProductionModal() {
 
       const date = lastRecord.production_date as string
 
-      const { shift1, shift2, planning, dailyTargetTotal, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
-
-      setDayData({ date, plant, shift1, shift2, planning, dailyTargetTotal })
+      const { shift1, shift2, planning, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
+      
+      setDayData({ date, plant, shift1, shift2, planning })
       setPrevDate(pd)
       setNextDate(nd)
       setError(null)
@@ -237,8 +218,8 @@ export function DailyProductionModal() {
     setNavLoading(true)
     try {
       const plant = dayData.plant
-      const { shift1, shift2, planning, dailyTargetTotal, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
-      setDayData({ date, plant, shift1, shift2, planning, dailyTargetTotal })
+      const { shift1, shift2, planning, prevDate: pd, nextDate: nd } = await fetchDayData(plant, date)
+      setDayData({ date, plant, shift1, shift2, planning })
       setPrevDate(pd)
       setNextDate(nd)
     } catch {
@@ -336,7 +317,7 @@ function ModalContent({
   onNext: () => void
 }) {
   const sizes = PLANT_SIZES[dayData.plant] || PLANT_SIZES["silke"]
-  const objectives = calcObjectives(dayData.planning, dayData.dailyTargetTotal)
+  const objectives = calcObjectives(dayData.planning)
 
   const totalProducedT1 = sizes.reduce((s, sz) => s + (dayData.shift1[sz] || 0), 0)
   const totalProducedT2 = sizes.reduce((s, sz) => s + (dayData.shift2[sz] || 0), 0)
