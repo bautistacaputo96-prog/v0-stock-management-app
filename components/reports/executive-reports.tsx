@@ -210,7 +210,7 @@ export function ExecutiveReports() {
         wasteBins.bin2Desmolde.boxes += bin2
         wasteBins.bin2Desmolde.kg += bin2 * 528.4
         wasteBins.bin3Cinta.boxes += bin3
-        wasteBins.bin3Cinta.kg += bin3 * 601.5
+        wasteBins.bin3Cinta.kg += bin3 * 476.5
         wasteBins.bin4Rotos.boxes += bin4
         wasteBins.bin4Rotos.kg += bin4 * 1074.5
         wasteBins.bin5Mezcladora.boxes += bin5

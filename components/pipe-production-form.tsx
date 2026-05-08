@@ -206,7 +206,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     // Cajones de desperdicio por tipo (precisión 0.5)
     wasteBin1Cinta: "",      // Cajón 1 - Sector Cinta (710kg)
     wasteBin2Desmolde: "",   // Cajón 2 - Sector Desmolde (656kg)
-    wasteBin3Cinta: "",      // Cajón 3 - Sector Cinta (710kg)
+    wasteBin3Cinta: "",      // Cajón 3 - Sector Cinta (476.5kg)
     wasteBin4Rotos: "",      // Cajón 4 - Caños Rotos (1307kg)
     wasteBin5Mezcladora: "", // Cajón 5 - Mezcladora (710kg)
     blocones: "",
@@ -661,11 +661,11 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   waste_bin_5_mezcladora: Number.parseFloat(formData.wasteBin5Mezcladora) || 0,
   // Peso NETO del material (bruto - tara del tacho vacío)
   // Tara: C1=133.3kg, C2=127.6kg, C3=108.5kg, C4=232.5kg, C5=133.3kg
-  // Neto: C1=576.7kg, C2=528.4kg, C3=601.5kg, C4=1074.5kg, C5=576.7kg
+  // Neto: C1=576.7kg, C2=528.4kg, C3=476.5kg, C4=1074.5kg, C5=576.7kg
   total_waste_kg: (
     (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
     (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
-    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
     (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
     (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
   ),
@@ -1484,7 +1484,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
               className="h-8 text-sm"
               placeholder="0"
             />
-            <span className="text-[10px] text-muted-foreground">710 kg/cajón</span>
+            <span className="text-[10px] text-muted-foreground">476.5 kg/cajón</span>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-amber-700">C4 - Caños Rotos</Label>
@@ -1520,7 +1520,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             {(
               (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
               (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
-              (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
+              (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
               (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
               (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
             ).toLocaleString()} kg
