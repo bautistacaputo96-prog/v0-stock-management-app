@@ -39,7 +39,9 @@ export function VillaRosaProductionHistory() {
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
   const [editPipeFormData, setEditPipeFormData] = useState<any>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
-
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState<1 | 2>(1)
+  const [deleteReason, setDeleteReason] = useState("")
+  
   useEffect(() => {
     loadHistory()
   }, [])
@@ -48,11 +50,12 @@ export function VillaRosaProductionHistory() {
     try {
       const supabase = getSupabase()
 
-      // Load pipe production for Villa Rosa (large pipes: 800, 1000, 1200)
+      // Load pipe production for Villa Rosa (large pipes: 800, 1000, 1200), excluding soft deleted
       const { data: pipeData } = await supabase
         .from("pipe_production")
         .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
         .eq("plant", "villa-rosa")
+        .is("deleted_at", null)
         .order("production_date", { ascending: false })
         .order("shift", { ascending: false })
         .limit(500)
@@ -81,6 +84,7 @@ export function VillaRosaProductionHistory() {
       .from("pipe_production")
       .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
       .eq("plant", "villa-rosa")
+      .is("deleted_at", null)
       .order("production_date", { ascending: false })
       .order("shift", { ascending: false })
 
@@ -112,14 +116,38 @@ export function VillaRosaProductionHistory() {
     await loadHistory()
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: number, reason: string) {
     const supabase = getSupabase()
     setLoading(true)
 
     try {
-      const { error } = await supabase.from("pipe_production").delete().eq("id", id)
+      // Obtener el registro antes de eliminarlo para guardarlo en audit_log
+      const { data: recordToDelete } = await supabase
+        .from("pipe_production")
+        .select("*")
+        .eq("id", id)
+        .single()
+      
+      // Soft delete: marcar como eliminado en lugar de borrar
+      const { error } = await supabase
+        .from("pipe_production")
+        .update({ 
+          deleted_at: new Date().toISOString(),
+          deleted_by: "usuario"
+        })
+        .eq("id", id)
 
       if (error) throw error
+      
+      // Registrar en audit_log
+      await supabase.from("audit_log").insert({
+        table_name: "pipe_production",
+        record_id: id,
+        action: "soft_delete",
+        old_data: recordToDelete,
+        performed_by: "usuario",
+        reason: reason || "Sin motivo especificado"
+      })
 
       toast({
         title: "Eliminado",
@@ -136,6 +164,8 @@ export function VillaRosaProductionHistory() {
     } finally {
       setLoading(false)
       setDeletingId(null)
+      setDeleteConfirmStep(1)
+      setDeleteReason("")
     }
   }
 
@@ -269,24 +299,80 @@ export function VillaRosaProductionHistory() {
                               )}
                             </DialogContent>
                           </Dialog>
-                          <AlertDialog open={deletingId === record.id} onOpenChange={(open) => !open && setDeletingId(null)}>
+                          <AlertDialog 
+                            open={deletingId === record.id} 
+                            onOpenChange={(open) => {
+                              if (!open) {
+                                setDeletingId(null)
+                                setDeleteConfirmStep(1)
+                                setDeleteReason("")
+                              }
+                            }}
+                          >
                             <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setDeletingId(record.id)}>
+                              <Button variant="ghost" size="sm" className="text-destructive" onClick={() => {
+                                setDeletingId(record.id)
+                                setDeleteConfirmStep(1)
+                              }}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </AlertDialogTrigger>
                             <AlertDialogContent>
                               <AlertDialogHeader>
-                                <AlertDialogTitle>Eliminar registro</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  ¿Estás seguro de eliminar este parte de producción? Esta acción no se puede deshacer.
+                                <AlertDialogTitle className="text-destructive">
+                                  {deleteConfirmStep === 1 ? "Eliminar registro" : "Confirmar Eliminacion"}
+                                </AlertDialogTitle>
+                                <AlertDialogDescription asChild>
+                                  <div className="space-y-3">
+                                    {deleteConfirmStep === 1 ? (
+                                      <p>
+                                        ¿Estas seguro de que quieres eliminar el parte del{" "}
+                                        <strong>{new Date(record.production_date).toLocaleDateString("es-AR")}</strong> - <strong>Turno {record.shift}</strong>?
+                                      </p>
+                                    ) : (
+                                      <>
+                                        <p className="text-destructive font-medium">
+                                          Esta es una accion critica. Por favor, indica el motivo de la eliminacion:
+                                        </p>
+                                        <textarea
+                                          className="w-full p-2 border rounded-md text-sm text-foreground"
+                                          rows={3}
+                                          placeholder="Motivo de la eliminacion (obligatorio)"
+                                          value={deleteReason}
+                                          onChange={(e) => setDeleteReason(e.target.value)}
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                          El registro quedara marcado como eliminado y se guardara en el log de auditoria.
+                                        </p>
+                                      </>
+                                    )}
+                                  </div>
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(record.id)} className="bg-destructive text-destructive-foreground">
-                                  Eliminar
-                                </AlertDialogAction>
+                                <AlertDialogCancel onClick={() => {
+                                  setDeletingId(null)
+                                  setDeleteConfirmStep(1)
+                                  setDeleteReason("")
+                                }}>
+                                  Cancelar
+                                </AlertDialogCancel>
+                                {deleteConfirmStep === 1 ? (
+                                  <Button 
+                                    variant="destructive"
+                                    onClick={() => setDeleteConfirmStep(2)}
+                                  >
+                                    Continuar
+                                  </Button>
+                                ) : (
+                                  <Button 
+                                    variant="destructive"
+                                    onClick={() => handleDelete(record.id, deleteReason)}
+                                    disabled={!deleteReason.trim()}
+                                  >
+                                    Confirmar Eliminacion
+                                  </Button>
+                                )}
                               </AlertDialogFooter>
                             </AlertDialogContent>
                           </AlertDialog>
