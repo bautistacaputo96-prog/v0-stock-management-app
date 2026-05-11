@@ -77,6 +77,7 @@ interface ProdRow {
   wetPieceWeightKg: string
   palletizedFirst: string
   palletizedSecond: string
+  wasteKg: string
   cementSilo1Tn: string
   cementSilo2Tn: string
   observations: string
@@ -99,6 +100,7 @@ const PROD_FIELDS: { key: keyof ProdRow; label: string; type: string; step?: str
   { key: "wetPieceWeightKg", label: "Peso H. (kg)", type: "number", step: "0.001", bgAlt: true },
   { key: "palletizedFirst", label: "Pzas 1ra", type: "number" },
   { key: "palletizedSecond", label: "Pzas 2da", type: "number" },
+  { key: "wasteKg", label: "Desp. (kg)", type: "number", step: "0.1" },
   { key: "observations", label: "Obs", type: "text" },
 ]
 
@@ -175,13 +177,14 @@ export function PaverRapidLoader({ onBack }: PaverRapidLoaderProps) {
         pastonesCount: "",
         tablesProduced: "",
         wetPieceWeightKg: "",
-        palletizedFirst: "",
-        palletizedSecond: "",
-        cementSilo1Tn: "",
-        cementSilo2Tn: "",
-        observations: "",
-      }
-    })
+  palletizedFirst: "",
+  palletizedSecond: "",
+  wasteKg: "",
+  cementSilo1Tn: "",
+  cementSilo2Tn: "",
+  observations: "",
+  }
+  })
     setProdRows(pRows)
 
     const dt: DtData = {}
@@ -324,9 +327,10 @@ export function PaverRapidLoader({ onBack }: PaverRapidLoaderProps) {
           pastones_count: Number(row.pastonesCount) || 0,
           tables_produced: row.tablesProduced ? Number(row.tablesProduced) : null,
           wet_piece_weight_kg: row.wetPieceWeightKg ? Number(row.wetPieceWeightKg) : null,
-          palletized_first: row.palletizedFirst ? Number(row.palletizedFirst) : null,
-          palletized_second: row.palletizedSecond ? Number(row.palletizedSecond) : null,
-          cement_silo_1_tn: row.cementSilo1Tn ? Number(row.cementSilo1Tn) : 0,
+  palletized_first: row.palletizedFirst ? Number(row.palletizedFirst) : null,
+  palletized_second: row.palletizedSecond ? Number(row.palletizedSecond) : null,
+  waste_kg: row.wasteKg ? Number(row.wasteKg) : 0,
+  cement_silo_1_tn: row.cementSilo1Tn ? Number(row.cementSilo1Tn) : 0,
           cement_silo_2_tn: row.cementSilo2Tn ? Number(row.cementSilo2Tn) : 0,
           cement_supplier: getSupplier("Cemento"),
           sand_supplier: getSupplier("Arena"),

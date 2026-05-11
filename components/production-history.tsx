@@ -57,6 +57,8 @@ export function ProductionHistory() {
   const [editingRow, setEditingRow] = useState<number | null>(null)
   const [editFormData, setEditFormData] = useState<any>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState<1 | 2>(1)
+  const [deleteReason, setDeleteReason] = useState("")
   const [editPipeFormData, setEditPipeFormData] = useState<any>(null)
 
   useEffect(() => {
@@ -102,11 +104,12 @@ export function ProductionHistory() {
         setBlockHistory(blockData)
       }
 
-      // Load pipe production with downtimes (only SILKE plant)
+      // Load pipe production with downtimes (only SILKE plant, excluding soft deleted)
       const { data: pipeData } = await supabase
         .from("pipe_production")
         .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
         .or("plant.is.null,plant.eq.silke")
+        .is("deleted_at", null)
         .order("production_date", { ascending: false })
         .order("shift", { ascending: false })
         .limit(500)
@@ -170,6 +173,7 @@ export function ProductionHistory() {
       .from("pipe_production")
       .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
       .or("plant.is.null,plant.eq.silke")
+      .is("deleted_at", null)
       .order("production_date", { ascending: false })
       .order("shift", { ascending: false })
 
@@ -356,14 +360,33 @@ export function ProductionHistory() {
     setLoading(true)
     
     try {
-      // First delete related downtimes and mold breakages
-      await supabase.from("pipe_downtime").delete().eq("pipe_production_id", id)
-      await supabase.from("pipe_mold_breakage").delete().eq("pipe_production_id", id)
+      // Obtener el registro antes de eliminarlo para guardarlo en audit_log
+      const { data: recordToDelete } = await supabase
+        .from("pipe_production")
+        .select("*")
+        .eq("id", id)
+        .single()
       
-      // Then delete the production record
-      const { error } = await supabase.from("pipe_production").delete().eq("id", id)
+      // Soft delete: marcar como eliminado en lugar de borrar
+      const { error } = await supabase
+        .from("pipe_production")
+        .update({ 
+          deleted_at: new Date().toISOString(),
+          deleted_by: "usuario" // TODO: usar usuario real cuando haya auth
+        })
+        .eq("id", id)
 
       if (error) throw error
+      
+      // Registrar en audit_log
+      await supabase.from("audit_log").insert({
+        table_name: "pipe_production",
+        record_id: id,
+        action: "soft_delete",
+        old_data: recordToDelete,
+        performed_by: "usuario",
+        reason: deleteReason || "Sin motivo especificado"
+      })
 
       toast({
         title: "Eliminado",
@@ -381,6 +404,8 @@ export function ProductionHistory() {
     } finally {
       setLoading(false)
       setDeletingId(null)
+      setDeleteConfirmStep(1)
+      setDeleteReason("")
     }
   }
 
@@ -870,34 +895,83 @@ export function ProductionHistory() {
                                   </Dialog>
                                   <AlertDialog
                                     open={deletingId === record.id}
-                                    onOpenChange={(open) => !open && setDeletingId(null)}
+                                    onOpenChange={(open) => {
+                                      if (!open) {
+                                        setDeletingId(null)
+                                        setDeleteConfirmStep(1)
+                                        setDeleteReason("")
+                                      }
+                                    }}
                                   >
                                     <AlertDialogTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="sm"
                                         className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                                        onClick={() => setDeletingId(record.id)}
+                                        onClick={() => {
+                                          setDeletingId(record.id)
+                                          setDeleteConfirmStep(1)
+                                        }}
                                       >
                                         <Trash2 className="h-3 w-3" />
                                       </Button>
                                     </AlertDialogTrigger>
                                     <AlertDialogContent>
                                       <AlertDialogHeader>
-                                        <AlertDialogTitle>Eliminar Registro</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          ¿Estas seguro de que quieres eliminar este registro de produccion de canos del {new Date(record.production_date).toLocaleDateString("es-AR")} - Turno {record.shift}?
-                                          Esta accion no se puede deshacer.
+                                        <AlertDialogTitle className="text-destructive">
+                                          {deleteConfirmStep === 1 ? "Eliminar Registro" : "Confirmar Eliminacion"}
+                                        </AlertDialogTitle>
+                                        <AlertDialogDescription asChild>
+                                          <div className="space-y-3">
+                                            {deleteConfirmStep === 1 ? (
+                                              <p>
+                                                ¿Estas seguro de que quieres eliminar el parte de produccion de canos del{" "}
+                                                <strong>{new Date(record.production_date).toLocaleDateString("es-AR")}</strong> - <strong>Turno {record.shift}</strong>?
+                                              </p>
+                                            ) : (
+                                              <>
+                                                <p className="text-destructive font-medium">
+                                                  Esta es una accion critica. Por favor, indica el motivo de la eliminacion:
+                                                </p>
+                                                <textarea
+                                                  className="w-full p-2 border rounded-md text-sm text-foreground"
+                                                  rows={3}
+                                                  placeholder="Motivo de la eliminacion (obligatorio)"
+                                                  value={deleteReason}
+                                                  onChange={(e) => setDeleteReason(e.target.value)}
+                                                />
+                                                <p className="text-xs text-muted-foreground">
+                                                  El registro quedara marcado como eliminado y se guardara en el log de auditoria.
+                                                </p>
+                                              </>
+                                            )}
+                                          </div>
                                         </AlertDialogDescription>
                                       </AlertDialogHeader>
                                       <AlertDialogFooter>
-                                        <AlertDialogCancel onClick={() => setDeletingId(null)}>Cancelar</AlertDialogCancel>
-                                        <AlertDialogAction 
-                                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                          onClick={() => handleDeletePipe(record.id)}
-                                        >
-                                          Eliminar
-                                        </AlertDialogAction>
+                                        <AlertDialogCancel onClick={() => {
+                                          setDeletingId(null)
+                                          setDeleteConfirmStep(1)
+                                          setDeleteReason("")
+                                        }}>
+                                          Cancelar
+                                        </AlertDialogCancel>
+                                        {deleteConfirmStep === 1 ? (
+                                          <Button 
+                                            variant="destructive"
+                                            onClick={() => setDeleteConfirmStep(2)}
+                                          >
+                                            Continuar
+                                          </Button>
+                                        ) : (
+                                          <Button 
+                                            variant="destructive"
+                                            onClick={() => handleDeletePipe(record.id)}
+                                            disabled={!deleteReason.trim()}
+                                          >
+                                            Confirmar Eliminacion
+                                          </Button>
+                                        )}
                                       </AlertDialogFooter>
                                     </AlertDialogContent>
                                   </AlertDialog>
@@ -1012,7 +1086,7 @@ export function ProductionHistory() {
                                                      (record.waste_bin_3_cinta || 0) + (record.waste_bin_4_rotos || 0) + 
                                                      (record.waste_bin_5_mezcladora || 0) || record.scrap_boxes || 0
                                     const totalKg = (record.waste_bin_1_cinta || 0) * 576.7 + (record.waste_bin_2_desmolde || 0) * 528.4 +
-                                                   (record.waste_bin_3_cinta || 0) * 601.5 + (record.waste_bin_4_rotos || 0) * 1074.5 +
+                                                   (record.waste_bin_3_cinta || 0) * 476.5 + (record.waste_bin_4_rotos || 0) * 1074.5 +
                                                    (record.waste_bin_5_mezcladora || 0) * 576.7
                                     return totalBins > 0 ? (
                                       <div className="mt-4 pt-4 border-t">

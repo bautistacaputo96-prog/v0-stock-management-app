@@ -33,7 +33,11 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Package,
+  ClipboardList,
+  Building2,
 } from "lucide-react"
+import Link from "next/link"
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -186,9 +190,9 @@ export default function IngresoMPPage() {
   const uniqueSupplierNames = [...new Set(suppliers.map(s => s.name))]
   
   // Get materials for the selected supplier
-  const supplierMaterials = selectedSupplier 
-    ? suppliers.filter(s => s.name === selectedSupplier.name)
-    : []
+  const supplierMaterials = selectedSupplier
+  ? suppliers.filter(s => s.name === selectedSupplier.name)
+  : []
   
   const isCemento = selectedMaterial?.toLowerCase().includes("cemento")
   const isArena = selectedMaterial?.toLowerCase().includes("arena")
@@ -237,10 +241,11 @@ export default function IngresoMPPage() {
 
   const fetchCarriers = useCallback(async () => {
     try {
-      const res = await fetch("/api/materia-prima/carriers")
+      const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+      const res = await fetch(`/api/materia-prima/carriers?plant=${plantValue}`)
       if (res.ok) setCarriers(await res.json())
     } catch { /* ignore */ }
-  }, [])
+  }, [selectedPlant])
 
   const fetchReceipts = useCallback(async () => {
     setLoading(true)
@@ -290,6 +295,7 @@ export default function IngresoMPPage() {
     if (!newCarrierName.trim()) return
     setSavingCarrier(true)
     try {
+      const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
       const res = await fetch("/api/materia-prima/carriers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -298,6 +304,7 @@ export default function IngresoMPPage() {
           phone: newCarrierPhone.trim() || null,
           license_plate: newCarrierPlate.trim() || null,
           company: newCarrierCompany.trim() || null,
+          plant: plantValue,
         }),
       })
       if (res.ok) {
@@ -323,9 +330,9 @@ export default function IngresoMPPage() {
         setSelectedSupplierId(supplierEntries[0].id.toString())
         setSelectedMaterial(supplierEntries[0].material_type)
       } else {
-        // Multiple materials - select first as supplier reference but clear material
+        // Multiple materials - auto-select the first one to avoid confusion
         setSelectedSupplierId(supplierEntries[0].id.toString())
-        setSelectedMaterial("")
+        setSelectedMaterial(supplierEntries[0].material_type)
       }
     }
     setLabSampleTaken(null)
@@ -339,12 +346,12 @@ export default function IngresoMPPage() {
   }
 
   const handleMaterialChange = (materialId: string) => {
-    // Find the supplier entry for this material
-    const supplierEntry = suppliers.find(s => s.id.toString() === materialId)
-    if (supplierEntry) {
-      setSelectedSupplierId(materialId)
-      setSelectedMaterial(supplierEntry.material_type)
-    }
+  // Find the supplier entry for this material
+  const supplierEntry = suppliers.find(s => s.id.toString() === materialId)
+  if (supplierEntry) {
+  setSelectedSupplierId(materialId)
+  setSelectedMaterial(supplierEntry.material_type)
+  }
     setLabSampleTaken(null)
     setShowGranulometry(false)
     setShowHumidity(false)
@@ -481,6 +488,22 @@ export default function IngresoMPPage() {
     <div className="min-h-screen bg-background">
       <Navigation />
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        {/* Tabs de navegación */}
+        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+          <Link href="/materia-prima" className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md text-muted-foreground hover:bg-background hover:text-foreground transition-colors">
+            <Package className="w-4 h-4" />
+            Stock
+          </Link>
+          <div className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-background text-foreground shadow-sm">
+            <ClipboardList className="w-4 h-4" />
+            Ingreso
+          </div>
+          <Link href="/materia-prima?tab=materiales" className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md text-muted-foreground hover:bg-background hover:text-foreground transition-colors">
+            <Building2 className="w-4 h-4" />
+            Proveedores y Fletes
+          </Link>
+        </div>
 
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -1089,7 +1112,7 @@ export default function IngresoMPPage() {
                     </div>
                     {labSampleTaken === true && (
                       <p className="text-[11px] text-blue-600 dark:text-blue-400">
-                        Se crearán 2 ensayos pendientes: humedad y granulometría para
+                        Se crearán 2 ensayos pendientes: humedad y granulometr��a para
                         el remito {remitoNumber || "—"}.
                       </p>
                     )}

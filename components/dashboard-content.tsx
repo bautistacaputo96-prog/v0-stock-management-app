@@ -37,8 +37,7 @@ interface MonthData {
   blockDowntimes: { reason: string; minutes: number; description?: string }[]
   pipeDowntimes: { reason: string; minutes: number; description?: string }[]
   pipeTargets: Record<string, number>
-  pipeDailyTargets: Record<number, number> // day -> objetivo diario total
-  dailyTargetTotal: number // Objetivo diario definido por el operario
+  pipeDailyTargets: Record<number, number> // day -> objetivo diario total (suma de planificación del día)
   pipeDailyPlanBySize: Record<number, Record<string, number>> // day -> {size -> cantidad planificada}
   }
 
@@ -332,17 +331,9 @@ export function DashboardContent() {
     const pipeDailyTargets: Record<number, number> = {} // day -> objetivo diario total
     // Guardar planificación cruda por día y medida para calcular proporciones
     const pipeDailyPlanBySize: Record<number, Record<string, number>> = {} // day -> {size -> cantidad}
-    let dailyTargetTotal = 0 // Objetivo diario total definido por el usuario
     
     if (cmPlanning.data) {
-      // Get daily_target_total from first row (all rows share same value)
-      const firstRow = cmPlanning.data[0]
-      if (firstRow?.daily_target_total) {
-        dailyTargetTotal = firstRow.daily_target_total
-      }
-      
       // Build planning data by day and size
-      const rawPipeDailyTotals: Record<number, number> = {} // day -> total planificado ese día
       cmPlanning.data.forEach((row: any) => {
         // Solo incluir tamaños correspondientes a la planta
         if (!plantSizes.includes(row.pipe_size)) return
@@ -351,7 +342,7 @@ export function DashboardContent() {
           const dayValue = row[`day_${day}`] || 0
           if (dayValue > 0) {
             sizeTotal += dayValue
-            rawPipeDailyTotals[day] = (rawPipeDailyTotals[day] || 0) + dayValue
+            pipeDailyTargets[day] = (pipeDailyTargets[day] || 0) + dayValue
             if (!pipeDailyPlanBySize[day]) pipeDailyPlanBySize[day] = {}
             pipeDailyPlanBySize[day][row.pipe_size] = dayValue
           }
@@ -360,83 +351,114 @@ export function DashboardContent() {
           pipeTargets[row.pipe_size] = sizeTotal
         }
       })
-      
-      // Set daily targets:
-      // - For past days (before today): use raw planning with 1.2x factor (historical behavior)
-      // - For today and future: if dailyTargetTotal is defined, use it; otherwise use raw planning with 1.2x
-      const today = new Date()
-      const currentDay = today.getDate()
-      const currentMonth = today.getMonth() + 1
-      const currentYear = today.getFullYear()
-      const viewingMonth = monthIdx + 1 // monthIdx is 0-indexed
-      const viewingYear = year
-      const isViewingCurrentMonth = viewingMonth === currentMonth && viewingYear === currentYear
-      const isViewingPastMonth = viewingYear < currentYear || (viewingYear === currentYear && viewingMonth < currentMonth)
-      
-      for (const day in rawPipeDailyTotals) {
-        const dayNum = parseInt(day)
-        const isPastDay = isViewingPastMonth || (isViewingCurrentMonth && dayNum < currentDay)
-        
-        if (isPastDay) {
-          // Past days: use raw planning with 1.2x factor (historical behavior)
-          pipeDailyTargets[dayNum] = Math.round(rawPipeDailyTotals[dayNum] * 1.2)
-        } else if (dailyTargetTotal > 0 && rawPipeDailyTotals[dayNum] > 0) {
-          // Today or future with custom target: use operator-defined daily target
-          pipeDailyTargets[dayNum] = dailyTargetTotal
-        } else {
-          // Today or future without custom target: use raw planning with 1.2x
-          pipeDailyTargets[dayNum] = Math.round(rawPipeDailyTotals[dayNum] * 1.2)
-        }
-      }
-      
-      // pipeTargets are just for monthly totals reference - use 1.2x factor as before
-      // (individual daily targets are already calculated correctly above)
-      for (const size in pipeTargets) {
-        pipeTargets[size] = Math.round(pipeTargets[size] * 1.2)
-      }
     }
 
-    setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes, dailyTargetTotal, pipeDailyPlanBySize))
+    setCurrentMonth(processMonthData(cmBlocks.data || [], cmPipes.data || [], weights, pipeTargets, pipeDailyTargets, plantSizes, pipeDailyPlanBySize))
     setPrevMonth(processMonthData(pmBlocks.data || [], pmPipes.data || [], weights, {}, {}, []))
 
     // Independent mp_receipts fetch + consumption calc — graceful fallback
     const SILKE_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const VR_MATERIALS = ["Arena", "Piedra 0/10", "Cemento", "Aditivos"]
     const materialNames = selectedPlant === "villa-rosa" ? VR_MATERIALS : SILKE_MATERIALS
+    
+    // Funcion para normalizar nombres de materiales
+    const normalizeMaterial = (mat: string): string => {
+      const lower = (mat || "").toLowerCase()
+      if (lower.includes("arena")) return "Arena"
+      if (lower.includes("piedra") || lower.includes("canto")) return "Piedra 0/10"
+      if (lower.includes("cemento") || lower.includes("cpc") || lower.includes("cpf")) return "Cemento"
+      if (lower.includes("aditivo") || lower.includes("plastificante") || lower.includes("hidrófugo")) return "Aditivos"
+      return mat // fallback
+    }
+    
     try {
-      // Fetch ingresos
-      const { data: mpResult } = await supabase
+      console.log("[v0] Starting MP fetch for plant:", plantValue)
+      // Fetch ALL ingresos (acumulativo - sin filtro de fecha) para calcular stock real
+      const { data: mpResult, error: mpError } = await supabase
         .from("mp_receipts")
-        .select("material_name, quantity_tn, receipt_date")
+        .select("material_type, quantity_tn, receipt_date")
         .eq("plant", plantValue)
-        .gte("receipt_date", cmStart)
-        .lte("receipt_date", cmEnd)
+      
+      console.log("[v0] MP receipts result:", mpResult?.length, "error:", mpError)
 
       const ingresoMap: Record<string, number> = {}
       if (mpResult && mpResult.length > 0) {
         mpResult.forEach((r: any) => {
-          ingresoMap[r.material_name] = (ingresoMap[r.material_name] || 0) + (r.quantity_tn || 0)
+          const normalized = normalizeMaterial(r.material_type)
+          ingresoMap[normalized] = (ingresoMap[normalized] || 0) + Number(r.quantity_tn || 0)
         })
       }
 
-      // Calcular consumos desde pipe_production
+      // Obtener pesos de cada diámetro de caño desde pipe_mix_designs
+      const { data: mixDesigns, error: mixError } = await supabase
+        .from("pipe_mix_designs")
+        .select("diameter, cement_kg, sand_kg, stone_kg, additive_liters")
+        .eq("plant", plantValue)
+        .eq("is_active", true)
+      
+      console.log("[v0] Mix designs result:", mixDesigns?.length, "error:", mixError)
+      
+      // Crear mapa de consumos por diámetro
+      const consumosPorDiametro: Record<number, { cement: number; sand: number; stone: number; additive: number }> = {}
+      if (mixDesigns) {
+        mixDesigns.forEach((d: any) => {
+          consumosPorDiametro[d.diameter] = {
+            cement: Number(d.cement_kg) || 0,
+            sand: Number(d.sand_kg) || 0,
+            stone: Number(d.stone_kg) || 0,
+            additive: Number(d.additive_liters) || 0
+          }
+        })
+      }
+      
+      // Calcular consumos desde ALL pipe_production basado en unidades producidas
+      const { data: allPipes } = await supabase
+        .from("pipe_production")
+        .select("cc300_units, cc400_units, cc500_units, cc600_units, cc800_units, cc1000_units, total_waste_kg")
+        .eq("plant", plantValue)
+      
       const consumoMap: Record<string, number> = { "Arena": 0, "Piedra 0/10": 0, "Cemento": 0, "Aditivos": 0 }
-      if (cmPipes.data && cmPipes.data.length > 0) {
-        cmPipes.data.forEach((r: any) => {
-          consumoMap["Arena"] += (r.sand_kg || 0) / 1000
-          consumoMap["Piedra 0/10"] += ((r.stone_0_10_kg || 0) + (r.stone_0_20_kg || 0)) / 1000
-          consumoMap["Cemento"] += (r.cement_kg || 0) / 1000
-          consumoMap["Aditivos"] += ((r.additive_1_kg || 0) + (r.additive_2_kg || 0)) / 1000
+      if (allPipes && allPipes.length > 0) {
+        allPipes.forEach((r: any) => {
+          // Calcular consumo por cada diámetro producido
+          const diameters = [300, 400, 500, 600, 800, 1000]
+          const unitFields = ["cc300_units", "cc400_units", "cc500_units", "cc600_units", "cc800_units", "cc1000_units"]
+          
+          diameters.forEach((diam, idx) => {
+            const units = Number(r[unitFields[idx]]) || 0
+            const consumos = consumosPorDiametro[diam]
+            if (units > 0 && consumos) {
+              consumoMap["Cemento"] += (units * consumos.cement) / 1000
+              consumoMap["Arena"] += (units * consumos.sand) / 1000
+              consumoMap["Piedra 0/10"] += (units * consumos.stone) / 1000
+              consumoMap["Aditivos"] += (units * consumos.additive) / 1000
+            }
+          })
+          
+          // Agregar desperdicio (se distribuye proporcionalmente, asumimos que es mezcla)
+          // El desperdicio es mezcla completa, lo distribuimos según proporciones típicas
+          const wasteKg = Number(r.total_waste_kg) || 0
+          if (wasteKg > 0) {
+            // Proporción típica de mezcla: ~8.5% cemento, ~12% arena, ~79% piedra, ~0.5% aditivos
+            consumoMap["Cemento"] += (wasteKg * 0.085) / 1000
+            consumoMap["Arena"] += (wasteKg * 0.12) / 1000
+            consumoMap["Piedra 0/10"] += (wasteKg * 0.79) / 1000
+            consumoMap["Aditivos"] += (wasteKg * 0.005) / 1000
+          }
         })
       }
 
+      console.log("[v0] Final ingresoMap:", ingresoMap)
+      console.log("[v0] Final consumoMap:", consumoMap)
+      
       setMpData(materialNames.map(name => ({
         name,
         ingresoTn: ingresoMap[name] || 0,
         consumoTn: consumoMap[name] || 0,
         balanceTn: (ingresoMap[name] || 0) - (consumoMap[name] || 0)
       })))
-    } catch {
+    } catch (err) {
+      console.log("[v0] MP fetch error:", err)
       setMpData(materialNames.map(name => ({ name, ingresoTn: 0, consumoTn: 0, balanceTn: 0 })))
     }
 
@@ -626,7 +648,7 @@ export function DashboardContent() {
     setLoading(false)
   }
 
-  function processMonthData(blockRecords: any[], pipeRecords: any[], weights: Record<string, number>, pipeTargets: Record<string, number> = {}, pipeDailyTargets: Record<number, number> = {}, plantSizes: string[] = [], dailyTargetTotal: number = 0, pipeDailyPlanBySize: Record<number, Record<string, number>> = {}): MonthData {
+  function processMonthData(blockRecords: any[], pipeRecords: any[], weights: Record<string, number>, pipeTargets: Record<string, number> = {}, pipeDailyTargets: Record<number, number> = {}, plantSizes: string[] = [], pipeDailyPlanBySize: Record<number, Record<string, number>> = {}): MonthData {
     const blockMetrics = blockRecords.map(r => calculateReportMetrics(r))
     const pipeMetrics = pipeRecords.length > 0 ? calculatePipeMetrics(pipeRecords, weights) : null
 
@@ -708,7 +730,7 @@ export function DashboardContent() {
   })
   const pipeDowntimes = Array.from(pipeDtMap.entries()).map(([reason, data]) => ({ reason, minutes: data.minutes, description: data.description })).sort((a, b) => b.minutes - a.minutes).slice(0, 5)
 
-    return { blockRecords, pipeRecords, blockMetrics, pipeMetrics, pipeDailyData, blockDowntimes, pipeDowntimes, pipeTargets, pipeDailyTargets, dailyTargetTotal, pipeDailyPlanBySize }
+    return { blockRecords, pipeRecords, blockMetrics, pipeMetrics, pipeDailyData, blockDowntimes, pipeDowntimes, pipeTargets, pipeDailyTargets, pipeDailyPlanBySize }
   }
 
   // ── Block chart data ──────────────────────────────────────────────────
@@ -1523,7 +1545,7 @@ const pipeChartLabels: Record<PipeChartMetric, string> = {
 
 
 
-            {/* ── Seccion 4: OEE gauges ── */}
+            {/* ── Seccion 4: OEE gauges ─�� */}
             {oeeData && (
               <div className="grid grid-cols-3 gap-3 mb-6">
                 <OeeGauge label="ID — Disponibilidad" value={oeeData.id} target={85} />

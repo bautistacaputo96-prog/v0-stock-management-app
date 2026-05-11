@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Calendar, Save, X, Loader2, Target, User, Clock } from "lucide-react"
+import { Calendar, Save, X, Loader2, User, Clock } from "lucide-react"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 const PIPE_SIZES = ["300", "400", "500", "600", "800", "1000", "1200"]
@@ -100,8 +100,7 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
   const { toast } = useToast()
   const supabase = createClient()
   
-  // Daily target and audit info
-  const [dailyTargetTotal, setDailyTargetTotal] = useState<number>(0)
+  // Audit info
   const [modifiedBy, setModifiedBy] = useState<string | null>(null)
   const [modifiedAt, setModifiedAt] = useState<string | null>(null)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -164,11 +163,9 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
         // Load audit info from first row (all rows share the same audit info)
         const firstRow = data[0]
         if (firstRow) {
-          setDailyTargetTotal(firstRow.daily_target_total || 0)
           setModifiedBy(firstRow.modified_by || null)
           setModifiedAt(firstRow.modified_at || null)
         } else {
-          setDailyTargetTotal(0)
           setModifiedBy(null)
           setModifiedAt(null)
         }
@@ -243,7 +240,6 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
       await supabase.from("production_planning_history").insert({
         year: selectedYear,
         month: selectedMonth + 1,
-        daily_target_total: dailyTargetTotal,
         planning_snapshot: planningData,
         modified_by: userName,
         modified_at: now,
@@ -267,7 +263,6 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
             month: selectedMonth + 1,
             pipe_size: pipeSize,
             ...dayColumns,
-            daily_target_total: dailyTargetTotal,
             modified_by: userName,
             modified_at: now,
             updated_at: now
@@ -383,24 +378,8 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
             </Button>
           </div>
           
-          {/* Fila 2: Objetivo diario y audit info */}
+          {/* Fila 2: Audit info */}
           <div className="flex items-center gap-4">
-            {/* Objetivo Diario Total */}
-            <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
-              <Target className="h-4 w-4 text-amber-600" />
-              <Label className="text-amber-700 font-medium whitespace-nowrap">Objetivo Diario:</Label>
-              <Input 
-                type="number"
-                value={dailyTargetTotal || ""}
-                onChange={(e) => setDailyTargetTotal(parseInt(e.target.value) || 0)}
-                className="w-[80px] h-8 text-center font-bold text-amber-700 border-amber-300"
-                placeholder="0"
-              />
-              <span className="text-xs text-amber-600 whitespace-nowrap">
-                caños (Planif: {getGrandTotal()})
-              </span>
-            </div>
-            
             <div className="flex-1" />
             
             {/* Audit info */}
@@ -682,10 +661,6 @@ export function ProductionPlanning({ lineType }: ProductionPlanningProps) {
               <div className="flex justify-between">
                 <span>Planificación mensual:</span>
                 <strong>{getGrandTotal()} caños</strong>
-              </div>
-              <div className="flex justify-between text-amber-700">
-                <span>Objetivo diario total:</span>
-                <strong>{dailyTargetTotal || "No definido"} caños</strong>
               </div>
             </div>
           </div>

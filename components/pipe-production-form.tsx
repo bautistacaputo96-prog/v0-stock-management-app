@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabase } from "@/lib/supabase"
-import { Loader2, Zap, ListPlus, AlertTriangle } from "lucide-react"
+import { Loader2, Zap, ListPlus, AlertTriangle, ChevronDown } from "lucide-react"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -206,7 +207,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     // Cajones de desperdicio por tipo (precisión 0.5)
     wasteBin1Cinta: "",      // Cajón 1 - Sector Cinta (710kg)
     wasteBin2Desmolde: "",   // Cajón 2 - Sector Desmolde (656kg)
-    wasteBin3Cinta: "",      // Cajón 3 - Sector Cinta (710kg)
+    wasteBin3Cinta: "",      // Cajón 3 - Sector Cinta (476.5kg)
     wasteBin4Rotos: "",      // Cajón 4 - Caños Rotos (1307kg)
     wasteBin5Mezcladora: "", // Cajón 5 - Mezcladora (710kg)
     blocones: "",
@@ -586,14 +587,15 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
 
   // Calculate totals
   const calculateTotals = (data: Record<string, Record<string, string>>) => {
-    const totals = { simples: 0, rotura: 0, armado: 0, rotura_armado: 0 }
-    PIPE_SIZES.forEach(size => {
-      totals.simples += Number(data[size]?.simples) || 0
-      totals.rotura += Number(data[size]?.rotura) || 0
-      totals.armado += Number(data[size]?.armado) || 0
-      totals.rotura_armado += Number(data[size]?.rotura_armado) || 0
-    })
-    return totals
+    const totals = { simples: 0, rotura: 0, armado: 0, rotura_armado: 0, scrap: 0 }
+  PIPE_SIZES.forEach(size => {
+  totals.simples += Number(data[size]?.simples) || 0
+  totals.rotura += Number(data[size]?.rotura) || 0
+  totals.armado += Number(data[size]?.armado) || 0
+  totals.rotura_armado += Number(data[size]?.rotura_armado) || 0
+  totals.scrap += Number(data[size]?.scrap) || 0
+  })
+  return totals
   }
 
   const prodTotals = calculateTotals(production)
@@ -661,11 +663,11 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   waste_bin_5_mezcladora: Number.parseFloat(formData.wasteBin5Mezcladora) || 0,
   // Peso NETO del material (bruto - tara del tacho vacío)
   // Tara: C1=133.3kg, C2=127.6kg, C3=108.5kg, C4=232.5kg, C5=133.3kg
-  // Neto: C1=576.7kg, C2=528.4kg, C3=601.5kg, C4=1074.5kg, C5=576.7kg
+  // Neto: C1=576.7kg, C2=528.4kg, C3=476.5kg, C4=1074.5kg, C5=576.7kg
   total_waste_kg: (
     (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
     (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
-    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+    (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
     (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
     (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
   ),
@@ -1058,7 +1060,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                 Total: {(
                   (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
                   (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
-                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
                   (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
                   (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
                 ).toLocaleString()} kg ({(
@@ -1278,33 +1280,39 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
-      {/* Proveedores */}
+      {/* Proveedores - Colapsable y compacto */}
       {Object.keys(ingredientSuppliers).length > 0 && (
-        <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/30">
-          <h3 className="text-sm font-semibold text-foreground">Proveedores</h3>
-          <div className="grid grid-cols-3 gap-3">
-            {["Cemento", "Arena", "Piedra"].map((ingredient) => (
-              <div key={ingredient} className="space-y-1">
-                <Label className="text-xs">{ingredient}</Label>
-                <Select
-                  value={currentSuppliers[ingredient] || ""}
-                  onValueChange={(value) => setCurrentSuppliers(prev => ({ ...prev, [ingredient]: value }))}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder={`Seleccionar ${ingredient.toLowerCase()}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(ingredientSuppliers[ingredient] || []).map((supplier) => (
-                      <SelectItem key={supplier} value={supplier} className="text-xs">
-                        {supplier}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        <Collapsible defaultOpen={plantName !== "Villa Rosa"}>
+          <div className="rounded-lg border border-border p-2 bg-muted/30">
+            <CollapsibleTrigger className="flex items-center justify-between w-full text-xs font-semibold text-foreground">
+              <span>Proveedores MP</span>
+              <ChevronDown className="h-3 w-3 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <div className="flex gap-2">
+                {["Cemento", "Arena", "Piedra"].map((ingredient) => (
+                  <div key={ingredient} className="flex-1">
+                    <Select
+                      value={currentSuppliers[ingredient] || ""}
+                      onValueChange={(value) => setCurrentSuppliers(prev => ({ ...prev, [ingredient]: value }))}
+                    >
+                      <SelectTrigger className="h-7 text-[10px]">
+                        <SelectValue placeholder={ingredient} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(ingredientSuppliers[ingredient] || []).map((supplier) => (
+                          <SelectItem key={supplier} value={supplier} className="text-xs">
+                            {supplier}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
               </div>
-            ))}
+            </CollapsibleContent>
           </div>
-        </div>
+        </Collapsible>
       )}
 
       {/* Producción y Transporte side by side */}
@@ -1387,6 +1395,9 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                   <th className="text-left p-1">{plantName === "Villa Rosa" ? "Producto" : "Medida"}</th>
                   <th className="text-center p-1">{plantName === "Villa Rosa" ? "1ra" : "Simples"}</th>
                   <th className="text-center p-1">{plantName === "Villa Rosa" ? "2da" : "Rotura"}</th>
+                  {plantName === "Villa Rosa" && (
+                    <th className="text-center p-1">Scrap</th>
+                  )}
                   {plantName !== "Villa Rosa" && (
                     <>
                       <th className="text-center p-1">Armado</th>
@@ -1399,8 +1410,11 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                 {PIPE_SIZES.map((size) => (
                   <tr key={`transp-${size}`} className="border-b">
                     <td className="p-1 font-medium">{plantName === "Villa Rosa" ? `CANO ${size}` : `Ø ${size} mm`}</td>
-                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.simples ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), simples: e.target.value } })} /></td>
-                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.rotura ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), rotura: e.target.value } })} /></td>
+                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.simples ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "", scrap: "" }), simples: e.target.value } })} /></td>
+                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.rotura ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "", scrap: "" }), rotura: e.target.value } })} /></td>
+                    {plantName === "Villa Rosa" && (
+                      <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.scrap ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", scrap: "" }), scrap: e.target.value } })} /></td>
+                    )}
                     {plantName !== "Villa Rosa" && (
                       <>
                         <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.armado ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), armado: e.target.value } })} /></td>
@@ -1413,6 +1427,9 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                   <td className="p-1">TOTAL</td>
                   <td className="p-1 text-center">{transpTotals.simples}</td>
                   <td className="p-1 text-center">{transpTotals.rotura}</td>
+                  {plantName === "Villa Rosa" && (
+                    <td className="p-1 text-center">{transpTotals.scrap || 0}</td>
+                  )}
                   {plantName !== "Villa Rosa" && (
                     <>
                       <td className="p-1 text-center">{transpTotals.armado}</td>
@@ -1426,21 +1443,37 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
-      {/* Cemento al Finalizar */}
-      <div className="space-y-1">
-        <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
-        <Input
-          id="cementFinalShiftTn"
-          type="number"
-          step="0.01"
-          min="0"
-          value={formData.cementFinalShiftTn}
-          onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
-          className="h-8 text-sm w-48"
-        />
+      {/* Cemento al Finalizar y Blocones */}
+      <div className="flex gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
+          <Input
+            id="cementFinalShiftTn"
+            type="number"
+            step="0.01"
+            min="0"
+            value={formData.cementFinalShiftTn}
+            onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
+            className="h-8 text-sm w-48"
+          />
+        </div>
+        {plantName === "Villa Rosa" && (
+          <div className="space-y-1">
+            <Label htmlFor="blocones" className="text-xs">Cantidad de Blocones</Label>
+            <Input
+              id="blocones"
+              type="number"
+              min="0"
+              value={formData.blocones}
+              onChange={(e) => setFormData({ ...formData, blocones: e.target.value })}
+              className="h-8 text-sm w-48"
+            />
+          </div>
+        )}
       </div>
 
-      {/* Cajones de Desperdicio */}
+      {/* Cajones de Desperdicio - Solo Silke */}
+      {plantName !== "Villa Rosa" && (
       <div className="space-y-3 rounded-lg border-2 border-amber-300 bg-amber-50/50 p-4">
         <div className="flex items-center justify-between">
           <Label className="text-sm font-semibold text-amber-800">Cajones de Desperdicio</Label>
@@ -1484,7 +1517,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
               className="h-8 text-sm"
               placeholder="0"
             />
-            <span className="text-[10px] text-muted-foreground">710 kg/cajón</span>
+            <span className="text-[10px] text-muted-foreground">476.5 kg/cajón</span>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-amber-700">C4 - Caños Rotos</Label>
@@ -1520,92 +1553,33 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             {(
               (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 710 +
               (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 656 +
-              (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 710 +
+              (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
               (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1307 +
               (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 710
             ).toLocaleString()} kg
           </span>
         </div>
       </div>
+      )}
 
-      {/* Extras Villa Rosa */}
-      <div className="grid grid-cols-2 gap-4">
-        {plantName === "Villa Rosa" && (
-          <>
-            <div className="space-y-1">
-              <Label htmlFor="blocones" className="text-xs">Cantidad de Blocones</Label>
-              <Input
-                id="blocones"
-                type="number"
-                min="0"
-                value={formData.blocones}
-                onChange={(e) => setFormData({ ...formData, blocones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cantidadPastones" className="text-xs">Cantidad de Pastones</Label>
-              <Input
-                id="cantidadPastones"
-                type="number"
-                min="0"
-                value={formData.cantidadPastones}
-                onChange={(e) => setFormData({ ...formData, cantidadPastones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Control Cemento - Solo Villa Rosa */}
+      {/* Control Cemento y OF - Solo Villa Rosa - Compacto en una fila */}
       {plantName === "Villa Rosa" && (
-        <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-          <h3 className="text-sm font-semibold text-foreground">Control Cemento</h3>
-          <div className="grid grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="silo1" className="text-xs">Silo 1</Label>
-              <Input
-                id="silo1"
-                type="number"
-                min="0"
-                value={formData.silo1}
-                onChange={(e) => setFormData({ ...formData, silo1: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="silo2" className="text-xs">Silo 2</Label>
-              <Input
-                id="silo2"
-                type="number"
-                min="0"
-                value={formData.silo2}
-                onChange={(e) => setFormData({ ...formData, silo2: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="totalPastones" className="text-xs">Total de Pastones</Label>
-              <Input
-                id="totalPastones"
-                type="number"
-                min="0"
-                value={formData.totalPastones}
-                onChange={(e) => setFormData({ ...formData, totalPastones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="fabricationOrderNumber" className="text-xs">OF (Orden Fabric.) N°</Label>
-              <Input
-                id="fabricationOrderNumber"
-                type="text"
-                value={formData.fabricationOrderNumber}
-                onChange={(e) => setFormData({ ...formData, fabricationOrderNumber: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
+        <div className="flex items-end gap-3 flex-wrap rounded-lg border border-border p-2 bg-muted/30">
+          <div className="space-y-0.5">
+            <Label htmlFor="silo1" className="text-[10px] text-muted-foreground">Silo 1</Label>
+            <Input id="silo1" type="number" min="0" value={formData.silo1} onChange={(e) => setFormData({ ...formData, silo1: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="silo2" className="text-[10px] text-muted-foreground">Silo 2</Label>
+            <Input id="silo2" type="number" min="0" value={formData.silo2} onChange={(e) => setFormData({ ...formData, silo2: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="totalPastones" className="text-[10px] text-muted-foreground">Pastones</Label>
+            <Input id="totalPastones" type="number" min="0" value={formData.totalPastones} onChange={(e) => setFormData({ ...formData, totalPastones: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="fabricationOrderNumber" className="text-[10px] text-muted-foreground">OF N°</Label>
+            <Input id="fabricationOrderNumber" type="text" value={formData.fabricationOrderNumber} onChange={(e) => setFormData({ ...formData, fabricationOrderNumber: e.target.value })} className="h-7 w-24 text-xs" />
           </div>
         </div>
       )}
@@ -1680,31 +1654,34 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         ))}
       </div>
 
-      {/* Motivos de Paradas - igual que bloques */}
+      {/* Motivos de Paradas - Compacto con acordeones */}
       <div className="space-y-2 rounded-lg border-2 border-border p-3 bg-background">
         <div className="border-b pb-2">
-          <h2 className="text-lg font-bold text-foreground">Motivos de Paradas</h2>
+          <h2 className="text-sm font-bold text-foreground">Motivos de Paradas</h2>
         </div>
 
         {Object.entries(plantName === "Villa Rosa" ? VILLA_ROSA_DOWNTIME_CATEGORIES : DOWNTIME_CATEGORIES).map(([category, reasons]) => {
-          const itemsPerColumn = Math.ceil(reasons.length / 2)
-          const column1 = reasons.slice(0, itemsPerColumn)
-          const column2 = reasons.slice(itemsPerColumn)
-
+          const categoryTotal = reasons.reduce((sum, r) => sum + (downtimes[r]?.minutes || 0), 0)
           return (
-            <div key={category} className="space-y-2">
-              <h4 className="text-base font-semibold text-primary bg-primary/10 px-3 py-2 rounded-md">{category}</h4>
-              <div className="grid md:grid-cols-2 gap-x-4 gap-y-2">
-                <div className="space-y-2">
-                  {column1.map((reason) => (
+            <Collapsible key={category} defaultOpen={categoryTotal > 0}>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-sm font-medium text-primary bg-primary/10 px-2 py-1.5 rounded hover:bg-primary/20 transition-colors">
+                <span>{category}</span>
+                <div className="flex items-center gap-2">
+                  {categoryTotal > 0 && <span className="text-xs bg-primary text-primary-foreground px-1.5 py-0.5 rounded">{categoryTotal} min</span>}
+                  <ChevronDown className="h-4 w-4 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+                </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2 space-y-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {reasons.map((reason) => (
                     <div key={reason} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`downtime-${reason}`} className="text-xs flex-1">{reason}</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor={`downtime-${reason}`} className="text-[11px] flex-1 truncate" title={reason}>{reason}</Label>
                         <Input
                           id={`downtime-${reason}`}
                           type="number"
                           min="0"
-                          placeholder="min"
+                          placeholder="0"
                           value={downtimes[reason]?.minutes?.toString() || ""}
                           onChange={(e) => {
                             const value = e.target.value
@@ -1715,51 +1692,13 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                             }))
                           }}
                           onKeyDown={handleEnterKey}
-                          className="h-8 w-16 text-sm"
+                          className="h-7 w-14 text-xs"
                         />
                       </div>
+                      {/* Comentario individual para cada motivo con minutos */}
                       {downtimes[reason]?.minutes > 0 && (
-                        <Textarea
-                          placeholder="Observaciones..."
-                          value={downtimes[reason]?.comments || ""}
-                          onChange={(e) => {
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { ...prev[reason], comments: e.target.value },
-                            }))
-                          }}
-                          className="text-xs min-h-[60px]"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-2">
-                  {column2.map((reason) => (
-                    <div key={reason} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`downtime-${reason}`} className="text-xs flex-1">{reason}</Label>
                         <Input
-                          id={`downtime-${reason}`}
-                          type="number"
-                          min="0"
-                          placeholder="min"
-                          value={downtimes[reason]?.minutes?.toString() || ""}
-                          onChange={(e) => {
-                            const value = e.target.value
-                            const minutes = value === "" ? 0 : Number.parseInt(value) || 0
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { minutes, comments: prev[reason]?.comments || "" },
-                            }))
-                          }}
-                          onKeyDown={handleEnterKey}
-                          className="h-8 w-16 text-sm"
-                        />
-                      </div>
-                      {downtimes[reason]?.minutes > 0 && (
-                        <Textarea
-                          placeholder="Observaciones..."
+                          placeholder="Observacion..."
                           value={downtimes[reason]?.comments || ""}
                           onChange={(e) => {
                             setDowntimes((prev) => ({
@@ -1767,14 +1706,14 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                               [reason]: { ...prev[reason], comments: e.target.value },
                             }))
                           }}
-                          className="text-xs min-h-[60px]"
+                          className="h-6 text-[10px]"
                         />
                       )}
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           )
         })}
       </div>

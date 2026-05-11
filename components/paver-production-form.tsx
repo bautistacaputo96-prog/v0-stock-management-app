@@ -180,6 +180,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     wetPieceWeightKg: "",
     palletizedFirst: "",
     palletizedSecond: "",
+    wasteKg: "",
     cementSilo1Tn: "",
     cementSilo2Tn: "",
   })
@@ -214,15 +215,15 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
     const loadData = async () => {
       try {
         const supabase = getSupabase()
-        const [prodRes, allSupRes, curSupRes] = await Promise.all([
-          supabase.from("paver_product_types").select("*").eq("active", true).order("product_code"),
-          supabase.from("paver_suppliers").select("id, ingredient_name, supplier_name").eq("active", true).order("ingredient_name").order("supplier_name"),
-          supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
-        ])
-        if (prodRes.data) setProductTypes(prodRes.data)
-        if (allSupRes.data) setAllSuppliers(allSupRes.data)
-        if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
-      } catch {}
+      const [prodRes, allSupRes, curSupRes] = await Promise.all([
+        supabase.from("paver_product_types").select("*").eq("active", true).order("product_code"),
+        supabase.from("paver_suppliers").select("id, ingredient_name, supplier_name").eq("active", true).order("ingredient_name").order("supplier_name"),
+        supabase.from("paver_supplier_current").select("*").order("ingredient_name"),
+      ])
+      if (prodRes.data) setProductTypes(prodRes.data)
+      if (allSupRes.data) setAllSuppliers(allSupRes.data)
+      if (curSupRes.data) setCurrentSuppliers(curSupRes.data)
+    } catch {}
     }
     loadData()
   }, [])
@@ -350,6 +351,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         wetPieceWeightKg: editingRecord.wet_piece_weight_kg?.toString() || "",
         palletizedFirst: editingRecord.palletized_first?.toString() || "",
         palletizedSecond: editingRecord.palletized_second?.toString() || "",
+        wasteKg: editingRecord.waste_kg?.toString() || "",
         cementSilo1Tn: editingRecord.cement_silo_1_tn?.toString() || "",
         cementSilo2Tn: editingRecord.cement_silo_2_tn?.toString() || "",
       })
@@ -541,6 +543,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         wet_piece_weight_kg: formData.wetPieceWeightKg ? Number(formData.wetPieceWeightKg) : null,
         palletized_first: formData.palletizedFirst ? Number(formData.palletizedFirst) : null,
         palletized_second: formData.palletizedSecond ? Number(formData.palletizedSecond) : null,
+        waste_kg: formData.wasteKg ? Number(formData.wasteKg) : 0,
         cement_silo_1_tn: formData.cementSilo1Tn ? Number(formData.cementSilo1Tn) : 0,
         cement_silo_2_tn: formData.cementSilo2Tn ? Number(formData.cementSilo2Tn) : 0,
         cement_supplier: getCurrentSupplier("Cemento"),
@@ -684,13 +687,14 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           pastonesCount: "",
           tablesProduced: "",
           wetPieceWeightKg: "",
-          palletizedFirst: "",
-          palletizedSecond: "",
-          cementSilo1Tn: "",
-          cementSilo2Tn: "",
-        })
-        setDowntimes({})
-        setObservations("")
+        palletizedFirst: "",
+        palletizedSecond: "",
+        wasteKg: "",
+        cementSilo1Tn: "",
+        cementSilo2Tn: "",
+      })
+      setDowntimes({})
+      setObservations("")
         setSupplierChanged(false)
         setSupplierChangeNotes("")
         setShowSupplierPanel(false)
@@ -823,18 +827,25 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="pv-pal-1" className="text-xs">Pzas Paletizadas 1ra</Label>
-            <Input id="pv-pal-1" type="number" min="0" value={formData.palletizedFirst}
-              onChange={e => setFormData({ ...formData, palletizedFirst: e.target.value })} className="h-8 text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pv-pal-2" className="text-xs">Pzas Paletizadas 2da</Label>
-            <Input id="pv-pal-2" type="number" min="0" value={formData.palletizedSecond}
-              onChange={e => setFormData({ ...formData, palletizedSecond: e.target.value })} className="h-8 text-sm" />
-          </div>
-        </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="pv-pal-1" className="text-xs">Pzas Paletizadas 1ra</Label>
+                  <Input id="pv-pal-1" type="number" min="0" value={formData.palletizedFirst}
+                    onChange={e => setFormData({ ...formData, palletizedFirst: e.target.value })} className="h-8 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="pv-pal-2" className="text-xs">Pzas Paletizadas 2da</Label>
+                  <Input id="pv-pal-2" type="number" min="0" value={formData.palletizedSecond}
+                    onChange={e => setFormData({ ...formData, palletizedSecond: e.target.value })} className="h-8 text-sm" />
+                </div>
+              </div>
+
+              {/* Desperdicio */}
+              <div className="space-y-1">
+                <Label htmlFor="pv-waste" className="text-xs">Desperdicio (kg)</Label>
+                <Input id="pv-waste" type="number" min="0" step="0.1" value={formData.wasteKg}
+                  onChange={e => setFormData({ ...formData, wasteKg: e.target.value })} className="h-8 text-sm" placeholder="kg" />
+              </div>
 
         {/* Add new product inline */}
         {showAddProduct && (

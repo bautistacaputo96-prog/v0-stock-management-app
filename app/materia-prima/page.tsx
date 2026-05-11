@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Navigation } from "@/components/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -45,8 +45,25 @@ interface Carrier {
   phone: string | null
   license_plate: string | null
   company: string | null
+  plant: string | null
+  material_type: string | null
   is_active: boolean
   created_at: string
+}
+
+// Material categories for grouping
+const MATERIAL_CATEGORIES: Record<string, string[]> = {
+  "Arena": ["Arena Especial", "Arena Fina", "Arena Gruesa"],
+  "Piedra": ["Piedra 010", "Piedra 06 Lavada", "Piedra 06 Limpia", "Piedra 0/10"],
+  "Cemento": ["CPC-40", "CPF-40", "Cemento"]
+}
+
+const getCategoryForMaterial = (material: string): string => {
+  const lower = material.toLowerCase()
+  if (lower.includes("arena")) return "Arena"
+  if (lower.includes("piedra") || lower.includes("canto")) return "Piedra"
+  if (lower.includes("cemento") || lower.includes("cpc") || lower.includes("cpf")) return "Cemento"
+  return "Otros"
 }
 
 interface StockAlert {
@@ -92,30 +109,43 @@ const getLineTypes = (plant: string) => {
 function MateriaPrimaContent() {
   const { selectedPlant } = usePlant()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const tabParam = searchParams.get("tab")
   const [activeTab, setActiveTab] = useState(tabParam || "stock")
   
   // Update tab when URL changes
   useEffect(() => {
-    if (tabParam) {
-      setActiveTab(tabParam)
-    }
+  if (tabParam) {
+  setActiveTab(tabParam)
+  }
   }, [tabParam])
+  
+  // Handle tab change - redirect to ingreso page if ingreso tab selected
+  const handleTabChange = (value: string) => {
+  if (value === "ingreso") {
+  router.push("/materia-prima/ingreso")
+  } else {
+  setActiveTab(value)
+  }
+  }
   
   // Suppliers state
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [showSupplierDialog, setShowSupplierDialog] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
-  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "mercedes", "villa_rosa", "ranchos"
+  const [supplierPlantFilter, setSupplierPlantFilter] = useState<string>("all") // "all", "silke", "villa_rosa", "ranchos"
   const [supplierForm, setSupplierForm] = useState({
-    name: "",
-    material_type: "",
-    plant: "mercedes",  // Nueva: planta del proveedor
+  name: "",
+  material_type: "",
+  plant: "silke",  // Nueva: planta del proveedor
     line_type: "ambos",
     density: "",
     unit: "kg"
   })
+  
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: "supplier" | "carrier"; id: number; name: string } | null>(null)
   
   // Carriers state
   const [carriers, setCarriers] = useState<Carrier[]>([])
@@ -126,7 +156,8 @@ function MateriaPrimaContent() {
     name: "",
     phone: "",
     license_plate: "",
-    company: ""
+    company: "",
+    material_type: ""
   })
   
   // Stock state
@@ -238,14 +269,19 @@ const dataToSave = {
   }
 
   const deleteSupplier = async (id: number) => {
-    const supabase = getSupabase()
-    await supabase
-      .from("suppliers")
-      .update({ is_active: false })
-      .eq("id", id)
-    loadSuppliers()
+  const supabase = getSupabase()
+  const { error } = await supabase
+  .from("suppliers")
+  .delete()
+  .eq("id", id)
+  if (error) {
+  alert("No se puede eliminar el proveedor porque tiene ingresos asociados. Puede desactivarlo en su lugar.")
+  } else {
+  loadSuppliers()
   }
-
+  setDeleteConfirm(null)
+  }
+  
   const toggleSupplierActive = async (supplier: Supplier) => {
     const supabase = getSupabase()
     await supabase
@@ -255,17 +291,19 @@ const dataToSave = {
     loadSuppliers()
   }
 
-  const saveCarrier = async () => {
-    const supabase = getSupabase()
-    
-    const dataToSave = {
-      name: carrierForm.name,
-      phone: carrierForm.phone || null,
-      license_plate: carrierForm.license_plate || null,
-      company: carrierForm.company || null,
-      is_active: true,
-      plant: selectedPlant
-    }
+const saveCarrier = async () => {
+  const supabase = getSupabase()
+  const plantValue = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+  
+  const dataToSave = {
+  name: carrierForm.name,
+  phone: carrierForm.phone || null,
+  license_plate: carrierForm.license_plate || null,
+  company: carrierForm.company || null,
+  material_type: carrierForm.material_type || null,
+  is_active: true,
+  plant: plantValue
+  }
     
     if (editingCarrier) {
       await supabase
@@ -285,12 +323,17 @@ const dataToSave = {
   }
 
   const deleteCarrier = async (id: number) => {
-    const supabase = getSupabase()
-    await supabase
-      .from("carriers")
-      .update({ is_active: false })
-      .eq("id", id)
-    loadCarriers()
+  const supabase = getSupabase()
+  const { error } = await supabase
+  .from("carriers")
+  .delete()
+  .eq("id", id)
+  if (error) {
+  alert("No se puede eliminar el flete porque tiene ingresos asociados.")
+  } else {
+  loadCarriers()
+  }
+  setDeleteConfirm(null)
   }
 
   const openEditSupplier = (supplier: Supplier) => {
@@ -298,7 +341,7 @@ const dataToSave = {
 setSupplierForm({
   name: supplier.name,
   material_type: supplier.material_type,
-  plant: supplier.plant || "mercedes",
+  plant: supplier.plant || "silke",
   line_type: supplier.line_type || "ambos",
   density: supplier.density?.toString() || "",
   unit: supplier.unit || "kg"
@@ -306,15 +349,16 @@ setSupplierForm({
     setShowSupplierDialog(true)
   }
 
-  const openEditCarrier = (carrier: Carrier) => {
-    setEditingCarrier(carrier)
-    setCarrierForm({
-      name: carrier.name,
-      phone: carrier.phone || "",
-      license_plate: carrier.license_plate || "",
-      company: carrier.company || ""
-    })
-    setShowCarrierDialog(true)
+const openEditCarrier = (carrier: Carrier) => {
+  setEditingCarrier(carrier)
+  setCarrierForm({
+    name: carrier.name,
+    phone: carrier.phone || "",
+    license_plate: carrier.license_plate || "",
+    company: carrier.company || "",
+    material_type: carrier.material_type || ""
+  })
+  setShowCarrierDialog(true)
   }
 
   const activeSuppliers = suppliers.filter(s => s.is_active)
@@ -329,39 +373,26 @@ setSupplierForm({
           <p className="text-muted-foreground">Gestión de proveedores, transportistas e ingresos de materia prima</p>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
-            <TabsTrigger value="stock" className="gap-2">
-              <Package className="w-4 h-4" />
-              <span className="hidden sm:inline">Stock</span>
-            </TabsTrigger>
-            <TabsTrigger value="ingreso" className="gap-2">
-              <ClipboardList className="w-4 h-4" />
-              <span className="hidden sm:inline">Ingreso</span>
-            </TabsTrigger>
-            <TabsTrigger value="proveedores" className="gap-2">
-              <Building2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Proveedores</span>
-            </TabsTrigger>
-            <TabsTrigger value="fletes" className="gap-2">
-              <Truck className="w-4 h-4" />
-              <span className="hidden sm:inline">Fletes</span>
-            </TabsTrigger>
-          </TabsList>
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
+<TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
+<TabsTrigger value="stock" className="gap-2">
+  <Package className="w-4 h-4" />
+  <span className="hidden sm:inline">Stock</span>
+</TabsTrigger>
+<TabsTrigger value="ingreso" className="gap-2">
+  <ClipboardList className="w-4 h-4" />
+  <span className="hidden sm:inline">Ingreso</span>
+</TabsTrigger>
+<TabsTrigger value="materiales" className="gap-2">
+  <Building2 className="w-4 h-4" />
+  <span className="hidden sm:inline">Proveedores y Fletes</span>
+</TabsTrigger>
+</TabsList>
 
-          {/* INGRESO - Redirect to existing page */}
-          <TabsContent value="ingreso">
-            <Card>
-              <CardContent className="py-8 text-center">
-                <ClipboardList className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Registro de Ingresos</h3>
-                <p className="text-muted-foreground mb-4">Registrá los ingresos de materia prima con remito y pesaje</p>
-                <Link href="/materia-prima/ingreso">
-                  <Button>Ir a Registro de Ingresos</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          </TabsContent>
+      {/* INGRESO - Redirects automatically via handleTabChange */}
+      <TabsContent value="ingreso">
+      <div className="py-8 text-center text-muted-foreground">Redirigiendo...</div>
+      </TabsContent>
 
           {/* STOCK - Dashboard integrado */}
           <TabsContent value="stock" className="space-y-6">
@@ -530,351 +561,309 @@ setSupplierForm({
             )}
           </TabsContent>
 
-          {/* PROVEEDORES */}
-          <TabsContent value="proveedores" className="space-y-4">
-            <div className="flex justify-between items-center">
+          {/* MATERIALES - Vista unificada agrupada por categoria */}
+          <TabsContent value="materiales" className="space-y-4">
+            <div className="flex justify-between items-center flex-wrap gap-4">
               <div className="flex items-center gap-4">
-                <h2 className="text-lg font-semibold">Proveedores de Materia Prima</h2>
+                <h2 className="text-lg font-semibold">Proveedores y Fletes por Material</h2>
                 <Select value={supplierPlantFilter} onValueChange={setSupplierPlantFilter}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Filtrar por planta" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas las plantas</SelectItem>
-                    <SelectItem value="mercedes">Mercedes</SelectItem>
+                    <SelectItem value="silke">Silke</SelectItem>
                     <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
                     <SelectItem value="ranchos">Ranchos</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => {
-                    setEditingSupplier(null)
-                    const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
-                    const defaultPlant = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
-                    setSupplierForm({ name: "", material_type: "", plant: defaultPlant, line_type: defaultLineType, density: "", unit: "kg" })
-                  }}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Agregar Proveedor
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>{editingSupplier ? "Editar Proveedor" : "Nuevo Proveedor"}</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div>
-                      <Label>Nombre del Proveedor</Label>
-                      <Input
-                        value={supplierForm.name}
-                        onChange={(e) => setSupplierForm(prev => ({ ...prev, name: e.target.value }))}
-                        placeholder="Ej: Piatti, Cementos Avellaneda"
-                      />
-                    </div>
-                    <div>
-                      <Label>Material</Label>
-                      <Input
-                        value={supplierForm.material_type}
-                        onChange={(e) => setSupplierForm(prev => ({ ...prev, material_type: e.target.value }))}
-                        placeholder="Ej: Piedra 06, Piedra 010, CPC-40, Arena Especial"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">Nombre completo del material que provee</p>
-                    </div>
-                    <div>
-                      <Label>Planta</Label>
-                      <Select
-                        value={supplierForm.plant}
-                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, plant: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar planta" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mercedes">Mercedes</SelectItem>
-                          <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
-                          <SelectItem value="ranchos">Ranchos</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Linea de Produccion</Label>
-                      <Select
-                        value={supplierForm.line_type}
-                        onValueChange={(value) => setSupplierForm(prev => ({ ...prev, line_type: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getLineTypes(selectedPlant).map(lt => (
-                            <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    {supplierForm.material_type.toLowerCase().includes("aditivo") && (
-                      <>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label>Densidad (kg/L)</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={supplierForm.density}
-                              onChange={(e) => setSupplierForm(prev => ({ ...prev, density: e.target.value }))}
-                              placeholder="Ej: 1.045"
-                            />
-                            <p className="text-xs text-muted-foreground mt-1">Segun ficha tecnica</p>
-                          </div>
-                          <div>
-                            <Label>Unidad de medida</Label>
-                            <Select
-                              value={supplierForm.unit}
-                              onValueChange={(value) => setSupplierForm(prev => ({ ...prev, unit: value }))}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="kg">Kilogramos (kg)</SelectItem>
-                                <SelectItem value="lts">Litros (lts)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                    
-                    <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
-                      {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
+              <div className="flex gap-2">
+                {/* Dialog Proveedor */}
+                <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" onClick={() => {
+                      setEditingSupplier(null)
+                      const defaultLineType = selectedPlant === "ranchos" ? "adoquines" : "ambos"
+                      const defaultPlant = selectedPlant === "villa-rosa" ? "villa_rosa" : selectedPlant
+                      setSupplierForm({ name: "", material_type: "", plant: defaultPlant, line_type: defaultLineType, density: "", unit: "kg" })
+                    }}>
+                      <Building2 className="w-4 h-4 mr-2" />
+                      Agregar Proveedor
                     </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Proveedor</TableHead>
-                      <TableHead>Material</TableHead>
-                      <TableHead>Planta</TableHead>
-                      <TableHead>Linea</TableHead>
-                      <TableHead>Densidad</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loadingSuppliers ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          Cargando proveedores...
-                        </TableCell>
-                      </TableRow>
-                    ) : suppliers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          No hay proveedores registrados
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      // Agrupar por planta y luego por proveedor
-                      (() => {
-                        const plantOrder = ["mercedes", "villa_rosa", "ranchos"]
-                        const plantNames: Record<string, string> = {
-                          mercedes: "Mercedes",
-                          villa_rosa: "Villa Rosa",
-                          ranchos: "Ranchos"
-                        }
-                        
-                        // Agrupar proveedores por planta
-                        const byPlant = suppliers.reduce((acc, s) => {
-                          const plant = s.plant || "otros"
-                          if (!acc[plant]) acc[plant] = []
-                          acc[plant].push(s)
-                          return acc
-                        }, {} as Record<string, Supplier[]>)
-                        
-                        // Ordenar cada grupo por nombre de proveedor
-                        Object.keys(byPlant).forEach(plant => {
-                          byPlant[plant].sort((a, b) => a.name.localeCompare(b.name))
-                        })
-                        
-                        return plantOrder.filter(p => byPlant[p]?.length > 0).map(plant => (
-                          <React.Fragment key={plant}>
-                            {/* Header de planta */}
-                            <TableRow className="bg-muted/50">
-                              <TableCell colSpan={7} className="font-semibold text-sm py-2">
-                                {plantNames[plant] || plant}
-                                <span className="ml-2 text-muted-foreground font-normal">
-                                  ({byPlant[plant].length} proveedores)
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                            {/* Proveedores de esta planta */}
-                            {byPlant[plant].map(supplier => (
-                              <TableRow key={supplier.id} className={!supplier.is_active ? "opacity-50" : ""}>
-                                <TableCell className="font-medium pl-6">{supplier.name}</TableCell>
-                                <TableCell>
-                                  <Badge variant="outline">{supplier.material_type}</Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant="secondary">{plantNames[supplier.plant] || supplier.plant}</Badge>
-                                </TableCell>
-                                <TableCell>
-                                  {supplier.line_type === "canos" && "Canos"}
-                                  {supplier.line_type === "bloques" && "Bloques"}
-                                  {supplier.line_type === "ambos" && "Ambos"}
-                                  {supplier.line_type === "adoquines" && "Adoquines"}
-                                  {!supplier.line_type && "-"}
-                                </TableCell>
-                                <TableCell>
-                                  {supplier.density ? `${supplier.density} kg/L` : "-"}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant={supplier.is_active ? "default" : "secondary"}>
-                                    {supplier.is_active ? "Activo" : "Inactivo"}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <Button variant="ghost" size="sm" onClick={() => openEditSupplier(supplier)}>
-                                    <Pencil className="w-4 h-4" />
-                                  </Button>
-                                  <Button variant="ghost" size="sm" onClick={() => toggleSupplierActive(supplier)}>
-                                    {supplier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{editingSupplier ? "Editar Proveedor" : "Nuevo Proveedor"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div>
+                        <Label>Nombre del Proveedor</Label>
+                        <Input
+                          value={supplierForm.name}
+                          onChange={(e) => setSupplierForm(prev => ({ ...prev, name: e.target.value }))}
+                          placeholder="Ej: Piatti, Cementos Avellaneda"
+                        />
+                      </div>
+                      <div>
+                        <Label>Material</Label>
+                        <Input
+                          value={supplierForm.material_type}
+                          onChange={(e) => setSupplierForm(prev => ({ ...prev, material_type: e.target.value }))}
+                          placeholder="Ej: Piedra 010, CPC-40, Arena Especial"
+                        />
+                      </div>
+                      <div>
+                        <Label>Planta</Label>
+                        <Select value={supplierForm.plant} onValueChange={(value) => setSupplierForm(prev => ({ ...prev, plant: value }))}>
+                          <SelectTrigger><SelectValue placeholder="Seleccionar planta" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="silke">Silke</SelectItem>
+                            <SelectItem value="villa_rosa">Villa Rosa</SelectItem>
+                            <SelectItem value="ranchos">Ranchos</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label>Linea de Produccion</Label>
+                        <Select value={supplierForm.line_type} onValueChange={(value) => setSupplierForm(prev => ({ ...prev, line_type: value }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {getLineTypes(selectedPlant).map(lt => (
+                              <SelectItem key={lt.value} value={lt.value}>{lt.label}</SelectItem>
                             ))}
-                          </React.Fragment>
-                        ))
-                      })()
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* FLETES / TRANSPORTISTAS */}
-          <TabsContent value="fletes" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-semibold">Transportistas / Choferes</h2>
-              <Dialog open={showCarrierDialog} onOpenChange={setShowCarrierDialog}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => {
-                    setEditingCarrier(null)
-                    setCarrierForm({ name: "", phone: "", license_plate: "", company: "" })
-                  }}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Agregar Chofer
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>{editingCarrier ? "Editar Chofer" : "Nuevo Chofer"}</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div>
-                      <Label>Nombre del Chofer</Label>
-                      <Input
-                        value={carrierForm.name}
-                        onChange={(e) => setCarrierForm(prev => ({ ...prev, name: e.target.value }))}
-                        placeholder="Nombre completo"
-                      />
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button onClick={saveSupplier} className="w-full" disabled={!supplierForm.name || !supplierForm.material_type}>
+                        {editingSupplier ? "Guardar Cambios" : "Agregar Proveedor"}
+                      </Button>
                     </div>
-                    <div>
-                      <Label>Telefono (opcional)</Label>
-                      <Input
-                        value={carrierForm.phone}
-                        onChange={(e) => setCarrierForm(prev => ({ ...prev, phone: e.target.value }))}
-                        placeholder="Ej: 11-1234-5678"
-                      />
-                    </div>
-                    <div>
-                      <Label>Patente del Camion (opcional)</Label>
-                      <Input
-                        value={carrierForm.license_plate}
-                        onChange={(e) => setCarrierForm(prev => ({ ...prev, license_plate: e.target.value }))}
-                        placeholder="Ej: AA123BB"
-                      />
-                    </div>
-                    <div>
-                      <Label>Empresa de Transporte (opcional)</Label>
-                      <Input
-                        value={carrierForm.company}
-                        onChange={(e) => setCarrierForm(prev => ({ ...prev, company: e.target.value }))}
-                        placeholder="Nombre de la empresa"
-                      />
-                    </div>
-                    <Button onClick={saveCarrier} className="w-full" disabled={!carrierForm.name}>
-                      {editingCarrier ? "Guardar Cambios" : "Agregar Chofer"}
+                  </DialogContent>
+                </Dialog>
+                
+                {/* Dialog Flete */}
+                <Dialog open={showCarrierDialog} onOpenChange={setShowCarrierDialog}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" onClick={() => {
+                      setEditingCarrier(null)
+                      setCarrierForm({ name: "", phone: "", license_plate: "", company: "", material_type: "" })
+                    }}>
+                      <Truck className="w-4 h-4 mr-2" />
+                      Agregar Flete
                     </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{editingCarrier ? "Editar Flete" : "Nuevo Flete"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div>
+                        <Label>Nombre del Chofer</Label>
+                        <Input
+                          value={carrierForm.name}
+                          onChange={(e) => setCarrierForm(prev => ({ ...prev, name: e.target.value }))}
+                          placeholder="Nombre completo"
+                        />
+                      </div>
+                      <div>
+                        <Label>Material que transporta</Label>
+                        <Select value={carrierForm.material_type} onValueChange={(value) => setCarrierForm(prev => ({ ...prev, material_type: value }))}>
+                          <SelectTrigger><SelectValue placeholder="Seleccionar material" /></SelectTrigger>
+                          <SelectContent>
+                            {[...new Set(suppliers.map(s => s.material_type))].sort().map(mat => (
+                              <SelectItem key={mat} value={mat}>{mat}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label>Telefono</Label>
+                          <Input
+                            value={carrierForm.phone}
+                            onChange={(e) => setCarrierForm(prev => ({ ...prev, phone: e.target.value }))}
+                            placeholder="11-1234-5678"
+                          />
+                        </div>
+                        <div>
+                          <Label>Patente</Label>
+                          <Input
+                            value={carrierForm.license_plate}
+                            onChange={(e) => setCarrierForm(prev => ({ ...prev, license_plate: e.target.value }))}
+                            placeholder="AA123BB"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Empresa de Transporte</Label>
+                        <Input
+                          value={carrierForm.company}
+                          onChange={(e) => setCarrierForm(prev => ({ ...prev, company: e.target.value }))}
+                          placeholder="Nombre de la empresa"
+                        />
+                      </div>
+                      <Button onClick={saveCarrier} className="w-full" disabled={!carrierForm.name}>
+                        {editingCarrier ? "Guardar Cambios" : "Agregar Flete"}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
 
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Chofer</TableHead>
-                      <TableHead>Telefono</TableHead>
-                      <TableHead>Patente</TableHead>
-                      <TableHead>Empresa</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loadingCarriers ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                          Cargando choferes...
-                        </TableCell>
-                      </TableRow>
-                    ) : carriers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                          No hay choferes registrados
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      carriers.map(carrier => (
-                        <TableRow key={carrier.id} className={!carrier.is_active ? "opacity-50" : ""}>
-                          <TableCell className="font-medium">{carrier.name}</TableCell>
-                          <TableCell>{carrier.phone || "-"}</TableCell>
-                          <TableCell>{carrier.license_plate || "-"}</TableCell>
-                          <TableCell>{carrier.company || "-"}</TableCell>
-                          <TableCell>
-                            <Badge variant={carrier.is_active ? "default" : "secondary"}>
-                              {carrier.is_active ? "Activo" : "Inactivo"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" onClick={() => openEditCarrier(carrier)}>
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => toggleCarrierActive(carrier)}>
-                              {carrier.is_active ? <Ban className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            {/* Tabla agrupada por categoria de material */}
+            {loadingSuppliers || loadingCarriers ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  Cargando datos...
+                </CardContent>
+              </Card>
+            ) : (
+              (() => {
+                const plantNames: Record<string, string> = { silke: "Silke", villa_rosa: "Villa Rosa", ranchos: "Ranchos" }
+                const categoryOrder = ["Arena", "Piedra", "Cemento", "Otros"]
+                
+                // Agrupar proveedores por categoria y luego por tipo de material
+                const byCategory: Record<string, Record<string, { suppliers: Supplier[], carriers: Carrier[] }>> = {}
+                
+                suppliers.forEach(s => {
+                  const cat = getCategoryForMaterial(s.material_type)
+                  if (!byCategory[cat]) byCategory[cat] = {}
+                  if (!byCategory[cat][s.material_type]) byCategory[cat][s.material_type] = { suppliers: [], carriers: [] }
+                  byCategory[cat][s.material_type].suppliers.push(s)
+                })
+                
+                carriers.forEach(c => {
+                  if (c.material_type) {
+                    const cat = getCategoryForMaterial(c.material_type)
+                    if (!byCategory[cat]) byCategory[cat] = {}
+                    if (!byCategory[cat][c.material_type]) byCategory[cat][c.material_type] = { suppliers: [], carriers: [] }
+                    byCategory[cat][c.material_type].carriers.push(c)
+                  }
+                })
+                
+                return (
+                  <div className="space-y-4">
+                    {categoryOrder.filter(cat => byCategory[cat]).map(category => (
+                      <Card key={category}>
+                        <CardHeader className="py-3 bg-muted/50">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            {category === "Arena" && <Package className="w-4 h-4" />}
+                            {category === "Piedra" && <Package className="w-4 h-4" />}
+                            {category === "Cemento" && <Package className="w-4 h-4" />}
+                            {category}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="text-xs">
+                                <TableHead className="w-[180px]">Tipo</TableHead>
+                                <TableHead>Proveedores</TableHead>
+                                <TableHead>Fletes</TableHead>
+                                <TableHead className="w-[100px] text-right">Acciones</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {Object.entries(byCategory[category]).sort((a, b) => a[0].localeCompare(b[0])).map(([materialType, data]) => (
+                                <TableRow key={materialType}>
+                                  <TableCell className="font-medium align-top py-3">
+                                    <Badge variant="outline" className="text-sm">{materialType}</Badge>
+                                  </TableCell>
+                                  <TableCell className="align-top py-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {data.suppliers.length > 0 ? data.suppliers.map(s => (
+                                        <div key={s.id} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${s.is_active ? "bg-blue-50 border-blue-200 text-blue-700" : "bg-gray-100 border-gray-200 text-gray-400"}`}>
+                                          <Building2 className="w-3 h-3" />
+                                          {s.name}
+                                          <span className="text-[10px] opacity-70">({plantNames[s.plant] || s.plant})</span>
+                                          <button onClick={() => openEditSupplier(s)} className="ml-1 hover:text-blue-900"><Pencil className="w-3 h-3" /></button>
+                                          <button onClick={() => setDeleteConfirm({ type: "supplier", id: s.id, name: s.name })} className="hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+                                        </div>
+                                      )) : <span className="text-xs text-muted-foreground">Sin proveedores</span>}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="align-top py-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {data.carriers.length > 0 ? data.carriers.map(c => (
+                                        <div key={c.id} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${c.is_active ? "bg-green-50 border-green-200 text-green-700" : "bg-gray-100 border-gray-200 text-gray-400"}`}>
+                                          <Truck className="w-3 h-3" />
+                                          {c.name}
+                                          {c.license_plate && <span className="text-[10px] opacity-70">({c.license_plate})</span>}
+                                          <button onClick={() => openEditCarrier(c)} className="ml-1 hover:text-green-900"><Pencil className="w-3 h-3" /></button>
+                                          <button onClick={() => setDeleteConfirm({ type: "carrier", id: c.id, name: c.name })} className="hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+                                        </div>
+                                      )) : <span className="text-xs text-muted-foreground">Sin fletes</span>}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="align-top py-3 text-right">
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        setEditingCarrier(null)
+                                        setCarrierForm({ name: "", phone: "", license_plate: "", company: "", material_type: materialType })
+                                        setShowCarrierDialog(true)
+                                      }}
+                                    >
+                                      <Plus className="w-3 h-3 mr-1" />
+                                      Flete
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )
+              })()
+            )}
           </TabsContent>
         </Tabs>
+        
+        {/* Delete Confirmation Dialog */}
+        {deleteConfirm && (
+          <Dialog open={true} onOpenChange={() => setDeleteConfirm(null)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-red-600">
+                  <AlertTriangle className="w-5 h-5" />
+                  Confirmar Eliminación
+                </DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <p className="text-sm text-muted-foreground mb-4">
+                  ¿Estás seguro que querés eliminar <span className="font-semibold text-foreground">{deleteConfirm.name}</span>?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Esta acción no se puede deshacer. Si el {deleteConfirm.type === "supplier" ? "proveedor" : "flete"} tiene ingresos asociados, no podrá ser eliminado.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  onClick={() => {
+                    if (deleteConfirm.type === "supplier") {
+                      deleteSupplier(deleteConfirm.id)
+                    } else {
+                      deleteCarrier(deleteConfirm.id)
+                    }
+                  }}
+                >
+                  Eliminar
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
       </main>
     </div>
   )

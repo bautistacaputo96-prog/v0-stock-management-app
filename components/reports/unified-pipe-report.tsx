@@ -40,7 +40,7 @@ interface PeriodData {
   wasteBins: {
     bin1Cinta: { boxes: number; kg: number }      // Cajón 1 - Sector Cinta (710kg)
     bin2Desmolde: { boxes: number; kg: number }   // Cajón 2 - Sector Desmolde (656kg)
-    bin3Cinta: { boxes: number; kg: number }      // Cajón 3 - Sector Cinta (710kg)
+    bin3Cinta: { boxes: number; kg: number }      // Cajón 3 - Sector Cinta (476.5kg)
     bin4Rotos: { boxes: number; kg: number }      // Cajón 4 - Caños Rotos (1307kg)
     bin5Mezcladora: { boxes: number; kg: number } // Cajón 5 - Mezcladora (710kg)
   }
@@ -273,7 +273,7 @@ export function UnifiedPipeReport() {
     const wasteBins = {
       bin1Cinta: { boxes: 0, kg: 0 },      // 710 kg
       bin2Desmolde: { boxes: 0, kg: 0 },   // 656 kg
-      bin3Cinta: { boxes: 0, kg: 0 },      // 710 kg
+      bin3Cinta: { boxes: 0, kg: 0 },      // 476.5 kg
       bin4Rotos: { boxes: 0, kg: 0 },      // 1307 kg
       bin5Mezcladora: { boxes: 0, kg: 0 }, // 710 kg
     }
@@ -322,20 +322,20 @@ export function UnifiedPipeReport() {
       
       // Peso NETO del material (descontando tara del tacho vacío)
       // Tara: C1=133.3kg, C2=127.6kg, C3=108.5kg, C4=232.5kg, C5=133.3kg
-      // Neto: C1=576.7kg, C2=528.4kg, C3=601.5kg, C4=1074.5kg, C5=576.7kg
+      // Neto: C1=576.7kg, C2=528.4kg, C3=476.5kg, C4=1074.5kg, C5=576.7kg
       wasteBins.bin1Cinta.boxes += bin1
       wasteBins.bin1Cinta.kg += bin1 * 576.7
       wasteBins.bin2Desmolde.boxes += bin2
       wasteBins.bin2Desmolde.kg += bin2 * 528.4
       wasteBins.bin3Cinta.boxes += bin3
-      wasteBins.bin3Cinta.kg += bin3 * 601.5
+      wasteBins.bin3Cinta.kg += bin3 * 476.5
       wasteBins.bin4Rotos.boxes += bin4
       wasteBins.bin4Rotos.kg += bin4 * 1074.5
       wasteBins.bin5Mezcladora.boxes += bin5
       wasteBins.bin5Mezcladora.kg += bin5 * 576.7
       
       // Total (usar total_waste_kg si existe, sino calcular de cajones individuales con peso neto, sino usar scrap_boxes legacy)
-      const dayScrapKg = record.total_waste_kg || (bin1 * 576.7 + bin2 * 528.4 + bin3 * 601.5 + bin4 * 1074.5 + bin5 * 576.7) || (record.scrap_boxes || 0) * scrapBoxWeight
+      const dayScrapKg = record.total_waste_kg || (bin1 * 576.7 + bin2 * 528.4 + bin3 * 476.5 + bin4 * 1074.5 + bin5 * 576.7) || (record.scrap_boxes || 0) * scrapBoxWeight
       totalScrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
       dailyProd[dateKey].scrapBoxes += (bin1 + bin2 + bin3 + bin4 + bin5) || record.scrap_boxes || 0
 
@@ -1112,7 +1112,7 @@ export function UnifiedPipeReport() {
                           <td className="py-1 px-2 text-[10px]"></td>
                         </tr>
                         <tr className="text-muted-foreground">
-                          <td className="py-1 px-2 pl-4 text-[10px]">└ C3-Cinta (710kg)</td>
+                          <td className="py-1 px-2 pl-4 text-[10px]">└ C3-Cinta (476.5kg)</td>
                           <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.wasteBins.bin3Cinta.boxes.toFixed(1)} caj</td>
                           <td className="py-1 px-2 text-center text-[10px]">{(currentPeriod.wasteBins.bin3Cinta.kg / 1000).toFixed(2)}</td>
                           <td className="py-1 px-2 text-center text-[10px]">{currentPeriod.totalScrapTn > 0 ? ((currentPeriod.wasteBins.bin3Cinta.kg / 1000 / currentPeriod.totalScrapTn) * 100).toFixed(1) : 0}%</td>

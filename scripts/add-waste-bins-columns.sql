@@ -9,9 +9,9 @@ COMMENT ON COLUMN pipe_production.waste_bin_1_cinta IS 'Cajón 1 - Sector Cinta 
 ALTER TABLE pipe_production ADD COLUMN IF NOT EXISTS waste_bin_2_desmolde numeric DEFAULT 0;
 COMMENT ON COLUMN pipe_production.waste_bin_2_desmolde IS 'Cajón 2 - Sector Desmolde (656kg/cajón)';
 
--- Cajón 3: Sector Cinta (segundo) - 710kg
+-- Cajón 3: Sector Cinta (segundo) - 476.5kg neto (585kg bruto - 108.5kg tara)
 ALTER TABLE pipe_production ADD COLUMN IF NOT EXISTS waste_bin_3_cinta numeric DEFAULT 0;
-COMMENT ON COLUMN pipe_production.waste_bin_3_cinta IS 'Cajón 3 - Sector Cinta (710kg/cajón)';
+COMMENT ON COLUMN pipe_production.waste_bin_3_cinta IS 'Cajón 3 - Sector Cinta (476.5kg neto/cajón)';
 
 -- Cajón 4: Caños Rotos - 1307kg
 ALTER TABLE pipe_production ADD COLUMN IF NOT EXISTS waste_bin_4_rotos numeric DEFAULT 0;
