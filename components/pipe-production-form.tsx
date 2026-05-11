@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { getSupabase } from "@/lib/supabase"
-import { Loader2, Zap, ListPlus, AlertTriangle } from "lucide-react"
+import { Loader2, Zap, ListPlus, AlertTriangle, ChevronDown } from "lucide-react"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -1278,33 +1279,39 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
-      {/* Proveedores */}
+      {/* Proveedores - Colapsable y compacto */}
       {Object.keys(ingredientSuppliers).length > 0 && (
-        <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/30">
-          <h3 className="text-sm font-semibold text-foreground">Proveedores</h3>
-          <div className="grid grid-cols-3 gap-3">
-            {["Cemento", "Arena", "Piedra"].map((ingredient) => (
-              <div key={ingredient} className="space-y-1">
-                <Label className="text-xs">{ingredient}</Label>
-                <Select
-                  value={currentSuppliers[ingredient] || ""}
-                  onValueChange={(value) => setCurrentSuppliers(prev => ({ ...prev, [ingredient]: value }))}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder={`Seleccionar ${ingredient.toLowerCase()}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(ingredientSuppliers[ingredient] || []).map((supplier) => (
-                      <SelectItem key={supplier} value={supplier} className="text-xs">
-                        {supplier}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        <Collapsible defaultOpen={plantName !== "Villa Rosa"}>
+          <div className="rounded-lg border border-border p-2 bg-muted/30">
+            <CollapsibleTrigger className="flex items-center justify-between w-full text-xs font-semibold text-foreground">
+              <span>Proveedores MP</span>
+              <ChevronDown className="h-3 w-3 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <div className="flex gap-2">
+                {["Cemento", "Arena", "Piedra"].map((ingredient) => (
+                  <div key={ingredient} className="flex-1">
+                    <Select
+                      value={currentSuppliers[ingredient] || ""}
+                      onValueChange={(value) => setCurrentSuppliers(prev => ({ ...prev, [ingredient]: value }))}
+                    >
+                      <SelectTrigger className="h-7 text-[10px]">
+                        <SelectValue placeholder={ingredient} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(ingredientSuppliers[ingredient] || []).map((supplier) => (
+                          <SelectItem key={supplier} value={supplier} className="text-xs">
+                            {supplier}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
               </div>
-            ))}
+            </CollapsibleContent>
           </div>
-        </div>
+        </Collapsible>
       )}
 
       {/* Producción y Transporte side by side */}
@@ -1440,7 +1447,8 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         />
       </div>
 
-      {/* Cajones de Desperdicio */}
+      {/* Cajones de Desperdicio - Solo Silke */}
+      {plantName !== "Villa Rosa" && (
       <div className="space-y-3 rounded-lg border-2 border-amber-300 bg-amber-50/50 p-4">
         <div className="flex items-center justify-between">
           <Label className="text-sm font-semibold text-amber-800">Cajones de Desperdicio</Label>
@@ -1527,85 +1535,30 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
           </span>
         </div>
       </div>
+      )}
 
-      {/* Extras Villa Rosa */}
-      <div className="grid grid-cols-2 gap-4">
-        {plantName === "Villa Rosa" && (
-          <>
-            <div className="space-y-1">
-              <Label htmlFor="blocones" className="text-xs">Cantidad de Blocones</Label>
-              <Input
-                id="blocones"
-                type="number"
-                min="0"
-                value={formData.blocones}
-                onChange={(e) => setFormData({ ...formData, blocones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cantidadPastones" className="text-xs">Cantidad de Pastones</Label>
-              <Input
-                id="cantidadPastones"
-                type="number"
-                min="0"
-                value={formData.cantidadPastones}
-                onChange={(e) => setFormData({ ...formData, cantidadPastones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Control Cemento - Solo Villa Rosa */}
+      {/* Control Cemento y OF - Solo Villa Rosa - Compacto en una fila */}
       {plantName === "Villa Rosa" && (
-        <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-          <h3 className="text-sm font-semibold text-foreground">Control Cemento</h3>
-          <div className="grid grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="silo1" className="text-xs">Silo 1</Label>
-              <Input
-                id="silo1"
-                type="number"
-                min="0"
-                value={formData.silo1}
-                onChange={(e) => setFormData({ ...formData, silo1: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="silo2" className="text-xs">Silo 2</Label>
-              <Input
-                id="silo2"
-                type="number"
-                min="0"
-                value={formData.silo2}
-                onChange={(e) => setFormData({ ...formData, silo2: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="totalPastones" className="text-xs">Total de Pastones</Label>
-              <Input
-                id="totalPastones"
-                type="number"
-                min="0"
-                value={formData.totalPastones}
-                onChange={(e) => setFormData({ ...formData, totalPastones: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="fabricationOrderNumber" className="text-xs">OF (Orden Fabric.) N°</Label>
-              <Input
-                id="fabricationOrderNumber"
-                type="text"
-                value={formData.fabricationOrderNumber}
-                onChange={(e) => setFormData({ ...formData, fabricationOrderNumber: e.target.value })}
-                className="h-8 text-sm"
-              />
-            </div>
+        <div className="flex items-end gap-3 flex-wrap rounded-lg border border-border p-2 bg-muted/30">
+          <div className="space-y-0.5">
+            <Label htmlFor="silo1" className="text-[10px] text-muted-foreground">Silo 1</Label>
+            <Input id="silo1" type="number" min="0" value={formData.silo1} onChange={(e) => setFormData({ ...formData, silo1: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="silo2" className="text-[10px] text-muted-foreground">Silo 2</Label>
+            <Input id="silo2" type="number" min="0" value={formData.silo2} onChange={(e) => setFormData({ ...formData, silo2: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="totalPastones" className="text-[10px] text-muted-foreground">Pastones</Label>
+            <Input id="totalPastones" type="number" min="0" value={formData.totalPastones} onChange={(e) => setFormData({ ...formData, totalPastones: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="blocones2" className="text-[10px] text-muted-foreground">Blocones</Label>
+            <Input id="blocones2" type="number" min="0" value={formData.blocones} onChange={(e) => setFormData({ ...formData, blocones: e.target.value })} className="h-7 w-20 text-xs" />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="fabricationOrderNumber" className="text-[10px] text-muted-foreground">OF N°</Label>
+            <Input id="fabricationOrderNumber" type="text" value={formData.fabricationOrderNumber} onChange={(e) => setFormData({ ...formData, fabricationOrderNumber: e.target.value })} className="h-7 w-24 text-xs" />
           </div>
         </div>
       )}
@@ -1680,101 +1633,68 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         ))}
       </div>
 
-      {/* Motivos de Paradas - igual que bloques */}
+      {/* Motivos de Paradas - Compacto con acordeones */}
       <div className="space-y-2 rounded-lg border-2 border-border p-3 bg-background">
         <div className="border-b pb-2">
-          <h2 className="text-lg font-bold text-foreground">Motivos de Paradas</h2>
+          <h2 className="text-sm font-bold text-foreground">Motivos de Paradas</h2>
         </div>
 
         {Object.entries(plantName === "Villa Rosa" ? VILLA_ROSA_DOWNTIME_CATEGORIES : DOWNTIME_CATEGORIES).map(([category, reasons]) => {
-          const itemsPerColumn = Math.ceil(reasons.length / 2)
-          const column1 = reasons.slice(0, itemsPerColumn)
-          const column2 = reasons.slice(itemsPerColumn)
-
+          const categoryTotal = reasons.reduce((sum, r) => sum + (downtimes[r]?.minutes || 0), 0)
           return (
-            <div key={category} className="space-y-2">
-              <h4 className="text-base font-semibold text-primary bg-primary/10 px-3 py-2 rounded-md">{category}</h4>
-              <div className="grid md:grid-cols-2 gap-x-4 gap-y-2">
-                <div className="space-y-2">
-                  {column1.map((reason) => (
-                    <div key={reason} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`downtime-${reason}`} className="text-xs flex-1">{reason}</Label>
-                        <Input
-                          id={`downtime-${reason}`}
-                          type="number"
-                          min="0"
-                          placeholder="min"
-                          value={downtimes[reason]?.minutes?.toString() || ""}
-                          onChange={(e) => {
-                            const value = e.target.value
-                            const minutes = value === "" ? 0 : Number.parseInt(value) || 0
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { minutes, comments: prev[reason]?.comments || "" },
-                            }))
-                          }}
-                          onKeyDown={handleEnterKey}
-                          className="h-8 w-16 text-sm"
-                        />
-                      </div>
-                      {downtimes[reason]?.minutes > 0 && (
-                        <Textarea
-                          placeholder="Observaciones..."
-                          value={downtimes[reason]?.comments || ""}
-                          onChange={(e) => {
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { ...prev[reason], comments: e.target.value },
-                            }))
-                          }}
-                          className="text-xs min-h-[60px]"
-                        />
-                      )}
+            <Collapsible key={category} defaultOpen={categoryTotal > 0}>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-sm font-medium text-primary bg-primary/10 px-2 py-1.5 rounded hover:bg-primary/20 transition-colors">
+                <span>{category}</span>
+                <div className="flex items-center gap-2">
+                  {categoryTotal > 0 && <span className="text-xs bg-primary text-primary-foreground px-1.5 py-0.5 rounded">{categoryTotal} min</span>}
+                  <ChevronDown className="h-4 w-4 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+                </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {reasons.map((reason) => (
+                    <div key={reason} className="flex items-center gap-1">
+                      <Label htmlFor={`downtime-${reason}`} className="text-[11px] flex-1 truncate" title={reason}>{reason}</Label>
+                      <Input
+                        id={`downtime-${reason}`}
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={downtimes[reason]?.minutes?.toString() || ""}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          const minutes = value === "" ? 0 : Number.parseInt(value) || 0
+                          setDowntimes((prev) => ({
+                            ...prev,
+                            [reason]: { minutes, comments: prev[reason]?.comments || "" },
+                          }))
+                        }}
+                        onKeyDown={handleEnterKey}
+                        className="h-7 w-14 text-xs"
+                      />
                     </div>
                   ))}
                 </div>
-                <div className="space-y-2">
-                  {column2.map((reason) => (
-                    <div key={reason} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`downtime-${reason}`} className="text-xs flex-1">{reason}</Label>
-                        <Input
-                          id={`downtime-${reason}`}
-                          type="number"
-                          min="0"
-                          placeholder="min"
-                          value={downtimes[reason]?.minutes?.toString() || ""}
-                          onChange={(e) => {
-                            const value = e.target.value
-                            const minutes = value === "" ? 0 : Number.parseInt(value) || 0
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { minutes, comments: prev[reason]?.comments || "" },
-                            }))
-                          }}
-                          onKeyDown={handleEnterKey}
-                          className="h-8 w-16 text-sm"
-                        />
-                      </div>
-                      {downtimes[reason]?.minutes > 0 && (
-                        <Textarea
-                          placeholder="Observaciones..."
-                          value={downtimes[reason]?.comments || ""}
-                          onChange={(e) => {
-                            setDowntimes((prev) => ({
-                              ...prev,
-                              [reason]: { ...prev[reason], comments: e.target.value },
-                            }))
-                          }}
-                          className="text-xs min-h-[60px]"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+                {/* Observaciones solo si hay minutos en la categoría */}
+                {categoryTotal > 0 && (
+                  <Textarea
+                    placeholder={`Observaciones ${category.toLowerCase()}...`}
+                    value={reasons.map(r => downtimes[r]?.comments).filter(Boolean).join("; ") || ""}
+                    onChange={(e) => {
+                      // Guardar en el primer motivo con minutos
+                      const firstWithMinutes = reasons.find(r => downtimes[r]?.minutes > 0)
+                      if (firstWithMinutes) {
+                        setDowntimes((prev) => ({
+                          ...prev,
+                          [firstWithMinutes]: { ...prev[firstWithMinutes], comments: e.target.value },
+                        }))
+                      }
+                    }}
+                    className="text-xs min-h-[40px] mt-2"
+                  />
+                )}
+              </CollapsibleContent>
+            </Collapsible>
           )
         })}
       </div>
