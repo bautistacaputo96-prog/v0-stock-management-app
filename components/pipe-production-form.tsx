@@ -587,14 +587,15 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
 
   // Calculate totals
   const calculateTotals = (data: Record<string, Record<string, string>>) => {
-    const totals = { simples: 0, rotura: 0, armado: 0, rotura_armado: 0 }
-    PIPE_SIZES.forEach(size => {
-      totals.simples += Number(data[size]?.simples) || 0
-      totals.rotura += Number(data[size]?.rotura) || 0
-      totals.armado += Number(data[size]?.armado) || 0
-      totals.rotura_armado += Number(data[size]?.rotura_armado) || 0
-    })
-    return totals
+    const totals = { simples: 0, rotura: 0, armado: 0, rotura_armado: 0, scrap: 0 }
+  PIPE_SIZES.forEach(size => {
+  totals.simples += Number(data[size]?.simples) || 0
+  totals.rotura += Number(data[size]?.rotura) || 0
+  totals.armado += Number(data[size]?.armado) || 0
+  totals.rotura_armado += Number(data[size]?.rotura_armado) || 0
+  totals.scrap += Number(data[size]?.scrap) || 0
+  })
+  return totals
   }
 
   const prodTotals = calculateTotals(production)
@@ -1394,6 +1395,9 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                   <th className="text-left p-1">{plantName === "Villa Rosa" ? "Producto" : "Medida"}</th>
                   <th className="text-center p-1">{plantName === "Villa Rosa" ? "1ra" : "Simples"}</th>
                   <th className="text-center p-1">{plantName === "Villa Rosa" ? "2da" : "Rotura"}</th>
+                  {plantName === "Villa Rosa" && (
+                    <th className="text-center p-1">Scrap</th>
+                  )}
                   {plantName !== "Villa Rosa" && (
                     <>
                       <th className="text-center p-1">Armado</th>
@@ -1406,8 +1410,11 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                 {PIPE_SIZES.map((size) => (
                   <tr key={`transp-${size}`} className="border-b">
                     <td className="p-1 font-medium">{plantName === "Villa Rosa" ? `CANO ${size}` : `Ø ${size} mm`}</td>
-                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.simples ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), simples: e.target.value } })} /></td>
-                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.rotura ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), rotura: e.target.value } })} /></td>
+                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.simples ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "", scrap: "" }), simples: e.target.value } })} /></td>
+                    <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.rotura ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "", scrap: "" }), rotura: e.target.value } })} /></td>
+                    {plantName === "Villa Rosa" && (
+                      <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.scrap ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", scrap: "" }), scrap: e.target.value } })} /></td>
+                    )}
                     {plantName !== "Villa Rosa" && (
                       <>
                         <td className="p-1"><Input type="number" min="0" className="h-7 text-xs w-14" value={transporte[size]?.armado ?? ""} onChange={(e) => setTransporte({ ...transporte, [size]: { ...(transporte[size] || { simples: "", rotura: "", armado: "", rotura_armado: "" }), armado: e.target.value } })} /></td>
@@ -1420,6 +1427,9 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                   <td className="p-1">TOTAL</td>
                   <td className="p-1 text-center">{transpTotals.simples}</td>
                   <td className="p-1 text-center">{transpTotals.rotura}</td>
+                  {plantName === "Villa Rosa" && (
+                    <td className="p-1 text-center">{transpTotals.scrap || 0}</td>
+                  )}
                   {plantName !== "Villa Rosa" && (
                     <>
                       <td className="p-1 text-center">{transpTotals.armado}</td>
@@ -1433,18 +1443,33 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
-      {/* Cemento al Finalizar */}
-      <div className="space-y-1">
-        <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
-        <Input
-          id="cementFinalShiftTn"
-          type="number"
-          step="0.01"
-          min="0"
-          value={formData.cementFinalShiftTn}
-          onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
-          className="h-8 text-sm w-48"
-        />
+      {/* Cemento al Finalizar y Blocones */}
+      <div className="flex gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="cementFinalShiftTn" className="text-xs">Cemento al Finalizar el Turno (Tn)</Label>
+          <Input
+            id="cementFinalShiftTn"
+            type="number"
+            step="0.01"
+            min="0"
+            value={formData.cementFinalShiftTn}
+            onChange={(e) => setFormData({ ...formData, cementFinalShiftTn: e.target.value })}
+            className="h-8 text-sm w-48"
+          />
+        </div>
+        {plantName === "Villa Rosa" && (
+          <div className="space-y-1">
+            <Label htmlFor="blocones" className="text-xs">Cantidad de Blocones</Label>
+            <Input
+              id="blocones"
+              type="number"
+              min="0"
+              value={formData.blocones}
+              onChange={(e) => setFormData({ ...formData, blocones: e.target.value })}
+              className="h-8 text-sm w-48"
+            />
+          </div>
+        )}
       </div>
 
       {/* Cajones de Desperdicio - Solo Silke */}
@@ -1553,10 +1578,6 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             <Input id="totalPastones" type="number" min="0" value={formData.totalPastones} onChange={(e) => setFormData({ ...formData, totalPastones: e.target.value })} className="h-7 w-20 text-xs" />
           </div>
           <div className="space-y-0.5">
-            <Label htmlFor="blocones2" className="text-[10px] text-muted-foreground">Blocones</Label>
-            <Input id="blocones2" type="number" min="0" value={formData.blocones} onChange={(e) => setFormData({ ...formData, blocones: e.target.value })} className="h-7 w-20 text-xs" />
-          </div>
-          <div className="space-y-0.5">
             <Label htmlFor="fabricationOrderNumber" className="text-[10px] text-muted-foreground">OF N°</Label>
             <Input id="fabricationOrderNumber" type="text" value={formData.fabricationOrderNumber} onChange={(e) => setFormData({ ...formData, fabricationOrderNumber: e.target.value })} className="h-7 w-24 text-xs" />
           </div>
@@ -1650,49 +1671,47 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                   <ChevronDown className="h-4 w-4 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
                 </div>
               </CollapsibleTrigger>
-              <CollapsibleContent className="pt-2">
+              <CollapsibleContent className="pt-2 space-y-2">
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                   {reasons.map((reason) => (
-                    <div key={reason} className="flex items-center gap-1">
-                      <Label htmlFor={`downtime-${reason}`} className="text-[11px] flex-1 truncate" title={reason}>{reason}</Label>
-                      <Input
-                        id={`downtime-${reason}`}
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={downtimes[reason]?.minutes?.toString() || ""}
-                        onChange={(e) => {
-                          const value = e.target.value
-                          const minutes = value === "" ? 0 : Number.parseInt(value) || 0
-                          setDowntimes((prev) => ({
-                            ...prev,
-                            [reason]: { minutes, comments: prev[reason]?.comments || "" },
-                          }))
-                        }}
-                        onKeyDown={handleEnterKey}
-                        className="h-7 w-14 text-xs"
-                      />
+                    <div key={reason} className="space-y-1">
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor={`downtime-${reason}`} className="text-[11px] flex-1 truncate" title={reason}>{reason}</Label>
+                        <Input
+                          id={`downtime-${reason}`}
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={downtimes[reason]?.minutes?.toString() || ""}
+                          onChange={(e) => {
+                            const value = e.target.value
+                            const minutes = value === "" ? 0 : Number.parseInt(value) || 0
+                            setDowntimes((prev) => ({
+                              ...prev,
+                              [reason]: { minutes, comments: prev[reason]?.comments || "" },
+                            }))
+                          }}
+                          onKeyDown={handleEnterKey}
+                          className="h-7 w-14 text-xs"
+                        />
+                      </div>
+                      {/* Comentario individual para cada motivo con minutos */}
+                      {downtimes[reason]?.minutes > 0 && (
+                        <Input
+                          placeholder="Observacion..."
+                          value={downtimes[reason]?.comments || ""}
+                          onChange={(e) => {
+                            setDowntimes((prev) => ({
+                              ...prev,
+                              [reason]: { ...prev[reason], comments: e.target.value },
+                            }))
+                          }}
+                          className="h-6 text-[10px]"
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
-                {/* Observaciones solo si hay minutos en la categoría */}
-                {categoryTotal > 0 && (
-                  <Textarea
-                    placeholder={`Observaciones ${category.toLowerCase()}...`}
-                    value={reasons.map(r => downtimes[r]?.comments).filter(Boolean).join("; ") || ""}
-                    onChange={(e) => {
-                      // Guardar en el primer motivo con minutos
-                      const firstWithMinutes = reasons.find(r => downtimes[r]?.minutes > 0)
-                      if (firstWithMinutes) {
-                        setDowntimes((prev) => ({
-                          ...prev,
-                          [firstWithMinutes]: { ...prev[firstWithMinutes], comments: e.target.value },
-                        }))
-                      }
-                    }}
-                    className="text-xs min-h-[40px] mt-2"
-                  />
-                )}
               </CollapsibleContent>
             </Collapsible>
           )
