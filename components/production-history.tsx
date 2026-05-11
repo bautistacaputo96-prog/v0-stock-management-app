@@ -1086,7 +1086,7 @@ export function ProductionHistory() {
                                                      (record.waste_bin_3_cinta || 0) + (record.waste_bin_4_rotos || 0) + 
                                                      (record.waste_bin_5_mezcladora || 0) || record.scrap_boxes || 0
                                     const totalKg = (record.waste_bin_1_cinta || 0) * 576.7 + (record.waste_bin_2_desmolde || 0) * 528.4 +
-                                                   (record.waste_bin_3_cinta || 0) * 601.5 + (record.waste_bin_4_rotos || 0) * 1074.5 +
+                                                   (record.waste_bin_3_cinta || 0) * 476.5 + (record.waste_bin_4_rotos || 0) * 1074.5 +
                                                    (record.waste_bin_5_mezcladora || 0) * 576.7
                                     return totalBins > 0 ? (
                                       <div className="mt-4 pt-4 border-t">

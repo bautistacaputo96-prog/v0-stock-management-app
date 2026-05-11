@@ -1058,7 +1058,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
                 Total: {(
                   (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
                   (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
-                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 601.5 +
+                  (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
                   (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
                   (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
                 ).toLocaleString()} kg ({(
