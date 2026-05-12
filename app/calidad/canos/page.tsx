@@ -98,6 +98,7 @@ export default function PipeQualityPage() {
   const [editingControl, setEditingControl] = useState<any | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [otherDefectComments, setOtherDefectComments] = useState<Record<number, string>>({}) // diameter -> comment
+  const [recoveredPipes, setRecoveredPipes] = useState<number>(0) // Caños recuperados
   const pdfReportRef = useRef<HTMLDivElement>(null)
   
   // Report filter state
@@ -888,6 +889,21 @@ export default function PipeQualityPage() {
                   </tfoot>
                 </table>
               </div>
+            </div>
+
+            {/* Caños Recuperados - después de Tabla 1 */}
+            <div className="flex items-center gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <Label htmlFor="recoveredPipes" className="text-sm font-medium text-emerald-800 whitespace-nowrap">Caños Recuperados:</Label>
+              <Input
+                id="recoveredPipes"
+                type="number"
+                min="0"
+                value={recoveredPipes || ""}
+                onChange={(e) => setRecoveredPipes(parseInt(e.target.value) || 0)}
+                onKeyDown={handleEnterKey}
+                className="w-24 h-8 text-sm text-center"
+                placeholder="0"
+              />
             </div>
 
             {/* TABLA 2: Clasificacion de Defectos - visible cuando hay segunda o rotos */}
