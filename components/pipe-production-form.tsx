@@ -584,6 +584,23 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
       } else {
         setMoldBreakages([{ size: "", reasons: [], comments: "" }])
       }
+
+      // Load pipe breakages (Villa Rosa)
+      if (editingRecord.pipe_breakages && editingRecord.pipe_breakages.length > 0) {
+        const breakagesData: Record<string, Record<string, number>> = {}
+        PIPE_BREAKAGE_REASONS.forEach(reason => {
+          breakagesData[reason] = {}
+          PIPE_SIZES.forEach(size => {
+            breakagesData[reason][size] = 0
+          })
+        })
+        editingRecord.pipe_breakages.forEach((b: any) => {
+          if (breakagesData[b.reason]) {
+            breakagesData[b.reason][b.pipe_size] = b.quantity || 0
+          }
+        })
+        setPipeBreakages(breakagesData)
+      }
     }
   }, [editingRecord])
 
@@ -754,6 +771,22 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
           }
         }
 
+        // Delete old pipe breakages and insert new ones (Villa Rosa)
+        await supabase.from("pipe_breakages").delete().eq("production_id", editingRecord.id)
+        
+        for (const [reason, sizes] of Object.entries(pipeBreakages)) {
+          for (const [size, quantity] of Object.entries(sizes)) {
+            if (quantity > 0) {
+              await supabase.from("pipe_breakages").insert({
+                production_id: editingRecord.id,
+                reason,
+                pipe_size: size,
+                quantity,
+              })
+            }
+          }
+        }
+
         toast({ title: "Actualizado", description: "El parte de producción se actualizó correctamente" })
         if (onSaveComplete) onSaveComplete()
       } else {
@@ -802,6 +835,20 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
               reasons: breakage.reasons,
               comments: breakage.comments || null,
             })
+          }
+        }
+
+        // Save pipe breakages (Villa Rosa)
+        for (const [reason, sizes] of Object.entries(pipeBreakages)) {
+          for (const [size, quantity] of Object.entries(sizes)) {
+            if (quantity > 0) {
+              await supabase.from("pipe_breakages").insert({
+                production_id: pipeData.id,
+                reason,
+                pipe_size: size,
+                quantity,
+              })
+            }
           }
         }
 
@@ -868,6 +915,15 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     setDowntimes({})
     setObservationsComments("")
     setMoldBreakages([{ size: "", reasons: [], comments: "" }])
+    // Reset pipe breakages
+    const initialBreakages: Record<string, Record<string, number>> = {}
+    PIPE_BREAKAGE_REASONS.forEach(reason => {
+      initialBreakages[reason] = {}
+      PIPE_SIZES.forEach(size => {
+        initialBreakages[reason][size] = 0
+      })
+    })
+    setPipeBreakages(initialBreakages)
   }
 
   return (

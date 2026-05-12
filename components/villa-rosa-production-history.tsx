@@ -53,7 +53,7 @@ export function VillaRosaProductionHistory() {
       // Load pipe production for Villa Rosa (large pipes: 800, 1000, 1200), excluding soft deleted
       const { data: pipeData } = await supabase
         .from("pipe_production")
-        .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
+        .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*), pipe_breakages(*)")
         .eq("plant", "villa-rosa")
         .is("deleted_at", null)
         .order("production_date", { ascending: false })
@@ -82,7 +82,7 @@ export function VillaRosaProductionHistory() {
 
     let pipeQuery = supabase
       .from("pipe_production")
-      .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*)")
+      .select("*, pipe_downtime(*, downtime_reasons(*)), pipe_mold_breakage(*), pipe_breakages(*)")
       .eq("plant", "villa-rosa")
       .is("deleted_at", null)
       .order("production_date", { ascending: false })
