@@ -514,10 +514,11 @@ export default function PipeQualityPage() {
       })) || []
       return { diameter: d, reasons }
     })
-    setDefects(newDefects)
-    
-    setEditingControl(control)
-    setActiveTab("planilla")
+  setDefects(newDefects)
+  setRecoveredPipes(control.recovered_pipes || 0)
+  
+  setEditingControl(control)
+  setActiveTab("planilla")
     setExpandedControl(null)
   }
 
@@ -629,6 +630,7 @@ export default function PipeQualityPage() {
   setItems(PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0 })))
   setDefects(PIPE_DIAMETERS.map((d) => ({ diameter: d, reasons: [] })))
   setOtherDefectComments({})
+  setRecoveredPipes(0)
   setEditingControl(null)
   }
 
@@ -714,6 +716,7 @@ export default function PipeQualityPage() {
           defects: activeDefects,
           observations,
           plant: selectedPlant,
+          recovered_pipes: recoveredPipes,
         }),
       })
       if (res.ok) {
@@ -770,7 +773,7 @@ export default function PipeQualityPage() {
                   {editingControl ? "Editar Planilla de Control" : "Produccion Canos - Nueva Planilla de Control"}
                 </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6" ref={formRef} onKeyDown={(e) => {
+          <CardContent className="space-y-4" ref={formRef} onKeyDown={(e) => {
             if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
               e.preventDefault()
               const form = formRef.current
@@ -797,311 +800,209 @@ export default function PipeQualityPage() {
               }
             }
           }}>
-            {/* Header fields */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Fecha</Label>
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-sm" />
+            {/* Header fields - Compacto */}
+            <div className="flex flex-wrap gap-3 items-end">
+              <div className="space-y-0.5">
+                <Label className="text-[10px] text-muted-foreground">Fecha</Label>
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-8 text-xs w-36" />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Lote</Label>
-                <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="Ej: L-2026-02" className="text-sm" required />
+              <div className="space-y-0.5">
+                <Label className="text-[10px] text-muted-foreground">Lote *</Label>
+                <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="L-2026-02" className="h-8 text-xs w-28" required />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Orden de Fabricacion</Label>
-                <Input value={fabricationOrder} onChange={(e) => setFabricationOrder(e.target.value)} placeholder="OF-001" className="text-sm" />
+              <div className="space-y-0.5">
+                <Label className="text-[10px] text-muted-foreground">OF</Label>
+                <Input value={fabricationOrder} onChange={(e) => setFabricationOrder(e.target.value)} placeholder="OF-001" className="h-8 text-xs w-24" />
               </div>
-              <div />
             </div>
 
-            {/* TABLA 1: Cantidades de produccion */}
+            {/* TABLA 1: Cantidades de produccion - Compacta */}
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <ClipboardList className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold text-foreground">Tabla 1 - Produccion de Canos</h3>
-              </div>
-              <div className="border border-border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-muted/50">
-                      <th className="text-left py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Producto</th>
-                      <th className="text-center py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Max.</th>
-                      <th className="text-center py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-emerald-600">Primera</th>
-                      <th className="text-center py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-amber-600">Segunda</th>
-                      <th className="text-center py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-destructive">Rotos</th>
-                      <th className="text-center py-2.5 px-4 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, idx) => {
-                      const total = item.first_quality + item.second_quality + item.broken
-                      const max = MAX_UNITS[item.diameter]
-                      return (
-                        <tr key={item.diameter} className="border-t border-border/50">
-                          <td className="py-2 px-4">
-                            <span className="font-semibold text-foreground">Cano {item.diameter}</span>
-                          </td>
-                          <td className="py-2 px-4 text-center text-xs text-muted-foreground">{max}</td>
-                          <td className="py-2 px-4 text-center">
-                            <Input
-                              type="number"
-                              min="0"
-                              max={max}
-                              value={item.first_quality || ""}
-                              onChange={(e) => updateItem(idx, "first_quality", parseInt(e.target.value) || 0)}
-                              onKeyDown={handleEnterKey}
-                              className="w-20 h-8 text-xs text-center mx-auto"
-                            />
-                          </td>
-                          <td className="py-2 px-4 text-center">
-                            <Input
-                              type="number"
-                              min="0"
-                              value={item.second_quality || ""}
-                              onChange={(e) => updateItem(idx, "second_quality", parseInt(e.target.value) || 0)}
-                              onKeyDown={handleEnterKey}
-                              className="w-20 h-8 text-xs text-center mx-auto"
-                            />
-                          </td>
-                          <td className="py-2 px-4 text-center">
-                            <Input
-                              type="number"
-                              onKeyDown={handleEnterKey}
-                              min="0"
-                              value={item.broken || ""}
-                              onChange={(e) => updateItem(idx, "broken", parseInt(e.target.value) || 0)}
-                              className="w-20 h-8 text-xs text-center mx-auto"
-                            />
-                          </td>
-                          <td className="py-2 px-4 text-center text-xs font-semibold text-foreground">{total > 0 ? total : "-"}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/50 border-t border-border font-semibold">
-                      <td className="py-2.5 px-4 text-sm" colSpan={2}>Totales</td>
-                      <td className="py-2.5 px-4 text-center text-sm text-emerald-600">{totalFirst}</td>
-                      <td className="py-2.5 px-4 text-center text-sm text-amber-600">{totalSecond}</td>
-                      <td className="py-2.5 px-4 text-center text-sm text-destructive">{totalBroken}</td>
-                      <td className="py-2.5 px-4 text-center text-sm">{totalUnits}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              <h3 className="text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                <ClipboardList className="h-3.5 w-3.5" /> Tabla 1 - Produccion
+              </h3>
+              <table className="w-full text-xs border border-border rounded">
+                <thead>
+                  <tr className="bg-muted/50">
+                    <th className="text-left py-1 px-2 font-medium">Producto</th>
+                    <th className="text-center py-1 px-1 font-medium text-emerald-600 w-16">1ra</th>
+                    <th className="text-center py-1 px-1 font-medium text-amber-600 w-16">2da</th>
+                    <th className="text-center py-1 px-1 font-medium text-destructive w-16">Rotos</th>
+                    <th className="text-center py-1 px-1 font-medium w-12">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, idx) => {
+                    const total = item.first_quality + item.second_quality + item.broken
+                    return (
+                      <tr key={item.diameter} className="border-t border-border/50">
+                        <td className="py-1 px-2 font-medium">Caño {item.diameter}</td>
+                        <td className="py-0.5 px-1 text-center">
+                          <Input type="number" min="0" value={item.first_quality || ""} onChange={(e) => updateItem(idx, "first_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
+                        </td>
+                        <td className="py-0.5 px-1 text-center">
+                          <Input type="number" min="0" value={item.second_quality || ""} onChange={(e) => updateItem(idx, "second_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
+                        </td>
+                        <td className="py-0.5 px-1 text-center">
+                          <Input type="number" min="0" value={item.broken || ""} onChange={(e) => updateItem(idx, "broken", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
+                        </td>
+                        <td className="py-1 px-1 text-center font-semibold">{total || "-"}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-muted/50 border-t font-semibold">
+                    <td className="py-1 px-2">Total</td>
+                    <td className="py-1 px-1 text-center text-emerald-600">{totalFirst}</td>
+                    <td className="py-1 px-1 text-center text-amber-600">{totalSecond}</td>
+                    <td className="py-1 px-1 text-center text-destructive">{totalBroken}</td>
+                    <td className="py-1 px-1 text-center">{totalUnits}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
 
-            {/* Caños Recuperados - después de Tabla 1 */}
-            <div className="flex items-center gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <Label htmlFor="recoveredPipes" className="text-sm font-medium text-emerald-800 whitespace-nowrap">Caños Recuperados:</Label>
-              <Input
-                id="recoveredPipes"
-                type="number"
-                min="0"
-                value={recoveredPipes || ""}
-                onChange={(e) => setRecoveredPipes(parseInt(e.target.value) || 0)}
-                onKeyDown={handleEnterKey}
-                className="w-24 h-8 text-sm text-center"
-                placeholder="0"
-              />
+            {/* Caños Recuperados - compacto */}
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded w-fit">
+              <Label htmlFor="recoveredPipes" className="text-xs font-medium text-emerald-800">Caños Recuperados:</Label>
+              <Input id="recoveredPipes" type="number" min="0" value={recoveredPipes || ""} onChange={(e) => setRecoveredPipes(parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-16 h-6 text-xs text-center" placeholder="0" />
             </div>
 
-            {/* TABLA 2: Clasificacion de Defectos - visible cuando hay segunda o rotos */}
+            {/* TABLA 2: Clasificacion de Defectos - Compacta */}
             {(totalSecond > 0 || totalBroken > 0) && (
               <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                  <h3 className="text-sm font-semibold text-foreground">Tabla 2 - Clasificacion de Defectos en Canos</h3>
-                </div>
+                <h3 className="text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Tabla 2 - Defectos
+                </h3>
                 {(() => {
                   const diametersWithDefects = items.filter((i) => i.second_quality > 0 || i.broken > 0)
                   return (
-                    <div className="border border-border rounded-lg overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="bg-muted/50">
-                            <th className="text-left py-2.5 px-3 text-[10px] uppercase tracking-widest font-medium text-muted-foreground min-w-[200px]">Motivo de Defecto</th>
-                            {diametersWithDefects.map((item) => (
-                              <th key={item.diameter} className="text-center py-2.5 px-2 text-[10px] uppercase tracking-widest font-medium text-muted-foreground min-w-[70px]">
-                                <div>{item.diameter}</div>
-                                <div className="text-[9px] font-normal text-amber-600/80">({item.second_quality + item.broken})</div>
-                              </th>
-                            ))}
-                            <th className="text-center py-2.5 px-3 text-[10px] uppercase tracking-widest font-semibold text-foreground min-w-[60px]">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {/* Rotura dentro de produccion */}
-                          <tr className="bg-amber-500/5">
-                            <td colSpan={diametersWithDefects.length + 2} className="py-2 px-3 text-[10px] uppercase tracking-widest font-bold text-amber-700">
-                              Rotura dentro de Produccion
-                            </td>
-                          </tr>
-                          {productionReasons.map((reason) => {
-                            const rowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, reason.id), 0)
-                            return (
-                              <tr key={reason.id} className="border-t border-border/30 hover:bg-muted/20">
-                                <td className="py-1.5 px-3 text-muted-foreground">{reason.reason}</td>
-                                {diametersWithDefects.map((item) => (
-                                  <td key={item.diameter} className="py-1.5 px-2 text-center">
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      value={getDefectQuantity(item.diameter, reason.id) || ""}
-                                      onChange={(e) => updateDefect(item.diameter, reason.id, parseInt(e.target.value) || 0)}
-                                      className="w-14 h-7 text-xs text-center mx-auto"
-                                    />
-                                  </td>
-                                ))}
-                                <td className="py-1.5 px-3 text-center font-semibold text-foreground">{rowTotal > 0 ? rowTotal : "-"}</td>
-                              </tr>
-                            )
-                          })}
-                          {/* Rotura en desmolde */}
-                          <tr className="bg-red-500/5">
-                            <td colSpan={diametersWithDefects.length + 2} className="py-2 px-3 text-[10px] uppercase tracking-widest font-bold text-red-700">
-                              Rotura en Desmolde
-                            </td>
-                          </tr>
-                          {desmoldeReasons.map((reason) => {
-                            const rowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, reason.id), 0)
-                            return (
-                              <tr key={reason.id} className="border-t border-border/30 hover:bg-muted/20">
-                                <td className="py-1.5 px-3 text-muted-foreground">{reason.reason}</td>
-                                {diametersWithDefects.map((item) => (
-                                  <td key={item.diameter} className="py-1.5 px-2 text-center">
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      value={getDefectQuantity(item.diameter, reason.id) || ""}
-                                      onChange={(e) => updateDefect(item.diameter, reason.id, parseInt(e.target.value) || 0)}
-                                      className="w-14 h-7 text-xs text-center mx-auto"
-                                    />
-                                  </td>
-                                ))}
-                                <td className="py-1.5 px-3 text-center font-semibold text-foreground">{rowTotal > 0 ? rowTotal : "-"}</td>
-                              </tr>
-                            )
-                          })}
-                          {/* Otra */}
-                          <tr className="bg-slate-500/5">
-                            <td colSpan={diametersWithDefects.length + 2} className="py-2 px-3 text-[10px] uppercase tracking-widest font-bold text-slate-700">
-                              Otro Motivo
-                            </td>
-                          </tr>
-                          {(() => {
-                            const otherRowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID), 0)
-                            const diametersWithOther = diametersWithDefects.filter(item => getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID) > 0)
-                            return (
-                              <>
-                                <tr className="border-t border-border/30 hover:bg-muted/20">
-                                  <td className="py-1.5 px-3 text-muted-foreground">Otra (especificar abajo)</td>
-                                  {diametersWithDefects.map((item) => (
-                                    <td key={item.diameter} className="py-1.5 px-2 text-center">
-                                      <Input
-                                        type="number"
-                                        min="0"
-                                        value={getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID) || ""}
-                                        onChange={(e) => updateDefect(item.diameter, OTHER_DEFECT_REASON_ID, parseInt(e.target.value) || 0)}
-                                        className="w-14 h-7 text-xs text-center mx-auto"
-                                      />
-                                    </td>
-                                  ))}
-                                  <td className="py-1.5 px-3 text-center font-semibold text-foreground">{otherRowTotal > 0 ? otherRowTotal : "-"}</td>
-                                </tr>
-                                {diametersWithOther.length > 0 && (
-                                  <tr className="border-t border-border/30 bg-slate-50">
-                                    <td colSpan={diametersWithDefects.length + 2} className="py-2 px-3">
-                                      <div className="space-y-2">
-                                        {diametersWithOther.map((item) => (
-                                          <div key={item.diameter} className="flex items-center gap-2">
-                                            <span className="text-xs font-medium text-muted-foreground min-w-[80px]">Cano {item.diameter}:</span>
-                                            <Input
-                                              type="text"
-                                              placeholder="Especifique el motivo del defecto..."
-                                              value={otherDefectComments[item.diameter] || ""}
-                                              onChange={(e) => setOtherDefectComments(prev => ({ ...prev, [item.diameter]: e.target.value }))}
-                                              className="flex-1 h-7 text-xs"
-                                            />
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </>
-                            )
-                          })()}
-                        </tbody>
-                        <tfoot>
-                          <tr className="bg-muted/50 border-t border-border font-semibold">
-                            <td className="py-2 px-3 text-xs">Total Defectos</td>
-                            {diametersWithDefects.map((item) => {
-                              const colTotal = getTotalDefectsForDiameter(item.diameter)
-                              const expected = item.second_quality + item.broken
-                              const matches = colTotal === expected
-                              return (
-                                <td key={item.diameter} className="py-2 px-2 text-center">
-                                  <span className={matches ? "text-emerald-600" : "text-destructive"}>
-                                    {colTotal}/{expected}
-                                  </span>
+                    <table className="w-full text-xs border border-border rounded">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          <th className="text-left py-1 px-2 font-medium text-muted-foreground">Motivo</th>
+                          {diametersWithDefects.map((item) => (
+                            <th key={item.diameter} className="text-center py-1 px-1 font-medium w-14">
+                              {item.diameter} <span className="text-[9px] text-amber-600">({item.second_quality + item.broken})</span>
+                            </th>
+                          ))}
+                          <th className="text-center py-1 px-1 font-medium w-10">Tot</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Rotura produccion */}
+                        <tr className="bg-amber-50"><td colSpan={diametersWithDefects.length + 2} className="py-0.5 px-2 text-[9px] uppercase font-bold text-amber-700">Rotura Produccion</td></tr>
+                        {productionReasons.map((reason) => {
+                          const rowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, reason.id), 0)
+                          return (
+                            <tr key={reason.id} className="border-t border-border/30">
+                              <td className="py-0.5 px-2 text-[11px] text-muted-foreground">{reason.reason}</td>
+                              {diametersWithDefects.map((item) => (
+                                <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                                  <Input type="number" min="0" value={getDefectQuantity(item.diameter, reason.id) || ""} onChange={(e) => updateDefect(item.diameter, reason.id, parseInt(e.target.value) || 0)} className="w-12 h-5 text-[10px] text-center" />
                                 </td>
-                              )
-                            })}
-                            <td className="py-2 px-3 text-center text-sm">
-                              {diametersWithDefects.reduce((s, i) => s + getTotalDefectsForDiameter(i.diameter), 0)}
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
+                              ))}
+                              <td className="py-0.5 px-1 text-center font-semibold">{rowTotal || "-"}</td>
+                            </tr>
+                          )
+                        })}
+                        {/* Desmolde */}
+                        <tr className="bg-red-50"><td colSpan={diametersWithDefects.length + 2} className="py-0.5 px-2 text-[9px] uppercase font-bold text-red-700">Rotura Desmolde</td></tr>
+                        {desmoldeReasons.map((reason) => {
+                          const rowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, reason.id), 0)
+                          return (
+                            <tr key={reason.id} className="border-t border-border/30">
+                              <td className="py-0.5 px-2 text-[11px] text-muted-foreground">{reason.reason}</td>
+                              {diametersWithDefects.map((item) => (
+                                <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                                  <Input type="number" min="0" value={getDefectQuantity(item.diameter, reason.id) || ""} onChange={(e) => updateDefect(item.diameter, reason.id, parseInt(e.target.value) || 0)} className="w-12 h-5 text-[10px] text-center" />
+                                </td>
+                              ))}
+                              <td className="py-0.5 px-1 text-center font-semibold">{rowTotal || "-"}</td>
+                            </tr>
+                          )
+                        })}
+                        {/* Otra */}
+                        <tr className="bg-slate-50"><td colSpan={diametersWithDefects.length + 2} className="py-0.5 px-2 text-[9px] uppercase font-bold text-slate-700">Otro</td></tr>
+                        {(() => {
+                          const otherRowTotal = diametersWithDefects.reduce((s, item) => s + getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID), 0)
+                          const diametersWithOther = diametersWithDefects.filter(item => getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID) > 0)
+                          return (
+                            <>
+                              <tr className="border-t border-border/30">
+                                <td className="py-0.5 px-2 text-[11px] text-muted-foreground">Otra</td>
+                                {diametersWithDefects.map((item) => (
+                                  <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                                    <Input type="number" min="0" value={getDefectQuantity(item.diameter, OTHER_DEFECT_REASON_ID) || ""} onChange={(e) => updateDefect(item.diameter, OTHER_DEFECT_REASON_ID, parseInt(e.target.value) || 0)} className="w-12 h-5 text-[10px] text-center" />
+                                  </td>
+                                ))}
+                                <td className="py-0.5 px-1 text-center font-semibold">{otherRowTotal || "-"}</td>
+                              </tr>
+                              {diametersWithOther.length > 0 && (
+                                <tr className="border-t border-border/30 bg-slate-50">
+                                  <td colSpan={diametersWithDefects.length + 2} className="py-1 px-2">
+                                    <div className="flex flex-wrap gap-2">
+                                      {diametersWithOther.map((item) => (
+                                        <div key={item.diameter} className="flex items-center gap-1">
+                                          <span className="text-[10px] text-muted-foreground">{item.diameter}:</span>
+                                          <Input type="text" placeholder="Motivo..." value={otherDefectComments[item.diameter] || ""} onChange={(e) => setOtherDefectComments(prev => ({ ...prev, [item.diameter]: e.target.value }))} className="h-5 text-[10px] w-32" />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
+                          )
+                        })()}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-muted/50 border-t font-semibold">
+                          <td className="py-1 px-2 text-[10px]">Total</td>
+                          {diametersWithDefects.map((item) => {
+                            const colTotal = getTotalDefectsForDiameter(item.diameter)
+                            const expected = item.second_quality + item.broken
+                            const matches = colTotal === expected
+                            return <td key={item.diameter} className="py-1 px-1 text-center"><span className={matches ? "text-emerald-600" : "text-destructive"}>{colTotal}/{expected}</span></td>
+                          })}
+                          <td className="py-1 px-1 text-center">{diametersWithDefects.reduce((s, i) => s + getTotalDefectsForDiameter(i.diameter), 0)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
                   )
                 })()}
                 {/* Warning */}
                 {diametersMissingDefects.length > 0 && (
-                  <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mt-3">
-                    <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                    <div className="text-xs text-amber-700">
-                      <span className="font-semibold">La cantidad de defectos clasificados no coincide con segunda + rotos para: </span>
-                      {diametersMissingDefects.map((i) => `Cano ${i.diameter}`).join(", ")}.
-                    </div>
+                  <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+                    <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+                    <span className="text-[10px] text-amber-700">Defectos no coinciden: {diametersMissingDefects.map((i) => i.diameter).join(", ")}</span>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Summary cards */}
+            {/* Summary - inline compact */}
             {totalUnits > 0 && (
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-muted/50 p-3 rounded-lg border border-border text-center">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Primera Calidad</div>
-                  <div className="text-xl font-bold text-emerald-600">{totalFirst}</div>
-                  <div className="text-[10px] text-muted-foreground">{totalUnits > 0 ? ((totalFirst / totalUnits) * 100).toFixed(1) : 0}%</div>
-                </div>
-                <div className="bg-muted/50 p-3 rounded-lg border border-border text-center">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Segunda Calidad</div>
-                  <div className="text-xl font-bold text-amber-600">{totalSecond}</div>
-                  <div className="text-[10px] text-muted-foreground">{totalUnits > 0 ? ((totalSecond / totalUnits) * 100).toFixed(1) : 0}%</div>
-                </div>
-                <div className="bg-muted/50 p-3 rounded-lg border border-border text-center">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Rotos</div>
-                  <div className="text-xl font-bold text-destructive">{totalBroken}</div>
-                  <div className="text-[10px] text-muted-foreground">{totalUnits > 0 ? ((totalBroken / totalUnits) * 100).toFixed(1) : 0}%</div>
-                </div>
+              <div className="flex gap-4 text-xs border border-border rounded px-3 py-2 bg-muted/30">
+                <div className="text-center"><span className="text-muted-foreground">1ra:</span> <span className="font-bold text-emerald-600">{totalFirst}</span> <span className="text-[10px] text-muted-foreground">({((totalFirst / totalUnits) * 100).toFixed(0)}%)</span></div>
+                <div className="text-center"><span className="text-muted-foreground">2da:</span> <span className="font-bold text-amber-600">{totalSecond}</span> <span className="text-[10px] text-muted-foreground">({((totalSecond / totalUnits) * 100).toFixed(0)}%)</span></div>
+                <div className="text-center"><span className="text-muted-foreground">Rotos:</span> <span className="font-bold text-destructive">{totalBroken}</span> <span className="text-[10px] text-muted-foreground">({((totalBroken / totalUnits) * 100).toFixed(0)}%)</span></div>
+                <div className="text-center"><span className="text-muted-foreground">Total:</span> <span className="font-bold">{totalUnits}</span></div>
               </div>
             )}
 
-            {/* Signatures */}
-            <div className="grid grid-cols-2 gap-4 border-t border-border pt-4">
-              <div className="space-y-1.5 relative">
-                <Label className="text-xs">Responsable Produccion</Label>
+            {/* Signatures - compact */}
+            <div className="flex gap-3 border-t border-border pt-3">
+              <div className="flex-1 space-y-0.5 relative">
+                <Label className="text-[10px] text-muted-foreground">Resp. Produccion *</Label>
                 <Input
                   value={productionRespName}
                   onChange={(e) => { setProductionRespName(e.target.value); setShowProductionDropdown(true) }}
                   onFocus={() => setShowProductionDropdown(true)}
                   onBlur={() => setTimeout(() => setShowProductionDropdown(false), 200)}
-                  placeholder="Escribir nombre..."
-                  className="text-sm"
+                  placeholder="Nombre..."
+                  className="h-8 text-xs"
                   autoComplete="off"
                 />
                 {showProductionDropdown && productionRespName.trim().length > 0 && (
@@ -1142,15 +1043,15 @@ export default function PipeQualityPage() {
                   </div>
                 )}
               </div>
-              <div className="space-y-1.5 relative">
-                <Label className="text-xs">Responsable Logistica</Label>
+              <div className="flex-1 space-y-0.5 relative">
+                <Label className="text-[10px] text-muted-foreground">Resp. Logistica *</Label>
                 <Input
                   value={logisticsRespName}
                   onChange={(e) => { setLogisticsRespName(e.target.value); setShowLogisticsDropdown(true) }}
                   onFocus={() => setShowLogisticsDropdown(true)}
                   onBlur={() => setTimeout(() => setShowLogisticsDropdown(false), 200)}
-                  placeholder="Escribir nombre..."
-                  className="text-sm"
+                  placeholder="Nombre..."
+                  className="h-8 text-xs"
                   autoComplete="off"
                 />
                 {showLogisticsDropdown && logisticsRespName.trim().length > 0 && (
