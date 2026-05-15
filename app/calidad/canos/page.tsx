@@ -833,7 +833,7 @@ export default function PipeQualityPage() {
               </div>
             </div>
 
-            {/* TABLA 1: Cantidades de produccion - Compacta */}
+            {/* TABLA 1: Cantidades de produccion - Diámetros en columnas (eje X) */}
             <div>
               <h3 className="text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
                 <ClipboardList className="h-3.5 w-3.5" /> Tabla 1 - Produccion
@@ -841,49 +841,106 @@ export default function PipeQualityPage() {
               <table className="w-full text-xs border border-border rounded">
                 <thead>
                   <tr className="bg-muted/50">
-                    <th className="text-left py-1 px-2 font-medium">Producto</th>
-                    <th className="text-center py-1 px-1 font-medium text-emerald-600 w-16">1ra</th>
-                    <th className="text-center py-1 px-1 font-medium text-amber-600 w-16">2da</th>
-                    <th className="text-center py-1 px-1 font-medium text-destructive w-16">Rotos</th>
-                    <th className="text-center py-1 px-1 font-medium w-12">Total</th>
+                    <th className="text-left py-1 px-2 font-medium w-16">Calidad</th>
+                    {PIPE_DIAMETERS.map(d => (
+                      <th key={d} className="text-center py-1 px-1 font-medium">{d}</th>
+                    ))}
+                    <th className="text-center py-1 px-1 font-medium w-14">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, idx) => {
-                    const total = item.first_quality + item.second_quality + item.broken
-                    return (
-                      <tr key={item.diameter} className="border-t border-border/50">
-                        <td className="py-1 px-2 font-medium">Caño {item.diameter}</td>
-                        <td className="py-0.5 px-1 text-center">
-                          <Input type="number" min="0" value={item.first_quality || ""} onChange={(e) => updateItem(idx, "first_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
-                        </td>
-                        <td className="py-0.5 px-1 text-center">
-                          <Input type="number" min="0" value={item.second_quality || ""} onChange={(e) => updateItem(idx, "second_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
-                        </td>
-                        <td className="py-0.5 px-1 text-center">
-                          <Input type="number" min="0" value={item.broken || ""} onChange={(e) => updateItem(idx, "broken", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-14 h-6 text-xs text-center" />
-                        </td>
-                        <td className="py-1 px-1 text-center font-semibold">{total || "-"}</td>
-                      </tr>
-                    )
-                  })}
+                  <tr className="border-t border-border/50">
+                    <td className="py-1 px-2 font-medium text-emerald-600">1ra</td>
+                    {items.map((item, idx) => (
+                      <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={item.first_quality || ""} onChange={(e) => updateItem(idx, "first_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-emerald-600">{totalFirst}</td>
+                  </tr>
+                  <tr className="border-t border-border/50">
+                    <td className="py-1 px-2 font-medium text-amber-600">2da</td>
+                    {items.map((item, idx) => (
+                      <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={item.second_quality || ""} onChange={(e) => updateItem(idx, "second_quality", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-amber-600">{totalSecond}</td>
+                  </tr>
+                  <tr className="border-t border-border/50">
+                    <td className="py-1 px-2 font-medium text-destructive">Rotos</td>
+                    {items.map((item, idx) => (
+                      <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={item.broken || ""} onChange={(e) => updateItem(idx, "broken", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-destructive">{totalBroken}</td>
+                  </tr>
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 border-t font-semibold">
                     <td className="py-1 px-2">Total</td>
-                    <td className="py-1 px-1 text-center text-emerald-600">{totalFirst}</td>
-                    <td className="py-1 px-1 text-center text-amber-600">{totalSecond}</td>
-                    <td className="py-1 px-1 text-center text-destructive">{totalBroken}</td>
+                    {items.map((item) => (
+                      <td key={item.diameter} className="py-1 px-1 text-center">{item.first_quality + item.second_quality + item.broken || "-"}</td>
+                    ))}
                     <td className="py-1 px-1 text-center">{totalUnits}</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
 
-            {/* Caños Recuperados - compacto */}
-            <div className="flex items-center gap-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded w-fit">
-              <Label htmlFor="recoveredPipes" className="text-xs font-medium text-emerald-800">Caños Recuperados:</Label>
-              <Input id="recoveredPipes" type="number" min="0" value={recoveredPipes || ""} onChange={(e) => setRecoveredPipes(parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-16 h-6 text-xs text-center" placeholder="0" />
+            {/* Caños Recuperados - Tabla por tipo de caño */}
+            <div>
+              <h3 className="text-xs font-semibold text-emerald-800 mb-1.5">Caños Recuperados</h3>
+              <table className="text-xs border border-emerald-200 rounded bg-emerald-50/50">
+                <thead>
+                  <tr className="bg-emerald-100/50">
+                    <th className="text-left py-1 px-2 font-medium w-16">Salida</th>
+                    {PIPE_DIAMETERS.map(d => (
+                      <th key={d} className="text-center py-1 px-1 font-medium">{d}</th>
+                    ))}
+                    <th className="text-center py-1 px-1 font-medium w-14">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-emerald-200/50">
+                    <td className="py-1 px-2 font-medium text-emerald-700">1ra</td>
+                    {PIPE_DIAMETERS.map(d => (
+                      <td key={d} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={recoveredPipes[d]?.first || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], first: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-emerald-700">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.first || 0), 0)}</td>
+                  </tr>
+                  <tr className="border-t border-emerald-200/50">
+                    <td className="py-1 px-2 font-medium text-amber-600">2da</td>
+                    {PIPE_DIAMETERS.map(d => (
+                      <td key={d} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={recoveredPipes[d]?.second || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], second: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-amber-600">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.second || 0), 0)}</td>
+                  </tr>
+                  <tr className="border-t border-emerald-200/50">
+                    <td className="py-1 px-2 font-medium text-destructive">Scrap</td>
+                    {PIPE_DIAMETERS.map(d => (
+                      <td key={d} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={recoveredPipes[d]?.scrap || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], scrap: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-destructive">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.scrap || 0), 0)}</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr className="bg-emerald-100/50 border-t border-emerald-200 font-semibold">
+                    <td className="py-1 px-2">Total</td>
+                    {PIPE_DIAMETERS.map(d => (
+                      <td key={d} className="py-1 px-1 text-center">{(recoveredPipes[d]?.first || 0) + (recoveredPipes[d]?.second || 0) + (recoveredPipes[d]?.scrap || 0) || "-"}</td>
+                    ))}
+                    <td className="py-1 px-1 text-center">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.first || 0) + (recoveredPipes[d]?.second || 0) + (recoveredPipes[d]?.scrap || 0), 0)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
 
             {/* TABLA 2: Clasificacion de Defectos - Compacta */}
