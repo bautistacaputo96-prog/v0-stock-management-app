@@ -597,29 +597,6 @@ export default function PipeQualityPage() {
       setControlToDelete(null)
     }
   }
-      
-      // Then delete items
-      await supabase
-        .from("pipe_quality_items")
-        .delete()
-        .eq("pipe_quality_control_id", id)
-      
-      // Finally delete control
-      const { error } = await supabase
-        .from("pipe_quality_control")
-        .delete()
-        .eq("id", id)
-      
-      if (error) throw error
-      
-      fetchControls()
-    } catch (error) {
-      console.error("Error deleting control:", error)
-      alert("Error al eliminar la planilla")
-    } finally {
-      setDeletingId(null)
-    }
-  }
 
   // Export PDF function
   const handleExportPDF = async () => {
