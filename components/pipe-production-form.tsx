@@ -26,6 +26,19 @@ interface MoldBreakage {
   comments: string
 }
 
+// Motivos de rotura de CAÑOS (para la tabla de cantidades por tipo)
+const PIPE_BREAKAGE_REASONS = [
+  "Mezcla seca",
+  "Mezcla pasada de agua",
+  "Aro en mal estado",
+  "Desmolde",
+  "Trabas molde",
+  "Trabas aro",
+  "Mala vibración",
+  "Mal llenado",
+  "Traslado",
+]
+
 // Motivos de rotura de molde según el PDF actualizado
 const MOLD_BREAKAGE_REASONS = [
   "Autoelevador",
@@ -410,6 +423,17 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
   const [downtimes, setDowntimes] = useState<Record<string, DowntimeEntry>>({})
   const [observationsComments, setObservationsComments] = useState("")
   const [moldBreakages, setMoldBreakages] = useState<MoldBreakage[]>([{ size: "", reasons: [], comments: "" }])
+  // Tabla de motivos de rotura por tipo de caño: { "Mezcla seca": { "800": 0, "1000": 0, "1200": 0 }, ... }
+  const [pipeBreakages, setPipeBreakages] = useState<Record<string, Record<string, number>>>(() => {
+    const initial: Record<string, Record<string, number>> = {}
+    PIPE_BREAKAGE_REASONS.forEach(reason => {
+      initial[reason] = {}
+      PIPE_SIZES.forEach(size => {
+        initial[reason][size] = 0
+      })
+    })
+    return initial
+  })
 
   // Funciones para manejar roturas de molde
   const addMoldBreakage = () => {
@@ -559,6 +583,23 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         setMoldBreakages(breakagesData)
       } else {
         setMoldBreakages([{ size: "", reasons: [], comments: "" }])
+      }
+
+      // Load pipe breakages (Villa Rosa)
+      if (editingRecord.pipe_breakages && editingRecord.pipe_breakages.length > 0) {
+        const breakagesData: Record<string, Record<string, number>> = {}
+        PIPE_BREAKAGE_REASONS.forEach(reason => {
+          breakagesData[reason] = {}
+          PIPE_SIZES.forEach(size => {
+            breakagesData[reason][size] = 0
+          })
+        })
+        editingRecord.pipe_breakages.forEach((b: any) => {
+          if (breakagesData[b.reason]) {
+            breakagesData[b.reason][b.pipe_size] = b.quantity || 0
+          }
+        })
+        setPipeBreakages(breakagesData)
       }
     }
   }, [editingRecord])
@@ -730,6 +771,22 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
           }
         }
 
+        // Delete old pipe breakages and insert new ones (Villa Rosa)
+        await supabase.from("pipe_breakages").delete().eq("production_id", editingRecord.id)
+        
+        for (const [reason, sizes] of Object.entries(pipeBreakages)) {
+          for (const [size, quantity] of Object.entries(sizes)) {
+            if (quantity > 0) {
+              await supabase.from("pipe_breakages").insert({
+                production_id: editingRecord.id,
+                reason,
+                pipe_size: size,
+                quantity,
+              })
+            }
+          }
+        }
+
         toast({ title: "Actualizado", description: "El parte de producción se actualizó correctamente" })
         if (onSaveComplete) onSaveComplete()
       } else {
@@ -778,6 +835,20 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
               reasons: breakage.reasons,
               comments: breakage.comments || null,
             })
+          }
+        }
+
+        // Save pipe breakages (Villa Rosa)
+        for (const [reason, sizes] of Object.entries(pipeBreakages)) {
+          for (const [size, quantity] of Object.entries(sizes)) {
+            if (quantity > 0) {
+              await supabase.from("pipe_breakages").insert({
+                production_id: pipeData.id,
+                reason,
+                pipe_size: size,
+                quantity,
+              })
+            }
           }
         }
 
@@ -844,6 +915,15 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
     setDowntimes({})
     setObservationsComments("")
     setMoldBreakages([{ size: "", reasons: [], comments: "" }])
+    // Reset pipe breakages
+    const initialBreakages: Record<string, Record<string, number>> = {}
+    PIPE_BREAKAGE_REASONS.forEach(reason => {
+      initialBreakages[reason] = {}
+      PIPE_SIZES.forEach(size => {
+        initialBreakages[reason][size] = 0
+      })
+    })
+    setPipeBreakages(initialBreakages)
   }
 
   return (
@@ -1443,6 +1523,58 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         </div>
       </div>
 
+      {/* Tabla de Motivos de Rotura - Solo Villa Rosa */}
+      {plantName === "Villa Rosa" && (
+        <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/30 p-3">
+          <h3 className="text-sm font-semibold text-red-800">Motivos de Rotura</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-red-200">
+                  <th className="text-left p-1 font-medium text-red-700">Motivo</th>
+                  {PIPE_SIZES.map(size => (
+                    <th key={size} className="text-center p-1 font-medium text-red-700 w-16">{size}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {PIPE_BREAKAGE_REASONS.map(reason => (
+                  <tr key={reason} className="border-b border-red-100">
+                    <td className="p-1 text-[11px]">{reason}</td>
+                    {PIPE_SIZES.map(size => (
+                      <td key={size} className="p-1">
+                        <Input
+                          type="number"
+                          min="0"
+                          className="h-6 w-14 text-xs text-center"
+                          value={pipeBreakages[reason]?.[size] || ""}
+                          onChange={(e) => {
+                            const value = e.target.value === "" ? 0 : Number(e.target.value) || 0
+                            setPipeBreakages(prev => ({
+                              ...prev,
+                              [reason]: { ...prev[reason], [size]: value }
+                            }))
+                          }}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {/* Fila de totales */}
+                <tr className="bg-red-100 font-semibold">
+                  <td className="p-1">TOTAL</td>
+                  {PIPE_SIZES.map(size => (
+                    <td key={size} className="p-1 text-center">
+                      {PIPE_BREAKAGE_REASONS.reduce((sum, reason) => sum + (pipeBreakages[reason]?.[size] || 0), 0)}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Cemento al Finalizar y Blocones */}
       <div className="flex gap-4">
         <div className="space-y-1">
@@ -1520,7 +1652,7 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             <span className="text-[10px] text-muted-foreground">476.5 kg/cajón</span>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-amber-700">C4 - Caños Rotos</Label>
+            <Label className="text-xs text-amber-700">C4 - Ca��os Rotos</Label>
             <Input
               type="number"
               min="0"

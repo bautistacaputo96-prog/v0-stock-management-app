@@ -43,6 +43,7 @@ export async function POST(request: Request) {
         logistics_responsible_id: body.logistics_responsible_id,
         observations: body.observations || null,
         plant: body.plant || "silke",
+        recovered_pipes: body.recovered_pipes || {},
       })
       .select()
       .single()
@@ -128,6 +129,7 @@ export async function PUT(request: Request) {
         production_responsible_id: body.production_responsible_id,
         logistics_responsible_id: body.logistics_responsible_id,
         observations: body.observations || null,
+        recovered_pipes: body.recovered_pipes || {},
       })
       .eq("id", id)
 
