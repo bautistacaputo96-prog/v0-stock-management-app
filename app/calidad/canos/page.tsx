@@ -98,7 +98,11 @@ export default function PipeQualityPage() {
   const [editingControl, setEditingControl] = useState<any | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [otherDefectComments, setOtherDefectComments] = useState<Record<number, string>>({}) // diameter -> comment
-  const [recoveredPipes, setRecoveredPipes] = useState<number>(0) // Caños recuperados
+  const [recoveredPipes, setRecoveredPipes] = useState<Record<number, { first: number; second: number; scrap: number }>>(() => {
+    const initial: Record<number, { first: number; second: number; scrap: number }> = {}
+    PIPE_DIAMETERS.forEach(d => { initial[d] = { first: 0, second: 0, scrap: 0 } })
+    return initial
+  })
   const pdfReportRef = useRef<HTMLDivElement>(null)
   
   // Report filter state
@@ -515,7 +519,18 @@ export default function PipeQualityPage() {
       return { diameter: d, reasons }
     })
   setDefects(newDefects)
-  setRecoveredPipes(control.recovered_pipes || 0)
+  // Load recovered pipes
+  if (control.recovered_pipes && typeof control.recovered_pipes === 'object') {
+    const loaded: Record<number, { first: number; second: number; scrap: number }> = {}
+    PIPE_DIAMETERS.forEach(d => {
+      loaded[d] = control.recovered_pipes[d] || { first: 0, second: 0, scrap: 0 }
+    })
+    setRecoveredPipes(loaded)
+  } else {
+    const initialRecovered: Record<number, { first: number; second: number; scrap: number }> = {}
+    PIPE_DIAMETERS.forEach(d => { initialRecovered[d] = { first: 0, second: 0, scrap: 0 } })
+    setRecoveredPipes(initialRecovered)
+  }
   
   setEditingControl(control)
   setActiveTab("planilla")
@@ -630,7 +645,9 @@ export default function PipeQualityPage() {
   setItems(PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0 })))
   setDefects(PIPE_DIAMETERS.map((d) => ({ diameter: d, reasons: [] })))
   setOtherDefectComments({})
-  setRecoveredPipes(0)
+  const initialRecovered: Record<number, { first: number; second: number; scrap: number }> = {}
+  PIPE_DIAMETERS.forEach(d => { initialRecovered[d] = { first: 0, second: 0, scrap: 0 } })
+  setRecoveredPipes(initialRecovered)
   setEditingControl(null)
   }
 
