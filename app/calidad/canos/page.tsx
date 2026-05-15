@@ -486,7 +486,6 @@ export default function PipeQualityPage() {
 
   // Handle edit control
   const handleEditControl = (control: any) => {
-    console.log("[v0] handleEditControl called with control:", control)
     // Load control data into form using existing state variables
     setDate(control.control_date)
     setLote(control.lote || "")
@@ -497,10 +496,8 @@ export default function PipeQualityPage() {
     const logResp = employees.find(e => e.id === control.logistics_responsible_id)
     setProductionRespName(prodResp ? `${prodResp.first_name} ${prodResp.last_name}` : "")
     setLogisticsRespName(logResp ? `${logResp.first_name} ${logResp.last_name}` : "")
-    console.log("[v0] Setting employees - prod:", prodResp, "log:", logResp)
     
     // Load items
-    console.log("[v0] control.items:", control.items)
     const newItems: PipeItem[] = PIPE_DIAMETERS.map(d => {
       const existingItem = control.items?.find((i: any) => i.diameter === d)
       return {
@@ -510,7 +507,6 @@ export default function PipeQualityPage() {
         broken: existingItem?.broken || 0,
       }
     })
-    console.log("[v0] newItems:", newItems)
     setItems(newItems)
     
     // Load defects
@@ -537,9 +533,13 @@ export default function PipeQualityPage() {
   }
   
   setEditingControl(control)
-  console.log("[v0] Setting activeTab to planilla")
-  setActiveTab("planilla")
-    setExpandedControl(null)
+  setShowForm(true)
+  setActiveTab("historial")
+  setExpandedControl(null)
+  // Scroll al formulario
+  setTimeout(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, 100)
   }
 
   // Handle delete control
