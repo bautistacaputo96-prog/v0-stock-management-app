@@ -13,6 +13,7 @@ import { Navigation } from "@/components/navigation"
 import { PlusCircle, CheckCircle2, Loader2, FileDown, AlertTriangle, ChevronDown, ChevronUp, ClipboardList, UserPlus, BarChart3, History, Pencil, Trash2 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+  import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { PipeQualityExecutiveReport } from "@/components/reports/pipe-quality-executive-report"
 import { exportElementToPDF } from "@/lib/pdf-export"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts"
@@ -97,6 +98,8 @@ export default function PipeQualityPage() {
   const [showPdfPreview, setShowPdfPreview] = useState(false)
   const [editingControl, setEditingControl] = useState<any | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [controlToDelete, setControlToDelete] = useState<{ id: number; lote: string } | null>(null)
   const [otherDefectComments, setOtherDefectComments] = useState<Record<number, string>>({}) // diameter -> comment
   const [recoveredPipes, setRecoveredPipes] = useState<Record<number, { first: number; second: number; scrap: number }>>(() => {
     const initial: Record<number, { first: number; second: number; scrap: number }> = {}
@@ -542,11 +545,19 @@ export default function PipeQualityPage() {
   }, 100)
   }
 
-  // Handle delete control
-  const handleDeleteControl = async (id: number) => {
-    if (!confirm("¿Está seguro de eliminar esta planilla? Esta acción no se puede deshacer.")) return
+// Handle delete control - abre el diálogo de confirmación
+  const handleDeleteControl = (control: { id: number; lote: string }) => {
+    setControlToDelete(control)
+    setDeleteConfirmOpen(true)
+  }
+
+  // Confirma y ejecuta la eliminación
+  const confirmDeleteControl = async () => {
+    if (!controlToDelete) return
     
-    setDeletingId(id)
+    setDeletingId(controlToDelete.id)
+    setDeleteConfirmOpen(false)
+    
     try {
       const supabase = getSupabase()
       
@@ -554,15 +565,38 @@ export default function PipeQualityPage() {
       const { data: items } = await supabase
         .from("pipe_quality_items")
         .select("id")
-        .eq("pipe_quality_control_id", id)
+        .eq("pipe_quality_control_id", controlToDelete.id)
       
       if (items && items.length > 0) {
-        const itemIds = items.map(i => i.id)
+        const itemIds = items.map((i: any) => i.id)
         await supabase
           .from("pipe_quality_defects")
           .delete()
           .in("pipe_quality_item_id", itemIds)
       }
+      
+      // Then delete items
+      await supabase
+        .from("pipe_quality_items")
+        .delete()
+        .eq("pipe_quality_control_id", controlToDelete.id)
+      
+      // Finally delete control
+      const { error } = await supabase
+        .from("pipe_quality_control")
+        .delete()
+        .eq("id", controlToDelete.id)
+      
+      if (error) throw error
+      
+      fetchControls()
+    } catch (error) {
+      console.error("Error deleting control:", error)
+    } finally {
+      setDeletingId(null)
+      setControlToDelete(null)
+    }
+  }
       
       // Then delete items
       await supabase
@@ -1347,10 +1381,10 @@ export default function PipeQualityPage() {
                                 variant="destructive"
                                 size="sm"
                                 className="gap-1.5 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleDeleteControl(c.id)
-                                }}
+onClick={(e) => {
+                    e.stopPropagation()
+                    handleDeleteControl({ id: c.id, lote: c.lote })
+                    }}
                                 disabled={deletingId === c.id}
                               >
                                 {deletingId === c.id ? (
@@ -1939,6 +1973,32 @@ export default function PipeQualityPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Confirmar eliminacion
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Esta a punto de eliminar la planilla de control:</p>
+              <p className="font-semibold text-foreground">Lote: {controlToDelete?.lote}</p>
+              <p className="text-destructive font-medium">Esta accion no se puede deshacer.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteControl}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Si, eliminar planilla
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
