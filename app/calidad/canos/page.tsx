@@ -1720,34 +1720,64 @@ onClick={(e) => {
                     <tr className="bg-muted/50">
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Cajones</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Peso/Cajon (kg)</th>
                       <th className="text-center py-1.5 px-2 font-medium">Toneladas</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {wasteData.WASTE_BIN_TYPES.map((t) => {
-                      const qty = wasteData.wasteBinsByType[t.key] || 0
-                      // Cada cajón pesa aprox 630kg según los datos (total_waste_kg / total_cajones)
-                      const kgPerBin = wasteData.totalWasteKg > 0 && Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0) > 0
-                        ? wasteData.totalWasteKg / Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
-                        : 630
-                      const kg = qty * kgPerBin
-                      return (
-                        <tr key={t.key} className="border-t border-border/50">
-                          <td className="py-1.5 px-2 font-medium">{t.label}</td>
-                          <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
-                          <td className="py-1.5 px-2 text-center">{(kg / 1000).toFixed(2)}</td>
-                        </tr>
-                      )
-                    })}
+                    {(() => {
+                      const totalBins = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
+                      const avgKgPerBin = totalBins > 0 ? wasteData.totalWasteKg / totalBins : 630
+                      return wasteData.WASTE_BIN_TYPES.map((t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const kg = qty * avgKgPerBin
+                        return (
+                          <tr key={t.key} className="border-t border-border/50">
+                            <td className="py-1.5 px-2 font-medium">{t.label}</td>
+                            <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
+                            <td className="py-1.5 px-2 text-center text-muted-foreground">{avgKgPerBin.toFixed(0)}</td>
+                            <td className="py-1.5 px-2 text-center">{(kg / 1000).toFixed(2)}</td>
+                          </tr>
+                        )
+                      })
+                    })()}
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/50 border-t font-semibold">
                       <td className="py-1.5 px-2">Total</td>
                       <td className="py-1.5 px-2 text-center">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</td>
+                      <td className="py-1.5 px-2 text-center text-muted-foreground">
+                        {Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0) > 0 
+                          ? (wasteData.totalWasteKg / Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)).toFixed(0)
+                          : "-"}
+                      </td>
                       <td className="py-1.5 px-2 text-center">{(wasteData.totalWasteKg / 1000).toFixed(2)}</td>
                     </tr>
                   </tfoot>
                 </table>
+              </div>
+              
+              {/* Card de Toneladas Procesadas */}
+              <div className="mt-4">
+                <Card className="bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200">
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Material Procesado (Produccion)</p>
+                        <p className="text-2xl font-bold text-emerald-600">{(wasteData.totalProductionKg / 1000).toFixed(2)} Tn</p>
+                        <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionUnits.toLocaleString()} unidades producidas</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">Desglose por tipo de cano:</p>
+                        <div className="text-[10px] text-muted-foreground mt-1 space-y-0.5">
+                          {PIPE_DIAMETERS.filter(d => (wasteData.totalProduction[d] || 0) > 0).map(d => (
+                            <p key={d}>CC{d}: {wasteData.totalProduction[d]} u = {((wasteData.totalProduction[d] * (wasteData.pipeWeights[d] || 0)) / 1000).toFixed(2)} Tn</p>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </div>
 
