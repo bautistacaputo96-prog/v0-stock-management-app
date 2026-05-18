@@ -522,28 +522,6 @@ export default function PipeQualityPage() {
         }
       })
     })
-      }
-      
-      // Initialize byDatePipe if needed
-      if (!byDatePipe[dateKey]) {
-        byDatePipe[dateKey] = {}
-        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
-      }
-      
-      c.items?.forEach(item => {
-        const broken = item.broken || 0
-        byDate[dateKey].controlBreakage[item.diameter] += broken
-        byDate[dateKey].totalKg += broken * (pipeWeights[item.diameter] || 0)
-        // Add control breakage to byDatePipe
-        if (byDatePipe[dateKey][item.diameter]) {
-          byDatePipe[dateKey][item.diameter].rotura += broken
-          byDatePipe[dateKey][item.diameter].kg += broken * (pipeWeights[item.diameter] || 0)
-        }
-      })
-    })
-
-    const totalWasteKg = totalProductionBreakageKg + totalControlBreakageKg + totalScrapBoxesKg
-    const wastePercentage = totalProductionKg > 0 ? (totalWasteKg / totalProductionKg) * 100 : 0
 
 return {
       pipeWeights,
