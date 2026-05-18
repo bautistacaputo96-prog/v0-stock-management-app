@@ -220,15 +220,16 @@ export default function PipeQualityPage() {
     } catch { /* ignore */ }
   }, [])
 
-  // Fetch production records for waste report
+// Fetch production records for waste report
   const fetchProductionRecords = useCallback(async () => {
-    const supabase = getSupabase()
-    const { data } = await supabase
-      .from("pipe_production")
-      .select("*")
-      .order("production_date", { ascending: false })
-    if (data) setProductionRecords(data)
-  }, [])
+  const supabase = getSupabase()
+  const { data } = await supabase
+  .from("pipe_production")
+  .select("*")
+  .eq("plant", selectedPlant)
+  .order("production_date", { ascending: false })
+  if (data) setProductionRecords(data)
+  }, [selectedPlant])
 
   // Fetch product config (weights)
   const fetchProductConfig = useCallback(async () => {
@@ -253,6 +254,11 @@ export default function PipeQualityPage() {
     fetchProductionRecords()
     fetchProductConfig()
   }, [fetchControls, fetchEmployees, fetchDefectReasons, fetchProductionRecords, fetchProductConfig])
+  
+  // Refetch production records when plant changes
+  useEffect(() => {
+    fetchProductionRecords()
+  }, [selectedPlant, fetchProductionRecords])
 
   const productionReasons = defectReasons.filter((r) => r.category === "produccion")
   const desmoldeReasons = defectReasons.filter((r) => r.category === "desmolde")
