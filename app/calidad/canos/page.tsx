@@ -120,6 +120,7 @@ export default function PipeQualityPage() {
   const [productionRecords, setProductionRecords] = useState<any[]>([])
   const [productConfig, setProductConfig] = useState<Record<string, number>>({})
   const [wasteShiftFilter, setWasteShiftFilter] = useState<"todos" | "1" | "2">("todos")
+  const [wastePipeFilter, setWastePipeFilter] = useState<"todos" | number>("todos")
 
   // Form state
   const [date, setDate] = useState(new Date().toISOString().split("T")[0])
@@ -417,6 +418,9 @@ export default function PipeQualityPage() {
 
     // By date and shift aggregation (for chart)
     const byDateShift: Record<string, Record<number, number>> = {} // date -> shift -> scrapBoxes
+    
+    // By date and pipe type aggregation (for chart filter)
+    const byDatePipe: Record<string, Record<number, { rotura: number, kg: number }>> = {} // date -> diameter -> { rotura, kg }
 
     filteredProduction.forEach(p => {
       const dateKey = p.production_date
@@ -439,10 +443,18 @@ export default function PipeQualityPage() {
       if (!byDateShift[dateKey]) byDateShift[dateKey] = {}
       byDateShift[dateKey][shift] = (byDateShift[dateKey][shift] || 0) + (p.scrap_boxes || 0)
       
+      // Track breakage by date and pipe type
+      if (!byDatePipe[dateKey]) {
+        byDatePipe[dateKey] = {}
+        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
+      }
+      
       PIPE_DIAMETERS.forEach(d => {
         const rotura = (p[`cc${d}_rotura`] || 0) + (p[`cc${d}_rotura_armado`] || 0)
         byDate[dateKey].productionBreakage[d] += rotura
         byDate[dateKey].totalKg += rotura * (pipeWeights[d] || 0)
+        byDatePipe[dateKey][d].rotura += rotura
+        byDatePipe[dateKey][d].kg += rotura * (pipeWeights[d] || 0)
       })
       byDate[dateKey].scrapBoxes += p.scrap_boxes || 0
       byDate[dateKey].totalKg += (p.scrap_boxes || 0) * scrapBoxWeight
@@ -462,10 +474,22 @@ export default function PipeQualityPage() {
           byDate[dateKey].controlBreakage[d] = 0
         })
       }
+      
+      // Initialize byDatePipe if needed
+      if (!byDatePipe[dateKey]) {
+        byDatePipe[dateKey] = {}
+        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
+      }
+      
       c.items?.forEach(item => {
         const broken = item.broken || 0
         byDate[dateKey].controlBreakage[item.diameter] += broken
         byDate[dateKey].totalKg += broken * (pipeWeights[item.diameter] || 0)
+        // Add control breakage to byDatePipe
+        if (byDatePipe[dateKey][item.diameter]) {
+          byDatePipe[dateKey][item.diameter].rotura += broken
+          byDatePipe[dateKey][item.diameter].kg += broken * (pipeWeights[item.diameter] || 0)
+        }
       })
     })
 
@@ -490,6 +514,7 @@ export default function PipeQualityPage() {
       wastePercentage,
       byDate: Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])),
       byDateShift,
+      byDatePipe,
     }
   }, [productionRecords, controls, reportFromDate, reportToDate, productConfig])
 
@@ -1726,27 +1751,55 @@ onClick={(e) => {
             {/* Gráfico de Tendencia - Cajones de Desperdicio */}
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Tendencia Diaria - Cajones de Desperdicio</CardTitle>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Turno:</span>
-                    <div className="flex gap-1">
-                      {(["todos", "1", "2"] as const).map((t) => (
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base">Tendencia Diaria - Desperdicio</CardTitle>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Tipo:</span>
+                      <div className="flex gap-1 flex-wrap">
                         <Button
-                          key={t}
                           size="sm"
-                          variant={wasteShiftFilter === t ? "default" : "outline"}
-                          onClick={() => setWasteShiftFilter(t)}
-                          className="h-7 px-3 text-xs"
+                          variant={wastePipeFilter === "todos" ? "default" : "outline"}
+                          onClick={() => setWastePipeFilter("todos")}
+                          className="h-7 px-2 text-xs"
                         >
-                          {t === "todos" ? "Todos" : `T${t}`}
+                          Cajones
                         </Button>
-                      ))}
+                        {[800, 1000, 1200].map((d) => (
+                          <Button
+                            key={d}
+                            size="sm"
+                            variant={wastePipeFilter === d ? "default" : "outline"}
+                            onClick={() => setWastePipeFilter(d)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            CC{d}
+                          </Button>
+                        ))}
+                      </div>
                     </div>
+                    {wastePipeFilter === "todos" && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Turno:</span>
+                        <div className="flex gap-1">
+                          {(["todos", "1", "2"] as const).map((t) => (
+                            <Button
+                              key={t}
+                              size="sm"
+                              variant={wasteShiftFilter === t ? "default" : "outline"}
+                              onClick={() => setWasteShiftFilter(t)}
+                              className="h-7 px-2 text-xs"
+                            >
+                              {t === "todos" ? "Todos" : `T${t}`}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+<CardContent>
                 {wasteData.byDate.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground text-sm">
                     No hay datos en el periodo seleccionado
@@ -1757,15 +1810,30 @@ onClick={(e) => {
                       <AreaChart
                         data={wasteData.byDate.map(([date, data]) => {
                           const shiftData = wasteData.byDateShift[date] || {}
-                          let cajones = 0
-                          if (wasteShiftFilter === "todos") {
-                            cajones = data.scrapBoxes
+                          const pipeData = wasteData.byDatePipe[date] || {}
+                          
+                          let value = 0
+                          let valueKg = 0
+                          
+                          if (wastePipeFilter === "todos") {
+                            // Cajones de desperdicio
+                            if (wasteShiftFilter === "todos") {
+                              value = data.scrapBoxes
+                            } else {
+                              value = shiftData[Number(wasteShiftFilter)] || 0
+                            }
+                            valueKg = value * wasteData.scrapBoxWeight
                           } else {
-                            cajones = shiftData[Number(wasteShiftFilter)] || 0
+                            // Rotura por tipo de caño
+                            const diameter = wastePipeFilter as number
+                            value = pipeData[diameter]?.rotura || 0
+                            valueKg = pipeData[diameter]?.kg || 0
                           }
+                          
                           return {
                             date: new Date(date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
-                            cajones,
+                            value,
+                            valueKg,
                             t1: shiftData[1] || 0,
                             t2: shiftData[2] || 0,
                           }
@@ -1774,8 +1842,8 @@ onClick={(e) => {
                       >
                         <defs>
                           <linearGradient id="wasteGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                            <stop offset="5%" stopColor={wastePipeFilter === "todos" ? "#f59e0b" : "#ef4444"} stopOpacity={0.2} />
+                            <stop offset="95%" stopColor={wastePipeFilter === "todos" ? "#f59e0b" : "#ef4444"} stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -1783,28 +1851,37 @@ onClick={(e) => {
                         <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" allowDecimals={false} />
                         <Tooltip
                           contentStyle={{ fontSize: 12 }}
-                          formatter={(value: number, name: string) => {
-                            if (name === "cajones") return [value, "Cajones"]
-                            return [value, name]
+                          formatter={(val: number, name: string, props: any) => {
+                            if (wastePipeFilter === "todos") {
+                              return [`${val} cajones (${((val as number) * wasteData.scrapBoxWeight / 1000).toFixed(2)} Tn)`, "Cajones"]
+                            } else {
+                              const kg = props.payload?.valueKg || 0
+                              return [`${val} unidades (${(kg / 1000).toFixed(2)} Tn)`, `Rotura CC${wastePipeFilter}`]
+                            }
                           }}
                           labelFormatter={(label) => `Fecha: ${label}`}
                         />
                         <Area
                           type="monotone"
-                          dataKey="cajones"
-                          stroke="#f59e0b"
+                          dataKey="value"
+                          stroke={wastePipeFilter === "todos" ? "#f59e0b" : "#ef4444"}
                           strokeWidth={2}
                           fill="url(#wasteGradient)"
-                          dot={{ r: 3, fill: "#f59e0b" }}
-                          name="cajones"
+                          dot={{ r: 3, fill: wastePipeFilter === "todos" ? "#f59e0b" : "#ef4444" }}
+                          name="value"
                         />
                         <ReferenceLine
-                          y={wasteData.byDate.reduce((sum, [, d]) => {
-                            const shiftData = wasteData.byDateShift[wasteData.byDate[0]?.[0]] ? wasteData.byDateShift : {}
-                            if (wasteShiftFilter === "todos") return sum + d.scrapBoxes
-                            return sum + ((shiftData as any)[wasteShiftFilter] || 0)
+                          y={wasteData.byDate.reduce((sum, [date, d]) => {
+                            if (wastePipeFilter === "todos") {
+                              const shiftData = wasteData.byDateShift[date] || {}
+                              if (wasteShiftFilter === "todos") return sum + d.scrapBoxes
+                              return sum + (shiftData[Number(wasteShiftFilter)] || 0)
+                            } else {
+                              const pipeData = wasteData.byDatePipe[date] || {}
+                              return sum + (pipeData[wastePipeFilter as number]?.rotura || 0)
+                            }
                           }, 0) / (wasteData.byDate.length || 1)}
-                          stroke="#f59e0b"
+                          stroke={wastePipeFilter === "todos" ? "#f59e0b" : "#ef4444"}
                           strokeDasharray="4 4"
                           strokeOpacity={0.6}
                         />
@@ -1812,9 +1889,14 @@ onClick={(e) => {
                     </ResponsiveContainer>
                   </div>
                 )}
-                {wasteShiftFilter !== "todos" && (
+                {wastePipeFilter === "todos" && wasteShiftFilter !== "todos" && (
                   <p className="text-xs text-muted-foreground mt-2 text-center">
                     Mostrando solo Turno {wasteShiftFilter}
+                  </p>
+                )}
+                {wastePipeFilter !== "todos" && (
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    Rotura de caños CC{wastePipeFilter} (producción + control)
                   </p>
                 )}
               </CardContent>
