@@ -356,6 +356,14 @@ export default function PipeQualityPage() {
       const d = new Date(p.production_date)
       return d >= from && d <= to
     })
+    
+    console.log("[v0] Filtered production:", {
+      totalRecords: productionRecords.length,
+      filteredRecords: filteredProduction.length,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      sampleRecord: filteredProduction[0]
+    })
 
     // Filter control records by date
     const filteredControls = controls.filter(c => {
@@ -408,6 +416,15 @@ export default function PipeQualityPage() {
         totalProductionBreakageUnits += rotura
         totalProductionBreakageKg += rotura * (pipeWeights[d] || 0)
       })
+
+    // Debug log for production breakage
+    console.log("[v0] Production breakage calculation:", {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      recordsCount: filteredProduction.length,
+      productionBreakage,
+      totalProductionBreakageUnits
+    })
       // Accumulate waste bins by type
       WASTE_BIN_TYPES.forEach(t => {
         wasteBinsByType[t.key] += parseFloat(p[t.key]) || 0
@@ -1736,41 +1753,31 @@ onClick={(e) => {
                     <tr className="bg-muted/50">
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Cajones</th>
-                      <th className="text-center py-1.5 px-2 font-medium">Peso/Cajon (kg)</th>
-                      <th className="text-center py-1.5 px-2 font-medium">Toneladas</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(() => {
-                      const totalBins = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
-                      const avgKgPerBin = totalBins > 0 ? wasteData.totalWasteKg / totalBins : 630
-                      return wasteData.WASTE_BIN_TYPES.map((t) => {
-                        const qty = wasteData.wasteBinsByType[t.key] || 0
-                        const kg = qty * avgKgPerBin
-                        return (
-                          <tr key={t.key} className="border-t border-border/50">
-                            <td className="py-1.5 px-2 font-medium">{t.label}</td>
-                            <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
-                            <td className="py-1.5 px-2 text-center text-muted-foreground">{avgKgPerBin.toFixed(0)}</td>
-                            <td className="py-1.5 px-2 text-center">{(kg / 1000).toFixed(2)}</td>
-                          </tr>
-                        )
-                      })
-                    })()}
+                    {wasteData.WASTE_BIN_TYPES.map((t) => {
+                      const qty = wasteData.wasteBinsByType[t.key] || 0
+                      return (
+                        <tr key={t.key} className="border-t border-border/50">
+                          <td className="py-1.5 px-2 font-medium">{t.label}</td>
+                          <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/50 border-t font-semibold">
-                      <td className="py-1.5 px-2">Total</td>
+                      <td className="py-1.5 px-2">Total Cajones</td>
                       <td className="py-1.5 px-2 text-center">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</td>
-                      <td className="py-1.5 px-2 text-center text-muted-foreground">
-                        {Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0) > 0 
-                          ? (wasteData.totalWasteKg / Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)).toFixed(0)
-                          : "-"}
-                      </td>
-                      <td className="py-1.5 px-2 text-center">{(wasteData.totalWasteKg / 1000).toFixed(2)}</td>
+                    </tr>
+                    <tr className="bg-amber-100 dark:bg-amber-900/30 border-t font-semibold">
+                      <td className="py-1.5 px-2">Total Desperdicio</td>
+                      <td className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400">{(wasteData.totalWasteKg / 1000).toFixed(2)} Tn</td>
                     </tr>
                   </tfoot>
                 </table>
+                <p className="text-[10px] text-muted-foreground mt-1">* El peso total proviene del campo total_waste_kg del parte diario</p>
               </div>
               
               {/* Card de Toneladas Procesadas */}
