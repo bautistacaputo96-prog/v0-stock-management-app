@@ -339,11 +339,10 @@ export default function PipeQualityPage() {
       600: productConfig["CC600"] || 395,
       800: productConfig["CC800"] || 718,
       1000: productConfig["CC1000"] || 1080,
-      1200: productConfig["CC1200"] || 1520,
-    }
-    const scrapBoxWeight = productConfig["CAJON-DESP"] || 150
-
-    // Filter production records by date
+1200: productConfig["CC1200"] || 1520,
+  }
+  
+  // Filter production records by date
     const filteredProduction = productionRecords.filter(p => {
       const d = new Date(p.production_date)
       return d >= from && d <= to
@@ -1693,15 +1692,14 @@ onClick={(e) => {
               <div className="grid grid-cols-3 gap-4">
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">{wasteData.totalScrapBoxes}</p>
+                    <p className="text-3xl font-bold text-amber-600">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</p>
                     <p className="text-xs text-muted-foreground mt-1">Cajones Desperdicio</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">{(wasteData.totalScrapBoxesKg / 1000).toFixed(2)}</p>
+                    <p className="text-3xl font-bold text-amber-600">{(wasteData.totalWasteKg / 1000).toFixed(2)}</p>
                     <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
-                    <p className="text-[10px] text-muted-foreground">({wasteData.scrapBoxWeight} kg/cajón)</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
@@ -2096,7 +2094,7 @@ onClick={(e) => {
               <CardContent className="py-3">
                 <p className="text-xs text-muted-foreground">
                   <strong>Nota:</strong> Los pesos de los caños se obtienen de la configuración de productos. 
-                  Peso cajón desperdicio: {wasteData.scrapBoxWeight} kg. 
+                  Los cajones de desperdicio usan el campo total_waste_kg del parte de producción.
                   Puede ajustar estos valores en Configuración {'>'} Productos.
                 </p>
               </CardContent>
