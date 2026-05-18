@@ -487,30 +487,8 @@ export default function PipeQualityPage() {
         byDatePipe[dateKey][d].kg += rotura * (pipeWeights[d] || 0)
       })
     })
-      }
-      
-      // Track scrap boxes by date and shift
-      if (!byDateShift[dateKey]) byDateShift[dateKey] = {}
-      byDateShift[dateKey][shift] = (byDateShift[dateKey][shift] || 0) + (p.scrap_boxes || 0)
-      
-      // Track breakage by date and pipe type
-      if (!byDatePipe[dateKey]) {
-        byDatePipe[dateKey] = {}
-        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
-      }
-      
-      PIPE_DIAMETERS.forEach(d => {
-        const rotura = (p[`cc${d}_rotura`] || 0) + (p[`cc${d}_rotura_armado`] || 0)
-        byDate[dateKey].productionBreakage[d] += rotura
-        byDate[dateKey].totalKg += rotura * (pipeWeights[d] || 0)
-        byDatePipe[dateKey][d].rotura += rotura
-        byDatePipe[dateKey][d].kg += rotura * (pipeWeights[d] || 0)
-      })
-      byDate[dateKey].scrapBoxes += p.scrap_boxes || 0
-      byDate[dateKey].totalKg += (p.scrap_boxes || 0) * scrapBoxWeight
-    })
 
-filteredControls.forEach(c => {
+    filteredControls.forEach(c => {
       const dateKey = c.control_date
       
       if (!byDate[dateKey]) {
