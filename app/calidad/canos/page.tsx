@@ -20,6 +20,12 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 const PIPE_DIAMETERS = [300, 400, 500, 600, 800, 1000, 1200]
 
+// Diámetros por planta
+const PIPE_DIAMETERS_BY_PLANT: Record<string, number[]> = {
+  silke: [300, 400, 500, 600],
+  "villa-rosa": [800, 1000, 1200],
+}
+
 const MAX_UNITS: Record<number, number> = {
   300: 60,
   400: 140,
@@ -331,6 +337,9 @@ export default function PipeQualityPage() {
     const to = new Date(reportToDate)
     to.setHours(23, 59, 59)
 
+    // Get diameters for selected plant
+    const plantDiameters = PIPE_DIAMETERS_BY_PLANT[selectedPlant] || PIPE_DIAMETERS
+
     // Get pipe weights from config (defaults based on actual product_config values)
     const pipeWeights: Record<number, number> = {
       300: productConfig["CC300"] || 162,
@@ -339,10 +348,10 @@ export default function PipeQualityPage() {
       600: productConfig["CC600"] || 395,
       800: productConfig["CC800"] || 718,
       1000: productConfig["CC1000"] || 1080,
-1200: productConfig["CC1200"] || 1520,
-  }
+      1200: productConfig["CC1200"] || 1520,
+    }
   
-  // Filter production records by date
+    // Filter production records by date
     const filteredProduction = productionRecords.filter(p => {
       const d = new Date(p.production_date)
       return d >= from && d <= to
@@ -359,12 +368,12 @@ export default function PipeQualityPage() {
     let totalProductionUnits = 0
     let totalProductionKg = 0
 
-    PIPE_DIAMETERS.forEach(d => { totalProduction[d] = 0 })
+    plantDiameters.forEach(d => { totalProduction[d] = 0 })
 
     filteredProduction.forEach(p => {
-      PIPE_DIAMETERS.forEach(d => {
-        // Sum simple + armado production
-        const produced = (p[`cc${d}_simple`] || 0) + (p[`cc${d}_armado`] || 0)
+      plantDiameters.forEach(d => {
+        // Sum simples + armado production (column names are cc300_simples, cc300_armado, etc.)
+        const produced = (p[`cc${d}_simples`] || 0) + (p[`cc${d}_armado`] || 0)
         totalProduction[d] += produced
         totalProductionUnits += produced
         totalProductionKg += produced * (pipeWeights[d] || 0)
@@ -390,10 +399,10 @@ export default function PipeQualityPage() {
     WASTE_BIN_TYPES.forEach(t => { wasteBinsByType[t.key] = 0 })
     let totalWasteKg = 0
 
-    PIPE_DIAMETERS.forEach(d => { productionBreakage[d] = 0 })
+    plantDiameters.forEach(d => { productionBreakage[d] = 0 })
 
     filteredProduction.forEach(p => {
-      PIPE_DIAMETERS.forEach(d => {
+      plantDiameters.forEach(d => {
         const rotura = (p[`cc${d}_rotura`] || 0) + (p[`cc${d}_rotura_armado`] || 0)
         productionBreakage[d] += rotura
         totalProductionBreakageUnits += rotura
@@ -411,14 +420,17 @@ export default function PipeQualityPage() {
     let totalControlBreakageUnits = 0
     let totalControlBreakageKg = 0
 
-    PIPE_DIAMETERS.forEach(d => { controlBreakage[d] = 0 })
+    plantDiameters.forEach(d => { controlBreakage[d] = 0 })
 
     filteredControls.forEach(c => {
       c.items?.forEach(item => {
-        const broken = item.broken || 0
-        controlBreakage[item.diameter] += broken
-        totalControlBreakageUnits += broken
-        totalControlBreakageKg += broken * (pipeWeights[item.diameter] || 0)
+        // Only count if this diameter belongs to this plant
+        if (plantDiameters.includes(item.diameter)) {
+          const broken = item.broken || 0
+          controlBreakage[item.diameter] += broken
+          totalControlBreakageUnits += broken
+          totalControlBreakageKg += broken * (pipeWeights[item.diameter] || 0)
+        }
       })
     })
 
@@ -449,7 +461,7 @@ export default function PipeQualityPage() {
           totalWasteKg: 0,
           totalKg: 0,
         }
-        PIPE_DIAMETERS.forEach(d => { 
+        plantDiameters.forEach(d => { 
           byDate[dateKey].productionBreakage[d] = 0
           byDate[dateKey].controlBreakage[d] = 0
         })
@@ -476,10 +488,10 @@ export default function PipeQualityPage() {
       // Track breakage by date and pipe type
       if (!byDatePipe[dateKey]) {
         byDatePipe[dateKey] = {}
-        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
+        plantDiameters.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
       }
       
-      PIPE_DIAMETERS.forEach(d => {
+      plantDiameters.forEach(d => {
         const rotura = (p[`cc${d}_rotura`] || 0) + (p[`cc${d}_rotura_armado`] || 0)
         byDate[dateKey].productionBreakage[d] += rotura
         byDatePipe[dateKey][d].rotura += rotura
@@ -498,7 +510,7 @@ export default function PipeQualityPage() {
           totalWasteKg: 0,
           totalKg: 0,
         }
-        PIPE_DIAMETERS.forEach(d => { 
+        plantDiameters.forEach(d => { 
           byDate[dateKey].productionBreakage[d] = 0
           byDate[dateKey].controlBreakage[d] = 0
         })
@@ -508,22 +520,26 @@ export default function PipeQualityPage() {
       // Initialize byDatePipe if needed
       if (!byDatePipe[dateKey]) {
         byDatePipe[dateKey] = {}
-        PIPE_DIAMETERS.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
+        plantDiameters.forEach(d => { byDatePipe[dateKey][d] = { rotura: 0, kg: 0 } })
       }
       
       c.items?.forEach(item => {
-        const broken = item.broken || 0
-        byDate[dateKey].controlBreakage[item.diameter] += broken
-        // Add control breakage to byDatePipe
-        if (byDatePipe[dateKey][item.diameter]) {
-          byDatePipe[dateKey][item.diameter].rotura += broken
-          byDatePipe[dateKey][item.diameter].kg += broken * (pipeWeights[item.diameter] || 0)
+        // Only count if this diameter belongs to this plant
+        if (plantDiameters.includes(item.diameter)) {
+          const broken = item.broken || 0
+          byDate[dateKey].controlBreakage[item.diameter] += broken
+          // Add control breakage to byDatePipe
+          if (byDatePipe[dateKey][item.diameter]) {
+            byDatePipe[dateKey][item.diameter].rotura += broken
+            byDatePipe[dateKey][item.diameter].kg += broken * (pipeWeights[item.diameter] || 0)
+          }
         }
       })
     })
 
 return {
       pipeWeights,
+      plantDiameters,
       WASTE_BIN_TYPES,
       // Production totals
       totalProduction,
@@ -552,7 +568,7 @@ return {
       byDateShiftBin,
       byDatePipe,
     }
-  }, [productionRecords, controls, reportFromDate, reportToDate, productConfig])
+  }, [productionRecords, controls, reportFromDate, reportToDate, productConfig, selectedPlant])
 
   // Handle edit control
   const handleEditControl = (control: any) => {
@@ -1770,7 +1786,7 @@ onClick={(e) => {
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Desglose por tipo de cano:</p>
                         <div className="text-[10px] text-muted-foreground mt-1 space-y-0.5">
-                          {PIPE_DIAMETERS.filter(d => (wasteData.totalProduction[d] || 0) > 0).map(d => (
+                          {wasteData.plantDiameters.filter(d => (wasteData.totalProduction[d] || 0) > 0).map(d => (
                             <p key={d}>CC{d}: {wasteData.totalProduction[d]} u = {((wasteData.totalProduction[d] * (wasteData.pipeWeights[d] || 0)) / 1000).toFixed(2)} Tn</p>
                           ))}
                         </div>
@@ -1997,7 +2013,7 @@ onClick={(e) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {PIPE_DIAMETERS.filter(d => d >= 800).map((d) => {
+                    {wasteData.plantDiameters.map((d) => {
                       const prodBreak = wasteData.productionBreakage[d] || 0
                       const ctrlBreak = wasteData.controlBreakage[d] || 0
                       const total = prodBreak + ctrlBreak
