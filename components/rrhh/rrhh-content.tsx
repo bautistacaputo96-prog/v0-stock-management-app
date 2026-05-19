@@ -5,9 +5,10 @@ import { RRHHLogin } from "./rrhh-login"
 import { EmployeeManager } from "./employee-manager"
 import { AttendanceGrid } from "./attendance-grid"
 import { AttendanceAnalysis } from "./attendance-analysis"
+import { PayrollModule } from "./payroll/payroll-module"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { LogOut, Users, CalendarDays, BarChart3 } from "lucide-react"
+import { LogOut, Users, CalendarDays, BarChart3, DollarSign } from "lucide-react"
 
 export function RRHHContent() {
   const [user, setUser] = useState<{ id: number; username: string; fullName: string } | null>(null)
@@ -31,7 +32,7 @@ export function RRHHContent() {
       </div>
 
       <Tabs defaultValue="employees">
-        <TabsList className="grid w-full max-w-xl grid-cols-3">
+        <TabsList className="grid w-full max-w-2xl grid-cols-4">
           <TabsTrigger value="employees" className="gap-2">
             <Users className="h-4 w-4" />
             Empleados
@@ -42,7 +43,11 @@ export function RRHHContent() {
           </TabsTrigger>
           <TabsTrigger value="analysis" className="gap-2">
             <BarChart3 className="h-4 w-4" />
-            Analisis
+            Análisis
+          </TabsTrigger>
+          <TabsTrigger value="liquidaciones" className="gap-2">
+            <DollarSign className="h-4 w-4" />
+            Liquidaciones
           </TabsTrigger>
         </TabsList>
         <TabsContent value="employees" className="mt-4">
@@ -53,6 +58,9 @@ export function RRHHContent() {
         </TabsContent>
         <TabsContent value="analysis" className="mt-4">
           <AttendanceAnalysis />
+        </TabsContent>
+        <TabsContent value="liquidaciones" className="mt-4">
+          <PayrollModule />
         </TabsContent>
       </Tabs>
     </div>
