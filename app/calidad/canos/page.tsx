@@ -1872,7 +1872,7 @@ onClick={(e) => {
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <CardTitle className="text-base">Tendencia Diaria - Cajones de Desperdicio (Tn)</CardTitle>
+                  <CardTitle className="text-base">Tendencia Diaria - Cantidad de Cajones</CardTitle>
                   <div className="flex items-center gap-4 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">Tipo:</span>
@@ -1929,34 +1929,27 @@ onClick={(e) => {
                         data={wasteData.byDate.map(([date, data]) => {
                           const shiftBinData = wasteData.byDateShiftBin[date] || {}
                           
-                          let totalKg = 0
-                          
-                          // Calculate kg per bin for this date
-                          const totalBins = Object.values(data.wasteBins || {}).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
-                          const kgPerBin = totalBins > 0 ? data.totalWasteKg / totalBins : 630
+                          let totalCajones = 0
                           
                           if (wasteShiftFilter === "todos") {
                             if (wasteBinFilter === "todos") {
-                              totalKg = data.totalWasteKg || 0
+                              totalCajones = Object.values(data.wasteBins || {}).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
                             } else {
-                              const binQty = data.wasteBins?.[wasteBinFilter] || 0
-                              totalKg = binQty * kgPerBin
+                              totalCajones = parseFloat(data.wasteBins?.[wasteBinFilter]) || 0
                             }
                           } else {
                             const shiftNum = Number(wasteShiftFilter)
                             const shiftData = shiftBinData[shiftNum] || {}
                             if (wasteBinFilter === "todos") {
-                              const shiftBins = Object.values(shiftData).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
-                              totalKg = shiftBins * kgPerBin
+                              totalCajones = Object.values(shiftData).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
                             } else {
-                              const binQty = shiftData[wasteBinFilter] || 0
-                              totalKg = binQty * kgPerBin
+                              totalCajones = parseFloat(shiftData[wasteBinFilter]) || 0
                             }
                           }
                           
                           return {
                             date: new Date(date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
-                            tn: totalKg / 1000,
+                            cajones: totalCajones,
                           }
                         })}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
@@ -1972,17 +1965,17 @@ onClick={(e) => {
                         <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" />
                         <Tooltip
                           contentStyle={{ fontSize: 12 }}
-                          formatter={(val: number) => [`${val.toFixed(2)} Tn`, "Desperdicio"]}
+                          formatter={(val: number) => [`${val.toFixed(1)} cajones`, "Cantidad"]}
                           labelFormatter={(label) => `Fecha: ${label}`}
                         />
                         <Area
                           type="monotone"
-                          dataKey="tn"
+                          dataKey="cajones"
                           stroke="#f59e0b"
                           strokeWidth={2}
                           fill="url(#wasteGradient)"
                           dot={{ r: 3, fill: "#f59e0b" }}
-                          name="tn"
+                          name="cajones"
                         />
                       </AreaChart>
                     </ResponsiveContainer>
