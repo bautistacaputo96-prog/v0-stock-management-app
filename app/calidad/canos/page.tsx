@@ -41,6 +41,7 @@ interface PipeItem {
   first_quality: number
   second_quality: number
   broken: number
+  to_recovery: number
 }
 
 interface DefectReason {
@@ -107,11 +108,6 @@ export default function PipeQualityPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [controlToDelete, setControlToDelete] = useState<{ id: number; lote: string } | null>(null)
   const [otherDefectComments, setOtherDefectComments] = useState<Record<number, string>>({}) // diameter -> comment
-  const [recoveredPipes, setRecoveredPipes] = useState<Record<number, { first: number; second: number; scrap: number }>>(() => {
-    const initial: Record<number, { first: number; second: number; scrap: number }> = {}
-    PIPE_DIAMETERS.forEach(d => { initial[d] = { first: 0, second: 0, scrap: 0 } })
-    return initial
-  })
   const pdfReportRef = useRef<HTMLDivElement>(null)
   
   // Report filter state
@@ -137,7 +133,7 @@ export default function PipeQualityPage() {
   const [showProductionDropdown, setShowProductionDropdown] = useState(false)
   const [showLogisticsDropdown, setShowLogisticsDropdown] = useState(false)
   const [items, setItems] = useState<PipeItem[]>(
-    PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0 }))
+    PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0, to_recovery: 0 }))
   )
   const [defects, setDefects] = useState<DiameterDefects[]>(
     PIPE_DIAMETERS.map((d) => ({ diameter: d, reasons: [] }))
@@ -356,14 +352,6 @@ export default function PipeQualityPage() {
       const d = new Date(p.production_date)
       return d >= from && d <= to
     })
-    
-    console.log("[v0] Filtered production:", {
-      totalRecords: productionRecords.length,
-      filteredRecords: filteredProduction.length,
-      from: from.toISOString(),
-      to: to.toISOString(),
-      sampleRecord: filteredProduction[0]
-    })
 
     // Filter control records by date
     const filteredControls = controls.filter(c => {
@@ -416,15 +404,6 @@ export default function PipeQualityPage() {
         totalProductionBreakageUnits += rotura
         totalProductionBreakageKg += rotura * (pipeWeights[d] || 0)
       })
-
-    // Debug log for production breakage
-    console.log("[v0] Production breakage calculation:", {
-      from: from.toISOString(),
-      to: to.toISOString(),
-      recordsCount: filteredProduction.length,
-      productionBreakage,
-      totalProductionBreakageUnits
-    })
       // Accumulate waste bins by type
       WASTE_BIN_TYPES.forEach(t => {
         wasteBinsByType[t.key] += parseFloat(p[t.key]) || 0
@@ -758,12 +737,9 @@ return {
   setFabricationOrder("")
   setProductionRespName("")
   setLogisticsRespName("")
-  setItems(PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0 })))
+  setItems(PIPE_DIAMETERS.map((d) => ({ diameter: d, first_quality: 0, second_quality: 0, broken: 0, to_recovery: 0 })))
   setDefects(PIPE_DIAMETERS.map((d) => ({ diameter: d, reasons: [] })))
   setOtherDefectComments({})
-  const initialRecovered: Record<number, { first: number; second: number; scrap: number }> = {}
-  PIPE_DIAMETERS.forEach(d => { initialRecovered[d] = { first: 0, second: 0, scrap: 0 } })
-  setRecoveredPipes(initialRecovered)
   setEditingControl(null)
   }
 
@@ -849,7 +825,6 @@ return {
           defects: activeDefects,
           observations,
           plant: selectedPlant,
-          recovered_pipes: recoveredPipes,
         }),
       })
       if (res.ok) {
@@ -992,6 +967,15 @@ return {
                     ))}
                     <td className="py-1 px-1 text-center font-semibold text-destructive">{totalBroken}</td>
                   </tr>
+                  <tr className="border-t border-border/50">
+                    <td className="py-1 px-2 font-medium text-purple-600">A Recup.</td>
+                    {items.map((item, idx) => (
+                      <td key={item.diameter} className="py-0.5 px-0.5 text-center">
+                        <Input type="number" min="0" value={item.to_recovery || ""} onChange={(e) => updateItem(idx, "to_recovery", parseInt(e.target.value) || 0)} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
+                      </td>
+                    ))}
+                    <td className="py-1 px-1 text-center font-semibold text-purple-600">{items.reduce((s, i) => s + (i.to_recovery || 0), 0)}</td>
+                  </tr>
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 border-t font-semibold">
@@ -1000,60 +984,6 @@ return {
                       <td key={item.diameter} className="py-1 px-1 text-center">{item.first_quality + item.second_quality + item.broken || "-"}</td>
                     ))}
                     <td className="py-1 px-1 text-center">{totalUnits}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* Caños Recuperados - Tabla por tipo de caño */}
-            <div>
-              <h3 className="text-xs font-semibold text-emerald-800 mb-1.5">Caños Recuperados</h3>
-              <table className="text-xs border border-emerald-200 rounded bg-emerald-50/50">
-                <thead>
-                  <tr className="bg-emerald-100/50">
-                    <th className="text-left py-1 px-2 font-medium w-16">Salida</th>
-                    {PIPE_DIAMETERS.map(d => (
-                      <th key={d} className="text-center py-1 px-1 font-medium">{d}</th>
-                    ))}
-                    <th className="text-center py-1 px-1 font-medium w-14">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-emerald-200/50">
-                    <td className="py-1 px-2 font-medium text-emerald-700">1ra</td>
-                    {PIPE_DIAMETERS.map(d => (
-                      <td key={d} className="py-0.5 px-0.5 text-center">
-                        <Input type="number" min="0" value={recoveredPipes[d]?.first || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], first: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
-                      </td>
-                    ))}
-                    <td className="py-1 px-1 text-center font-semibold text-emerald-700">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.first || 0), 0)}</td>
-                  </tr>
-                  <tr className="border-t border-emerald-200/50">
-                    <td className="py-1 px-2 font-medium text-amber-600">2da</td>
-                    {PIPE_DIAMETERS.map(d => (
-                      <td key={d} className="py-0.5 px-0.5 text-center">
-                        <Input type="number" min="0" value={recoveredPipes[d]?.second || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], second: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
-                      </td>
-                    ))}
-                    <td className="py-1 px-1 text-center font-semibold text-amber-600">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.second || 0), 0)}</td>
-                  </tr>
-                  <tr className="border-t border-emerald-200/50">
-                    <td className="py-1 px-2 font-medium text-destructive">Scrap</td>
-                    {PIPE_DIAMETERS.map(d => (
-                      <td key={d} className="py-0.5 px-0.5 text-center">
-                        <Input type="number" min="0" value={recoveredPipes[d]?.scrap || ""} onChange={(e) => setRecoveredPipes(prev => ({ ...prev, [d]: { ...prev[d], scrap: parseInt(e.target.value) || 0 } }))} onKeyDown={handleEnterKey} className="w-12 h-6 text-xs text-center" />
-                      </td>
-                    ))}
-                    <td className="py-1 px-1 text-center font-semibold text-destructive">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.scrap || 0), 0)}</td>
-                  </tr>
-                </tbody>
-                <tfoot>
-                  <tr className="bg-emerald-100/50 border-t border-emerald-200 font-semibold">
-                    <td className="py-1 px-2">Total</td>
-                    {PIPE_DIAMETERS.map(d => (
-                      <td key={d} className="py-1 px-1 text-center">{(recoveredPipes[d]?.first || 0) + (recoveredPipes[d]?.second || 0) + (recoveredPipes[d]?.scrap || 0) || "-"}</td>
-                    ))}
-                    <td className="py-1 px-1 text-center">{PIPE_DIAMETERS.reduce((s, d) => s + (recoveredPipes[d]?.first || 0) + (recoveredPipes[d]?.second || 0) + (recoveredPipes[d]?.scrap || 0), 0)}</td>
                   </tr>
                 </tfoot>
               </table>
