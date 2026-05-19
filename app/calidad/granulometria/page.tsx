@@ -39,6 +39,20 @@ const MATERIAL_TYPES = [
   { value: "piedra_0_20", label: "Piedra 0/20" },
 ]
 
+// Materiales válidos por planta
+const PLANT_MATERIAL_TYPES: Record<string, string[]> = {
+  silke: ["arena", "piedra_0_10"],
+  ranchos: ["arena", "piedra_0_6"],
+  "villa-rosa": ["arena", "piedra_0_10"],
+}
+
+// Piedra correcta por planta (para cálculo de mezcla y búsqueda en acopios)
+const PLANT_STONE_TYPE: Record<string, string> = {
+  silke: "piedra_0_10",
+  ranchos: "piedra_0_6",
+  "villa-rosa": "piedra_0_10",
+}
+
 // MF limits by material type (corrected ranges)
 const MF_LIMITS: Record<string, { min: number; max: number }> = {
   arena: { min: 2.3, max: 3.1 },        // IRAM zona II/III
@@ -171,6 +185,9 @@ const [stockpileFormData, setStockpileFormData] = useState({
   useEffect(() => {
     loadTests()
     loadStockpileTests()
+    // Resetear el tipo de material del acopio al correcto para la planta
+    const stoneType = PLANT_STONE_TYPE[selectedPlant] || "piedra_0_10"
+    setStockpileFormData(prev => ({ ...prev, material_type: stoneType }))
   }, [selectedPlant])
 
   // Load latest stockpile tests for each material type (filtered by plant)
@@ -460,8 +477,9 @@ const [stockpileFormData, setStockpileFormData] = useState({
 
   // Calculate optimal dosification based on stockpile tests
   function calculateOptimalDosification() {
-    const arenaTest = stockpileTests.find(t => t.material_type.toLowerCase().includes("arena"))
-    const piedraTest = stockpileTests.find(t => t.material_type.toLowerCase().includes("piedra"))
+    const arenaTest = stockpileTests.find(t => t.material_type.toLowerCase() === "arena")
+    const stoneType = PLANT_STONE_TYPE[selectedPlant] || "piedra_0_10"
+    const piedraTest = stockpileTests.find(t => t.material_type.toLowerCase() === stoneType)
     
     if (!arenaTest || !piedraTest) return null
     
@@ -704,7 +722,9 @@ function getChartData(test: GranulometryTest) {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {MATERIAL_TYPES.map(m => (
+                            {MATERIAL_TYPES.filter(m =>
+                              (PLANT_MATERIAL_TYPES[selectedPlant] || MATERIAL_TYPES.map(x => x.value)).includes(m.value)
+                            ).map(m => (
                               <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                             ))}
                           </SelectContent>
