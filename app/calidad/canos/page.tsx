@@ -1697,31 +1697,73 @@ onClick={(e) => {
                     <tr className="bg-muted/50">
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Cajones</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Peso Tacho (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Peso Lleno (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Contenido (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Total (Tn)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {wasteData.WASTE_BIN_TYPES.map((t) => {
-                      const qty = wasteData.wasteBinsByType[t.key] || 0
-                      return (
-                        <tr key={t.key} className="border-t border-border/50">
-                          <td className="py-1.5 px-2 font-medium">{t.label}</td>
-                          <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
-                        </tr>
-                      )
-                    })}
+                    {(() => {
+                      // Pesos de los tachos (vacío y lleno)
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },      // Tacho 1
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },   // Tacho 2
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },      // Tacho 3
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },     // Tacho 4
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 }, // Tacho 5 = Tacho 1
+                      }
+                      
+                      let totalContenido = 0
+                      
+                      return wasteData.WASTE_BIN_TYPES.map((t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        const contenidoPorCajon = weights.lleno - weights.tara
+                        const totalTn = (qty * contenidoPorCajon) / 1000
+                        totalContenido += qty * contenidoPorCajon
+                        
+                        return (
+                          <tr key={t.key} className="border-t border-border/50">
+                            <td className="py-1.5 px-2 font-medium">{t.label}</td>
+                            <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
+                            <td className="py-1.5 px-2 text-center text-muted-foreground">{weights.tara}</td>
+                            <td className="py-1.5 px-2 text-center text-muted-foreground">{weights.lleno}</td>
+                            <td className="py-1.5 px-2 text-center">{contenidoPorCajon.toFixed(1)}</td>
+                            <td className="py-1.5 px-2 text-center font-medium">{totalTn.toFixed(2)}</td>
+                          </tr>
+                        )
+                      })
+                    })()}
                   </tbody>
                   <tfoot>
-                    <tr className="bg-muted/50 border-t font-semibold">
-                      <td className="py-1.5 px-2">Total Cajones</td>
-                      <td className="py-1.5 px-2 text-center">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</td>
-                    </tr>
-                    <tr className="bg-amber-100 dark:bg-amber-900/30 border-t font-semibold">
-                      <td className="py-1.5 px-2">Total Desperdicio</td>
-                      <td className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400">{(wasteData.totalWasteKg / 1000).toFixed(2)} Tn</td>
-                    </tr>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalCajones = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
+                      const totalContenidoKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      
+                      return (
+                        <tr className="bg-amber-100 dark:bg-amber-900/30 border-t font-semibold">
+                          <td className="py-1.5 px-2">Total</td>
+                          <td className="py-1.5 px-2 text-center">{totalCajones.toFixed(1)}</td>
+                          <td className="py-1.5 px-2 text-center" colSpan={3}>-</td>
+                          <td className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400">{(totalContenidoKg / 1000).toFixed(2)} Tn</td>
+                        </tr>
+                      )
+                    })()}
                   </tfoot>
                 </table>
-                <p className="text-[10px] text-muted-foreground mt-1">* El peso total proviene del campo total_waste_kg del parte diario</p>
+                <p className="text-[10px] text-muted-foreground mt-1">* Pesos de tachos configurados. Contenido = Peso Lleno - Peso Tacho</p>
               </div>
               
               {/* Card de Toneladas Procesadas */}
