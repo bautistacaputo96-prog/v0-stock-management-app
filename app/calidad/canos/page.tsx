@@ -413,19 +413,29 @@ export default function PipeQualityPage() {
 
     // Calculate breakage from CONTROL (rotura en desmolde/control)
     const controlBreakage: Record<number, number> = {}
+    const toRecovery: Record<number, number> = {}
     let totalControlBreakageUnits = 0
     let totalControlBreakageKg = 0
+    let totalToRecoveryUnits = 0
+    let totalToRecoveryKg = 0
 
-    plantDiameters.forEach(d => { controlBreakage[d] = 0 })
+    plantDiameters.forEach(d => { 
+      controlBreakage[d] = 0
+      toRecovery[d] = 0
+    })
 
     filteredControls.forEach(c => {
       c.items?.forEach(item => {
         // Only count if this diameter belongs to this plant
         if (plantDiameters.includes(item.diameter)) {
           const broken = item.broken || 0
+          const recovery = item.to_recovery || 0
           controlBreakage[item.diameter] += broken
           totalControlBreakageUnits += broken
           totalControlBreakageKg += broken * (pipeWeights[item.diameter] || 0)
+          toRecovery[item.diameter] += recovery
+          totalToRecoveryUnits += recovery
+          totalToRecoveryKg += recovery * (pipeWeights[item.diameter] || 0)
         }
       })
     })
@@ -551,6 +561,10 @@ return {
       controlBreakage,
       totalControlBreakageUnits,
       totalControlBreakageKg,
+      // To Recovery totals
+      toRecovery,
+      totalToRecoveryUnits,
+      totalToRecoveryKg,
       // Combined totals
       totalBreakageUnits: totalProductionBreakageUnits + totalControlBreakageUnits,
       totalBreakageKg: totalProductionBreakageKg + totalControlBreakageKg,
@@ -1741,18 +1755,18 @@ onClick={(e) => {
                 Control de Calidad
               </h3>
               <p className="text-xs text-muted-foreground mb-3">Caños de segunda calidad y rotos registrados en el control de calidad</p>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
                 <Card className="bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-2xl font-bold text-emerald-600">{(wasteData.totalProductionKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Producción Total (Tn)</p>
+                    <p className="text-xs text-muted-foreground mt-1">Produccion Total (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionUnits.toLocaleString()} unidades</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-orange-50 dark:bg-orange-950/20 border-orange-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-2xl font-bold text-orange-600">{(wasteData.totalProductionBreakageKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Rotura Producción (Tn)</p>
+                    <p className="text-xs text-muted-foreground mt-1">Rotura Produccion (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionBreakageUnits} unidades</p>
                   </CardContent>
                 </Card>
@@ -1761,6 +1775,13 @@ onClick={(e) => {
                     <p className="text-2xl font-bold text-red-600">{(wasteData.totalControlBreakageKg / 1000).toFixed(2)}</p>
                     <p className="text-xs text-muted-foreground mt-1">Rotura Control (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalControlBreakageUnits} unidades</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-purple-50 dark:bg-purple-950/20 border-purple-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-purple-600">{(wasteData.totalToRecoveryKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">A Recuperar (Tn)</p>
+                    <p className="text-[10px] text-muted-foreground">{wasteData.totalToRecoveryUnits} unidades</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-red-100 dark:bg-red-950/30 border-red-300">
@@ -1798,6 +1819,7 @@ onClick={(e) => {
                       <p className="text-amber-600">Cajones: {(wasteData.totalWasteKg / 1000).toFixed(2)} Tn ({Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)} caj)</p>
                       <p className="text-orange-600">Rotura Prod: {(wasteData.totalProductionBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalProductionBreakageUnits} u)</p>
                       <p className="text-red-600">Rotura Control: {(wasteData.totalControlBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalControlBreakageUnits} u)</p>
+                      <p className="text-purple-600">A Recuperar: {(wasteData.totalToRecoveryKg / 1000).toFixed(2)} Tn ({wasteData.totalToRecoveryUnits} u)</p>
                     </div>
                   </div>
                 </CardContent>
@@ -1936,7 +1958,7 @@ onClick={(e) => {
             {/* Tabla de Rotura de Caños por Tipo */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Rotura de Caños por Tipo</CardTitle>
+                <CardTitle className="text-base">Rotura de Canos por Tipo</CardTitle>
               </CardHeader>
               <CardContent>
                 <table className="w-full text-xs border border-border rounded">
@@ -1945,7 +1967,8 @@ onClick={(e) => {
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Rotura Prod</th>
                       <th className="text-center py-1.5 px-2 font-medium">Rotura Control</th>
-                      <th className="text-center py-1.5 px-2 font-medium">Total Unidades</th>
+                      <th className="text-center py-1.5 px-2 font-medium">A Recup.</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Total Rotura</th>
                       <th className="text-center py-1.5 px-2 font-medium">Toneladas</th>
                     </tr>
                   </thead>
@@ -1953,6 +1976,7 @@ onClick={(e) => {
                     {wasteData.plantDiameters.map((d) => {
                       const prodBreak = wasteData.productionBreakage[d] || 0
                       const ctrlBreak = wasteData.controlBreakage[d] || 0
+                      const toRecov = wasteData.toRecovery[d] || 0
                       const total = prodBreak + ctrlBreak
                       const kg = total * (wasteData.pipeWeights[d] || 0)
                       return (
@@ -1960,6 +1984,7 @@ onClick={(e) => {
                           <td className="py-1.5 px-2 font-medium">CC{d}</td>
                           <td className="py-1.5 px-2 text-center text-orange-600">{prodBreak}</td>
                           <td className="py-1.5 px-2 text-center text-red-600">{ctrlBreak}</td>
+                          <td className="py-1.5 px-2 text-center text-purple-600">{toRecov}</td>
                           <td className="py-1.5 px-2 text-center font-semibold">{total}</td>
                           <td className="py-1.5 px-2 text-center">{(kg / 1000).toFixed(2)}</td>
                         </tr>
@@ -1971,6 +1996,7 @@ onClick={(e) => {
                       <td className="py-1.5 px-2">Total</td>
                       <td className="py-1.5 px-2 text-center text-orange-600">{wasteData.totalProductionBreakageUnits}</td>
                       <td className="py-1.5 px-2 text-center text-red-600">{wasteData.totalControlBreakageUnits}</td>
+                      <td className="py-1.5 px-2 text-center text-purple-600">{wasteData.totalToRecoveryUnits}</td>
                       <td className="py-1.5 px-2 text-center">{wasteData.totalBreakageUnits}</td>
                       <td className="py-1.5 px-2 text-center">{(wasteData.totalBreakageKg / 1000).toFixed(2)}</td>
                     </tr>
@@ -1982,36 +2008,39 @@ onClick={(e) => {
             {/* Rotura por Molde */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Rotura por Molde (Diámetro)</CardTitle>
+                <CardTitle className="text-base">Rotura por Molde (Diametro)</CardTitle>
               </CardHeader>
               <CardContent>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2 font-medium text-muted-foreground">Diámetro</th>
+                      <th className="text-left py-2 font-medium text-muted-foreground">Diametro</th>
                       <th className="text-right py-2 font-medium text-muted-foreground">Peso/u (kg)</th>
                       <th className="text-center py-2 font-medium text-orange-600">Prod (u)</th>
                       <th className="text-center py-2 font-medium text-orange-600">Prod (kg)</th>
                       <th className="text-center py-2 font-medium text-red-600">Control (u)</th>
                       <th className="text-center py-2 font-medium text-red-600">Control (kg)</th>
+                      <th className="text-center py-2 font-medium text-purple-600">A Recup. (u)</th>
                       <th className="text-center py-2 font-medium text-destructive">Total (u)</th>
                       <th className="text-center py-2 font-medium text-destructive">Total (kg)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {PIPE_DIAMETERS.map((d) => {
+                    {wasteData.plantDiameters.map((d) => {
                       const prodUnits = wasteData.productionBreakage[d] || 0
                       const controlUnits = wasteData.controlBreakage[d] || 0
+                      const toRecovUnits = wasteData.toRecovery[d] || 0
                       const weight = wasteData.pipeWeights[d] || 0
                       const totalUnits = prodUnits + controlUnits
                       return (
                         <tr key={d} className="border-b border-border/50">
-                          <td className="py-2 font-medium">Caño {d}</td>
+                          <td className="py-2 font-medium">Cano {d}</td>
                           <td className="py-2 text-right text-muted-foreground">{weight}</td>
                           <td className="py-2 text-center text-orange-600">{prodUnits || "-"}</td>
                           <td className="py-2 text-center text-orange-600">{prodUnits ? (prodUnits * weight).toLocaleString() : "-"}</td>
                           <td className="py-2 text-center text-red-600">{controlUnits || "-"}</td>
                           <td className="py-2 text-center text-red-600">{controlUnits ? (controlUnits * weight).toLocaleString() : "-"}</td>
+                          <td className="py-2 text-center text-purple-600">{toRecovUnits || "-"}</td>
                           <td className="py-2 text-center font-semibold text-destructive">{totalUnits || "-"}</td>
                           <td className="py-2 text-center font-semibold text-destructive">{totalUnits ? (totalUnits * weight).toLocaleString() : "-"}</td>
                         </tr>
@@ -2023,6 +2052,7 @@ onClick={(e) => {
                       <td className="py-2 text-center text-orange-600">{wasteData.totalProductionBreakageKg.toLocaleString()}</td>
                       <td className="py-2 text-center text-red-600">{wasteData.totalControlBreakageUnits}</td>
                       <td className="py-2 text-center text-red-600">{wasteData.totalControlBreakageKg.toLocaleString()}</td>
+                      <td className="py-2 text-center text-purple-600">{wasteData.totalToRecoveryUnits}</td>
                       <td className="py-2 text-center text-destructive">{wasteData.totalProductionBreakageUnits + wasteData.totalControlBreakageUnits}</td>
                       <td className="py-2 text-center text-destructive">{(wasteData.totalProductionBreakageKg + wasteData.totalControlBreakageKg).toLocaleString()}</td>
                     </tr>
