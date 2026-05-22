@@ -60,9 +60,11 @@ export async function getYesterdayDispatches(): Promise<DispatchSummary[]> {
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
   const dateStr = getArgentinaDate(yesterday)
 
+  // Argentina UTC-3: día empieza a las 03:00Z y termina a las 02:59Z del día siguiente
+  const nextDateStr = getArgentinaDate(new Date(yesterday.getTime() + 24 * 60 * 60 * 1000))
   const [dispatches, clients, sites, formulas] = await Promise.all([
     rebucretFetch(
-      `dispatches?dispatch_date=gte.${dateStr}T03:00:00Z&dispatch_date=lte.${dateStr}T26:59:59Z&is_test_dispatch=eq.false&select=quantity_m3,client_id,construction_site_id,formula_id,dispatch_date`
+      `dispatches?dispatch_date=gte.${dateStr}T03:00:00Z&dispatch_date=lt.${nextDateStr}T03:00:00Z&is_test_dispatch=eq.false&select=quantity_m3,client_id,construction_site_id,formula_id,dispatch_date`
     ),
     getClients(),
     getConstructionSites(),
@@ -98,9 +100,10 @@ export interface ScheduledSummary {
 export async function getTodaySchedule(): Promise<ScheduledSummary[]> {
   const todayStr = getArgentinaDate(new Date())
 
+  const tomorrowStr = getArgentinaDate(new Date(new Date().getTime() + 24 * 60 * 60 * 1000))
   const [scheduled, clients, sites, formulas] = await Promise.all([
     rebucretFetch(
-      `scheduled_dispatches?scheduled_arrival_time=gte.${todayStr}T03:00:00Z&scheduled_arrival_time=lte.${todayStr}T26:59:59Z&status=neq.cancelled&order=scheduled_arrival_time.asc&select=quantity_m3,scheduled_arrival_time,is_urgent,status,client_id,construction_site_id,formula_id`
+      `scheduled_dispatches?scheduled_arrival_time=gte.${todayStr}T03:00:00Z&scheduled_arrival_time=lt.${tomorrowStr}T03:00:00Z&status=neq.cancelled&order=scheduled_arrival_time.asc&select=quantity_m3,scheduled_arrival_time,is_urgent,status,client_id,construction_site_id,formula_id`
     ),
     getClients(),
     getConstructionSites(),
