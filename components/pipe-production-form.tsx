@@ -869,6 +869,27 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
         localStorage.removeItem("pipeProductionForm")
         toast({ title: "Guardado", description: "El parte de produccion se guardo correctamente" })
 
+        // Notificación WhatsApp (fire-and-forget, no bloquea el flujo)
+        const totalPipes = PIPE_SIZES.reduce((sum, size) => {
+          return sum +
+            (Number.parseInt(production[size]?.simples) || 0) +
+            (Number.parseInt(production[size]?.armado) || 0)
+        }, 0)
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "pipe_production",
+            plant: selectedPlant,
+            date: formData.productionDate,
+            details: {
+              shift: formData.shift,
+              totalPipes,
+              operator: formData.operatorName || null,
+            },
+          }),
+        }).catch(() => {}) // silencioso si falla
+
         // Reset form and formula change state
         setFormulaChangedBy("")
         setFormulaChangeReason("")

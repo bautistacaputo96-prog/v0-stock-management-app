@@ -662,12 +662,28 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
         }
 
         localStorage.removeItem("paverProductionForm")
-        toast({ 
-          title: "Guardado", 
-          description: samplesTaken && samples.length > 0 
-            ? `Parte y ${samples.length} muestra(s) guardados correctamente` 
-            : "El parte de adoquines se guardo correctamente" 
+        toast({
+          title: "Guardado",
+          description: samplesTaken && samples.length > 0
+            ? `Parte y ${samples.length} muestra(s) guardados correctamente`
+            : "El parte de adoquines se guardo correctamente"
         })
+
+        // Notificación WhatsApp (fire-and-forget)
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "paver_production",
+            plant: "ranchos",
+            date: formData.productionDate,
+            details: {
+              product: formData.productTypeCode || "—",
+              tables: formData.tablesProduced || "—",
+              pastons: formData.pastonesCount || "—",
+            },
+          }),
+        }).catch(() => {})
 
         // Reset form and formula change state
         setFormulaChangedBy("")
