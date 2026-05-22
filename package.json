@@ -65,6 +65,7 @@
     "swr": "2.4.0",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
+    "twilio": "^6.0.2",
     "vaul": "^1.1.2",
     "xlsx": "^0.18.5",
     "zod": "3.25.76"

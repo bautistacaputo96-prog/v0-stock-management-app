@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/whatsapp/daily-report?secret=rebucret2026",
+      "schedule": "30 11 * * *"
+    }
+  ]
+}
