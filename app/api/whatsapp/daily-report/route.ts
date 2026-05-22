@@ -44,13 +44,19 @@ export async function GET(request: Request) {
 
     const sent = results.filter(r => r.status === "fulfilled").length
     const failed = results.filter(r => r.status === "rejected").length
+    const errors = results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map(r => r.reason?.message || String(r.reason))
 
-    console.log(`Reporte diario enviado: ${sent} exitosos, ${failed} fallidos`)
+    console.log(`Reporte diario enviado: ${sent} exitosos, ${failed} fallidos`, errors)
 
     return NextResponse.json({
       success: true,
       sent,
       failed,
+      errors,
+      from,
+      recipients: recipients.map(r => `whatsapp:${r}`),
       preview: message,
     })
   } catch (error) {
