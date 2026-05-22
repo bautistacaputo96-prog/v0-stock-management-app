@@ -681,6 +681,7 @@ export function PaverProductionForm({ editingRecord = null, onSaveComplete }: Pa
               product: formData.productTypeCode || "—",
               tables: formData.tablesProduced || "—",
               pastons: formData.pastonesCount || "—",
+              wasteKg: formData.wasteKg || "0",
             },
           }),
         }).catch(() => {})

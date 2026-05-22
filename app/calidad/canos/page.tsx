@@ -842,6 +842,23 @@ return {
         }),
       })
       if (res.ok) {
+        // Notificación WhatsApp solo en nuevos controles (no ediciones)
+        if (!isEditing) {
+          const primera = activeItems.reduce((s: number, i: any) => s + (i.first_quality || 0), 0)
+          const segunda = activeItems.reduce((s: number, i: any) => s + (i.second_quality || 0), 0)
+          const rotos = activeItems.reduce((s: number, i: any) => s + (i.broken || 0), 0)
+          const recuperar = activeItems.reduce((s: number, i: any) => s + (i.to_recovery || 0), 0)
+          fetch("/api/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "quality_pipe",
+              plant: selectedPlant,
+              date,
+              details: { primera, segunda, rotos, recuperar, lote: lote.trim() },
+            }),
+          }).catch(() => {})
+        }
         resetForm()
         setShowForm(false)
         setEditingControl(null)

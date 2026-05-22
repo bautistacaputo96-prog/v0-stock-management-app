@@ -875,6 +875,20 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
             (Number.parseInt(production[size]?.simples) || 0) +
             (Number.parseInt(production[size]?.armado) || 0)
         }, 0)
+        const isVillaRosa = selectedPlant === "villa-rosa"
+        const wasteCajones = isVillaRosa ? null :
+          (Number.parseFloat(formData.wasteBin1Cinta) || 0) +
+          (Number.parseFloat(formData.wasteBin2Desmolde) || 0) +
+          (Number.parseFloat(formData.wasteBin3Cinta) || 0) +
+          (Number.parseFloat(formData.wasteBin4Rotos) || 0) +
+          (Number.parseFloat(formData.wasteBin5Mezcladora) || 0)
+        const wasteKg = isVillaRosa ? Math.round(
+          (Number.parseFloat(formData.wasteBin1Cinta) || 0) * 576.7 +
+          (Number.parseFloat(formData.wasteBin2Desmolde) || 0) * 528.4 +
+          (Number.parseFloat(formData.wasteBin3Cinta) || 0) * 476.5 +
+          (Number.parseFloat(formData.wasteBin4Rotos) || 0) * 1074.5 +
+          (Number.parseFloat(formData.wasteBin5Mezcladora) || 0) * 576.7
+        ) : null
         fetch("/api/notify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -886,9 +900,12 @@ export function PipeProductionForm({ editingRecord = null, onSaveComplete, pipeS
               shift: formData.shift,
               totalPipes,
               operator: formData.operatorName || null,
+              wasteCajones,
+              wasteKg,
+              isVillaRosa,
             },
           }),
-        }).catch(() => {}) // silencioso si falla
+        }).catch(() => {})
 
         // Reset form and formula change state
         setFormulaChangedBy("")

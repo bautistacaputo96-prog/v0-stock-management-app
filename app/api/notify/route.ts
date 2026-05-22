@@ -8,49 +8,62 @@ export async function POST(request: Request) {
     const phone = process.env.WHATSAPP_PHONE ?? "5491131379034"
     const apiKey = process.env.WHATSAPP_API_KEY ?? "5189487"
 
-    const PLANT_EMOJI: Record<string, string> = {
+    const PLANT_LABEL: Record<string, string> = {
       silke: "🏭 Silke (Olivera)",
       "villa-rosa": "🏭 Villa Rosa",
       ranchos: "🏭 Ranchos",
     }
+    const plantLabel = PLANT_LABEL[plant] ?? plant
 
-    const plantLabel = PLANT_EMOJI[plant] ?? plant
     let message = ""
 
     if (type === "pipe_production") {
-      const { shift, totalPipes, operator } = details
+      const { shift, totalPipes, operator, wasteCajones, wasteKg, isVillaRosa } = details
+
+      const wasteLine = isVillaRosa
+        ? `🗑️ Desperdicio: *${wasteKg ?? 0} kg*`
+        : `🗑️ Desperdicio: *${wasteCajones ?? 0} cajones*`
+
       message =
         `✅ *Parte de caños cargado*\n` +
         `${plantLabel}\n` +
         `📅 ${date} — Turno ${shift}\n` +
         `🔩 Total caños: *${totalPipes}*\n` +
-        (operator ? `👷 Operario: ${operator}` : "")
+        wasteLine +
+        (operator ? `\n👷 ${operator}` : "")
+
     } else if (type === "paver_production") {
-      const { tables, product, pastons } = details
+      const { tables, product, pastons, wasteKg } = details
       message =
         `✅ *Parte de adoquines cargado*\n` +
         `${plantLabel}\n` +
         `📅 ${date}\n` +
         `🧱 Producto: ${product}\n` +
-        `📦 Tablas: *${tables}*  |  Pastones: ${pastons}`
+        `📦 Tablas: *${tables}*  |  Pastones: ${pastons}\n` +
+        `🗑️ Desperdicio: *${wasteKg ?? 0} kg*`
+
+    } else if (type === "quality_pipe") {
+      const { primera, segunda, rotos, recuperar, lote } = details
+      message =
+        `🔬 *Control de calidad — Caños*\n` +
+        `${plantLabel}\n` +
+        `📅 ${date}${lote ? `  |  Lote: ${lote}` : ""}\n` +
+        `✅ 1ra calidad: *${primera}*\n` +
+        `🔸 2da calidad: *${segunda}*\n` +
+        `❌ Rotos: *${rotos}*\n` +
+        `🔄 A recuperar: *${recuperar}*`
+
     } else {
       message = `📋 *Parte cargado*\n${plantLabel}\n📅 ${date}`
     }
 
-    // Llamar a CallMeBot directamente aquí para poder ver la respuesta
     const encoded = encodeURIComponent(message)
     const url = `https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${encoded}&apikey=${apiKey}`
+    await fetch(url)
 
-    const res = await fetch(url)
-    const text = await res.text()
-
-    return NextResponse.json({
-      success: true,
-      callmebot_status: res.status,
-      callmebot_response: text.slice(0, 300),
-      phone_used: `${phone.slice(0, 4)}...${phone.slice(-3)}`,
-    })
+    return NextResponse.json({ success: true })
   } catch (err: any) {
+    console.error("[notify]", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
