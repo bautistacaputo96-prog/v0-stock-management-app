@@ -1666,7 +1666,7 @@ onClick={(e) => {
                 Parte Diario de Producción
               </h3>
               <p className="text-xs text-muted-foreground mb-3">Cajones de desperdicio cargados por el operario en el parte de producción</p>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-3xl font-bold text-amber-600">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</p>
@@ -1675,16 +1675,75 @@ onClick={(e) => {
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">{(wasteData.totalWasteKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{totalDesperdicioKg.toLocaleString("es-AR", { maximumFractionDigits: 0 })}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Kg Desperdicio</p>
+                        </>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">
-                      {wasteData.totalProductionKg > 0 ? ((wasteData.totalWasteKg / wasteData.totalProductionKg) * 100).toFixed(2) : "0.00"}%
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">% vs Produccion Total</p>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{(totalDesperdicioKg / 1000).toFixed(2)}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
+                        </>
+                      )
+                    })()}
+                  </CardContent>
+                </Card>
+                <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
+                  <CardContent className="py-4 text-center">
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      const pct = wasteData.totalProductionKg > 0 ? (totalDesperdicioKg / wasteData.totalProductionKg) * 100 : 0
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{pct.toFixed(2)}%</p>
+                          <p className="text-xs text-muted-foreground mt-1">% vs Produccion Total</p>
+                        </>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
               </div>
