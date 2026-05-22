@@ -848,6 +848,23 @@ return {
           const segunda = activeItems.reduce((s: number, i: any) => s + (i.second_quality || 0), 0)
           const rotos = activeItems.reduce((s: number, i: any) => s + (i.broken || 0), 0)
           const recuperar = activeItems.reduce((s: number, i: any) => s + (i.to_recovery || 0), 0)
+
+          // Defecto más recurrente: sumar cantidades por reason_id en todos los diámetros
+          const totalesPorDefecto: Record<number, number> = {}
+          for (const d of activeDefects) {
+            for (const r of d.reasons) {
+              if (r.defect_reason_id > 0) {
+                totalesPorDefecto[r.defect_reason_id] = (totalesPorDefecto[r.defect_reason_id] || 0) + r.quantity
+              }
+            }
+          }
+          let topDefecto: string | null = null
+          if (Object.keys(totalesPorDefecto).length > 0) {
+            const topId = Number(Object.entries(totalesPorDefecto).sort((a, b) => b[1] - a[1])[0][0])
+            const found = defectReasons.find((r) => r.id === topId)
+            topDefecto = found ? `${found.reason} (${totalesPorDefecto[topId]})` : null
+          }
+
           fetch("/api/notify", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -855,7 +872,7 @@ return {
               type: "quality_pipe",
               plant: selectedPlant,
               date,
-              details: { primera, segunda, rotos, recuperar, lote: lote.trim() },
+              details: { primera, segunda, rotos, recuperar, lote: lote.trim(), topDefecto },
             }),
           }).catch(() => {})
         }

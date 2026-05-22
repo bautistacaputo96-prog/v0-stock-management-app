@@ -43,7 +43,7 @@ export async function POST(request: Request) {
         `🗑️ Desperdicio: *${wasteKg ?? 0} kg*`
 
     } else if (type === "quality_pipe") {
-      const { primera, segunda, rotos, recuperar, lote } = details
+      const { primera, segunda, rotos, recuperar, lote, topDefecto } = details
       message =
         `🔬 *Control de calidad — Caños*\n` +
         `${plantLabel}\n` +
@@ -51,7 +51,8 @@ export async function POST(request: Request) {
         `✅ 1ra calidad: *${primera}*\n` +
         `🔸 2da calidad: *${segunda}*\n` +
         `❌ Rotos: *${rotos}*\n` +
-        `🔄 A recuperar: *${recuperar}*`
+        `🔄 A recuperar: *${recuperar}*` +
+        (topDefecto ? `\n⚠️ Defecto principal: ${topDefecto}` : "")
 
     } else {
       message = `📋 *Parte cargado*\n${plantLabel}\n📅 ${date}`
