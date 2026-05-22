@@ -7,11 +7,10 @@
  *   WHATSAPP_API_KEY  — API key que te manda CallMeBot al activar el servicio
  */
 export async function sendWhatsApp(message: string): Promise<void> {
-  const phone = process.env.WHATSAPP_PHONE
-  const apiKey = process.env.WHATSAPP_API_KEY
+  const phone = process.env.WHATSAPP_PHONE ?? "5491131379034"
+  const apiKey = process.env.WHATSAPP_API_KEY ?? "5189487"
 
   if (!phone || !apiKey) {
-    // Si no están configuradas las variables, no falla — solo loguea
     console.warn("[WhatsApp] Variables WHATSAPP_PHONE / WHATSAPP_API_KEY no configuradas")
     return
   }
