@@ -1,17 +1,12 @@
 import { NextResponse } from "next/server"
-import { sendWhatsApp } from "@/lib/whatsapp"
 
-/**
- * POST /api/notify
- * Body: { type, plant, date, details }
- *
- * Llamado desde los formularios del cliente después de guardar un parte.
- * La API key de WhatsApp vive en el servidor (env vars) y nunca se expone al browser.
- */
 export async function POST(request: Request) {
   try {
     const body = await request.json()
     const { type, plant, date, details } = body
+
+    const phone = process.env.WHATSAPP_PHONE ?? "5491131379034"
+    const apiKey = process.env.WHATSAPP_API_KEY ?? "5189487"
 
     const PLANT_EMOJI: Record<string, string> = {
       silke: "🏭 Silke (Olivera)",
@@ -20,7 +15,6 @@ export async function POST(request: Request) {
     }
 
     const plantLabel = PLANT_EMOJI[plant] ?? plant
-
     let message = ""
 
     if (type === "pipe_production") {
@@ -39,25 +33,24 @@ export async function POST(request: Request) {
         `📅 ${date}\n` +
         `🧱 Producto: ${product}\n` +
         `📦 Tablas: *${tables}*  |  Pastones: ${pastons}`
-    } else if (type === "quality_test") {
-      const { testType, result } = details
-      message =
-        `🔬 *Ensayo de calidad cargado*\n` +
-        `${plantLabel}\n` +
-        `📅 ${date}\n` +
-        `📋 Tipo: ${testType}\n` +
-        (result ? `📊 Resultado: ${result}` : "")
     } else {
-      message =
-        `📋 *Parte cargado*\n` +
-        `${plantLabel}\n` +
-        `📅 ${date}`
+      message = `📋 *Parte cargado*\n${plantLabel}\n📅 ${date}`
     }
 
-    await sendWhatsApp(message)
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error("[notify] Error:", err)
-    return NextResponse.json({ error: "Error al enviar notificación" }, { status: 500 })
+    // Llamar a CallMeBot directamente aquí para poder ver la respuesta
+    const encoded = encodeURIComponent(message)
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${encoded}&apikey=${apiKey}`
+
+    const res = await fetch(url)
+    const text = await res.text()
+
+    return NextResponse.json({
+      success: true,
+      callmebot_status: res.status,
+      callmebot_response: text.slice(0, 300),
+      phone_used: `${phone.slice(0, 4)}...${phone.slice(-3)}`,
+    })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
