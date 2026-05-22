@@ -120,22 +120,36 @@ export async function getTodaySchedule(): Promise<ScheduledSummary[]> {
     return []
   }
 
-  return (data || []).map((d: any) => {
+  // Agrupar por cliente + obra + formula para no exceder el límite de WhatsApp
+  const groups: Record<string, ScheduledSummary> = {}
+  for (const d of (data || []) as any[]) {
+    const clientName = d.client?.name || "Sin cliente"
+    const obraName = d.construction_site?.name || "Sin obra"
+    const formulaName = d.formula?.name || "Sin tipo"
+    const key = `${clientName}|${obraName}|${formulaName}`
+
     const arrivalDate = new Date(d.scheduled_arrival_time)
     const arHours = new Date(arrivalDate.getTime() + AR_OFFSET * 60 * 60 * 1000)
     const hora = arHours.toISOString().substring(11, 16)
 
-    return {
-      client: d.client?.name || "Sin cliente",
-      obra: d.construction_site?.name || "Sin obra",
-      formula: d.formula?.name || "Sin tipo",
-      total_m3: Number(d.quantity_m3) || 0,
-      viajes: 1,
-      hora,
-      is_urgent: d.is_urgent || false,
-      status: d.status,
+    if (!groups[key]) {
+      groups[key] = {
+        client: clientName,
+        obra: obraName,
+        formula: formulaName,
+        total_m3: 0,
+        viajes: 0,
+        hora, // primera hora del grupo
+        is_urgent: d.is_urgent || false,
+        status: d.status,
+      }
     }
-  })
+    groups[key].total_m3 += Number(d.quantity_m3) || 0
+    groups[key].viajes += 1
+    if (d.is_urgent) groups[key].is_urgent = true
+  }
+
+  return Object.values(groups).sort((a, b) => a.hora.localeCompare(b.hora))
 }
 
 // ─── Formatea el reporte completo como mensaje WhatsApp ─────────────────────
@@ -179,14 +193,15 @@ export function formatDailyReport(
     lines.push(`_Sin viajes programados_`)
   } else {
     const totalM3 = todaySchedule.reduce((s, d) => s + d.total_m3, 0)
-    const totalViajes = todaySchedule.length
+    const totalViajes = todaySchedule.reduce((s, d) => s + d.viajes, 0)
     lines.push(`Total: *${totalM3.toFixed(1)} m³* en ${totalViajes} viajes`)
     lines.push(``)
 
     for (const d of todaySchedule) {
       const urgente = d.is_urgent ? " ⚡" : ""
       const completado = d.status === "completed" ? " ✅" : ""
-      lines.push(`${d.hora}hs • ${d.client} → *${d.formula}*: ${d.total_m3.toFixed(1)} m³${urgente}${completado}`)
+      const viajesStr = d.viajes > 1 ? ` (${d.viajes}v)` : ""
+      lines.push(`${d.hora}hs • ${d.client} → *${d.formula}*: ${d.total_m3.toFixed(1)} m³${viajesStr}${urgente}${completado}`)
       if (d.obra && d.obra !== d.client) lines.push(`  📍 ${d.obra}`)
     }
   }
