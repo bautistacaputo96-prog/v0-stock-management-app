@@ -60,9 +60,11 @@ export async function POST(request: Request) {
 
     const encoded = encodeURIComponent(message)
     const url = `https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${encoded}&apikey=${apiKey}`
-    await fetch(url)
+    const cbRes = await fetch(url)
+    const cbText = await cbRes.text()
+    console.log("[notify] CallMeBot status:", cbRes.status, "response:", cbText.slice(0, 200))
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, cb_status: cbRes.status, cb_response: cbText.slice(0, 200) })
   } catch (err: any) {
     console.error("[notify]", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
