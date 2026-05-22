@@ -413,19 +413,29 @@ export default function PipeQualityPage() {
 
     // Calculate breakage from CONTROL (rotura en desmolde/control)
     const controlBreakage: Record<number, number> = {}
+    const toRecovery: Record<number, number> = {}
     let totalControlBreakageUnits = 0
     let totalControlBreakageKg = 0
+    let totalToRecoveryUnits = 0
+    let totalToRecoveryKg = 0
 
-    plantDiameters.forEach(d => { controlBreakage[d] = 0 })
+    plantDiameters.forEach(d => { 
+      controlBreakage[d] = 0
+      toRecovery[d] = 0
+    })
 
     filteredControls.forEach(c => {
       c.items?.forEach(item => {
         // Only count if this diameter belongs to this plant
         if (plantDiameters.includes(item.diameter)) {
           const broken = item.broken || 0
+          const recovery = item.to_recovery || 0
           controlBreakage[item.diameter] += broken
           totalControlBreakageUnits += broken
           totalControlBreakageKg += broken * (pipeWeights[item.diameter] || 0)
+          toRecovery[item.diameter] += recovery
+          totalToRecoveryUnits += recovery
+          totalToRecoveryKg += recovery * (pipeWeights[item.diameter] || 0)
         }
       })
     })
@@ -551,6 +561,10 @@ return {
       controlBreakage,
       totalControlBreakageUnits,
       totalControlBreakageKg,
+      // To Recovery totals
+      toRecovery,
+      totalToRecoveryUnits,
+      totalToRecoveryKg,
       // Combined totals
       totalBreakageUnits: totalProductionBreakageUnits + totalControlBreakageUnits,
       totalBreakageKg: totalProductionBreakageKg + totalControlBreakageKg,
@@ -1652,7 +1666,7 @@ onClick={(e) => {
                 Parte Diario de Producción
               </h3>
               <p className="text-xs text-muted-foreground mb-3">Cajones de desperdicio cargados por el operario en el parte de producción</p>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-3xl font-bold text-amber-600">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</p>
@@ -1661,16 +1675,75 @@ onClick={(e) => {
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">{(wasteData.totalWasteKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{totalDesperdicioKg.toLocaleString("es-AR", { maximumFractionDigits: 0 })}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Kg Desperdicio</p>
+                        </>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
-                    <p className="text-3xl font-bold text-amber-600">
-                      {wasteData.totalProductionKg > 0 ? ((wasteData.totalWasteKg / wasteData.totalProductionKg) * 100).toFixed(2) : "0.00"}%
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">% vs Produccion Total</p>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{(totalDesperdicioKg / 1000).toFixed(2)}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Toneladas Desperdicio</p>
+                        </>
+                      )
+                    })()}
+                  </CardContent>
+                </Card>
+                <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
+                  <CardContent className="py-4 text-center">
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      const pct = wasteData.totalProductionKg > 0 ? (totalDesperdicioKg / wasteData.totalProductionKg) * 100 : 0
+                      return (
+                        <>
+                          <p className="text-3xl font-bold text-amber-600">{pct.toFixed(2)}%</p>
+                          <p className="text-xs text-muted-foreground mt-1">% vs Produccion Total</p>
+                        </>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
               </div>
@@ -1683,31 +1756,73 @@ onClick={(e) => {
                     <tr className="bg-muted/50">
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Cajones</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Peso Tacho (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Peso Lleno (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Contenido (kg)</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Total (Tn)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {wasteData.WASTE_BIN_TYPES.map((t) => {
-                      const qty = wasteData.wasteBinsByType[t.key] || 0
-                      return (
-                        <tr key={t.key} className="border-t border-border/50">
-                          <td className="py-1.5 px-2 font-medium">{t.label}</td>
-                          <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
-                        </tr>
-                      )
-                    })}
+                    {(() => {
+                      // Pesos de los tachos (vacío y lleno)
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },      // Tacho 1
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },   // Tacho 2
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },      // Tacho 3
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },     // Tacho 4
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 }, // Tacho 5 = Tacho 1
+                      }
+                      
+                      let totalContenido = 0
+                      
+                      return wasteData.WASTE_BIN_TYPES.map((t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        const contenidoPorCajon = weights.lleno - weights.tara
+                        const totalTn = (qty * contenidoPorCajon) / 1000
+                        totalContenido += qty * contenidoPorCajon
+                        
+                        return (
+                          <tr key={t.key} className="border-t border-border/50">
+                            <td className="py-1.5 px-2 font-medium">{t.label}</td>
+                            <td className="py-1.5 px-2 text-center">{qty.toFixed(1)}</td>
+                            <td className="py-1.5 px-2 text-center text-muted-foreground">{weights.tara}</td>
+                            <td className="py-1.5 px-2 text-center text-muted-foreground">{weights.lleno}</td>
+                            <td className="py-1.5 px-2 text-center">{contenidoPorCajon.toFixed(1)}</td>
+                            <td className="py-1.5 px-2 text-center font-medium">{totalTn.toFixed(2)}</td>
+                          </tr>
+                        )
+                      })
+                    })()}
                   </tbody>
                   <tfoot>
-                    <tr className="bg-muted/50 border-t font-semibold">
-                      <td className="py-1.5 px-2">Total Cajones</td>
-                      <td className="py-1.5 px-2 text-center">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</td>
-                    </tr>
-                    <tr className="bg-amber-100 dark:bg-amber-900/30 border-t font-semibold">
-                      <td className="py-1.5 px-2">Total Desperdicio</td>
-                      <td className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400">{(wasteData.totalWasteKg / 1000).toFixed(2)} Tn</td>
-                    </tr>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalCajones = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
+                      const totalContenidoKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      
+                      return (
+                        <tr className="bg-amber-100 dark:bg-amber-900/30 border-t font-semibold">
+                          <td className="py-1.5 px-2">Total</td>
+                          <td className="py-1.5 px-2 text-center">{totalCajones.toFixed(1)}</td>
+                          <td className="py-1.5 px-2 text-center" colSpan={3}>-</td>
+                          <td className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400">{(totalContenidoKg / 1000).toFixed(2)} Tn</td>
+                        </tr>
+                      )
+                    })()}
                   </tfoot>
                 </table>
-                <p className="text-[10px] text-muted-foreground mt-1">* El peso total proviene del campo total_waste_kg del parte diario</p>
+                <p className="text-[10px] text-muted-foreground mt-1">* Pesos de tachos configurados. Contenido = Peso Lleno - Peso Tacho</p>
               </div>
               
               {/* Card de Toneladas Procesadas */}
@@ -1741,18 +1856,18 @@ onClick={(e) => {
                 Control de Calidad
               </h3>
               <p className="text-xs text-muted-foreground mb-3">Caños de segunda calidad y rotos registrados en el control de calidad</p>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
                 <Card className="bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-2xl font-bold text-emerald-600">{(wasteData.totalProductionKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Producción Total (Tn)</p>
+                    <p className="text-xs text-muted-foreground mt-1">Produccion Total (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionUnits.toLocaleString()} unidades</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-orange-50 dark:bg-orange-950/20 border-orange-200">
                   <CardContent className="py-4 text-center">
                     <p className="text-2xl font-bold text-orange-600">{(wasteData.totalProductionBreakageKg / 1000).toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Rotura Producción (Tn)</p>
+                    <p className="text-xs text-muted-foreground mt-1">Rotura Produccion (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalProductionBreakageUnits} unidades</p>
                   </CardContent>
                 </Card>
@@ -1761,6 +1876,13 @@ onClick={(e) => {
                     <p className="text-2xl font-bold text-red-600">{(wasteData.totalControlBreakageKg / 1000).toFixed(2)}</p>
                     <p className="text-xs text-muted-foreground mt-1">Rotura Control (Tn)</p>
                     <p className="text-[10px] text-muted-foreground">{wasteData.totalControlBreakageUnits} unidades</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-purple-50 dark:bg-purple-950/20 border-purple-200">
+                  <CardContent className="py-4 text-center">
+                    <p className="text-2xl font-bold text-purple-600">{(wasteData.totalToRecoveryKg / 1000).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">A Recuperar (Tn)</p>
+                    <p className="text-[10px] text-muted-foreground">{wasteData.totalToRecoveryUnits} unidades</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-red-100 dark:bg-red-950/30 border-red-300">
@@ -1798,6 +1920,7 @@ onClick={(e) => {
                       <p className="text-amber-600">Cajones: {(wasteData.totalWasteKg / 1000).toFixed(2)} Tn ({Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)} caj)</p>
                       <p className="text-orange-600">Rotura Prod: {(wasteData.totalProductionBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalProductionBreakageUnits} u)</p>
                       <p className="text-red-600">Rotura Control: {(wasteData.totalControlBreakageKg / 1000).toFixed(2)} Tn ({wasteData.totalControlBreakageUnits} u)</p>
+                      <p className="text-purple-600">A Recuperar: {(wasteData.totalToRecoveryKg / 1000).toFixed(2)} Tn ({wasteData.totalToRecoveryUnits} u)</p>
                     </div>
                   </div>
                 </CardContent>
@@ -1808,7 +1931,7 @@ onClick={(e) => {
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <CardTitle className="text-base">Tendencia Diaria - Cajones de Desperdicio (Tn)</CardTitle>
+                  <CardTitle className="text-base">Tendencia Diaria - Cantidad de Cajones</CardTitle>
                   <div className="flex items-center gap-4 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">Tipo:</span>
@@ -1865,34 +1988,27 @@ onClick={(e) => {
                         data={wasteData.byDate.map(([date, data]) => {
                           const shiftBinData = wasteData.byDateShiftBin[date] || {}
                           
-                          let totalKg = 0
-                          
-                          // Calculate kg per bin for this date
-                          const totalBins = Object.values(data.wasteBins || {}).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
-                          const kgPerBin = totalBins > 0 ? data.totalWasteKg / totalBins : 630
+                          let totalCajones = 0
                           
                           if (wasteShiftFilter === "todos") {
                             if (wasteBinFilter === "todos") {
-                              totalKg = data.totalWasteKg || 0
+                              totalCajones = Object.values(data.wasteBins || {}).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
                             } else {
-                              const binQty = data.wasteBins?.[wasteBinFilter] || 0
-                              totalKg = binQty * kgPerBin
+                              totalCajones = parseFloat(data.wasteBins?.[wasteBinFilter]) || 0
                             }
                           } else {
                             const shiftNum = Number(wasteShiftFilter)
                             const shiftData = shiftBinData[shiftNum] || {}
                             if (wasteBinFilter === "todos") {
-                              const shiftBins = Object.values(shiftData).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
-                              totalKg = shiftBins * kgPerBin
+                              totalCajones = Object.values(shiftData).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0)
                             } else {
-                              const binQty = shiftData[wasteBinFilter] || 0
-                              totalKg = binQty * kgPerBin
+                              totalCajones = parseFloat(shiftData[wasteBinFilter]) || 0
                             }
                           }
                           
                           return {
                             date: new Date(date + "T12:00:00").toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
-                            tn: totalKg / 1000,
+                            cajones: totalCajones,
                           }
                         })}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
@@ -1908,17 +2024,17 @@ onClick={(e) => {
                         <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" />
                         <Tooltip
                           contentStyle={{ fontSize: 12 }}
-                          formatter={(val: number) => [`${val.toFixed(2)} Tn`, "Desperdicio"]}
+                          formatter={(val: number) => [`${val.toFixed(1)} cajones`, "Cantidad"]}
                           labelFormatter={(label) => `Fecha: ${label}`}
                         />
                         <Area
                           type="monotone"
-                          dataKey="tn"
+                          dataKey="cajones"
                           stroke="#f59e0b"
                           strokeWidth={2}
                           fill="url(#wasteGradient)"
                           dot={{ r: 3, fill: "#f59e0b" }}
-                          name="tn"
+                          name="cajones"
                         />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -1936,7 +2052,7 @@ onClick={(e) => {
             {/* Tabla de Rotura de Caños por Tipo */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Rotura de Caños por Tipo</CardTitle>
+                <CardTitle className="text-base">Rotura de Canos por Tipo</CardTitle>
               </CardHeader>
               <CardContent>
                 <table className="w-full text-xs border border-border rounded">
@@ -1945,7 +2061,8 @@ onClick={(e) => {
                       <th className="text-left py-1.5 px-2 font-medium">Tipo</th>
                       <th className="text-center py-1.5 px-2 font-medium">Rotura Prod</th>
                       <th className="text-center py-1.5 px-2 font-medium">Rotura Control</th>
-                      <th className="text-center py-1.5 px-2 font-medium">Total Unidades</th>
+                      <th className="text-center py-1.5 px-2 font-medium">A Recup.</th>
+                      <th className="text-center py-1.5 px-2 font-medium">Total Rotura</th>
                       <th className="text-center py-1.5 px-2 font-medium">Toneladas</th>
                     </tr>
                   </thead>
@@ -1953,6 +2070,7 @@ onClick={(e) => {
                     {wasteData.plantDiameters.map((d) => {
                       const prodBreak = wasteData.productionBreakage[d] || 0
                       const ctrlBreak = wasteData.controlBreakage[d] || 0
+                      const toRecov = wasteData.toRecovery[d] || 0
                       const total = prodBreak + ctrlBreak
                       const kg = total * (wasteData.pipeWeights[d] || 0)
                       return (
@@ -1960,6 +2078,7 @@ onClick={(e) => {
                           <td className="py-1.5 px-2 font-medium">CC{d}</td>
                           <td className="py-1.5 px-2 text-center text-orange-600">{prodBreak}</td>
                           <td className="py-1.5 px-2 text-center text-red-600">{ctrlBreak}</td>
+                          <td className="py-1.5 px-2 text-center text-purple-600">{toRecov}</td>
                           <td className="py-1.5 px-2 text-center font-semibold">{total}</td>
                           <td className="py-1.5 px-2 text-center">{(kg / 1000).toFixed(2)}</td>
                         </tr>
@@ -1971,6 +2090,7 @@ onClick={(e) => {
                       <td className="py-1.5 px-2">Total</td>
                       <td className="py-1.5 px-2 text-center text-orange-600">{wasteData.totalProductionBreakageUnits}</td>
                       <td className="py-1.5 px-2 text-center text-red-600">{wasteData.totalControlBreakageUnits}</td>
+                      <td className="py-1.5 px-2 text-center text-purple-600">{wasteData.totalToRecoveryUnits}</td>
                       <td className="py-1.5 px-2 text-center">{wasteData.totalBreakageUnits}</td>
                       <td className="py-1.5 px-2 text-center">{(wasteData.totalBreakageKg / 1000).toFixed(2)}</td>
                     </tr>
@@ -1982,36 +2102,39 @@ onClick={(e) => {
             {/* Rotura por Molde */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Rotura por Molde (Diámetro)</CardTitle>
+                <CardTitle className="text-base">Rotura por Molde (Diametro)</CardTitle>
               </CardHeader>
               <CardContent>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2 font-medium text-muted-foreground">Diámetro</th>
+                      <th className="text-left py-2 font-medium text-muted-foreground">Diametro</th>
                       <th className="text-right py-2 font-medium text-muted-foreground">Peso/u (kg)</th>
                       <th className="text-center py-2 font-medium text-orange-600">Prod (u)</th>
                       <th className="text-center py-2 font-medium text-orange-600">Prod (kg)</th>
                       <th className="text-center py-2 font-medium text-red-600">Control (u)</th>
                       <th className="text-center py-2 font-medium text-red-600">Control (kg)</th>
+                      <th className="text-center py-2 font-medium text-purple-600">A Recup. (u)</th>
                       <th className="text-center py-2 font-medium text-destructive">Total (u)</th>
                       <th className="text-center py-2 font-medium text-destructive">Total (kg)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {PIPE_DIAMETERS.map((d) => {
+                    {wasteData.plantDiameters.map((d) => {
                       const prodUnits = wasteData.productionBreakage[d] || 0
                       const controlUnits = wasteData.controlBreakage[d] || 0
+                      const toRecovUnits = wasteData.toRecovery[d] || 0
                       const weight = wasteData.pipeWeights[d] || 0
                       const totalUnits = prodUnits + controlUnits
                       return (
                         <tr key={d} className="border-b border-border/50">
-                          <td className="py-2 font-medium">Caño {d}</td>
+                          <td className="py-2 font-medium">Cano {d}</td>
                           <td className="py-2 text-right text-muted-foreground">{weight}</td>
                           <td className="py-2 text-center text-orange-600">{prodUnits || "-"}</td>
                           <td className="py-2 text-center text-orange-600">{prodUnits ? (prodUnits * weight).toLocaleString() : "-"}</td>
                           <td className="py-2 text-center text-red-600">{controlUnits || "-"}</td>
                           <td className="py-2 text-center text-red-600">{controlUnits ? (controlUnits * weight).toLocaleString() : "-"}</td>
+                          <td className="py-2 text-center text-purple-600">{toRecovUnits || "-"}</td>
                           <td className="py-2 text-center font-semibold text-destructive">{totalUnits || "-"}</td>
                           <td className="py-2 text-center font-semibold text-destructive">{totalUnits ? (totalUnits * weight).toLocaleString() : "-"}</td>
                         </tr>
@@ -2023,6 +2146,7 @@ onClick={(e) => {
                       <td className="py-2 text-center text-orange-600">{wasteData.totalProductionBreakageKg.toLocaleString()}</td>
                       <td className="py-2 text-center text-red-600">{wasteData.totalControlBreakageUnits}</td>
                       <td className="py-2 text-center text-red-600">{wasteData.totalControlBreakageKg.toLocaleString()}</td>
+                      <td className="py-2 text-center text-purple-600">{wasteData.totalToRecoveryUnits}</td>
                       <td className="py-2 text-center text-destructive">{wasteData.totalProductionBreakageUnits + wasteData.totalControlBreakageUnits}</td>
                       <td className="py-2 text-center text-destructive">{(wasteData.totalProductionBreakageKg + wasteData.totalControlBreakageKg).toLocaleString()}</td>
                     </tr>
