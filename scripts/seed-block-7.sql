@@ -1,0 +1,18 @@
+INSERT INTO maintenance_inventory (plant, category_id, name, current_stock, minimum_stock) VALUES
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Acarreo de Autoelevador', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Cetec Reclamos/Servicio', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Parche Urgente Autoelevador', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Parche Urgente Pala Mecánica', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Bomba Centrífuga', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Bomba Inyección', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Burro de Pala Urgente', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Cilindro', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Motor Eléctrico', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Motor Freno', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Radiador', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Soldadora Intraud Mig', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Motovibrador', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Reparar Motor de Arranque', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Envío Reparación', 0, 0),
+('silke', (SELECT id FROM maintenance_categories WHERE plant='silke' AND name='Reparación Ext.' LIMIT 1), 'Gomería, parches', 0, 0)
+ON CONFLICT DO NOTHING;
