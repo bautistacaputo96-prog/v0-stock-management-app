@@ -689,6 +689,23 @@ export function RanchosDashboardContent() {
       .slice(0, 5)
   }, [records])
 
+  // Detalle completo de paradas con fecha, motivo, minutos y comentarios
+  const paradasDetalle = useMemo(() => {
+    const detalles: { fecha: string; motivo: string; minutos: number; comentario: string }[] = []
+    records.forEach(r => {
+      const fecha = new Date(r.production_date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })
+      ;(r.paver_downtime || []).forEach((dt: any) => {
+        detalles.push({
+          fecha,
+          motivo: dt.custom_reason || "Sin especificar",
+          minutos: dt.minutes || 0,
+          comentario: dt.comments || ""
+        })
+      })
+    })
+    return detalles.sort((a, b) => b.minutos - a.minutos)
+  }, [records])
+
   // Alerts
   const alerts = useMemo(() => {
     const result: string[] = []
@@ -1055,6 +1072,48 @@ export function RanchosDashboardContent() {
               )}
             </div>
           </div>
+
+          {/* ═══ SECCION 5b — Detalle de Paradas ════════════════════════ */}
+          {paradasDetalle.length > 0 && (
+            <div className="bg-card rounded-lg border border-border p-5 shadow-sm mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-destructive" />
+                  Detalle de Paradas - {MONTH_NAMES[selectedMonthIdx]}
+                </h3>
+                <span className="text-xs text-muted-foreground">{paradasDetalle.length} registros</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 px-2 font-medium text-muted-foreground">Fecha</th>
+                      <th className="text-left py-2 px-2 font-medium text-muted-foreground">Motivo</th>
+                      <th className="text-center py-2 px-2 font-medium text-muted-foreground">Min</th>
+                      <th className="text-left py-2 px-2 font-medium text-muted-foreground">Comentario</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paradasDetalle.map((p, idx) => (
+                      <tr key={idx} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="py-2 px-2 font-medium text-foreground">{p.fecha}</td>
+                        <td className="py-2 px-2 text-foreground">{p.motivo}</td>
+                        <td className="py-2 px-2 text-center font-mono font-semibold text-destructive">{p.minutos}</td>
+                        <td className="py-2 px-2 text-muted-foreground italic">{p.comentario || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/30 font-semibold">
+                      <td className="py-2 px-2" colSpan={2}>Total</td>
+                      <td className="py-2 px-2 text-center font-mono text-destructive">{paradasDetalle.reduce((s, p) => s + p.minutos, 0)}</td>
+                      <td className="py-2 px-2"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* ═══ SECCION 6 — Cambios de proveedor ═════════════════════════ */}
           {dailyData.some(d => d.supplierChanged) && (
