@@ -109,6 +109,9 @@ export default function PipeQualityPage() {
   const [controlToDelete, setControlToDelete] = useState<{ id: number; lote: string } | null>(null)
   const [otherDefectComments, setOtherDefectComments] = useState<Record<number, string>>({}) // diameter -> comment
   const pdfReportRef = useRef<HTMLDivElement>(null)
+  const wastePdfRef = useRef<HTMLDivElement>(null)
+  const [showWastePdfPreview, setShowWastePdfPreview] = useState(false)
+  const [exportingWastePdf, setExportingWastePdf] = useState(false)
   
   // Report filter state
   const [reportFromDate, setReportFromDate] = useState(() => {
@@ -1695,11 +1698,22 @@ onClick={(e) => {
 
             {/* PARTE DIARIO - Cajones de Desperdicio */}
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                Parte Diario de Producción
-              </h3>
-              <p className="text-xs text-muted-foreground mb-3">Cajones de desperdicio cargados por el operario en el parte de producción</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Parte Diario de Produccion
+                </h3>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowWastePdfPreview(true)}
+                  className="h-7 text-xs gap-1"
+                >
+                  <FileDown className="w-3 h-3" />
+                  Informe PDF
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">Cajones de desperdicio cargados por el operario en el parte de produccion</p>
               <div className="grid grid-cols-4 gap-4">
                 <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200">
                   <CardContent className="py-4 text-center">
@@ -2270,6 +2284,195 @@ onClick={(e) => {
               reportData={reportData}
               controlsCount={reportData.filteredControls.length}
             />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Waste Report PDF Preview Dialog */}
+      <Dialog open={showWastePdfPreview} onOpenChange={setShowWastePdfPreview}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>Informe de Desperdicio - {new Date(reportFromDate).toLocaleDateString("es-AR")} al {new Date(reportToDate).toLocaleDateString("es-AR")}</span>
+              <Button 
+                variant="default" 
+                size="sm" 
+                className="gap-2"
+                onClick={async () => {
+                  if (!wastePdfRef.current) return
+                  setExportingWastePdf(true)
+                  try {
+                    await exportElementToPDF(wastePdfRef.current, `informe-desperdicio-${reportFromDate}-${reportToDate}.pdf`)
+                  } finally {
+                    setExportingWastePdf(false)
+                  }
+                }}
+                disabled={exportingWastePdf}
+              >
+                {exportingWastePdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+                Descargar PDF
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="border rounded-lg bg-white p-4 shadow-inner">
+            <div ref={wastePdfRef} className="bg-white p-6 text-gray-900" style={{ minWidth: "700px" }}>
+              {/* Header */}
+              <div className="text-center mb-6 pb-4 border-b-2 border-amber-500">
+                <h1 className="text-xl font-bold text-gray-900">INFORME DE DESPERDICIO</h1>
+                <p className="text-sm text-gray-600 mt-1">Planta: {selectedPlant === "silke" ? "Silke" : "Villa Rosa"}</p>
+                <p className="text-sm text-gray-600">Periodo: {new Date(reportFromDate).toLocaleDateString("es-AR")} - {new Date(reportToDate).toLocaleDateString("es-AR")}</p>
+              </div>
+
+              {/* KPIs Summary */}
+              <div className="mb-6">
+                <h2 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Resumen General
+                </h2>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                    <p className="text-2xl font-bold text-amber-600">{Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0).toFixed(1)}</p>
+                    <p className="text-xs text-gray-600 mt-1">Cajones Totales</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      return (
+                        <>
+                          <p className="text-2xl font-bold text-amber-600">{(totalDesperdicioKg / 1000).toFixed(2)}</p>
+                          <p className="text-xs text-gray-600 mt-1">Toneladas Desperdicio</p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalDesperdicioKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      const pct = wasteData.totalProductionKg > 0 ? (totalDesperdicioKg / wasteData.totalProductionKg) * 100 : 0
+                      return (
+                        <>
+                          <p className="text-2xl font-bold text-amber-600">{pct.toFixed(2)}%</p>
+                          <p className="text-xs text-gray-600 mt-1">% vs Produccion</p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Detalle por Tipo de Cajón */}
+              <div className="mb-6">
+                <h2 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Detalle por Tipo de Cajon
+                </h2>
+                <table className="w-full text-sm border border-gray-300 rounded">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="text-left py-2 px-3 font-semibold border-b border-gray-300">Tipo de Cajon</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">Cantidad</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">Peso Tacho (kg)</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">Peso Lleno (kg)</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">Contenido (kg)</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">Total (Tn)</th>
+                      <th className="text-center py-2 px-3 font-semibold border-b border-gray-300">% del Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalCajones = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
+                      const totalContenidoKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      
+                      return wasteData.WASTE_BIN_TYPES.map((t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        const contenidoPorCajon = weights.lleno - weights.tara
+                        const totalTn = (qty * contenidoPorCajon) / 1000
+                        const pct = totalContenidoKg > 0 ? ((qty * contenidoPorCajon) / totalContenidoKg) * 100 : 0
+                        
+                        return (
+                          <tr key={t.key} className="border-b border-gray-200">
+                            <td className="py-2 px-3 font-medium">{t.label}</td>
+                            <td className="py-2 px-3 text-center">{qty.toFixed(1)}</td>
+                            <td className="py-2 px-3 text-center text-gray-500">{weights.tara}</td>
+                            <td className="py-2 px-3 text-center text-gray-500">{weights.lleno}</td>
+                            <td className="py-2 px-3 text-center">{contenidoPorCajon.toFixed(1)}</td>
+                            <td className="py-2 px-3 text-center font-medium">{totalTn.toFixed(2)}</td>
+                            <td className="py-2 px-3 text-center font-medium text-amber-600">{pct.toFixed(1)}%</td>
+                          </tr>
+                        )
+                      })
+                    })()}
+                  </tbody>
+                  <tfoot>
+                    {(() => {
+                      const binWeights: Record<string, { tara: number; lleno: number }> = {
+                        "waste_bin_1_cinta": { tara: 133.3, lleno: 710.5 },
+                        "waste_bin_2_desmolde": { tara: 127.6, lleno: 656.0 },
+                        "waste_bin_3_cinta": { tara: 108.5, lleno: 585.0 },
+                        "waste_bin_4_rotos": { tara: 232.5, lleno: 1307.5 },
+                        "waste_bin_5_mezcladora": { tara: 133.3, lleno: 710.5 },
+                      }
+                      const totalCajones = Object.values(wasteData.wasteBinsByType).reduce((a, b) => a + b, 0)
+                      const totalContenidoKg = wasteData.WASTE_BIN_TYPES.reduce((sum, t) => {
+                        const qty = wasteData.wasteBinsByType[t.key] || 0
+                        const weights = binWeights[t.key] || { tara: 0, lleno: 0 }
+                        return sum + qty * (weights.lleno - weights.tara)
+                      }, 0)
+                      
+                      return (
+                        <tr className="bg-amber-100 font-semibold">
+                          <td className="py-2 px-3">TOTAL</td>
+                          <td className="py-2 px-3 text-center">{totalCajones.toFixed(1)}</td>
+                          <td className="py-2 px-3 text-center" colSpan={3}>-</td>
+                          <td className="py-2 px-3 text-center text-amber-700">{(totalContenidoKg / 1000).toFixed(2)} Tn</td>
+                          <td className="py-2 px-3 text-center text-amber-700">100%</td>
+                        </tr>
+                      )
+                    })()}
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Footer */}
+              <div className="mt-6 pt-4 border-t border-gray-300 text-center">
+                <p className="text-xs text-gray-500">Generado el {new Date().toLocaleDateString("es-AR")} a las {new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</p>
+                <p className="text-xs text-gray-400 mt-1">Sistema de Control de Produccion - Concretus</p>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
