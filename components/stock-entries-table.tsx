@@ -170,7 +170,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="font-mono text-green-600 font-semibold">
-                        +{entry.quantity.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                        +{entry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </TableCell>
                     <TableCell>{entry.suppliers?.name || "-"}</TableCell>
@@ -321,7 +321,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                 {deleteEntry && (
                   <div className="mt-2 p-2 bg-muted rounded text-sm">
                     <div><strong>Material:</strong> {deleteEntry.materials.name}</div>
-                    <div><strong>Cantidad:</strong> {deleteEntry.quantity} {deleteEntry.materials.unit}</div>
+                    <div><strong>Cantidad:</strong> {deleteEntry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {deleteEntry.materials.unit}</div>
                     <div><strong>Proveedor:</strong> {deleteEntry.suppliers?.name || "-"}</div>
                     <div><strong>Remito:</strong> {deleteEntry.remito || "-"}</div>
                   </div>
