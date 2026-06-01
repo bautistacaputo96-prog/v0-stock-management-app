@@ -1,17 +1,16 @@
 import type React from "react"
-import type { Metadata, Viewport } from "next"
+import type { Metadata } from "next"
 import { Inter, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
-import { PlantProvider } from "@/lib/plant-context"
-import { AuthProvider } from "@/lib/auth-context"
 import "./globals.css"
+import { AppShell } from "@/components/app-shell"
 
 const _inter = Inter({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Concretus - Control de Produccion",
-  description: "Sistema de control de produccion y mantenimiento para plantas de hormigon",
+  title: "Stock Management - Rebucret S.A.",
+  description: "Sistema de gestión de stock para hormigonera",
   generator: "v0.app",
   icons: {
     icon: [
@@ -32,12 +31,6 @@ export const metadata: Metadata = {
   },
 }
 
-export const viewport: Viewport = {
-  themeColor: "#1e3a5f",
-  width: "device-width",
-  initialScale: 1,
-}
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -45,12 +38,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className={`font-sans antialiased`}>
-        <AuthProvider>
-          <PlantProvider>
-            {children}
-          </PlantProvider>
-        </AuthProvider>
+      <body className="font-sans antialiased">
+        <AppShell>{children}</AppShell>
         <Analytics />
       </body>
     </html>
