@@ -168,7 +168,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     const [dispatchesRes, clientsRes, mixersRes, formulasRes] = await Promise.all([
       dispatchesQuery,
       supabase.from("clients").select("*, construction_sites(*)").eq("active", true).order("name"),
-      supabase.from("mixers").select("*").eq("is_active", true).order("license_plate"),
+      supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
       // Cargar todas las fórmulas (la columna active no existe en formulas)
       supabase.from("formulas").select("id, name, code, useful_life_minutes").order("code"),
     ])

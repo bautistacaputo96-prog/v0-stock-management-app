@@ -241,7 +241,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         .lt("scheduled_arrival_time", dayEnd.toISOString())
         .neq("status", "cancelled")
         .order("scheduled_departure_time"),
-      supabase.from("mixers").select("*").eq("is_active", true).order("license_plate"),
+      supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
       supabase.from("formulas").select("*, formula_materials(id, quantity, materials(id, name, unit))").eq("plant_id", selectedPlant).order("code"),
       supabase.from("clients").select("*").eq("plant_id", selectedPlant).order("name"),
       // Get completed dispatches for selected day summary
