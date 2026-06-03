@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -8,21 +8,57 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar, X } from "lucide-react"
 
 interface DateRangeFilterProps {
-  onFilterChange: (startDate: string | null, endDate: string | null) => void
+  onFilterChange?: (startDate: string | null, endDate: string | null) => void
+  // Alternative controlled props
+  dateFrom?: string
+  dateTo?: string
+  onDateFromChange?: (value: string) => void
+  onDateToChange?: (value: string) => void
 }
 
-export function DateRangeFilter({ onFilterChange }: DateRangeFilterProps) {
-  const [startDate, setStartDate] = useState<string>("")
-  const [endDate, setEndDate] = useState<string>("")
+export function DateRangeFilter({ 
+  onFilterChange, 
+  dateFrom, 
+  dateTo, 
+  onDateFromChange, 
+  onDateToChange 
+}: DateRangeFilterProps) {
+  // Use controlled values if provided, otherwise use internal state
+  const isControlled = dateFrom !== undefined || dateTo !== undefined
+  const [internalStartDate, setInternalStartDate] = useState<string>("")
+  const [internalEndDate, setInternalEndDate] = useState<string>("")
+
+  const startDate = isControlled ? (dateFrom || "") : internalStartDate
+  const endDate = isControlled ? (dateTo || "") : internalEndDate
+
+  const setStartDate = (value: string) => {
+    if (isControlled && onDateFromChange) {
+      onDateFromChange(value)
+    } else {
+      setInternalStartDate(value)
+    }
+  }
+
+  const setEndDate = (value: string) => {
+    if (isControlled && onDateToChange) {
+      onDateToChange(value)
+    } else {
+      setInternalEndDate(value)
+    }
+  }
 
   const handleApply = () => {
-    onFilterChange(startDate || null, endDate || null)
+    if (onFilterChange) {
+      onFilterChange(startDate || null, endDate || null)
+    }
   }
 
   const handleClear = () => {
     setStartDate("")
     setEndDate("")
-    onFilterChange(null, null)
+    if (onFilterChange) {
+      onFilterChange(null, null)
+    }
   }
 
   const hasFilter = startDate || endDate
@@ -30,11 +66,16 @@ export function DateRangeFilter({ onFilterChange }: DateRangeFilterProps) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="gap-2 bg-transparent">
+        <Button variant="outline" className="gap-2 bg-transparent h-9">
           <Calendar className="h-4 w-4" />
-          Filtrar por fecha
-          {hasFilter && (
-            <span className="ml-1 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">1</span>
+          {hasFilter ? (
+            <span className="text-xs">
+              {startDate && new Date(startDate).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+              {startDate && endDate && " - "}
+              {endDate && new Date(endDate).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+            </span>
+          ) : (
+            "Fechas"
           )}
         </Button>
       </PopoverTrigger>
@@ -42,7 +83,7 @@ export function DateRangeFilter({ onFilterChange }: DateRangeFilterProps) {
         <div className="space-y-4">
           <div className="space-y-2">
             <h4 className="font-medium leading-none">Filtrar por rango de fechas</h4>
-            <p className="text-sm text-muted-foreground">Selecciona el rango de fechas que deseas consultar</p>
+            <p className="text-sm text-muted-foreground">Selecciona el rango de fechas</p>
           </div>
           <div className="space-y-3">
             <div className="space-y-2">
@@ -59,9 +100,11 @@ export function DateRangeFilter({ onFilterChange }: DateRangeFilterProps) {
               <X className="h-4 w-4 mr-1" />
               Limpiar
             </Button>
-            <Button size="sm" onClick={handleApply}>
-              Aplicar filtro
-            </Button>
+            {onFilterChange && (
+              <Button size="sm" onClick={handleApply}>
+                Aplicar filtro
+              </Button>
+            )}
           </div>
         </div>
       </PopoverContent>

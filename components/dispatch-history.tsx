@@ -345,7 +345,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const [clientsRes, formulasRes, mixersRes, sitesRes] = await Promise.all([
       supabase.from("clients").select("id, name").eq("plant_id", selectedPlant).order("name"),
       supabase.from("formulas").select("id, name, code").order("name"),
-      supabase.from("mixers").select("id, license_plate").eq("plant_id", selectedPlant).order("license_plate"),
+      supabase.from("mixers").select("id, license_plate").eq("active", true).order("license_plate"),
       supabase.from("construction_sites").select("id, name, client_id").order("name"),
     ])
     
