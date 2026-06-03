@@ -23,7 +23,7 @@ Sistema web de gestion integral para plantas de hormigon elaborado, desarrollado
 
 ## Estructura del Proyecto
 
-```
+\`\`\`
 /
 ├── app/                          # Rutas de Next.js (App Router)
 │   ├── page.tsx                  # Dashboard principal
@@ -61,7 +61,7 @@ Sistema web de gestion integral para plantas de hormigon elaborado, desarrollado
     ├── 001_create_tables.sql     # Creacion inicial de tablas
     ├── 002_seed_initial_data.sql # Datos semilla
     └── *.sql                     # Migraciones adicionales
-```
+\`\`\`
 
 ---
 
@@ -275,7 +275,7 @@ Usuarios del sistema (operadores)
 
 ## Variables de Entorno
 
-```env
+\`\`\`env
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
@@ -287,14 +287,14 @@ POSTGRES_HOST=...
 POSTGRES_USER=...
 POSTGRES_PASSWORD=...
 POSTGRES_DATABASE=...
-```
+\`\`\`
 
 ---
 
 ## Conexion a Supabase
 
 ### Cliente (Browser)
-```typescript
+\`\`\`typescript
 // lib/supabase/client.ts
 import { createBrowserClient } from "@supabase/ssr"
 
@@ -304,10 +304,10 @@ export function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 }
-```
+\`\`\`
 
 ### Servidor (Server Components / Route Handlers)
-```typescript
+\`\`\`typescript
 // lib/supabase/server.ts
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
@@ -329,7 +329,7 @@ export async function createClient() {
     }
   )
 }
-```
+\`\`\`
 
 ---
 
@@ -366,7 +366,7 @@ export async function createClient() {
 
 ## Comandos de Instalacion
 
-```bash
+\`\`\`bash
 # Clonar e instalar dependencias
 git clone <repo>
 cd <proyecto>
@@ -381,7 +381,7 @@ cp .env.example .env.local
 
 # Iniciar desarrollo
 npm run dev
-```
+\`\`\`
 
 ---
 

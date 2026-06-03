@@ -6,12 +6,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Edit, Filter } from "lucide-react"
+import { Edit, Filter, Trash2, MoreHorizontal } from "lucide-react"
 import { EditCylinderDialog } from "./edit-cylinder-dialog"
 import { DateRangeFilter } from "./date-range-filter"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 interface TestCylinder {
   id: string
@@ -50,6 +52,8 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
   const [filteredCylinders, setFilteredCylinders] = useState<TestCylinder[]>([])
   const [loading, setLoading] = useState(true)
   const [editingCylinder, setEditingCylinder] = useState<TestCylinder | null>(null)
+  const [deletingCylinder, setDeletingCylinder] = useState<TestCylinder | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
     from: "",
     to: "",
@@ -203,6 +207,28 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     loadCylinders()
   }, [selectedPlantId, dateRange])
 
+  const deleteCylinder = async (cylinder: TestCylinder) => {
+    setDeleting(true)
+    const supabase = createClient()
+    if (!supabase) {
+      setDeleting(false)
+      return
+    }
+
+    const { error } = await supabase
+      .from("test_cylinders")
+      .delete()
+      .eq("id", cylinder.id)
+
+    if (error) {
+      console.error("Error deleting cylinder:", error)
+    } else {
+      loadCylinders()
+    }
+    setDeleting(false)
+    setDeletingCylinder(null)
+  }
+
   const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return "-"
 
@@ -274,7 +300,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
       } else {
         setFilters({
           ...filters,
-          [column]: [...selectedValues, column === "probetaId" || column === "dias" ? Number(value) : value],
+          [column]: [...selectedValues, column === "dias" ? Number(value) : value],
         })
       }
     }
@@ -515,16 +541,28 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
                     {cylinder.dispatch?.extra_water_liters ? `${cylinder.dispatch.extra_water_liters}L` : "-"}
                   </TableCell>
                   <TableCell className="max-w-[150px] truncate py-2 px-3 text-xs">{cylinder.comments || "-"}</TableCell>
-                  <TableCell className="py-2 px-3">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setEditingCylinder(cylinder)}
-                    >
-                      <Edit className="h-3 w-3" />
-                    </Button>
-                  </TableCell>
+                    <TableCell className="py-2 px-3">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setEditingCylinder(cylinder)}>
+                            <Edit className="h-4 w-4 mr-2" />
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => setDeletingCylinder(cylinder)}
+                            className="text-red-600 focus:text-red-600"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Eliminar
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
                 </TableRow>
               ))
             )}
@@ -539,6 +577,35 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
           onUpdate={loadCylinders}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deletingCylinder} onOpenChange={(open) => !open && setDeletingCylinder(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar Probeta</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingCylinder && (
+                <>
+                  Esta por eliminar la probeta <strong>{deletingCylinder.dispatch?.sample_number || "N/A"}</strong> 
+                  {" "}(Cilindro #{deletingCylinder.cylinder_number}, {deletingCylinder.test_age_days} dias).
+                  <br /><br />
+                  Esta accion no se puede deshacer.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deletingCylinder && deleteCylinder(deletingCylinder)}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleting ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

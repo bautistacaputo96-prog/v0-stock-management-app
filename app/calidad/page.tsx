@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useEffect, Suspense } from "react"
-import { TestTube2, Hammer, Filter, BarChart3 } from "lucide-react"
+import { TestTube2, Hammer, Filter, BarChart3, TrendingUp } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { TestCylindersTable } from "@/components/test-cylinders-table"
 import { CylinderBreakingTable } from "@/components/cylinder-breaking-table"
 import { GranulometriaTable } from "@/components/granulometria-table"
 import { BreakingResultsTable } from "@/components/breaking-results-table"
+import { QualityAnalysisDashboard } from "@/components/quality-analysis-dashboard"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 
@@ -19,7 +20,7 @@ interface Plant {
 
 function CalidadContent() {
   const searchParams = useSearchParams()
-  const activeTab = searchParams.get("tab") || "probetas"
+  const activeTab = searchParams.get("tab") || "analisis"
   
   const [plantsData, setPlantsData] = useState<Plant[]>([])
   const [initialPlantId, setInitialPlantId] = useState("all")
@@ -42,6 +43,7 @@ function CalidadContent() {
   }, [])
 
   const tabs = [
+    { id: "analisis", label: "Analisis Estadistico", icon: TrendingUp },
     { id: "probetas", label: "Extraccion de Probetas", icon: TestTube2 },
     { id: "rotura", label: "Rotura de Probetas", icon: Hammer },
     { id: "resultados", label: "Resultados de Roturas", icon: BarChart3 },
@@ -81,6 +83,10 @@ function CalidadContent() {
             </a>
           ))}
         </div>
+
+        {activeTab === "analisis" && (
+          <QualityAnalysisDashboard plants={plantsData} selectedPlantId={initialPlantId} />
+        )}
 
         {activeTab === "probetas" && (
           <Card>
