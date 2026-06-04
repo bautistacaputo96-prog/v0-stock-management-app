@@ -200,7 +200,7 @@ export function DispatchesTable({ dispatches, onRefresh }: { dispatches: Dispatc
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => window.open(`/api/remito/${dispatch.id}`, '_blank')}>
                             <Printer className="h-4 w-4 mr-2" />
-                            Imprimir Remito
+                            Visualizar Remito
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openEdit(dispatch)}>
                             <Pencil className="h-4 w-4 mr-2" />

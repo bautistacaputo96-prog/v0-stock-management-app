@@ -467,7 +467,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem onClick={() => window.open(`/api/remito/${d.id}`, '_blank')}>
                                   <Printer className="h-4 w-4 mr-2" />
-                                  Imprimir Remito
+                                  Visualizar Remito
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEditDispatch(d)}>
                                   <Pencil className="h-4 w-4 mr-2" />
