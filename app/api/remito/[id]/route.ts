@@ -44,337 +44,520 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     day: "2-digit", month: "2-digit", year: "numeric"
   })
 
-  const m3          = Number(row.quantity_m3 || 0).toFixed(1)
-  const formulaDesc = f.code
-    ? `HORMIGON ELABORADO ${f.name} (${f.code})`
-    : f.name ? `HORMIGON ELABORADO ${f.name}` : "HORMIGON ELABORADO"
-  const obraDesc    = s.name ? `Obra: ${s.name}` : ""
-  const descripcion = [formulaDesc, obraDesc].filter(Boolean).join(" — ")
-  const obraDireccion = [s.address, s.localidad].filter(Boolean).join(", ")
+  const m3           = Number(row.quantity_m3 || 0).toFixed(0)
+  const remito       = (!isScheduled && row.remito) ? row.remito : ""
+  const productoCode = f.code || f.name || ""
+  const productoDesc = productoCode ? `${productoCode}` : "HORMIGON ELABORADO"
 
-  const html = buildHTML({
+  const data = {
     fecha,
-    razonSocial:   c.razon_social || c.name || "",
-    direccion:     c.direccion_fiscal || "",
-    localidad:     c.localidad_cliente || "",
-    cp:            c.cp || "",
-    cuitCliente:   c.cuit || "",
-    condIva:       c.cond_iva || "",
+    razonSocial:   c.razon_social      || c.name || "",
+    nombreCliente: c.name              || "",
+    direccion:     c.direccion_fiscal  || "",
+    cp:            c.cp                || "",
+    localidadCliente: c.localidad_cliente || "",
+    provincia:     c.provincia         || "",
+    condIva:       c.cond_iva          || "",
+    condPago:      c.cond_pago         || "",
+    cuit:          c.cuit              || "",
+    nPedido:       "",
+    remito,
     m3,
-    descripcion,
-    obraDireccion,
-    obraNombre:    s.name || "",
-    patente:       m.license_plate || "",
+    productoDesc,
+    obraLocalidad: s.localidad         || "",
+    obraDireccion: s.address           || "",
+    patente:       m.license_plate     || "",
     observaciones: row.observations || row.notes || "",
-    isScheduled,
-  })
+  }
 
-  return new NextResponse(html, {
+  return new NextResponse(buildHTML(data), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   })
 }
 
-function buildHTML(d: Record<string, string | boolean>) {
-  const fecha       = d.fecha as string
-  const razonSocial = d.razonSocial as string
-  const direccion   = d.direccion as string
-  const localidad   = d.localidad as string
-  const cp          = d.cp as string
-  const cuitCliente = d.cuitCliente as string
-  const m3          = d.m3 as string
-  const descripcion = d.descripcion as string
-  const obraDireccion = d.obraDireccion as string
-  const obraNombre  = d.obraNombre as string
-  const patente     = d.patente as string
-  const observaciones = d.observaciones as string
-
+function buildHTML(d: Record<string, string>) {
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Remito — ${razonSocial || "Sin cliente"} — ${fecha}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Documentos del Despacho</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
-/* ══════════════════════════════════════════════
-   PANTALLA — vista previa del remito
-   ══════════════════════════════════════════════ */
-@media screen {
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: Arial, Helvetica, sans-serif;
-    background: #f3f4f6;
-    min-height: 100vh;
-    padding: 24px 16px 80px;
-    color: #111;
-  }
+/* ═══════ BASE ═══════ */
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: Arial, Helvetica, sans-serif; background:#e5e7eb; }
 
-  /* Barra de acciones */
-  .toolbar {
-    max-width: 720px; margin: 0 auto 20px;
-    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
-  }
-  .toolbar h2 { flex:1; font-size:16px; color:#374151; }
-  .btn-pdf {
-    background:#1d4ed8; color:white; border:none;
-    padding:10px 20px; border-radius:8px; font-size:14px;
-    cursor:pointer; font-family:inherit; font-weight:600;
-    display:flex; align-items:center; gap:6px;
-    box-shadow: 0 2px 4px rgba(0,0,0,.15);
-  }
-  .btn-pdf:hover { background:#1e40af; }
-  .btn-print {
-    background:white; color:#374151; border:1.5px solid #d1d5db;
-    padding:10px 20px; border-radius:8px; font-size:14px;
-    cursor:pointer; font-family:inherit; font-weight:500;
-    display:flex; align-items:center; gap:6px;
-  }
-  .btn-print:hover { background:#f9fafb; }
+/* ═══════ TOOLBAR ═══════ */
+.toolbar {
+  position: sticky; top: 0; z-index: 100;
+  background: #1e293b; padding: 10px 20px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.toolbar-title { color: white; font-size: 14px; font-weight: 600; flex: 1; }
+.tab-btn {
+  background: transparent; border: 1.5px solid #64748b;
+  color: #94a3b8; padding: 6px 14px; border-radius: 6px;
+  font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.tab-btn.active { background: white; color: #1e293b; border-color: white; font-weight: 700; }
+.act-btn {
+  padding: 7px 14px; border-radius: 6px; font-size: 12px;
+  cursor: pointer; border: none; font-weight: 600; transition: all .15s;
+}
+.act-pdf   { background: #2563eb; color: white; }
+.act-print { background: #16a34a; color: white; }
+.act-btn:hover { opacity: .85; }
 
-  /* Tarjeta del remito */
-  #remito-preview {
-    max-width: 720px; margin: 0 auto;
-    background: white;
-    border: 1.5px solid #e5e7eb;
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: 0 4px 20px rgba(0,0,0,.08);
-    font-size: 12px;
-  }
-
-  /* Header */
-  .rm-header {
-    display: grid; grid-template-columns: auto 1fr auto;
-    gap: 0; border-bottom: 2px solid #111;
-  }
-  .rm-logo { padding:12px 14px; border-right:1.5px solid #ddd; display:flex; align-items:center; }
-  .rm-logo-text { font-size:22px; font-weight:900; color:#111; letter-spacing:-1px; }
-  .rm-empresa { padding:10px 14px; font-size:10px; line-height:1.6; }
-  .rm-empresa .nombre { font-size:14px; font-weight:700; margin-bottom:4px; }
-  .rm-tipo {
-    padding:10px 14px; border-left:1.5px solid #ddd;
-    min-width:200px; text-align:right;
-  }
-  .rm-tipo .titulo { font-size:18px; font-weight:900; letter-spacing:2px; }
-  .rm-tipo .numero { font-size:13px; font-weight:600; margin:4px 0; color:#374151; }
-  .rm-tipo .fecha-row { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:4px; }
-  .rm-tipo .fecha-label { font-size:10px; color:#6b7280; font-weight:600; text-transform:uppercase; }
-  .rm-tipo .fecha-val { font-size:12px; font-weight:700; }
-  .rm-tipo .cuit-info { font-size:9px; color:#6b7280; margin-top:6px; line-height:1.5; }
-
-  /* Destinatario */
-  .rm-dest {
-    padding:14px 16px; border-bottom:1px solid #e5e7eb; min-height:70px;
-    background:#fafafa;
-  }
-  .rm-dest-label { font-size:9px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
-  .rm-dest-nombre { font-size:14px; font-weight:700; color:#111; }
-  .rm-dest-info { font-size:11px; color:#374151; margin-top:3px; line-height:1.6; }
-  .rm-dest-cuit { font-size:11px; color:#374151; margin-top:2px; }
-
-  /* Tabla items */
-  .rm-table { width:100%; border-collapse:collapse; }
-  .rm-table th {
-    background:#f3f4f6; border:1px solid #e5e7eb;
-    padding:7px 10px; font-size:10px; font-weight:700;
-    text-transform:uppercase; letter-spacing:.5px; color:#374151;
-  }
-  .rm-table td {
-    border:1px solid #e5e7eb; padding:10px 10px;
-    vertical-align:top; font-size:12px;
-  }
-  .rm-table .td-cant { width:100px; text-align:center; font-size:14px; font-weight:700; }
-  .rm-table .td-desc .desc-main { font-weight:600; font-size:13px; }
-  .rm-table .td-desc .desc-sub { font-size:10px; color:#6b7280; margin-top:3px; line-height:1.5; }
-  .rm-table .empty-rows td { height:24px; }
-
-  /* Nota */
-  .rm-nota { padding:8px 12px; font-size:9px; color:#6b7280; border-top:1px solid #e5e7eb; background:#fffbeb; }
-  .rm-nota strong { color:#92400e; }
-
-  /* Footer */
-  .rm-footer { border-top:2px solid #111; }
-  .rm-footer-row {
-    display:grid; grid-template-columns:1fr 1fr;
-    border-bottom:1px solid #e5e7eb;
-  }
-  .rm-footer-cell { padding:7px 12px; font-size:10px; }
-  .rm-footer-cell .lbl { font-weight:700; color:#374151; text-transform:uppercase; font-size:9px; }
-  .rm-footer-cell .val { color:#111; margin-top:1px; font-size:11px; }
-  .rm-footer-last { padding:7px 12px; font-size:10px; border-top:1px solid #e5e7eb; }
-  .rm-footer-last .lbl { font-weight:700; color:#374151; text-transform:uppercase; font-size:9px; }
-  .rm-footer-last .val { color:#111; margin-top:1px; font-size:11px; }
+/* ═══════ DOCUMENTO A4 ═══════ */
+.doc-wrapper { display: none; padding: 20px 0; }
+.doc-wrapper.active { display: block; }
+.a4 {
+  width: 210mm; min-height: 297mm;
+  background: white; margin: 0 auto;
+  box-shadow: 0 4px 20px rgba(0,0,0,.15);
+  position: relative; overflow: hidden;
+  font-size: 8.5pt; color: #000;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ══════════════════════════════════════════════
-   IMPRESIÓN — overlay sobre formulario físico ARCA
-   Calibrar variables :root para alinear
-   ══════════════════════════════════════════════ */
+/* ══════════════════════════════════════════
+   DOCUMENTO 1: CONTROL PANEL
+   ══════════════════════════════════════════ */
+.cp { padding: 12mm 12mm 10mm 12mm; }
+
+.cp-fecha {
+  text-align: right; font-size: 8.5pt;
+  margin-bottom: 8mm;
+}
+
+.cp-cliente {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 0; margin-bottom: 6mm;
+  font-size: 8.5pt; line-height: 1.9;
+}
+.cp-cliente .col { }
+.cp-cliente .row { display: flex; gap: 4px; }
+.cp-cliente .lbl { font-size: 8.5pt; }
+.cp-cliente .val { font-size: 8.5pt; }
+.cp-remito { margin-top: 2mm; font-size: 8.5pt; }
+
+.cp-producto {
+  margin: 8mm 0 5mm 0;
+  font-size: 9pt;
+  display: flex; gap: 12mm; align-items: baseline;
+}
+.cp-producto .qty { font-size: 9pt; }
+.cp-producto .cod { font-size: 9pt; }
+
+/* Tabla principal */
+.cp-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 7.5pt; margin-bottom: 20mm;
+}
+.cp-table td, .cp-table th {
+  border: 0.5px solid #333;
+  padding: 1.2mm 1.5mm;
+  vertical-align: top;
+}
+.cp-table .hdr-check {
+  font-size: 7pt; text-align: center;
+  width: 15mm; vertical-align: middle;
+}
+.cp-table .check-cell {
+  text-align: center; font-size: 7.5pt;
+  width: 15mm;
+}
+.cp-table .check-cell div { line-height: 2; }
+.cp-table .full { font-weight: bold; }
+.cp-table .disclaimer {
+  font-size: 6.5pt; line-height: 1.3;
+  width: 45mm;
+}
+.cp-table .horario-row td { height: 5.5mm; }
+.cp-table .section-hdr { font-weight: bold; font-size: 7.5pt; }
+.cp-table .empty-row td { height: 7mm; }
+.cp-table .litros-cell { width: 12mm; vertical-align: top; }
+
+/* Transporte */
+.cp-transporte {
+  position: absolute; bottom: 12mm; left: 50mm;
+  font-size: 8.5pt; line-height: 2.1;
+}
+
+/* ══════════════════════════════════════════
+   DOCUMENTO 2: ARCA REMITO X
+   ══════════════════════════════════════════ */
+.rx { padding: 0; }
+
+/* Header box */
+.rx-header {
+  border: 1px solid #000;
+  display: grid;
+  grid-template-columns: 45mm 28mm 1fr;
+  margin: 8mm 8mm 0 8mm;
+}
+.rx-logo {
+  border-right: 1px solid #000;
+  padding: 6mm 4mm;
+  display: flex; flex-direction: column;
+  justify-content: center;
+}
+.rx-logo-icon {
+  font-size: 22px; line-height: 1; margin-bottom: 2mm;
+}
+.rx-logo .co-name { font-size: 10pt; font-weight: 900; letter-spacing: -0.5px; }
+.rx-logo .co-addr { font-size: 7pt; line-height: 1.4; margin-top: 1mm; color: #333; }
+.rx-logo .co-iva  { font-size: 7pt; margin-top: 2mm; }
+
+.rx-x {
+  border-right: 1px solid #000;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 3mm 2mm; text-align: center;
+}
+.rx-x .x-box {
+  border: 2px solid #000; width: 14mm; height: 10mm;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16pt; font-weight: 900; margin-bottom: 2mm;
+}
+.rx-x .x-label { font-size: 5pt; line-height: 1.3; }
+
+.rx-info {
+  padding: 5mm 5mm;
+}
+.rx-info .remito-title { font-size: 14pt; font-weight: 900; letter-spacing: 2px; }
+.rx-info .remito-num { font-size: 11pt; font-weight: 700; margin: 1mm 0; }
+.rx-info .fecha-row { display: flex; gap: 4mm; align-items: baseline; margin: 1mm 0; }
+.rx-info .fecha-lbl { font-size: 8.5pt; font-weight: 700; }
+.rx-info .fecha-val { font-size: 8.5pt; font-weight: 700; border-bottom: 0.5px solid #666; min-width: 28mm; }
+.rx-info .cuit-block { font-size: 7pt; margin-top: 2mm; line-height: 1.5; color: #333; }
+
+/* Destinatario */
+.rx-dest {
+  margin: 0 8mm;
+  border-left: 1px solid #000;
+  border-right: 1px solid #000;
+  border-bottom: 1px solid #000;
+  padding: 5mm 5mm;
+  min-height: 35mm;
+  font-size: 8.5pt; line-height: 1.9;
+}
+.rx-dest .dest-nombre { font-weight: 700; font-size: 9pt; }
+
+/* Tabla items */
+.rx-table {
+  width: calc(100% - 16mm);
+  margin: 0 8mm;
+  border-collapse: collapse;
+  font-size: 8pt;
+}
+.rx-table th {
+  border: 0.5px solid #000;
+  padding: 1.5mm 2mm;
+  font-size: 8pt; font-weight: 700;
+  text-transform: uppercase;
+  background: white;
+}
+.rx-table td {
+  border: 0.5px solid #000;
+  padding: 2mm 2mm;
+  vertical-align: top;
+}
+.rx-table .td-cant { width: 30mm; text-align: center; }
+.rx-table .td-desc { }
+.rx-table .empty-r td { height: 7mm; }
+.rx-table .sig-row td {
+  height: 12mm; font-size: 7.5pt; vertical-align: bottom;
+  padding-bottom: 1.5mm; text-align: center;
+}
+.rx-table .sig-row td:not(:first-child) { border-left: 0.5px solid #000; }
+
+/* Nota */
+.rx-nota {
+  margin: 0 8mm;
+  border: 0.5px solid #000; border-top: none;
+  padding: 1.5mm 3mm; font-size: 7pt;
+}
+.rx-nota strong { font-weight: 700; }
+
+/* Footer */
+.rx-footer {
+  margin: 2mm 8mm 8mm;
+  border: 0.5px solid #000;
+  font-size: 8pt;
+}
+.rx-footer-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  border-bottom: 0.5px solid #000;
+}
+.rx-footer-row:last-child { border-bottom: none; }
+.rx-fc {
+  padding: 1.5mm 3mm; display: flex; gap: 3mm;
+}
+.rx-fc:first-child { border-right: 0.5px solid #000; }
+.rx-fc .fl { font-weight: 700; white-space: nowrap; }
+.rx-fc .fv { }
+.rx-footer-single {
+  padding: 1.5mm 3mm; display: flex; gap: 3mm;
+  border-top: 0.5px solid #000;
+}
+.rx-footer-single .fl { font-weight: 700; }
+
+/* ═══════ PRINT ═══════ */
 @media print {
-  .toolbar, #remito-preview { display: none !important; }
-
-  :root {
-    --fecha-top:   57mm; --fecha-left: 148mm;
-    --dest-left:   15mm;
-    --dest-rs-top:  82mm;
-    --dest-dir-top: 90mm;
-    --dest-loc-top: 98mm;
-    --dest-cuit-top:106mm;
-    --item-top:    158mm;
-    --cant-left:    15mm;
-    --desc-left:    40mm;
-    --obs-top:     251mm; --obs-left:    48mm;
-    --trans-top:   259mm; --trans-left:  52mm;
-    --cuit-f-top:  267mm; --cuit-f-left: 30mm;
-  }
-
-  @page { size: A4; margin: 0; }
-  html, body { width:210mm; height:297mm; background:white; position:relative; overflow:hidden; font-family:Arial,Helvetica,sans-serif; font-size:9pt; color:#000; }
-
-  .overlay { display: block !important; }
-  .v { position:absolute; white-space:nowrap; line-height:1; }
+  body { background: white; }
+  .toolbar { display: none !important; }
+  .doc-wrapper { display: block !important; padding: 0 !important; }
+  .doc-wrapper + .doc-wrapper { page-break-before: always; }
+  .a4 { box-shadow: none; margin: 0; width: 210mm; min-height: 297mm; }
 }
-
-/* Overlay oculto en pantalla */
-.overlay { display: none; }
 </style>
 </head>
 <body>
 
-<!-- ── BARRA DE ACCIONES (solo pantalla) ── -->
+<!-- ── TOOLBAR ── -->
 <div class="toolbar">
-  <h2>Vista previa del Remito</h2>
-  <button class="btn-pdf" onclick="descargarPDF()">
-    📄 Descargar PDF
-  </button>
-  <button class="btn-print" onclick="window.print()">
-    🖨 Imprimir en formulario ARCA
-  </button>
+  <span class="toolbar-title">Documentos del Despacho — ${d.razonSocial || "Sin cliente"} — ${d.fecha}</span>
+  <button class="tab-btn active" id="tab-cp" onclick="showTab('cp')">Control de Carga</button>
+  <button class="tab-btn"        id="tab-rx" onclick="showTab('rx')">Remito Fiscal (ARCA)</button>
+  <button class="act-btn act-pdf"   onclick="downloadPDF()">📄 Descargar PDF</button>
+  <button class="act-btn act-print" onclick="window.print()">🖨 Imprimir</button>
 </div>
 
-<!-- ── PREVIEW (solo pantalla) ── -->
-<div id="remito-preview">
+<!-- ══════════════════════════════════════════════════════
+     DOCUMENTO 1: CONTROL PANEL
+     ══════════════════════════════════════════════════════ -->
+<div class="doc-wrapper active" id="wrap-cp">
+<div class="a4">
+<div class="cp">
 
-  <!-- Header -->
-  <div class="rm-header">
-    <div class="rm-logo">
-      <span class="rm-logo-text">Rebucret</span>
+  <!-- FECHA -->
+  <div class="cp-fecha">${d.fecha}</div>
+
+  <!-- DATOS DEL CLIENTE -->
+  <div class="cp-cliente">
+    <div class="col">
+      <div class="row"><span class="lbl">R. Social:&nbsp;</span><span class="val">${d.razonSocial}</span></div>
+      <div class="row"><span class="lbl">Direccion:&nbsp;</span><span class="val">${d.direccion}</span></div>
+      <div class="row"><span class="lbl">CP:&nbsp;</span><span class="val">${d.cp}</span></div>
+      <div class="row"><span class="lbl">Cond IVA:&nbsp;</span><span class="val">${d.condIva}</span></div>
+      <div class="row"><span class="lbl">N Ped:&nbsp;</span><span class="val">${d.nPedido}&nbsp;&nbsp;|</span></div>
+      <div class="row"><span class="lbl">Cond Pago:&nbsp;</span><span class="val">${d.condPago}</span></div>
     </div>
-    <div class="rm-empresa">
-      <div class="nombre">REBUCRET S.A.</div>
-      <div>AV. SANTA FE 1385, Piso 6 — (1059) C.A.B.A.</div>
-      <div>I.V.A. RESPONSABLE INSCRIPTO</div>
+    <div class="col">
+      <div class="row"><span class="lbl">Cliente:&nbsp;</span><span class="val">${d.nombreCliente}</span></div>
+      <div class="row"><span class="lbl">Localidad:&nbsp;</span><span class="val">${d.localidadCliente}</span></div>
+      <div class="row"><span class="lbl">Provincia:&nbsp;</span><span class="val">${d.provincia}</span></div>
+      <div class="row"><span class="lbl">CUIT:&nbsp;</span><span class="val">${d.cuit}</span></div>
+      <div class="row">&nbsp;</div>
+      <div class="cp-remito">RM2 - 0099-${d.remito}</div>
     </div>
-    <div class="rm-tipo">
-      <div class="titulo">REMITO</div>
-      <div class="numero">Nº 00002-</div>
+  </div>
+
+  <!-- PRODUCTO -->
+  <div class="cp-producto">
+    <span class="qty">${d.m3}</span>
+    <span class="cod">${d.productoDesc}</span>
+  </div>
+
+  <!-- TABLA PRINCIPAL -->
+  <table class="cp-table">
+    <!-- Fila 1: header agua + checkboxes -->
+    <tr>
+      <td rowspan="2" colspan="2" style="width:55%; vertical-align:middle; font-size:7.5pt;">AGREGADO DE AGUA AUTORIZADO POR EL CLIENTE</td>
+      <td class="hdr-check">Se realizaron<br>probetas</td>
+      <td class="hdr-check">Se realizaron de<br>acuerdo a norma</td>
+      <td class="hdr-check">Se encuentra en<br>lugar de guardado<br>apropiado</td>
+    </tr>
+    <!-- Fila 2: Si / No -->
+    <tr>
+      <td class="check-cell"><div>Si</div><div>No</div></td>
+      <td class="check-cell"><div>Si</div><div>No</div></td>
+      <td class="check-cell"><div>Si</div><div>No</div></td>
+    </tr>
+    <!-- Fila 3: disclaimer + litros + observaciones -->
+    <tr>
+      <td class="disclaimer">REBUCRET S.A. NO SE RESPONSABILIZA POR LA CANTIDAD DE AGUA AGREGADA EN OBRA YA QUE SE MODIFICA LA RELACIÓN AGUA/CEMENTO EN LA FORMULA DE DISEÑO</td>
+      <td class="litros-cell" style="font-size:7pt; text-align:center;">LITROS</td>
+      <td colspan="3" style="vertical-align:top; font-size:7.5pt;">Observaciones:</td>
+    </tr>
+    <!-- Fila 4: asentamiento -->
+    <tr>
+      <td colspan="5" class="section-hdr">ASENTAMIENTO EN OBRA:</td>
+    </tr>
+    <!-- Fila 5: aditivos -->
+    <tr>
+      <td colspan="4" class="section-hdr">ADITIVOS/AGREGADOS:</td>
+      <td class="section-hdr" style="text-align:center;">CANTIDAD</td>
+    </tr>
+    <!-- Filas vacías para aditivos -->
+    <tr class="empty-row"><td colspan="4"></td><td></td></tr>
+    <tr class="empty-row"><td colspan="4"></td><td></td></tr>
+    <tr class="empty-row"><td colspan="4"></td><td></td></tr>
+    <!-- Header horarios -->
+    <tr>
+      <td colspan="5" class="section-hdr">HORARIOS DEL SERVICIO:</td>
+    </tr>
+    <!-- Filas de horario -->
+    <tr class="horario-row"><td colspan="4">HORA DE CARGA:</td><td></td></tr>
+    <tr class="horario-row"><td colspan="4">HORA DE LLEGADA A OBRA:</td><td></td></tr>
+    <tr class="horario-row"><td colspan="4">COMIENZO DE DESCARGA:</td><td></td></tr>
+    <tr class="horario-row"><td colspan="4">TERMINO DE DESCARGA:</td><td></td></tr>
+    <tr class="horario-row"><td colspan="4">HORA DE RETIRO DE LA OBRA:</td><td></td></tr>
+  </table>
+
+</div><!-- /cp -->
+
+<!-- TRANSPORTE (bottom) -->
+<div class="cp-transporte">
+  <div>Transporte:</div>
+  <div>Chofer:</div>
+  <div>Patente:&nbsp;&nbsp;${d.patente}</div>
+  <div>Localidad:&nbsp;&nbsp;${d.obraLocalidad}</div>
+  <div>Direccion:&nbsp;&nbsp;${d.obraDireccion}</div>
+</div>
+
+</div><!-- /a4 -->
+</div><!-- /wrap-cp -->
+
+
+<!-- ══════════════════════════════════════════════════════
+     DOCUMENTO 2: ARCA REMITO X
+     ══════════════════════════════════════════════════════ -->
+<div class="doc-wrapper" id="wrap-rx">
+<div class="a4 rx">
+
+  <!-- HEADER -->
+  <div class="rx-header">
+    <!-- Logo / empresa -->
+    <div class="rx-logo">
+      <div class="rx-logo-icon">🚛</div>
+      <div class="co-name">REBUCRET S.A.</div>
+      <div class="co-addr">AV. SANTA FE 1385<br>Piso 6<br>(1059) C.A.B.A.</div>
+      <div class="co-iva">I.V.A. RESPONSABLE INSCRIPTO</div>
+    </div>
+    <!-- X -->
+    <div class="rx-x">
+      <div class="x-box">X</div>
+      <div class="x-label">DOCUMENTO<br>NO VALIDO<br>COMO FACTURA</div>
+    </div>
+    <!-- Remito info -->
+    <div class="rx-info">
+      <div class="remito-title">REMITO</div>
+      <div class="remito-num">Nº 00002-&nbsp;${d.remito ? "0099-" + d.remito : ""}</div>
       <div class="fecha-row">
-        <span class="fecha-label">Fecha</span>
-        <span class="fecha-val">${fecha}</span>
+        <span class="fecha-lbl">FECHA</span>
+        <span class="fecha-val">${d.fecha}</span>
       </div>
-      <div class="cuit-info">
+      <div class="cuit-block">
         C.U.I.T.: 30-71598364-4<br>
-        ING. BRUTOS: 30-71598364-4
+        ING. BRUTOS: 30-71598364-4<br>
+        Fecha Inicio Activ.: 06-02-2018
       </div>
     </div>
   </div>
 
-  <!-- Destinatario -->
-  <div class="rm-dest">
-    <div class="rm-dest-label">Destinatario</div>
-    <div class="rm-dest-nombre">${razonSocial || "—"}</div>
-    <div class="rm-dest-info">
-      ${direccion ? `${direccion}` : ""}
-      ${localidad || cp ? ` — ${[localidad, cp].filter(Boolean).join(" ")}` : ""}
-    </div>
-    ${cuitCliente ? `<div class="rm-dest-cuit">CUIT: ${cuitCliente}${d.condIva ? ` &nbsp;·&nbsp; ${d.condIva}` : ""}</div>` : ""}
+  <!-- DESTINATARIO -->
+  <div class="rx-dest">
+    <div class="dest-nombre">${d.razonSocial}</div>
+    ${d.direccion ? `<div>${d.direccion}</div>` : ""}
+    ${d.localidadCliente ? `<div>${d.localidadCliente}${d.cp ? " (" + d.cp + ")" : ""}&nbsp;&nbsp;—&nbsp;&nbsp;${d.provincia}</div>` : ""}
+    ${d.cuit ? `<div>C.U.I.T.: ${d.cuit}</div>` : ""}
   </div>
 
-  <!-- Items -->
-  <table class="rm-table">
+  <!-- ITEMS TABLE -->
+  <table class="rx-table">
     <thead>
       <tr>
-        <th>Cantidad</th>
-        <th>Descripción</th>
+        <th class="td-cant">CANTIDAD</th>
+        <th class="td-desc">DESCRIPCION</th>
       </tr>
     </thead>
     <tbody>
       <tr>
-        <td class="td-cant">${m3} m³</td>
+        <td class="td-cant" style="font-weight:700; font-size:9pt;">${d.m3} m³</td>
         <td class="td-desc">
-          <div class="desc-main">${descripcion}</div>
-          <div class="desc-sub">
-            ${obraDireccion ? `📍 Dirección entrega: ${obraDireccion}` : ""}
-            ${patente ? `<br>🚛 Camión: ${patente}` : ""}
-          </div>
+          ${d.productoDesc}
+          ${d.obraDireccion ? `<br><span style="font-size:7.5pt; color:#444;">Dir. entrega: ${d.obraDireccion}</span>` : ""}
+          ${d.patente ? `<br><span style="font-size:7.5pt; color:#444;">Camión: ${d.patente}</span>` : ""}
         </td>
       </tr>
-      <tr class="empty-rows"><td></td><td></td></tr>
-      <tr class="empty-rows"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="empty-r"><td></td><td></td></tr>
+      <tr class="sig-row">
+        <td colspan="1" style="border-top: 0.5px solid #000; text-align:center;">Firma</td>
+        <td style="border-top: 0.5px solid #000; text-align:center;">Aclaración &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Documento Nº</td>
+      </tr>
     </tbody>
   </table>
 
-  <!-- Nota -->
-  <div class="rm-nota">
-    <strong>NOTA:</strong> La mercadería viaja por cuenta y orden del comprador.
+  <!-- NOTA -->
+  <div class="rx-nota">
+    <strong>NOTA:</strong> La mercadería viaja por cuenta y orden del comprador
   </div>
 
-  <!-- Footer -->
-  <div class="rm-footer">
-    <div class="rm-footer-row">
-      <div class="rm-footer-cell">
-        <div class="lbl">Observaciones</div>
-        <div class="val">${observaciones || "—"}</div>
+  <!-- FOOTER -->
+  <div class="rx-footer">
+    <div class="rx-footer-row">
+      <div class="rx-fc">
+        <span class="fl">OBSERVACIONES:</span>
+        <span class="fv">${d.observaciones}</span>
       </div>
-      <div class="rm-footer-cell">
-        <div class="lbl">Bultos</div>
-        <div class="val">—</div>
-      </div>
-    </div>
-    <div class="rm-footer-row">
-      <div class="rm-footer-cell">
-        <div class="lbl">Transportista</div>
-        <div class="val">REBUCRET S.A.${patente ? ` — ${patente}` : ""}</div>
-      </div>
-      <div class="rm-footer-cell">
-        <div class="lbl">Valor Declarado</div>
-        <div class="val">—</div>
+      <div class="rx-fc">
+        <span class="fl">BULTOS:</span>
+        <span class="fv"></span>
       </div>
     </div>
-    <div class="rm-footer-last">
-      <span class="lbl">C.U.I.T. Transportista: </span>
-      <span class="val">30-71598364-4</span>
+    <div class="rx-footer-row">
+      <div class="rx-fc">
+        <span class="fl">TRANSPORTISTA:</span>
+        <span class="fv">REBUCRET S.A.${d.patente ? " — " + d.patente : ""}</span>
+      </div>
+      <div class="rx-fc">
+        <span class="fl">VALOR DECLARADO:</span>
+        <span class="fv"></span>
+      </div>
+    </div>
+    <div class="rx-footer-row" style="border-bottom:none;">
+      <div class="rx-fc" style="border-right:none;">
+        <span class="fl">C.U.I.T.:</span>
+        <span class="fv">30-71598364-4</span>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ── OVERLAY (solo impresión en formulario ARCA) ── -->
-<div class="overlay">
-  <span class="v" style="top:var(--fecha-top);left:var(--fecha-left)">${fecha}</span>
-  <span class="v" style="top:var(--dest-rs-top);left:var(--dest-left);font-weight:bold">${razonSocial}</span>
-  <span class="v" style="top:var(--dest-dir-top);left:var(--dest-left)">${direccion}</span>
-  <span class="v" style="top:var(--dest-loc-top);left:var(--dest-left)">${localidad}${cp ? " (" + cp + ")" : ""}</span>
-  <span class="v" style="top:var(--dest-cuit-top);left:var(--dest-left)">CUIT: ${cuitCliente}</span>
-  <span class="v" style="top:var(--item-top);left:var(--cant-left)">${m3} m³</span>
-  <span class="v" style="top:var(--item-top);left:var(--desc-left)">${descripcion}</span>
-  ${obraDireccion ? `<span class="v" style="top:calc(var(--item-top) + 6mm);left:var(--desc-left);font-size:8pt">Dir. entrega: ${obraDireccion}</span>` : ""}
-  ${patente ? `<span class="v" style="top:calc(var(--item-top) + 12mm);left:var(--desc-left);font-size:8pt">Camión: ${patente}</span>` : ""}
-  ${observaciones ? `<span class="v" style="top:var(--obs-top);left:var(--obs-left)">${observaciones}</span>` : ""}
-  <span class="v" style="top:var(--trans-top);left:var(--trans-left)">REBUCRET S.A.${patente ? " — " + patente : ""}</span>
-  <span class="v" style="top:var(--cuit-f-top);left:var(--cuit-f-left)">30-71598364-4</span>
-</div>
+</div><!-- /a4 rx -->
+</div><!-- /wrap-rx -->
 
 <script>
-function descargarPDF() {
-  const el = document.getElementById('remito-preview')
-  const opt = {
-    margin:      [8, 8, 8, 8],
-    filename:    'remito-${razonSocial.replace(/[^a-zA-Z0-9]/g, '_') || 'rebucret'}-${fecha.replace(/\//g, '-')}.pdf',
-    image:       { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true },
-    jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' }
-  }
-  html2pdf().set(opt).from(el).save()
+var currentTab = 'cp';
+
+function showTab(tab) {
+  currentTab = tab;
+  document.getElementById('wrap-cp').classList.toggle('active', tab === 'cp');
+  document.getElementById('wrap-rx').classList.toggle('active', tab === 'rx');
+  document.getElementById('tab-cp').classList.toggle('active', tab === 'cp');
+  document.getElementById('tab-rx').classList.toggle('active', tab === 'rx');
+}
+
+function downloadPDF() {
+  var el = document.querySelector('#wrap-' + currentTab + ' .a4');
+  var name = currentTab === 'cp' ? 'control-carga' : 'remito-fiscal';
+  var opt = {
+    margin: 0,
+    filename: name + '-${(d.razonSocial || "rebucret").replace(/[^a-zA-Z0-9]/g, '_')}-${d.fecha.replace(/\//g, '-')}.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  html2pdf().set(opt).from(el).save();
 }
 </script>
 </body>
