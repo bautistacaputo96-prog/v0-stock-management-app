@@ -12,7 +12,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Pencil, Search, Trash2 } from "lucide-react"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -469,7 +468,7 @@ export function ClientsManagement() {
               </div>
             </div>
 
-            <Separator />
+            <div className="border-t" />
 
             {/* Domicilio fiscal */}
             <div>
@@ -512,7 +511,7 @@ export function ClientsManagement() {
               </div>
             </div>
 
-            <Separator />
+            <div className="border-t" />
 
             {/* Datos de contacto */}
             <div>
@@ -570,7 +569,7 @@ export function ClientsManagement() {
               </div>
             </div>
 
-            <Separator />
+            <div className="border-t" />
 
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Logística</p>
@@ -602,7 +601,7 @@ export function ClientsManagement() {
               </div>
             </div>
 
-            <Separator />
+            <div className="border-t" />
 
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Contacto en obra</p>
