@@ -16,7 +16,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Plus, X, Check, ChevronsUpDown } from "lucide-react"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Plus, Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
@@ -25,11 +26,6 @@ type Material = {
   id: string
   name: string
   unit: string
-}
-
-type FormulaMaterial = {
-  material_id: string
-  quantity: string
 }
 
 interface AddFormulaDialogProps {
@@ -56,7 +52,8 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
     metodo: "none",
     yield_m3: "1.0",
   })
-  const [formulaMaterials, setFormulaMaterials] = useState<FormulaMaterial[]>([])
+  // Store quantities keyed by material_id
+  const [materialQuantities, setMaterialQuantities] = useState<Record<string, string>>({})
   const { toast } = useToast()
 
   // Auto-generate code
@@ -99,18 +96,11 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
     return name
   }, [formData])
 
-  const addMaterial = () => {
-    setFormulaMaterials([...formulaMaterials, { material_id: "", quantity: "0" }])
-  }
-
-  const removeMaterial = (index: number) => {
-    setFormulaMaterials(formulaMaterials.filter((_, i) => i !== index))
-  }
-
-  const updateMaterial = (index: number, field: keyof FormulaMaterial, value: string) => {
-    const updated = [...formulaMaterials]
-    updated[index][field] = value
-    setFormulaMaterials(updated)
+  const updateMaterialQuantity = (materialId: string, quantity: string) => {
+    setMaterialQuantities(prev => ({
+      ...prev,
+      [materialId]: quantity
+    }))
   }
 
   const resetForm = () => {
@@ -121,9 +111,16 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
       metodo: "none",
       yield_m3: "1.0",
     })
-    setFormulaMaterials([])
+    setMaterialQuantities({})
     setResistenciaInput("")
   }
+
+  // Get materials with quantities > 0
+  const formulaMaterials = useMemo(() => {
+    return Object.entries(materialQuantities)
+      .filter(([_, qty]) => Number.parseFloat(qty) > 0)
+      .map(([material_id, quantity]) => ({ material_id, quantity }))
+  }, [materialQuantities])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -142,15 +139,6 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
         variant: "destructive",
         title: "Error",
         description: "Debes agregar al menos un material a la formula",
-      })
-      return
-    }
-
-    if (formulaMaterials.some((m) => !m.material_id || Number.parseFloat(m.quantity) <= 0)) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Todos los materiales deben tener un material seleccionado y una cantidad valida",
       })
       return
     }
@@ -343,59 +331,45 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
             />
           </div>
 
-          {/* Materials */}
+          {/* Materials Table */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>Composicion</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addMaterial}>
-                <Plus className="h-4 w-4 mr-1" />
-                Agregar Material
-              </Button>
+              <span className="text-sm text-muted-foreground">
+                {formulaMaterials.length} material{formulaMaterials.length !== 1 ? "es" : ""} con cantidad
+              </span>
             </div>
 
-            {formulaMaterials.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4 border rounded-lg">
-                No hay materiales agregados. Haz clic en "Agregar Material" para comenzar.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {formulaMaterials.map((fm, index) => (
-                  <div key={index} className="flex gap-2 items-end">
-                    <div className="flex-1 space-y-2">
-                      <Label className="text-xs">Material</Label>
-                      <Select
-                        value={fm.material_id}
-                        onValueChange={(value) => updateMaterial(index, "material_id", value)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {materials.map((material) => (
-                            <SelectItem key={material.id} value={material.id}>
-                              {material.name} ({material.unit})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="w-32 space-y-2">
-                      <Label className="text-xs">Cantidad</Label>
-                      <Input
-                        type="number"
-                        step="0.001"
-                        value={fm.quantity}
-                        onChange={(e) => updateMaterial(index, "quantity", e.target.value)}
-                        placeholder="0"
-                      />
-                    </div>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => removeMaterial(index)}>
-                      <X className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-[50%]">Material</TableHead>
+                    <TableHead className="w-[25%]">Cantidad</TableHead>
+                    <TableHead className="w-[25%]">Unidad</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {materials.map((material) => (
+                    <TableRow key={material.id} className={materialQuantities[material.id] && Number.parseFloat(materialQuantities[material.id]) > 0 ? "bg-primary/5" : ""}>
+                      <TableCell className="font-medium py-2">{material.name}</TableCell>
+                      <TableCell className="py-2">
+                        <Input
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          value={materialQuantities[material.id] || ""}
+                          onChange={(e) => updateMaterialQuantity(material.id, e.target.value)}
+                          placeholder="0"
+                          className="h-8"
+                        />
+                      </TableCell>
+                      <TableCell className="py-2 text-muted-foreground">{material.unit}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-4">
