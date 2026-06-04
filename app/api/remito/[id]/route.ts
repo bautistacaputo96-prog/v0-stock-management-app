@@ -9,10 +9,6 @@ function sb() {
   )
 }
 
-function fmt(d: Date) {
-  return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
-}
-
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = sb()
@@ -33,105 +29,163 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!row) return new NextResponse("Despacho no encontrado", { status: 404 })
 
   const [{ data: client }, { data: site }, { data: formula }, { data: mixer }] = await Promise.all([
-    row.client_id             ? supabase.from("clients").select("*").eq("id", row.client_id).single() : { data: null },
-    row.construction_site_id  ? supabase.from("construction_sites").select("*").eq("id", row.construction_site_id).single() : { data: null },
-    row.formula_id            ? supabase.from("formulas").select("*").eq("id", row.formula_id).single() : { data: null },
-    row.mixer_id              ? supabase.from("mixers").select("*").eq("id", row.mixer_id).single() : { data: null },
+    row.client_id            ? supabase.from("clients").select("*").eq("id", row.client_id).single() : { data: null },
+    row.construction_site_id ? supabase.from("construction_sites").select("*").eq("id", row.construction_site_id).single() : { data: null },
+    row.formula_id           ? supabase.from("formulas").select("*").eq("id", row.formula_id).single() : { data: null },
+    row.mixer_id             ? supabase.from("mixers").select("*").eq("id", row.mixer_id).single() : { data: null },
   ])
 
-  const c = client  || {}
-  const s = site    || {}
-  const f = formula || {}
-  const m = mixer   || {}
+  const c = (client   as any) || {}
+  const s = (site     as any) || {}
+  const f = (formula  as any) || {}
+  const m = (mixer    as any) || {}
 
   const dateRaw = row.dispatch_date || row.scheduled_arrival_time
-  const fecha   = fmt(new Date(dateRaw))
-  const m3      = Number(row.quantity_m3 || 0).toFixed(0)
-  const remito  = (!isScheduled && row.remito) ? row.remito : ""
+  const fecha   = new Date(dateRaw).toLocaleDateString("es-AR", {
+    day: "2-digit", month: "2-digit", year: "numeric"
+  })
 
-  const d = {
+  const m3          = Number(row.quantity_m3 || 0).toFixed(1)
+  const formulaDesc = f.code ? `HORMIGON ELABORADO ${f.name} (${f.code})` : (f.name ? `HORMIGON ELABORADO ${f.name}` : "HORMIGON ELABORADO")
+  const obraDesc    = s.name ? `Obra: ${s.name}` : ""
+  const descripcion = [formulaDesc, obraDesc].filter(Boolean).join(" - ")
+
+  const html = buildHTML({
     fecha,
-    razonSocial:      (c as any).razon_social       || (c as any).name          || "",
-    nombreCliente:    (c as any).name               || "",
-    clienteDireccion: (c as any).direccion_fiscal   || "",
-    clienteCP:        (c as any).cp                 || "",
-    clienteLocalidad: (c as any).localidad_cliente  || "",
-    clienteProvincia: (c as any).provincia          || "",
-    condIva:          (c as any).cond_iva           || "",
-    condPago:         (c as any).cond_pago          || "",
-    cuit:             (c as any).cuit               || "",
-    nPedido:          "",
-    remito,
+    razonSocial:  c.razon_social  || c.name       || "",
+    direccion:    c.direccion_fiscal              || "",
+    localidad:    c.localidad_cliente             || "",
+    cp:           c.cp                            || "",
+    cuitCliente:  c.cuit                          || "",
     m3,
-    productoCodigo:   (f as any).code || (f as any).name || "",
-    obraLocalidad:    (s as any).localidad || "",
-    obraDireccion:    (s as any).address   || "",
-    patente:          (m as any).license_plate || "",
-  }
+    descripcion,
+    obraDireccion: [s.address, s.localidad].filter(Boolean).join(", "),
+    patente:      m.license_plate                 || "",
+    observaciones: row.observations || row.notes  || "",
+  })
 
-  const html = buildHTML(d)
   return new NextResponse(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   })
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// HTML del remito overlay — solo valores, posicionados sobre el formulario ARCA
-// Ajustar las variables CSS en :root para calibrar con el formulario físico
-// ──────────────────────────────────────────────────────────────────────────────
-function buildHTML(d: Record<string, string>) {
+// ─────────────────────────────────────────────────────────────────────────────
+// HTML del remito — valores posicionados sobre el ARCA Remito X de Rebucret
+//
+// CALIBRACIÓN: ajustá las variables CSS en :root para alinear con el formulario
+// físico. Probá con una hoja en blanco primero para ver posiciones.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildHTML(d: {
+  fecha: string
+  razonSocial: string
+  direccion: string
+  localidad: string
+  cp: string
+  cuitCliente: string
+  m3: string
+  descripcion: string
+  obraDireccion: string
+  patente: string
+  observaciones: string
+}) {
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Remito ${d.remito || d.m3 + "m³"}</title>
+<title>Remito</title>
 <style>
-/* ── Calibración ── ajustar según el formulario físico */
+/* ══════════════════════════════════════════════════
+   CALIBRACIÓN — ajustar estos valores para alinear
+   con el formulario físico ARCA Remito X
+   ══════════════════════════════════════════════════ */
 :root {
-  --fecha-top:   24mm; --fecha-left: 153mm;
-  --col-izq:     28mm;
-  --col-der:    128mm;
-  --r1: 53mm; --r2: 61mm; --r3: 69mm;
-  --r4: 77mm; --r5: 85mm; --r6: 93mm;
-  --remito-left: 152mm;
-  --prod-top:   108mm; --prod-qty: 12mm; --prod-cod: 26mm;
-  --trans-left:  77mm;
-  --t1: 261mm; --t2: 267mm; --t3: 273mm; --t4: 279mm; --t5: 285mm;
-  --fs: 8.5pt;
-  --ff: Arial, Helvetica, sans-serif;
+  /* ── FECHA (header, columna derecha) ─────────── */
+  --fecha-top:   57mm;
+  --fecha-left: 148mm;
+
+  /* ── DESTINATARIO (área grande en blanco) ────── */
+  --dest-left:   15mm;
+  --dest-rs-top:  82mm;   /* Razón Social */
+  --dest-dir-top: 90mm;   /* Dirección */
+  --dest-loc-top: 98mm;   /* Localidad / CP */
+  --dest-cuit-top:106mm;  /* CUIT destinatario */
+
+  /* ── TABLA ITEMS ─────────────────────────────── */
+  --item-top:    158mm;   /* primera fila de items */
+  --cant-left:    15mm;   /* columna CANTIDAD */
+  --desc-left:    40mm;   /* columna DESCRIPCION */
+
+  /* ── FOOTER ──────────────────────────────────── */
+  --obs-top:     251mm;   --obs-left:    48mm;
+  --trans-top:   259mm;   --trans-left:  52mm;
+  --cuit-f-top:  267mm;   --cuit-f-left: 30mm;
+
+  /* ── Tipografía ──────────────────────────────── */
+  --fs:   9pt;
+  --ff:   Arial, Helvetica, sans-serif;
 }
+
+/* ── Página ── */
 @page { size: A4; margin: 0; }
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 210mm; height: 297mm; background: white; font-family: var(--ff); font-size: var(--fs); color: #000; position: relative; overflow: hidden; }
-.v { position: absolute; white-space: nowrap; line-height: 1; }
-.btn { position: fixed; top: 8px; right: 8px; background: #1d4ed8; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; z-index: 999; font-family: system-ui, sans-serif; }
+html, body {
+  width: 210mm; height: 297mm;
+  background: white;
+  font-family: var(--ff);
+  font-size: var(--fs);
+  color: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Valor posicionado ── */
+.v {
+  position: absolute;
+  white-space: nowrap;
+  line-height: 1;
+}
+.v-wrap {
+  position: absolute;
+  line-height: 1.3;
+  max-width: 170mm;
+}
+
+/* ── Botón imprimir (no se imprime) ── */
+.btn {
+  position: fixed; top: 8px; right: 8px;
+  background: #1d4ed8; color: white; border: none;
+  border-radius: 6px; padding: 8px 18px;
+  font-size: 13px; cursor: pointer; z-index: 999;
+  font-family: system-ui, sans-serif;
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
 @media print { .btn { display: none; } }
 </style>
 </head>
 <body>
+
 <button class="btn" onclick="window.print()">🖨 Imprimir</button>
 
-<span class="v" style="top:var(--fecha-top);left:var(--fecha-left)">${d.fecha}</span>
+<!-- ── FECHA ── -->
+<span class="v" style="top:var(--fecha-top); left:var(--fecha-left);">${d.fecha}</span>
 
-<span class="v" style="top:var(--r1);left:var(--col-izq)">${d.razonSocial}</span>
-<span class="v" style="top:var(--r2);left:var(--col-izq)">${d.clienteDireccion}</span>
-<span class="v" style="top:var(--r3);left:var(--col-izq)">${d.clienteCP}</span>
-<span class="v" style="top:var(--r4);left:var(--col-izq)">${d.condIva}</span>
-<span class="v" style="top:var(--r5);left:var(--col-izq)">${d.nPedido}</span>
-<span class="v" style="top:var(--r6);left:var(--col-izq)">${d.condPago}</span>
+<!-- ── DESTINATARIO ── -->
+<span class="v" style="top:var(--dest-rs-top);  left:var(--dest-left); font-weight:bold;">${d.razonSocial}</span>
+<span class="v" style="top:var(--dest-dir-top); left:var(--dest-left);">${d.direccion}</span>
+<span class="v" style="top:var(--dest-loc-top); left:var(--dest-left);">${d.localidad}${d.cp ? " (" + d.cp + ")" : ""}</span>
+<span class="v" style="top:var(--dest-cuit-top); left:var(--dest-left);">CUIT: ${d.cuitCliente}</span>
 
-<span class="v" style="top:var(--r1);left:var(--col-der)">${d.nombreCliente}</span>
-<span class="v" style="top:var(--r2);left:var(--col-der)">${d.clienteLocalidad}</span>
-<span class="v" style="top:var(--r3);left:var(--col-der)">${d.clienteProvincia}</span>
-<span class="v" style="top:var(--r4);left:var(--col-der)">${d.cuit}</span>
-<span class="v" style="top:var(--r6);left:var(--remito-left)">${d.remito}</span>
+<!-- ── ITEMS ── -->
+<span class="v" style="top:var(--item-top); left:var(--cant-left);">${d.m3} m³</span>
+<span class="v-wrap" style="top:var(--item-top); left:var(--desc-left);">${d.descripcion}</span>
+${d.obraDireccion ? `<span class="v" style="top:calc(var(--item-top) + 6mm); left:var(--desc-left); font-size:8pt; color:#333;">Dirección entrega: ${d.obraDireccion}</span>` : ""}
+${d.patente ? `<span class="v" style="top:calc(var(--item-top) + 12mm); left:var(--desc-left); font-size:8pt; color:#333;">Camión: ${d.patente}</span>` : ""}
 
-<span class="v" style="top:var(--prod-top);left:var(--prod-qty);font-size:9.5pt">${d.m3}</span>
-<span class="v" style="top:var(--prod-top);left:var(--prod-cod);font-size:9.5pt">${d.productoCodigo}</span>
+<!-- ── FOOTER ── -->
+${d.observaciones ? `<span class="v" style="top:var(--obs-top); left:var(--obs-left);">${d.observaciones}</span>` : ""}
+<span class="v" style="top:var(--trans-top); left:var(--trans-left);">REBUCRET S.A.${d.patente ? " - " + d.patente : ""}</span>
+<span class="v" style="top:var(--cuit-f-top); left:var(--cuit-f-left);">30-71598364-4</span>
 
-<span class="v" style="top:var(--t3);left:var(--trans-left)">${d.patente}</span>
-<span class="v" style="top:var(--t4);left:var(--trans-left)">${d.obraLocalidad}</span>
-<span class="v" style="top:var(--t5);left:var(--trans-left)">${d.obraDireccion}</span>
 </body>
 </html>`
 }
