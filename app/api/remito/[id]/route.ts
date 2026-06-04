@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
+import * as fs from "fs"
+import * as path from "path"
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 function sb() {
@@ -16,14 +18,11 @@ function sb() {
 const pt  = (mm: number) => mm * 2.8346
 const top = (mmFromTop: number, pageH: number) => pageH - pt(mmFromTop)
 
-// ── Carga la plantilla desde public/ ─────────────────────────────────────────
-async function loadTemplate(name: string): Promise<ArrayBuffer> {
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
-  const res = await fetch(`${baseUrl}/templates/${name}`)
-  if (!res.ok) throw new Error(`Template ${name} not found`)
-  return res.arrayBuffer()
+// ── Carga la plantilla desde public/templates/ ────────────────────────────────
+function loadTemplate(name: string): Buffer {
+  const filePath = path.join(process.cwd(), "public", "templates", name)
+  if (!fs.existsSync(filePath)) throw new Error(`Template ${name} not found at ${filePath}`)
+  return fs.readFileSync(filePath)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -34,10 +33,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   // ── Si no hay doc: devuelve página HTML de preview ─────────────────────────
   if (!doc) {
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_SITE_URL || ""
-    const html = buildPreviewPage(id, baseUrl)
+    const html = buildPreviewPage(id)
     return new NextResponse(html, { headers: { "Content-Type": "text/html; charset=utf-8" } })
   }
 
@@ -124,7 +120,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // DOCUMENT 1: Control de Carga
 // ══════════════════════════════════════════════════════════════════════════════
 async function fillControlPanel(data: Record<string, string>): Promise<Uint8Array> {
-  const templateBytes = await loadTemplate("control-panel.pdf")
+  const templateBytes = loadTemplate("control-panel.pdf")
   const pdfDoc = await PDFDocument.load(templateBytes)
   const page   = pdfDoc.getPages()[0]
   const font   = await pdfDoc.embedFont(StandardFonts.Helvetica)
@@ -192,7 +188,7 @@ async function fillControlPanel(data: Record<string, string>): Promise<Uint8Arra
 // DOCUMENT 2: Remito Fiscal (ARCA Remito X)
 // ══════════════════════════════════════════════════════════════════════════════
 async function fillRemitoFiscal(data: Record<string, string>): Promise<Uint8Array> {
-  const templateBytes = await loadTemplate("remito-fiscal.pdf")
+  const templateBytes = loadTemplate("remito-fiscal.pdf")
   const pdfDoc = await PDFDocument.load(templateBytes)
   const page   = pdfDoc.getPages()[0]
   const font   = await pdfDoc.embedFont(StandardFonts.Helvetica)
@@ -276,7 +272,7 @@ async function fillRemitoFiscal(data: Record<string, string>): Promise<Uint8Arra
 // ══════════════════════════════════════════════════════════════════════════════
 // PÁGINA DE PREVIEW HTML
 // ══════════════════════════════════════════════════════════════════════════════
-function buildPreviewPage(id: string, baseUrl: string) {
+function buildPreviewPage(id: string) {
   const controlUrl = `/api/remito/${id}?doc=control`
   const fiscalUrl  = `/api/remito/${id}?doc=fiscal`
 
