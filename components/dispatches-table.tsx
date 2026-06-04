@@ -3,7 +3,7 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Eye, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { Eye, MoreHorizontal, Pencil, Printer, Trash2 } from "lucide-react"
 import { ViewDispatchDialog } from "./view-dispatch-dialog"
 import { useState } from "react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -198,6 +198,10 @@ export function DispatchesTable({ dispatches, onRefresh }: { dispatches: Dispatc
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => window.open(`/api/remito/${dispatch.id}`, '_blank')}>
+                            <Printer className="h-4 w-4 mr-2" />
+                            Imprimir Remito
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openEdit(dispatch)}>
                             <Pencil className="h-4 w-4 mr-2" />
                             Editar
