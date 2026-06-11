@@ -194,7 +194,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     // Load scheduled dispatches
     const { data: scheduledData, error: scheduledError } = await supabase
       .from("scheduled_dispatches")
-      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
+      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
       .eq("plant_id", selectedPlant)
       .gte("scheduled_arrival_time", `${dateFrom}T00:00:00`)
       .lte("scheduled_arrival_time", `${dateTo}T23:59:59`)
@@ -440,18 +440,23 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }
     } else {
       // Update scheduled_dispatches table (esta tabla si tiene "observations")
-      const { error } = await supabase.from("scheduled_dispatches").update({
+      const { data, error } = await supabase.from("scheduled_dispatches").update({
         ...updateData,
         observations: editForm.observations || null,
+        remito: editForm.remito || null,
+        extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
         client_id: editForm.client_id || null,
         construction_site_id: editForm.construction_site_id || null,
         formula_id: editForm.formula_id || null,
         mixer_id: editForm.mixer_id || null,
-      }).eq("id", editingDispatch.id)
+      }).eq("id", editingDispatch.id).select()
       
       if (error) {
         console.log("[v0] Error updating scheduled dispatch:", error.message, error.details, error.hint, error.code)
         toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
+      } else if (!data || data.length === 0) {
+        console.log("[v0] No rows updated for scheduled dispatch id:", editingDispatch.id)
+        toast({ title: "Error", description: "No se encontro el despacho para actualizar", variant: "destructive" })
       } else {
         // Si el despacho programado tiene un despacho real asociado (dispatch_id),
         // tambien actualizamos el remito y agua en la tabla dispatches.
