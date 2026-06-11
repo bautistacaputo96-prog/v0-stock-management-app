@@ -4,6 +4,7 @@ import { Inter, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { AppShell } from "@/components/app-shell"
+import { LoginGate } from "@/components/login-gate"
 
 const _inter = Inter({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -39,7 +40,9 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="font-sans antialiased">
-        <AppShell>{children}</AppShell>
+        <LoginGate>
+          <AppShell>{children}</AppShell>
+        </LoginGate>
         <Analytics />
       </body>
     </html>
