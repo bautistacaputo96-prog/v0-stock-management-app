@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { Plus } from "lucide-react"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AddClientDialogProps {
   plantId: string
@@ -23,9 +22,6 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
-    razon_social: "",
-    cuit: "",
-    cond_iva: "Responsable Inscripto",
     contact: "",
     phone: "",
     email: "",
@@ -55,14 +51,10 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
         .from("clients")
         .insert({
           name: formData.name,
-          razon_social: formData.razon_social || formData.name,
-          cuit: formData.cuit || null,
-          cond_iva: formData.cond_iva || null,
           contact: formData.contact || null,
           phone: formData.phone || null,
           email: formData.email || null,
           plant_id: plantId,
-          active: true,
         })
         .select()
         .single()
@@ -71,7 +63,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
       if (error) throw error
 
       toast.success("Cliente agregado exitosamente")
-      setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "" })
+      setFormData({ name: "", contact: "", phone: "", email: "" })
       setOpen(false)
 
       if (onClientAdded && data) {
@@ -100,36 +92,14 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Nombre / Razón Social *</Label>
+            <Label htmlFor="name">Nombre *</Label>
             <Input
               id="name"
-              value={formData.razon_social}
-              onChange={(e) => setFormData({ ...formData, razon_social: e.target.value, name: e.target.value })}
-              placeholder="Ej: GARCÍA JUAN CARLOS"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Nombre del cliente"
               required
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="cuit">CUIT</Label>
-              <Input
-                id="cuit"
-                value={formData.cuit}
-                onChange={(e) => setFormData({ ...formData, cuit: e.target.value })}
-                placeholder="XX-XXXXXXXX-X"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Cond. IVA</Label>
-              <Select value={formData.cond_iva} onValueChange={(v) => setFormData({ ...formData, cond_iva: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["Responsable Inscripto","Monotributista","Consumidor Final","Exento","No Responsable"].map(o => (
-                    <SelectItem key={o} value={o}>{o}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="contact">Contacto</Label>
