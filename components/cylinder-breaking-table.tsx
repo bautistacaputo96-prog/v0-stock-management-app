@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Check, Loader2, Settings2, AlertTriangle } from "lucide-react"
+import { Check, Loader2, Settings2, AlertTriangle, Search } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -49,6 +49,7 @@ interface CylinderBreakingTableProps {
 export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreakingTableProps) {
   const [cylinders, setCylinders] = useState<CylinderBreakingRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState("")
   const [editingValues, setEditingValues] = useState<
     Record<string, { weight?: string; dial?: string; comments?: string; testDate?: string }>
   >({})
@@ -272,7 +273,24 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     return 3 // Future
   }
 
-  const sortedCylinders = [...cylinders].sort((a, b) => {
+  const sortedCylinders = [...cylinders]
+    .filter((c) => {
+      const term = searchTerm.trim().toLowerCase()
+      if (term === "") return true
+      const probetaId = `${c.dispatch?.sample_number || ""}-${c.cylinder_number}`
+      const fields = [
+        c.dispatch?.sample_number,
+        probetaId,
+        c.cylinder_number?.toString(),
+        c.test_age_days?.toString(),
+        c.weight_grams?.toString(),
+        c.dial_reading?.toString(),
+        c.comments,
+        c.scheduled_test_date,
+      ]
+      return fields.filter(Boolean).some((f) => String(f).toLowerCase().includes(term))
+    })
+    .sort((a, b) => {
     const daysA = calculateDaysUntilTest(a.scheduled_test_date)
     const daysB = calculateDaysUntilTest(b.scheduled_test_date)
     const priorityA = getPriority(daysA)
@@ -417,11 +435,21 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
         </Button>
       </div>
 
-      <div className="rounded-md border">
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Buscar por probeta, dias, peso, observaciones..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="text-xs font-semibold">Probeta ID</TableHead>
+              <TableHead className="text-xs font-semibold sticky left-0 z-20 bg-muted">Probeta ID</TableHead>
               <TableHead className="text-xs font-semibold">Fecha de Ensayo</TableHead>
               <TableHead className="text-xs font-semibold">Romper</TableHead>
               <TableHead className="text-xs font-semibold">Fecha de Rotura</TableHead>
@@ -441,7 +469,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
 
               return (
                 <TableRow key={cylinder.id} className={`text-xs ${rowColor}`}>
-                  <TableCell className="font-medium py-2 px-3">
+                  <TableCell className={`font-medium py-2 px-3 sticky left-0 z-10 ${rowColor || "bg-card"}`}>
                     {cylinder.dispatch?.sample_number || "-"}-{cylinder.cylinder_number}
                   </TableCell>
                   <TableCell className="py-2 px-3">{formatDate(cylinder.scheduled_test_date)}</TableCell>

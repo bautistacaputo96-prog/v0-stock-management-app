@@ -377,7 +377,9 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       const { data: newDispatch, error: dispatchError } = await supabase.from("dispatches").insert({
         formula_id: dispatchDialog.formula_id,
         quantity_m3: dispatchDialog.quantity_m3,
-        dispatch_date: new Date().toISOString(),
+        // Usar la fecha de programación original para que el historial refleje
+        // la fecha en que se programó el camión, no la fecha de carga real
+        dispatch_date: dispatchDialog.scheduled_arrival_time,
         remito: dispatchForm.remito.trim(),
         client_id: dispatchDialog.client_id,
         construction_site_id: dispatchDialog.construction_site_id,

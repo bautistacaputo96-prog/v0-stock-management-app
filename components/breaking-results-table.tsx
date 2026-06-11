@@ -4,12 +4,24 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { format, parseISO, isValid } from "date-fns"
 import { es } from "date-fns/locale"
-import { Search, CheckCircle2 } from "lucide-react"
+import { Search, CheckCircle2, Trash2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
+import { toast } from "@/hooks/use-toast"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 function safeFormatDate(dateStr: string | null | undefined, formatStr: string = "dd/MM/yyyy"): string {
   if (!dateStr) return "-"
@@ -64,6 +76,8 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
   const [searchTerm, setSearchTerm] = useState("")
   const [filterAge, setFilterAge] = useState<string>("all")
   const [filterStatus, setFilterStatus] = useState<string>("completed")
+  const [deletingResult, setDeletingResult] = useState<BreakingResult | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     loadResults()
@@ -194,6 +208,24 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
       : 0,
   }
 
+  async function handleDelete() {
+    if (!deletingResult) return
+    setDeleting(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("test_cylinders").delete().eq("id", deletingResult.id)
+      if (error) throw error
+      toast({ title: "Resultado eliminado", description: "La probeta se elimino correctamente" })
+      setResults((prev) => prev.filter((r) => r.id !== deletingResult.id))
+    } catch (err: any) {
+      console.error("[v0] Error deleting result:", err)
+      toast({ title: "Error", description: err?.message || "No se pudo eliminar", variant: "destructive" })
+    } finally {
+      setDeleting(false)
+      setDeletingResult(null)
+    }
+  }
+
   const getStrengthStatus = (result: BreakingResult) => {
     if (!result.strength_mpa) return "pending"
     if (!result.expected_strength) return "unknown"
@@ -270,7 +302,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="text-xs font-semibold whitespace-nowrap">N Remito</TableHead>
+              <TableHead className="text-xs font-semibold whitespace-nowrap sticky left-0 z-20 bg-muted">N Remito</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Tipo Hormigon</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Asent. Real</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Prob ID</TableHead>
@@ -287,12 +319,13 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
               <TableHead className="text-xs font-semibold whitespace-nowrap">Direccion Obra</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Cliente</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Observaciones</TableHead>
+              <TableHead className="text-xs font-semibold whitespace-nowrap text-center w-[60px]">Accion</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={17} className="text-center py-8">
+                <TableCell colSpan={18} className="text-center py-8">
                   <div className="flex items-center justify-center">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                   </div>
@@ -300,7 +333,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
               </TableRow>
             ) : filteredResults.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={17} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={18} className="text-center py-8 text-muted-foreground">
                   No se encontraron resultados
                 </TableCell>
               </TableRow>
@@ -309,7 +342,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
                 const status = getStrengthStatus(result)
                 return (
                   <TableRow key={result.id} className="hover:bg-muted/30">
-                    <TableCell className="text-xs font-medium">{result.remito || "-"}</TableCell>
+                    <TableCell className="text-xs font-medium sticky left-0 z-10 bg-card">{result.remito || "-"}</TableCell>
                     <TableCell className="text-xs">
                       <div>
                         <Badge variant="outline" className="font-mono text-xs">
@@ -374,6 +407,17 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
                     <TableCell className="text-xs max-w-[150px] truncate" title={result.comments || ""}>
                       {result.comments || "-"}
                     </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => setDeletingResult(result)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Eliminar</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 )
               })
@@ -385,6 +429,33 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
       <p className="text-xs text-muted-foreground text-right">
         Mostrando {filteredResults.length} de {results.length} resultados
       </p>
+
+      <AlertDialog open={!!deletingResult} onOpenChange={(open) => !open && setDeletingResult(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar Resultado</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingResult && (
+                <>
+                  Esta por eliminar el resultado del remito <strong>{deletingResult.remito || "N/A"}</strong> (Probeta #
+                  {deletingResult.cylinder_number}, {deletingResult.test_age_days} dias). Esta accion no se puede
+                  deshacer.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

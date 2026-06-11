@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Edit, Filter, Trash2, MoreHorizontal } from "lucide-react"
+import { Edit, Filter, Trash2, MoreHorizontal, Search } from "lucide-react"
 import { EditCylinderDialog } from "./edit-cylinder-dialog"
 import { DateRangeFilter } from "./date-range-filter"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -51,6 +51,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
   const [cylinders, setCylinders] = useState<TestCylinder[]>([])
   const [filteredCylinders, setFilteredCylinders] = useState<TestCylinder[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState("")
   const [editingCylinder, setEditingCylinder] = useState<TestCylinder | null>(null)
   const [deletingCylinder, setDeletingCylinder] = useState<TestCylinder | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -132,6 +133,34 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
   useEffect(() => {
     let filtered = [...cylinders]
 
+    // Apply global search across all visible data
+    const term = searchTerm.trim().toLowerCase()
+    if (term !== "") {
+      filtered = filtered.filter((c) => {
+        const fields = [
+          c.dispatch?.remito,
+          c.dispatch?.formula?.code,
+          c.dispatch?.formula?.name,
+          c.dispatch?.sample_number,
+          c.dispatch?.plant?.code,
+          c.dispatch?.plant?.name,
+          c.dispatch?.client?.name,
+          c.dispatch?.construction_site?.name,
+          c.comments,
+          c.test_age_days?.toString(),
+          c.dial_reading?.toString(),
+          c.strength_mpa?.toString(),
+          c.dispatch?.actual_slump_cm?.toString(),
+          c.dispatch?.extra_water_liters?.toString(),
+          formatDate(c.dispatch?.dispatch_date),
+          formatDate(c.scheduled_test_date),
+          formatDate(c.actual_test_date),
+          c.actual_test_date ? "Ensayado" : "Pendiente",
+        ]
+        return fields.filter(Boolean).some((f) => String(f).toLowerCase().includes(term))
+      })
+    }
+
     // Apply remito filter
     if (filters.remito.length > 0) {
       filtered = filtered.filter((c) => c.dispatch && filters.remito.includes(c.dispatch.remito || ""))
@@ -201,7 +230,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     })
 
     setFilteredCylinders(filtered)
-  }, [cylinders, filters])
+  }, [cylinders, filters, searchTerm])
 
   useEffect(() => {
     loadCylinders()
@@ -374,6 +403,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
       filters.cliente.length > 0 ||
       filters.obra.length > 0 ||
       filters.estado.length > 0 ||
+      searchTerm.trim() !== "" ||
       dateRange.from !== "" ||
       dateRange.to !== ""
     )
@@ -390,6 +420,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
       obra: [],
       estado: [],
     })
+    setSearchTerm("")
     setDateRange({ from: "", to: "" })
   }
 
@@ -412,6 +443,16 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
 
         <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
 
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar remito, probeta, formula, cliente, obra..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
         <Button
           variant={hasActiveFilters() ? "default" : "outline"}
           size="sm"
@@ -427,7 +468,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
         <Table>
           <TableHeader>
             <TableRow className="h-10">
-              <TableHead className="w-[100px] py-2 px-3 text-xs">
+              <TableHead className="w-[100px] py-2 px-3 text-xs sticky left-0 z-20 bg-card">
                 <div className="flex items-center">
                   N° Remito
                   <ColumnFilter column="remito" label="Remito" />
@@ -504,7 +545,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
                   key={cylinder.id}
                   className={`h-10 ${cylinder.dial_reading ? "bg-green-50 hover:bg-green-100" : ""}`}
                 >
-                  <TableCell className="font-medium py-2 px-3 text-xs">{cylinder.dispatch?.remito || "-"}</TableCell>
+                  <TableCell className={`font-medium py-2 px-3 text-xs sticky left-0 z-10 ${cylinder.dial_reading ? "bg-green-50" : "bg-card"}`}>{cylinder.dispatch?.remito || "-"}</TableCell>
                   <TableCell className="py-2 px-3 text-xs">{cylinder.dispatch?.formula?.code || "-"}</TableCell>
                   <TableCell className="py-2 px-3 text-xs">
                     {cylinder.dispatch?.actual_slump_cm ? `${cylinder.dispatch.actual_slump_cm} cm` : "-"}

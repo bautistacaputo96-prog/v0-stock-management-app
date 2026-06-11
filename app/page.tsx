@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server"
 import { DashboardClient } from "@/components/dashboard-client"
 
-// Revalidate every 5 minutes
-export const revalidate = 300
+// Render at request time so Supabase env vars are available (avoids build-time prerender error)
+export const dynamic = "force-dynamic"
 
 export default async function DashboardPage() {
   const supabase = await createClient()
