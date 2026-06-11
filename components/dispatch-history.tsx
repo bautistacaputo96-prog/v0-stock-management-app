@@ -873,16 +873,14 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               </div>
               
               <div className="grid grid-cols-2 gap-4">
-                {editingDispatch.source === "manual" && (
-                  <div className="space-y-2">
-                    <Label>Remito</Label>
-                    <Input 
-                      value={editForm.remito}
-                      onChange={(e) => setEditForm({ ...editForm, remito: e.target.value })}
-                      placeholder="Numero de remito"
-                    />
-                  </div>
-                )}
+                <div className="space-y-2">
+                  <Label>Remito</Label>
+                  <Input 
+                    value={editForm.remito}
+                    onChange={(e) => setEditForm({ ...editForm, remito: e.target.value })}
+                    placeholder="Numero de remito"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label>Cantidad (m3)</Label>
                   <Input 
@@ -974,18 +972,16 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               </div>
               
               <div className="grid grid-cols-2 gap-4">
-                {editingDispatch.source === "manual" && (
-                  <div className="space-y-2">
-                    <Label>Agua agregada en planta (litros)</Label>
-                    <Input 
-                      type="number"
-                      step="1"
-                      value={editForm.extra_water_liters}
-                      onChange={(e) => setEditForm({ ...editForm, extra_water_liters: e.target.value })}
-                      placeholder="0"
-                    />
-                  </div>
-                )}
+                <div className="space-y-2">
+                  <Label>Agua agregada en planta (litros)</Label>
+                  <Input 
+                    type="number"
+                    step="1"
+                    value={editForm.extra_water_liters}
+                    onChange={(e) => setEditForm({ ...editForm, extra_water_liters: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label>Observaciones</Label>
                   <Input 
