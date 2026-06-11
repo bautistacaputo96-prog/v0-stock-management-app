@@ -416,7 +416,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     // Different tables have different fields
     if (editingDispatch.source === "manual") {
       // Update dispatches table (usa "notes", no "observations")
-      const { error } = await supabase.from("dispatches").update({
+      const { data, error } = await supabase.from("dispatches").update({
         ...updateData,
         notes: editForm.observations || null,
         remito: editForm.remito || null,
@@ -425,11 +425,14 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         construction_site_id: editForm.construction_site_id || null,
         formula_id: editForm.formula_id || null,
         mixer_id: editForm.mixer_id || null,
-      }).eq("id", editingDispatch.id)
+      }).eq("id", editingDispatch.id).select()
       
       if (error) {
         console.log("[v0] Error updating manual dispatch:", error.message, error.details, error.hint, error.code)
         toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
+      } else if (!data || data.length === 0) {
+        console.log("[v0] No rows updated for dispatch id:", editingDispatch.id)
+        toast({ title: "Error", description: "No se encontro el despacho para actualizar", variant: "destructive" })
       } else {
         toast({ title: "Despacho actualizado" })
         loadData()
@@ -774,7 +777,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
             <Table>
               <TableHeader className="sticky top-0 z-30 bg-card">
                 <TableRow>
-                  <TableHead className="sticky left-0 z-40 bg-card">
+                  <TableHead className="sticky left-0 z-40 bg-card w-[90px]">
                     <div className="flex items-center gap-1">
                       Remito
                       <ColumnFilter column="remito" label="Remito" />
@@ -827,7 +830,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   filteredDispatches.map((dispatch) => {
                     return (
                       <TableRow key={dispatch.id}>
-                        <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium">
+                        <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium w-[90px] truncate">
                           {dispatch.remito || "-"}
                         </TableCell>
                         <TableCell>
