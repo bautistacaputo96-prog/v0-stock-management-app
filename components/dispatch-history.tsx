@@ -32,6 +32,7 @@ type ScheduledDispatch = {
   formulas?: { name: string; code: string }; mixers?: { license_plate: string };
   created_by?: string | null; remito?: string | null; extra_water_liters?: number | null;
   client_id?: string; construction_site_id?: string; formula_id?: string; mixer_id?: string;
+  dispatch_id?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -410,14 +411,14 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     
     const updateData: any = {
       quantity_m3: parseFloat(editForm.quantity_m3),
-      observations: editForm.observations || null,
     }
     
     // Different tables have different fields
     if (editingDispatch.source === "manual") {
-      // Update dispatches table
+      // Update dispatches table (usa "notes", no "observations")
       const { error } = await supabase.from("dispatches").update({
         ...updateData,
+        notes: editForm.observations || null,
         remito: editForm.remito || null,
         extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
         client_id: editForm.client_id || null,
@@ -427,15 +428,18 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }).eq("id", editingDispatch.id)
       
       if (error) {
-        toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
+        console.log("[v0] Error updating manual dispatch:", error.message, error.details, error.hint, error.code)
+        toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
       } else {
         toast({ title: "Despacho actualizado" })
         loadData()
+        setEditingDispatch(null)
       }
     } else {
-      // Update scheduled_dispatches table
+      // Update scheduled_dispatches table (esta tabla si tiene "observations")
       const { error } = await supabase.from("scheduled_dispatches").update({
         ...updateData,
+        observations: editForm.observations || null,
         client_id: editForm.client_id || null,
         construction_site_id: editForm.construction_site_id || null,
         formula_id: editForm.formula_id || null,
@@ -443,14 +447,28 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }).eq("id", editingDispatch.id)
       
       if (error) {
-        toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
+        console.log("[v0] Error updating scheduled dispatch:", error.message, error.details, error.hint, error.code)
+        toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
       } else {
+        // Si el despacho programado tiene un despacho real asociado (dispatch_id),
+        // tambien actualizamos el remito y agua en la tabla dispatches.
+        if (editingDispatch.dispatch_id) {
+          const { error: dispatchError } = await supabase.from("dispatches").update({
+            remito: editForm.remito || null,
+            extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
+            quantity_m3: parseFloat(editForm.quantity_m3),
+            notes: editForm.observations || null,
+          }).eq("id", editingDispatch.dispatch_id)
+          if (dispatchError) {
+            console.log("[v0] Error updating linked dispatch:", dispatchError.message)
+          }
+        }
         toast({ title: "Despacho actualizado" })
         loadData()
+        setEditingDispatch(null)
       }
     }
     
-    setEditingDispatch(null)
     setSaving(false)
   }
 
