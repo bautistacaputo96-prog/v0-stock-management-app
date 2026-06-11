@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Plus, ChevronLeft, ChevronRight, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, addDays, startOfWeek, addWeeks, subWeeks, isSameDay, parseISO, setHours, setMinutes, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
@@ -465,6 +465,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => window.open(`/api/remito/${d.id}`, '_blank')}>
+                                  <Printer className="h-4 w-4 mr-2" />
+                                  Visualizar Remito
+                                </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEditDispatch(d)}>
                                   <Pencil className="h-4 w-4 mr-2" />
                                   Editar

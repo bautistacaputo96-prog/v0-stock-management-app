@@ -12,6 +12,15 @@ export async function createClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
 
+  console.log("[v0] Supabase env check:", {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? "SET" : "MISSING",
+    SUPABASE_URL: process.env.SUPABASE_URL ? "SET" : "MISSING",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "SET" : "MISSING",
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ? "SET" : "MISSING",
+    resolvedUrl: supabaseUrl ? "SET" : "MISSING",
+    resolvedKey: supabaseKey ? "SET" : "MISSING",
+  })
+
   return createServerClient(
     supabaseUrl!,
     supabaseKey!,

@@ -616,16 +616,6 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
         </div>
 
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar remito, cliente, obra, formula, camion, estado..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Estado" />
@@ -751,110 +741,121 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       <Card>
         <CardHeader>
           <CardTitle>Historial de Despachos</CardTitle>
+          <div className="relative mt-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar remito, cliente, obra, formula, camion, estado..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="sticky left-0 z-20 bg-card">
-                  <div className="flex items-center gap-1">
-                    Remito
-                    <ColumnFilter column="remito" label="Remito" />
-                  </div>
-                </TableHead>
-                <TableHead>Fecha</TableHead>
-                <TableHead>
-                  <div className="flex items-center gap-1">
-                    Cliente
-                    <ColumnFilter column="cliente" label="Cliente" />
-                  </div>
-                </TableHead>
-                <TableHead>
-                  <div className="flex items-center gap-1">
-                    Obra
-                    <ColumnFilter column="obra" label="Obra" />
-                  </div>
-                </TableHead>
-                <TableHead>
-                  <div className="flex items-center gap-1">
-                    Formula
-                    <ColumnFilter column="formula" label="Formula" />
-                  </div>
-                </TableHead>
-                <TableHead className="text-right">m3</TableHead>
-                <TableHead>
-                  <div className="flex items-center gap-1">
-                    Camion
-                    <ColumnFilter column="camion" label="Camion" />
-                  </div>
-                </TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>
-                  <div className="flex items-center gap-1">
-                    Responsable
-                    <ColumnFilter column="responsable" label="Responsable" />
-                  </div>
-                </TableHead>
-                <TableHead className="w-[50px]"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredDispatches.length === 0 ? (
+          <div className="relative max-h-[600px] overflow-auto rounded-md border">
+            <Table>
+              <TableHeader className="sticky top-0 z-30 bg-card">
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
-                    No hay despachos en el periodo seleccionado
-                  </TableCell>
+                  <TableHead className="sticky left-0 z-40 bg-card">
+                    <div className="flex items-center gap-1">
+                      Remito
+                      <ColumnFilter column="remito" label="Remito" />
+                    </div>
+                  </TableHead>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Cliente
+                      <ColumnFilter column="cliente" label="Cliente" />
+                    </div>
+                  </TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Obra
+                      <ColumnFilter column="obra" label="Obra" />
+                    </div>
+                  </TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Formula
+                      <ColumnFilter column="formula" label="Formula" />
+                    </div>
+                  </TableHead>
+                  <TableHead className="text-right">m3</TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Camion
+                      <ColumnFilter column="camion" label="Camion" />
+                    </div>
+                  </TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Responsable
+                      <ColumnFilter column="responsable" label="Responsable" />
+                    </div>
+                  </TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
-              ) : (
-                filteredDispatches.map((dispatch) => {
-                  return (
-                    <TableRow key={dispatch.id}>
-                      <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium">
-                        {dispatch.remito || "-"}
-                      </TableCell>
-                      <TableCell>
-                        {format(parseISO(dispatch.scheduled_arrival_time), "dd/MM/yyyy")}
-                      </TableCell>
-                      <TableCell className="font-medium">{dispatch.clients?.name || "-"}</TableCell>
-                      <TableCell>{dispatch.construction_sites?.name}</TableCell>
-                      <TableCell>{dispatch.formulas?.code}</TableCell>
-                      <TableCell className="text-right">{dispatch.quantity_m3}</TableCell>
-                      <TableCell>{dispatch.mixers?.license_plate || "-"}</TableCell>
-                      <TableCell>
-                        <Badge variant={dispatch.status === "delivered" ? "default" : dispatch.status === "cancelled" ? "destructive" : "secondary"}>
-                          {STATUS_LABELS[dispatch.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">{dispatch.created_by || "-"}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openSampleDialog(dispatch)}>
-                              <FlaskConical className="h-4 w-4 mr-2" />
-                              Agregar Muestra
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
-                              <Pencil className="h-4 w-4 mr-2" />
-                              Editar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setDeleteDispatch(dispatch)} className="text-destructive">
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Eliminar
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filteredDispatches.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                      No hay despachos en el periodo seleccionado
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredDispatches.map((dispatch) => {
+                    return (
+                      <TableRow key={dispatch.id}>
+                        <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium">
+                          {dispatch.remito || "-"}
+                        </TableCell>
+                        <TableCell>
+                          {format(parseISO(dispatch.scheduled_arrival_time), "dd/MM/yyyy")}
+                        </TableCell>
+                        <TableCell className="font-medium">{dispatch.clients?.name || "-"}</TableCell>
+                        <TableCell>{dispatch.construction_sites?.name}</TableCell>
+                        <TableCell>{dispatch.formulas?.code}</TableCell>
+                        <TableCell className="text-right">{dispatch.quantity_m3}</TableCell>
+                        <TableCell>{dispatch.mixers?.license_plate || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant={dispatch.status === "delivered" ? "default" : dispatch.status === "cancelled" ? "destructive" : "secondary"}>
+                            {STATUS_LABELS[dispatch.status]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{dispatch.created_by || "-"}</TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openSampleDialog(dispatch)}>
+                                <FlaskConical className="h-4 w-4 mr-2" />
+                                Agregar Muestra
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Editar
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setDeleteDispatch(dispatch)} className="text-destructive">
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
