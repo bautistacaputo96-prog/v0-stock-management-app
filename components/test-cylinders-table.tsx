@@ -24,6 +24,7 @@ interface TestCylinder {
   actual_test_date: string | null
   dial_reading: number | null
   strength_mpa: number | null
+  weight_grams: number | null
   comments: string | null
   dispatch: {
     remito: string | null
