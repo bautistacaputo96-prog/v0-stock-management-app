@@ -32,6 +32,7 @@ type ScheduledDispatch = {
   formulas?: { name: string; code: string }; mixers?: { license_plate: string };
   created_by?: string | null; remito?: string | null; extra_water_liters?: number | null;
   client_id?: string; construction_site_id?: string; formula_id?: string; mixer_id?: string;
+  dispatch_id?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -193,7 +194,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     // Load scheduled dispatches
     const { data: scheduledData, error: scheduledError } = await supabase
       .from("scheduled_dispatches")
-      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
+      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
       .eq("plant_id", selectedPlant)
       .gte("scheduled_arrival_time", `${dateFrom}T00:00:00`)
       .lte("scheduled_arrival_time", `${dateTo}T23:59:59`)
@@ -410,47 +411,72 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     
     const updateData: any = {
       quantity_m3: parseFloat(editForm.quantity_m3),
-      observations: editForm.observations || null,
     }
     
     // Different tables have different fields
     if (editingDispatch.source === "manual") {
-      // Update dispatches table
-      const { error } = await supabase.from("dispatches").update({
+      // Update dispatches table (usa "notes", no "observations")
+      const { data, error } = await supabase.from("dispatches").update({
         ...updateData,
+        notes: editForm.observations || null,
         remito: editForm.remito || null,
         extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
         client_id: editForm.client_id || null,
         construction_site_id: editForm.construction_site_id || null,
         formula_id: editForm.formula_id || null,
         mixer_id: editForm.mixer_id || null,
-      }).eq("id", editingDispatch.id)
+      }).eq("id", editingDispatch.id).select()
       
       if (error) {
-        toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
+        console.log("[v0] Error updating manual dispatch:", error.message, error.details, error.hint, error.code)
+        toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
+      } else if (!data || data.length === 0) {
+        console.log("[v0] No rows updated for dispatch id:", editingDispatch.id)
+        toast({ title: "Error", description: "No se encontro el despacho para actualizar", variant: "destructive" })
       } else {
         toast({ title: "Despacho actualizado" })
         loadData()
+        setEditingDispatch(null)
       }
     } else {
-      // Update scheduled_dispatches table
-      const { error } = await supabase.from("scheduled_dispatches").update({
+      // Update scheduled_dispatches table (esta tabla si tiene "observations")
+      const { data, error } = await supabase.from("scheduled_dispatches").update({
         ...updateData,
+        observations: editForm.observations || null,
+        remito: editForm.remito || null,
+        extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
         client_id: editForm.client_id || null,
         construction_site_id: editForm.construction_site_id || null,
         formula_id: editForm.formula_id || null,
         mixer_id: editForm.mixer_id || null,
-      }).eq("id", editingDispatch.id)
+      }).eq("id", editingDispatch.id).select()
       
       if (error) {
-        toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
+        console.log("[v0] Error updating scheduled dispatch:", error.message, error.details, error.hint, error.code)
+        toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
+      } else if (!data || data.length === 0) {
+        console.log("[v0] No rows updated for scheduled dispatch id:", editingDispatch.id)
+        toast({ title: "Error", description: "No se encontro el despacho para actualizar", variant: "destructive" })
       } else {
+        // Si el despacho programado tiene un despacho real asociado (dispatch_id),
+        // tambien actualizamos el remito y agua en la tabla dispatches.
+        if (editingDispatch.dispatch_id) {
+          const { error: dispatchError } = await supabase.from("dispatches").update({
+            remito: editForm.remito || null,
+            extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
+            quantity_m3: parseFloat(editForm.quantity_m3),
+            notes: editForm.observations || null,
+          }).eq("id", editingDispatch.dispatch_id)
+          if (dispatchError) {
+            console.log("[v0] Error updating linked dispatch:", dispatchError.message)
+          }
+        }
         toast({ title: "Despacho actualizado" })
         loadData()
+        setEditingDispatch(null)
       }
     }
     
-    setEditingDispatch(null)
     setSaving(false)
   }
 
@@ -756,7 +782,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
             <Table>
               <TableHeader className="sticky top-0 z-30 bg-card">
                 <TableRow>
-                  <TableHead className="sticky left-0 z-40 bg-card">
+                  <TableHead className="sticky left-0 z-40 bg-card w-[90px]">
                     <div className="flex items-center gap-1">
                       Remito
                       <ColumnFilter column="remito" label="Remito" />
@@ -809,7 +835,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   filteredDispatches.map((dispatch) => {
                     return (
                       <TableRow key={dispatch.id}>
-                        <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium">
+                        <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium w-[90px] truncate">
                           {dispatch.remito || "-"}
                         </TableCell>
                         <TableCell>
