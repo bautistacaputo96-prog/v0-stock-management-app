@@ -193,7 +193,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     // Load scheduled dispatches
     const { data: scheduledData, error: scheduledError } = await supabase
       .from("scheduled_dispatches")
-      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, client_id, construction_site_id, formula_id, mixer_id, created_by, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
+      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
       .eq("plant_id", selectedPlant)
       .gte("scheduled_arrival_time", `${dateFrom}T00:00:00`)
       .lte("scheduled_arrival_time", `${dateTo}T23:59:59`)
@@ -238,7 +238,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }))
 
       // Add source to scheduled dispatches
-      const scheduledWithSource = (scheduledData || []).map((d: any) => ({ ...d, source: "scheduled" as const }))
+      // Excluir los programados que ya fueron cargados (tienen dispatch_id),
+      // porque esos aparecen desde la tabla "dispatches" con todos los datos editables (remito, etc.)
+      const scheduledWithSource = (scheduledData || [])
+        .filter((d: any) => !d.dispatch_id)
+        .map((d: any) => ({ ...d, source: "scheduled" as const }))
 
       // Combine and sort by date
       const combined = [...scheduledWithSource, ...transformedManual].sort((a, b) => 
@@ -251,10 +255,24 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }
 
   const filteredDispatches = dispatches.filter((d) => {
+    const term = searchTerm.trim().toLowerCase()
     const matchesSearch =
-      d.clients?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.construction_sites?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.mixers?.license_plate?.toLowerCase().includes(searchTerm.toLowerCase())
+      term === "" ||
+      [
+        d.remito,
+        d.clients?.name,
+        d.construction_sites?.name,
+        d.formulas?.code,
+        d.formulas?.name,
+        d.mixers?.license_plate,
+        d.created_by,
+        d.observations,
+        STATUS_LABELS[d.status],
+        d.quantity_m3?.toString(),
+        d.scheduled_arrival_time ? format(parseISO(d.scheduled_arrival_time), "dd/MM/yyyy") : "",
+      ]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(term))
     const matchesStatus = statusFilter === "all" || d.status === statusFilter
     
     // Column filters (arrays)
@@ -308,21 +326,51 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     if (!deleteDispatch) return
     setSaving(true)
     const supabase = createClient()
-    
-    // Delete from the correct table based on source
-    const tableName = deleteDispatch.source === "manual" ? "dispatches" : "scheduled_dispatches"
-    const { error } = await supabase.from(tableName).delete().eq("id", deleteDispatch.id)
-    
-    if (error) {
-      console.error("[v0] Error deleting dispatch:", error)
-      toast({ title: "Error", description: error.message || "No se pudo eliminar", variant: "destructive" })
-    } else {
+    if (!supabase) {
+      toast({ title: "Error", description: "No se pudo conectar con la base de datos", variant: "destructive" })
+      setSaving(false)
+      return
+    }
+
+    try {
+      if (deleteDispatch.source === "manual") {
+        // Es un despacho real (tabla "dispatches"): eliminar primero los registros hijos
+        // para evitar errores de clave foránea.
+        await supabase.from("test_cylinders").delete().eq("dispatch_id", deleteDispatch.id)
+        await supabase.from("dispatch_materials").delete().eq("dispatch_id", deleteDispatch.id)
+
+        // Eliminar la programación vinculada a este despacho (si existe), junto con su log.
+        // Antes solo se desvinculaba (dispatch_id = null), lo que hacía que la programación
+        // volviera a aparecer en el historial y pareciera que el despacho no se eliminaba.
+        const { data: linkedScheduled } = await supabase
+          .from("scheduled_dispatches")
+          .select("id")
+          .eq("dispatch_id", deleteDispatch.id)
+
+        if (linkedScheduled && linkedScheduled.length > 0) {
+          const scheduledIds = linkedScheduled.map((s: { id: string }) => s.id)
+          await supabase.from("dispatch_status_log").delete().in("scheduled_dispatch_id", scheduledIds)
+          await supabase.from("scheduled_dispatches").delete().in("id", scheduledIds)
+        }
+
+        const { error } = await supabase.from("dispatches").delete().eq("id", deleteDispatch.id)
+        if (error) throw error
+      } else {
+        // Es una programación (tabla "scheduled_dispatches")
+        await supabase.from("dispatch_status_log").delete().eq("scheduled_dispatch_id", deleteDispatch.id)
+        const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
+        if (error) throw error
+      }
+
       toast({ title: "Despacho eliminado" })
       loadData()
+    } catch (error: any) {
+      console.error("[v0] Error deleting dispatch:", error)
+      toast({ title: "Error", description: error?.message || "No se pudo eliminar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+      setDeleteDispatch(null)
     }
-    setSaving(false)
-    setDeleteDispatch(null)
-    setSaving(false)
   }
 
   async function openEditDialog(dispatch: ScheduledDispatch) {
@@ -571,7 +619,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar cliente, obra, camion..."
+            placeholder="Buscar remito, cliente, obra, formula, camion, estado..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-9"
@@ -708,7 +756,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>
+                <TableHead className="sticky left-0 z-20 bg-card">
                   <div className="flex items-center gap-1">
                     Remito
                     <ColumnFilter column="remito" label="Remito" />
@@ -761,7 +809,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                 filteredDispatches.map((dispatch) => {
                   return (
                     <TableRow key={dispatch.id}>
-                      <TableCell className="font-mono font-medium">
+                      <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium">
                         {dispatch.remito || "-"}
                       </TableCell>
                       <TableCell>
