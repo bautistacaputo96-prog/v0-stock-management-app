@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, TrendingUp, TrendingDown, Package, Calendar, ExternalLink } from "lucide-react"
+import { Loader2, TrendingUp, TrendingDown, Package, Calendar, ExternalLink, Pencil } from "lucide-react"
+import { AdjustStockDialog } from "@/components/adjust-stock-dialog"
 import { format, subDays, startOfDay, endOfDay } from "date-fns"
 import { es } from "date-fns/locale"
 import {
@@ -48,6 +49,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   const [showConsumptionDetail, setShowConsumptionDetail] = useState(false)
   const [consumptionDetails, setConsumptionDetails] = useState<any[]>([])
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [showAdjustDialog, setShowAdjustDialog] = useState(false)
 
   const supabase = createClient()
 
@@ -264,16 +266,27 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
           <label className="text-sm font-medium mb-2 block">Material</label>
-          <Select value={selectedMaterial} onValueChange={setSelectedMaterial}>
-            <SelectTrigger>
-              <SelectValue placeholder="Seleccionar material" />
-            </SelectTrigger>
-            <SelectContent>
-              {materials.map(m => (
-                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2">
+            <Select value={selectedMaterial} onValueChange={setSelectedMaterial}>
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar material" />
+              </SelectTrigger>
+              <SelectContent>
+                {materials.map(m => (
+                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              className="shrink-0 gap-2"
+              disabled={!materialInfo}
+              onClick={() => setShowAdjustDialog(true)}
+            >
+              <Pencil className="h-4 w-4" />
+              <span className="hidden sm:inline">Ajustar Stock</span>
+            </Button>
+          </div>
         </div>
         <div>
           <label className="text-sm font-medium mb-2 block">Periodo</label>
@@ -592,6 +605,16 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
           )}
         </DialogContent>
       </Dialog>
+
+      <AdjustStockDialog
+        material={materialInfo}
+        open={showAdjustDialog}
+        onOpenChange={setShowAdjustDialog}
+        onSuccess={() => {
+          loadMaterials()
+          loadChartData()
+        }}
+      />
     </div>
   )
 }
