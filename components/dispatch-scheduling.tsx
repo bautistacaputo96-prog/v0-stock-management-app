@@ -237,7 +237,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       const supabase = createClient()
       // Determinar planta a usar: si el filtro es "all", usar newDispatchPlant
       const plantToUse = selectedPlant === "all" ? newDispatchPlant : selectedPlant
-      const arrivalTime = `${form.arrival_date}T${form.arrival_time}:00`
+      // Convertir hora local del browser a UTC para guardar con timezone correcta
+      const arrivalTime = new Date(`${form.arrival_date}T${form.arrival_time}:00`).toISOString()
       const departureTime = calculateDepartureTime(arrivalTime, selectedSite)
 
       if (editingDispatch) {

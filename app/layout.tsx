@@ -5,6 +5,8 @@ import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { AppShell } from "@/components/app-shell"
 import { LoginGate } from "@/components/login-gate"
+import { Toaster } from "@/components/ui/toaster"
+import { Toaster as SonnerToaster } from "sonner"
 
 const _inter = Inter({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -43,6 +45,8 @@ export default function RootLayout({
         <LoginGate>
           <AppShell>{children}</AppShell>
         </LoginGate>
+        <Toaster />
+        <SonnerToaster richColors position="top-right" />
         <Analytics />
       </body>
     </html>
