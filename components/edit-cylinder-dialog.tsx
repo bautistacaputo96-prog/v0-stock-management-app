@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,14 @@ interface EditCylinderDialogProps {
   onUpdate: () => void
 }
 
+interface PressCalibration {
+  constant_a: number
+  constant_b: number
+  constant_c: number
+  constant_d: number
+  cylinder_diameter_cm: number
+}
+
 export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinderDialogProps) {
   const [formData, setFormData] = useState({
     // Datos propios de la probeta
@@ -52,6 +60,36 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
     extra_water_liters: cylinder.dispatch?.extra_water_liters?.toString() || "",
   })
   const [saving, setSaving] = useState(false)
+  const [calibration, setCalibration] = useState<PressCalibration | null>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from("press_calibrations")
+      .select("constant_a, constant_b, constant_c, constant_d, cylinder_diameter_cm")
+      .eq("is_active", true)
+      .order("calibration_date", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) setCalibration(data[0])
+      })
+  }, [])
+
+  const calculateMPa = (dialStr: string): string => {
+    if (!calibration || !dialStr) return ""
+    const x = parseFloat(dialStr)
+    if (isNaN(x)) return ""
+    const { constant_a: a, constant_b: b, constant_c: c, constant_d: d, cylinder_diameter_cm } = calibration
+    const tf = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
+    const r = cylinder_diameter_cm / 100 / 2
+    const mpa = (tf * 9.80665) / (Math.PI * r * r) / 1000
+    return mpa.toFixed(2)
+  }
+
+  const handleDialChange = (value: string) => {
+    const mpa = calculateMPa(value)
+    setFormData((prev) => ({ ...prev, dial_reading: value, strength_mpa: mpa }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -120,6 +158,8 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
     onUpdate()
     onClose()
   }
+
+  const mpaPreview = calculateMPa(formData.dial_reading)
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
@@ -250,7 +290,7 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
                   step="0.01"
                   placeholder="Ej: 245.50"
                   value={formData.dial_reading}
-                  onChange={(e) => setFormData({ ...formData, dial_reading: e.target.value })}
+                  onChange={(e) => handleDialChange(e.target.value)}
                 />
               </div>
 
@@ -260,10 +300,16 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
                   id="strength_mpa"
                   type="number"
                   step="0.01"
-                  placeholder="Ej: 28.5"
+                  placeholder={calibration ? "Se calcula automáticamente" : "Ej: 28.5"}
                   value={formData.strength_mpa}
                   onChange={(e) => setFormData({ ...formData, strength_mpa: e.target.value })}
+                  className={mpaPreview ? "text-primary font-semibold" : ""}
                 />
+                <p className="text-xs text-muted-foreground">
+                  {calibration
+                    ? "Calculado automáticamente desde el dial con la calibración activa"
+                    : "Sin calibración activa — ingresar MPa manualmente"}
+                </p>
               </div>
             </div>
 

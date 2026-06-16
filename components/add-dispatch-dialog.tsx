@@ -384,8 +384,28 @@ export function AddDispatchDialog({
         })
       }
 
+      // Auto-create test cylinders if sample was taken
+      if (formData.sample_taken && formData.sample_number) {
+        const [year, month, day] = formData.dispatch_date.split("-").map(Number)
+        const addDays = (n: number) => {
+          const d = new Date(year, month - 1, day)
+          d.setDate(d.getDate() + n)
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+        }
+        await supabase.from("test_cylinders").insert([
+          { dispatch_id: dispatch.id, cylinder_number: 1, test_age_days: 7,  scheduled_test_date: addDays(7)  },
+          { dispatch_id: dispatch.id, cylinder_number: 2, test_age_days: 28, scheduled_test_date: addDays(28) },
+          { dispatch_id: dispatch.id, cylinder_number: 3, test_age_days: 28, scheduled_test_date: addDays(28) },
+        ])
+        console.log("[v0] Test cylinders created for sample", formData.sample_number)
+      }
+
       console.log("[v0] Dispatch saved successfully with stock updated")
-      toast.success("Despacho registrado y stock actualizado")
+      toast.success(
+        formData.sample_taken
+          ? "Despacho registrado con 3 probetas (7d, 28d, 28d)"
+          : "Despacho registrado y stock actualizado"
+      )
       // Close dialog immediately - setLoading(false) AFTER setOpen(false) to avoid race condition
       setOpen(false)
       resetForm()

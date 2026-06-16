@@ -180,39 +180,14 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setLoading(false)
   }
 
-  const MAX_CAPACITY_M3 = 8 // Capacidad máxima por camión
   const selectedClient = clients.find((c) => c.id === form.client_id)
   const selectedSite = selectedClient?.construction_sites?.find((s) => s.id === form.construction_site_id)
-  
-  // Calcular cantidad de viajes necesarios - llenar camiones al máximo
-  const totalM3 = parseFloat(form.quantity_m3) || 0
-  const numTrips = Math.ceil(totalM3 / MAX_CAPACITY_M3)
-  
-  // Calcular m3 por viaje: primeros viajes van llenos (8m3), último lleva el resto
-  function getTripQuantities(): number[] {
-    if (totalM3 <= 0) return []
-    const trips: number[] = []
-    let remaining = totalM3
-    for (let i = 0; i < numTrips; i++) {
-      const qty = Math.min(MAX_CAPACITY_M3, remaining)
-      trips.push(Math.round(qty * 10) / 10) // Redondear a 1 decimal
-      remaining -= qty
-    }
-    return trips
-  }
-  const tripQuantities = getTripQuantities()
 
   function calculateDepartureTime(arrivalTime: string, site: ConstructionSite | undefined): string {
     if (!site || !arrivalTime) return arrivalTime
     const arrival = parseISO(arrivalTime)
     const departure = addMinutes(arrival, -(site.travel_time_minutes || 30))
     return departure.toISOString()
-  }
-  
-  // Calcular el intervalo entre viajes (tiempo de descarga + margen)
-  function getTripInterval(): number {
-    const unloadTime = selectedSite?.unload_time_minutes || 20
-    return unloadTime + 10 // tiempo de descarga + 10 min margen
   }
 
   function openNewDispatch(date: Date, hour: number) {
@@ -260,73 +235,53 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     
     try {
       const supabase = createClient()
-      const tripInterval = getTripInterval()
       // Determinar planta a usar: si el filtro es "all", usar newDispatchPlant
       const plantToUse = selectedPlant === "all" ? newDispatchPlant : selectedPlant
-
-      if (editingDispatch) {
-      // Editar despacho existente (solo 1)
       const arrivalTime = `${form.arrival_date}T${form.arrival_time}:00`
       const departureTime = calculateDepartureTime(arrivalTime, selectedSite)
-      
-      const { error } = await supabase.from("scheduled_dispatches").update({
-        plant_id: plantToUse,
-        client_id: form.client_id,
-        construction_site_id: form.construction_site_id,
-        formula_id: form.formula_id,
-        mixer_id: form.mixer_id || null,
-        quantity_m3: parseFloat(form.quantity_m3),
-        scheduled_arrival_time: arrivalTime,
-        scheduled_departure_time: departureTime,
-        observations: form.observations || null,
-        is_urgent: form.is_urgent,
-      }).eq("id", editingDispatch.id)
-      
-      if (error) {
-        toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
-        setSaving(false)
-        return
-      }
-      toast({ title: "Despacho actualizado" })
-    } else {
-      // Crear nuevos despachos - dividir en viajes si es necesario
-      const dispatches = []
-      const baseArrival = parseISO(`${form.arrival_date}T${form.arrival_time}:00`)
-      
-      for (let i = 0; i < numTrips; i++) {
-        // Cada viaje llega con intervalo de tiempo de descarga
-        const tripArrival = addMinutes(baseArrival, i * tripInterval)
-        const tripDeparture = calculateDepartureTime(tripArrival.toISOString(), selectedSite)
-        
-        dispatches.push({
+
+      if (editingDispatch) {
+        // Editar despacho existente
+        const { error } = await supabase.from("scheduled_dispatches").update({
           plant_id: plantToUse,
           client_id: form.client_id,
           construction_site_id: form.construction_site_id,
           formula_id: form.formula_id,
-          mixer_id: null, // Los camiones se asignan después
-          quantity_m3: tripQuantities[i], // 8m3 los primeros, resto el último
-          scheduled_arrival_time: tripArrival.toISOString(),
-          scheduled_departure_time: tripDeparture,
-          observations: numTrips > 1 ? `Viaje ${i + 1} de ${numTrips} (${tripQuantities[i]}m3). ${form.observations || ""}`.trim() : (form.observations || null),
+          mixer_id: form.mixer_id || null,
+          quantity_m3: parseFloat(form.quantity_m3),
+          scheduled_arrival_time: arrivalTime,
+          scheduled_departure_time: departureTime,
+          observations: form.observations || null,
+          is_urgent: form.is_urgent,
+        }).eq("id", editingDispatch.id)
+        if (error) {
+          toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
+          setSaving(false)
+          return
+        }
+        toast({ title: "Despacho actualizado" })
+      } else {
+        // Crear un único pedido con el total de m3
+        const { error } = await supabase.from("scheduled_dispatches").insert({
+          plant_id: plantToUse,
+          client_id: form.client_id,
+          construction_site_id: form.construction_site_id,
+          formula_id: form.formula_id,
+          mixer_id: null,
+          quantity_m3: parseFloat(form.quantity_m3),
+          scheduled_arrival_time: arrivalTime,
+          scheduled_departure_time: departureTime,
+          observations: form.observations || null,
           is_urgent: form.is_urgent,
           created_by: form.created_by || null,
         })
+        if (error) {
+          toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
+          setSaving(false)
+          return
+        }
+        toast({ title: "Despacho programado", description: `${form.quantity_m3} m3` })
       }
-      
-      const { error } = await supabase.from("scheduled_dispatches").insert(dispatches)
-      if (error) {
-        toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
-        setSaving(false)
-        return
-      }
-      
-      if (numTrips > 1) {
-        const breakdown = tripQuantities.map((q, i) => `Viaje ${i+1}: ${q}m3`).join(", ")
-        toast({ title: `${numTrips} viajes programados`, description: breakdown })
-      } else {
-        toast({ title: "Despacho programado" })
-      }
-    }
 
       setIsDialogOpen(false)
       loadData()
@@ -619,33 +574,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Cantidad Total (m3) *</Label>
-                <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Capacidad por camion</Label>
-                <Input type="number" value={MAX_CAPACITY_M3} disabled className="bg-muted" />
-              </div>
+            <div className="space-y-2">
+              <Label>Cantidad Total (m3) *</Label>
+              <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} placeholder="Ej: 40" />
             </div>
-
-            {!editingDispatch && numTrips > 1 && (
-              <Card className="bg-blue-50 border-blue-200">
-                <CardContent className="p-3 text-sm">
-                  <div className="flex items-center gap-2 text-blue-800 font-medium">
-                    <Truck className="h-4 w-4" />
-                    <span>Se crearan {numTrips} viajes</span>
-                  </div>
-                  <p className="text-blue-600 text-xs mt-1">
-                    {tripQuantities.map((q, i) => `Viaje ${i+1}: ${q}m3`).join(" | ")}
-                  </p>
-                  <p className="text-blue-600 text-xs">
-                    Intervalo entre llegadas: {getTripInterval()} min
-                  </p>
-                </CardContent>
-              </Card>
-            )}
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
