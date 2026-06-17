@@ -229,6 +229,17 @@ export function AddDispatchDialog({
           })
 
           if (stockError) throw stockError
+
+          // Track in stock_movements so manual discharges appear in the evolution chart
+          await supabase.from("stock_movements").insert({
+            material_id: item.material_id,
+            movement_type: "consumo",
+            quantity_kg: item.quantity_kg,
+            reference_type: "manual_withdrawal",
+            reference_id: withdrawal.id,
+            movement_date: formData.dispatch_date,
+            notes: `Descarga manual${formData.notes ? `: ${formData.notes}` : ""}`,
+          })
         }
 
         toast.success("Ingreso manual registrado exitosamente")

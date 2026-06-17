@@ -219,21 +219,23 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
 
       // Update material stock - always use dry_stock for materials with humidity control
       if (requiresGranulometry) {
-        // Get current dry_stock and update it
+        // Get current stocks
         const { data: materialData } = await supabase
           .from("materials")
           .select("dry_stock, current_stock")
           .eq("id", formData.material_id)
           .single()
-        
+
         const currentDryStock = materialData?.dry_stock || 0
+        const currentWetStock = materialData?.current_stock || 0
         const newDryStock = currentDryStock + dryQuantity
-        
+        const newWetStock = currentWetStock + originalQuantity // wet kg, consistent with dispatch deduction
+
         await supabase
           .from("materials")
-          .update({ 
-            dry_stock: newDryStock,
-            current_stock: newDryStock // Keep current_stock in sync for now
+          .update({
+            dry_stock: newDryStock,    // dry weight reference for humidity tracking
+            current_stock: newWetStock // wet weight, consistent with how dispatch deducts
           })
           .eq("id", formData.material_id)
       } else {
