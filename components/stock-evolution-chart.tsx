@@ -72,6 +72,12 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   const [consumptionDetails, setConsumptionDetails] = useState<any[]>([])
   const [loadingDetails, setLoadingDetails] = useState(false)
 
+  // Day drill-down
+  const [showDayDetail, setShowDayDetail] = useState(false)
+  const [dayDetailDate, setDayDetailDate] = useState<string>("")
+  const [dayDetailData, setDayDetailData] = useState<any[]>([])
+  const [loadingDayDetail, setLoadingDayDetail] = useState(false)
+
   // Password gate
   const [showPasswordDialog, setShowPasswordDialog] = useState(false)
   const [passwordInput, setPasswordInput] = useState("")
@@ -273,6 +279,71 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
     setLoadingDetails(false)
   }
 
+  async function loadDayDetail(date: string) {
+    if (!selectedMaterial) return
+    setDayDetailDate(date)
+    setLoadingDayDetail(true)
+    setShowDayDetail(true)
+
+    const { data: movements } = await supabase
+      .from("stock_movements")
+      .select("id, quantity_kg, notes, reference_id, reference_type")
+      .eq("material_id", selectedMaterial)
+      .eq("movement_type", "consumo")
+      .eq("movement_date", date)
+      .order("quantity_kg", { ascending: false })
+
+    if (!movements || movements.length === 0) {
+      setDayDetailData([])
+      setLoadingDayDetail(false)
+      return
+    }
+
+    const dispatchIds = movements
+      .filter((m) => m.reference_type === "dispatch")
+      .map((m) => m.reference_id)
+      .filter(Boolean)
+
+    let dispatches: any[] = []
+    if (dispatchIds.length > 0) {
+      const { data } = await supabase
+        .from("dispatches")
+        .select("id, remito, quantity_m3, formulas(id, name, code), clients(name)")
+        .in("id", dispatchIds)
+      dispatches = data || []
+    }
+
+    const rows = movements.map((mov) => {
+      if (mov.reference_type === "dispatch") {
+        const dispatch = dispatches.find((d) => d.id === mov.reference_id)
+        return {
+          type: "dispatch",
+          id: mov.id,
+          remito: dispatch?.remito || "-",
+          formula: dispatch?.formulas?.name || "-",
+          formula_code: dispatch?.formulas?.code || "-",
+          client: dispatch?.clients?.name || "-",
+          m3: dispatch?.quantity_m3 || 0,
+          kg: mov.quantity_kg || 0,
+        }
+      }
+      return {
+        type: "manual",
+        id: mov.id,
+        remito: "-",
+        formula: "Descarga Manual",
+        formula_code: "-",
+        client: "-",
+        m3: 0,
+        kg: mov.quantity_kg || 0,
+        notes: mov.notes,
+      }
+    })
+
+    setDayDetailData(rows)
+    setLoadingDayDetail(false)
+  }
+
   const stats = useMemo(() => {
     if (chartData.length === 0) return null
 
@@ -286,6 +357,21 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
 
     return { totalEntries, totalConsumption, avgDailyConsumption, stockChange, stockChangePercent }
   }, [chartData])
+
+  const dayDetailByFormula = useMemo(() => {
+    if (!dayDetailData.length) return []
+    const grouped: Record<string, { formula: string; formula_code: string; count: number; totalM3: number; totalKg: number }> = {}
+    dayDetailData.forEach((row) => {
+      const key = row.formula || "Manual"
+      if (!grouped[key]) {
+        grouped[key] = { formula: row.formula, formula_code: row.formula_code, count: 0, totalM3: 0, totalKg: 0 }
+      }
+      grouped[key].count++
+      grouped[key].totalM3 += row.m3 || 0
+      grouped[key].totalKg += row.kg || 0
+    })
+    return Object.values(grouped).sort((a, b) => b.totalKg - a.totalKg)
+  }, [dayDetailData])
 
   function handleAdjustClick(material: Material) {
     setAdjustTarget(material)
@@ -683,7 +769,10 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
           {/* Daily Movements Table */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base font-medium">Movimientos Diarios</CardTitle>
+              <CardTitle className="text-base font-medium">
+                Movimientos Diarios
+                <span className="text-xs font-normal text-muted-foreground ml-2">· clic en consumo para ver detalle</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto max-h-96">
@@ -698,15 +787,24 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                   </thead>
                   <tbody>
                     {[...chartData].reverse().map((day) => (
-                      <tr key={day.date} className="border-b last:border-0 hover:bg-muted/50">
+                      <tr
+                        key={day.date}
+                        className={`border-b last:border-0 hover:bg-muted/50 ${day.consumption > 0 ? "cursor-pointer" : ""}`}
+                        onClick={() => day.consumption > 0 && loadDayDetail(day.date)}
+                      >
                         <td className="py-2 px-3 font-medium">
                           {format(new Date(day.date + "T12:00:00"), "EEEE dd/MM", { locale: es })}
                         </td>
                         <td className="py-2 px-3 text-right text-green-600">
                           {day.entries > 0 ? `+${(day.entries / 1000).toFixed(2)} t` : "-"}
                         </td>
-                        <td className="py-2 px-3 text-right text-red-600">
-                          {day.consumption > 0 ? `-${(day.consumption / 1000).toFixed(2)} t` : "-"}
+                        <td className="py-2 px-3 text-right text-red-600 font-medium">
+                          {day.consumption > 0 ? (
+                            <span className="inline-flex items-center gap-1">
+                              -{(day.consumption / 1000).toFixed(2)} t
+                              <ExternalLink className="h-3 w-3 opacity-50" />
+                            </span>
+                          ) : "-"}
                         </td>
                         <td className="py-2 px-3 text-right font-medium">{(day.stock / 1000).toFixed(2)} t</td>
                       </tr>
@@ -718,6 +816,114 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
           </Card>
         </div>
       )}
+
+      {/* ── DAY DETAIL DIALOG ─────────────────────────────────────────────────── */}
+      <Dialog open={showDayDetail} onOpenChange={setShowDayDetail}>
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] flex flex-col p-0">
+          <DialogHeader className="p-6 pb-4 border-b">
+            <DialogTitle className="flex items-center gap-2">
+              <TrendingDown className="h-5 w-5 text-red-600" />
+              Detalle {dayDetailDate ? format(new Date(dayDetailDate + "T12:00:00"), "EEEE d/MM/yyyy", { locale: es }) : ""} — {materialInfo?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {loadingDayDetail ? (
+            <div className="flex items-center justify-center flex-1 p-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : dayDetailData.length === 0 ? (
+            <div className="flex items-center justify-center flex-1 p-12 text-muted-foreground">
+              Sin movimientos ese día
+            </div>
+          ) : (
+            <div className="flex-1 overflow-auto p-6 space-y-6">
+              {/* Summary by formula */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Resumen por Fórmula</h3>
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left py-2 px-3 font-semibold">Fórmula</th>
+                      <th className="text-right py-2 px-3 font-semibold">Camiones</th>
+                      <th className="text-right py-2 px-3 font-semibold">Total m³</th>
+                      <th className="text-right py-2 px-3 font-semibold text-red-600">Total {materialInfo?.name}</th>
+                      <th className="text-right py-2 px-3 font-semibold text-muted-foreground">kg/m³</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayDetailByFormula.map((row, idx) => (
+                      <tr key={idx} className="border-b hover:bg-muted/20">
+                        <td className="py-2 px-3 font-medium">
+                          <Badge variant="secondary">{row.formula}</Badge>
+                        </td>
+                        <td className="py-2 px-3 text-right text-muted-foreground">{row.count}</td>
+                        <td className="py-2 px-3 text-right font-medium">{row.totalM3.toFixed(1)} m³</td>
+                        <td className="py-2 px-3 text-right font-bold text-red-600">
+                          {(row.totalKg / 1000).toFixed(3)} t
+                          <span className="text-xs font-normal text-muted-foreground ml-1">({Math.round(row.totalKg).toLocaleString()} kg)</span>
+                        </td>
+                        <td className="py-2 px-3 text-right text-muted-foreground text-xs">
+                          {row.totalM3 > 0 ? `${(row.totalKg / row.totalM3).toFixed(0)} kg/m³` : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 bg-muted/20 font-bold">
+                      <td className="py-2 px-3">TOTAL</td>
+                      <td className="py-2 px-3 text-right">{dayDetailData.length}</td>
+                      <td className="py-2 px-3 text-right">
+                        {dayDetailByFormula.reduce((s, r) => s + r.totalM3, 0).toFixed(1)} m³
+                      </td>
+                      <td className="py-2 px-3 text-right text-red-600">
+                        {(dayDetailByFormula.reduce((s, r) => s + r.totalKg, 0) / 1000).toFixed(3)} t
+                      </td>
+                      <td className="py-2 px-3 text-right text-muted-foreground text-xs">
+                        {(() => {
+                          const totalKg = dayDetailByFormula.reduce((s, r) => s + r.totalKg, 0)
+                          const totalM3 = dayDetailByFormula.reduce((s, r) => s + r.totalM3, 0)
+                          return totalM3 > 0 ? `${(totalKg / totalM3).toFixed(0)} kg/m³` : "-"
+                        })()}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Individual dispatch rows */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Detalle por Camión</h3>
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left py-2 px-3 font-semibold">Remito</th>
+                      <th className="text-left py-2 px-3 font-semibold">Fórmula</th>
+                      <th className="text-left py-2 px-3 font-semibold">Cliente</th>
+                      <th className="text-right py-2 px-3 font-semibold">m³</th>
+                      <th className="text-right py-2 px-3 font-semibold text-red-600">kg {materialInfo?.name}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayDetailData.map((row, idx) => (
+                      <tr key={row.id} className={`border-b hover:bg-muted/20 ${idx % 2 === 0 ? "bg-muted/10" : ""}`}>
+                        <td className="py-2 px-3">
+                          <Badge variant="outline">{row.remito}</Badge>
+                        </td>
+                        <td className="py-2 px-3">
+                          <Badge variant="secondary">{row.formula}</Badge>
+                        </td>
+                        <td className="py-2 px-3 text-muted-foreground text-xs">{row.client || row.notes || "-"}</td>
+                        <td className="py-2 px-3 text-right">{row.m3 > 0 ? `${row.m3.toFixed(1)} m³` : "-"}</td>
+                        <td className="py-2 px-3 text-right font-bold text-red-600">
+                          {Math.round(row.kg).toLocaleString()} kg
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── CONSUMPTION DETAIL DIALOG ──────────────────────────────────────────── */}
       <Dialog open={showConsumptionDetail} onOpenChange={setShowConsumptionDetail}>
