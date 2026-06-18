@@ -357,7 +357,22 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         const { error } = await supabase.from("dispatches").delete().eq("id", deleteDispatch.id)
         if (error) throw error
       } else {
-        // Es una programación (tabla "scheduled_dispatches")
+        // Es una programación (tabla "scheduled_dispatches").
+        // Puede existir un despacho real en "dispatches" que referencia esta programación
+        // mediante scheduled_dispatch_id. Hay que eliminar ese despacho (y sus hijos) primero
+        // para no violar la clave foránea "dispatches_scheduled_dispatch_id_fkey".
+        const { data: linkedDispatches } = await supabase
+          .from("dispatches")
+          .select("id")
+          .eq("scheduled_dispatch_id", deleteDispatch.id)
+
+        if (linkedDispatches && linkedDispatches.length > 0) {
+          const dispatchIds = linkedDispatches.map((d: { id: string }) => d.id)
+          await supabase.from("test_cylinders").delete().in("dispatch_id", dispatchIds)
+          await supabase.from("dispatch_materials").delete().in("dispatch_id", dispatchIds)
+          await supabase.from("dispatches").delete().in("id", dispatchIds)
+        }
+
         await supabase.from("dispatch_status_log").delete().eq("scheduled_dispatch_id", deleteDispatch.id)
         const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
         if (error) throw error
