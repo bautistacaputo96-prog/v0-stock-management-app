@@ -96,13 +96,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   try {
-    const pdfBytes = doc === "control"
-      ? await fillControlPanel(data)
-      : await fillRemitoFiscal(data)
-
-    const filename = doc === "control"
-      ? `control-carga-${fecha.replace(/\//g, "-")}.pdf`
-      : `remito-fiscal-${fecha.replace(/\//g, "-")}.pdf`
+    let pdfBytes: Uint8Array
+    let filename: string
+    if (doc === "control") {
+      pdfBytes = await fillControlPanel(data)
+      filename = `control-carga-${fecha.replace(/\//g, "-")}.pdf`
+    } else if (doc === "remitox") {
+      // fondo=0 -> solo los datos (para imprimir sobre la hoja ya pre-impresa)
+      // fondo=1 (o sin param) -> con el formulario de fondo (para pantalla o papel en blanco)
+      const withBackground = searchParams.get("fondo") !== "0"
+      pdfBytes = await fillRemitoX(data, withBackground)
+      filename = `remito-${fecha.replace(/\//g, "-")}.pdf`
+    } else {
+      pdfBytes = await fillRemitoFiscal(data)
+      filename = `remito-fiscal-${fecha.replace(/\//g, "-")}.pdf`
+    }
 
     return new NextResponse(pdfBytes, {
       headers: {
@@ -270,17 +278,73 @@ async function fillRemitoFiscal(data: Record<string, string>): Promise<Uint8Arra
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// DOCUMENT 3: Remito X (hoja pre-impresa Rebucret)
+// withBackground=true dibuja también el formulario (pantalla / papel en blanco)
+// withBackground=false dibuja SOLO los datos (para imprimir sobre la hoja ya impresa)
+// ══════════════════════════════════════════════════════════════════════════════
+async function fillRemitoX(data: Record<string, string>, withBackground: boolean): Promise<Uint8Array> {
+  let pdfDoc: PDFDocument
+  let page
+  if (withBackground) {
+    pdfDoc = await PDFDocument.load(loadTemplate("remito-x.pdf"))
+    page = pdfDoc.getPages()[0]
+  } else {
+    pdfDoc = await PDFDocument.create()
+    page = pdfDoc.addPage([pt(210), pt(297)]) // A4
+  }
+  const font  = await pdfDoc.embedFont(StandardFonts.Helvetica)
+  const fontB = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  const H     = page.getHeight()
+  const BLACK = rgb(0, 0, 0)
+
+  const w = (text: string, xMm: number, topMm: number, opts?: { size?: number; bold?: boolean }) => {
+    if (!text) return
+    page.drawText(text, {
+      x: pt(xMm), y: top(topMm, H),
+      size: opts?.size ?? 9, font: opts?.bold ? fontB : font, color: BLACK,
+    })
+  }
+
+  // Fecha (arriba a la derecha, al lado del label FECHA)
+  w(data.fecha, 150, 33)
+
+  // Datos del cliente (dos columnas, en el espacio en blanco entre el encabezado y la tabla).
+  // Las etiquetas se imprimen siempre; el valor queda en blanco si el cliente no lo tiene cargado.
+  const CS = 8
+  const rm2 = data.remito ? `0099-000${data.remito}` : ""
+  // Columna izquierda
+  w("R. Social: " + (data.razonSocial || ""), 16, 54, { size: CS })
+  w("Dirección: " + (data.direccion || ""),   16, 58.6, { size: CS })
+  w("CP: " + (data.cp || ""),                  16, 63.2, { size: CS })
+  w("Cond IVA: " + (data.condIva || ""),       16, 67.8, { size: CS })
+  w("N Ped: " + (data.nPedido || ""),          16, 72.4, { size: CS })
+  w("Cond Pago: " + (data.condPago || ""),     16, 77.0, { size: CS })
+  // Columna derecha
+  w("Cliente: " + (data.nombreCliente || ""),    118, 54, { size: CS })
+  w("Localidad: " + (data.localidadCliente || ""),118, 58.6, { size: CS })
+  w("Provincia: " + (data.provincia || ""),      118, 63.2, { size: CS })
+  w("Cuit: " + (data.cuit || ""),                118, 67.8, { size: CS })
+  w("RM2: " + rm2,                               118, 77.0, { size: CS })
+
+  // Tabla: CANTIDAD (m3 de este viaje) | DESCRIPCION (código de fórmula)
+  w(data.m3 ? `${data.m3} m³` : "", 15, 93, { size: 12, bold: true })
+  w(data.productoCode, 42, 93, { size: 11, bold: true })
+
+  return pdfDoc.save()
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PÁGINA DE PREVIEW HTML
 // ══════════════════════════════════════════════════════════════════════════════
 function buildPreviewPage(id: string) {
-  const controlUrl = `/api/remito/${id}?doc=control`
-  const fiscalUrl  = `/api/remito/${id}?doc=fiscal`
+  const remitoxUrl = `/api/remito/${id}?doc=remitox`
+  const datosUrl   = `/api/remito/${id}?doc=remitox&fondo=0`
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Documentos del Despacho</title>
+<title>Remito del Despacho</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: system-ui, sans-serif; background: #1e293b; height: 100vh; display: flex; flex-direction: column; }
@@ -290,53 +354,22 @@ body { font-family: system-ui, sans-serif; background: #1e293b; height: 100vh; d
   border-bottom: 1px solid #334155;
 }
 .title { color: #f1f5f9; font-size: 14px; font-weight: 600; flex: 1; }
-.tab { background: transparent; border: 1.5px solid #475569; color: #94a3b8;
-  padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-.tab.active { background: #f1f5f9; color: #0f172a; border-color: #f1f5f9; font-weight: 700; }
 .btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
   font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
 .btn-blue { background: #2563eb; color: white; }
 .btn-green { background: #16a34a; color: white; }
-.frame-container { flex: 1; display: none; }
-.frame-container.active { display: block; }
-iframe { width: 100%; height: 100%; border: none; }
+.btn-amber { background: #d97706; color: white; }
+iframe { flex: 1; width: 100%; border: none; }
 </style>
 </head>
 <body>
 <div class="toolbar">
-  <span class="title">Documentos del Despacho</span>
-  <button class="tab active" id="t1" onclick="show('control')">📋 Control de Carga</button>
-  <button class="tab"        id="t2" onclick="show('fiscal')">🧾 Remito Fiscal (ARCA)</button>
-  <a class="btn btn-blue"   id="dl" href="${controlUrl}" download>📄 Descargar PDF</a>
-  <a class="btn btn-green"  id="pr" href="${controlUrl}" target="_blank">🖨 Abrir para imprimir</a>
+  <span class="title">Remito del Despacho</span>
+  <a class="btn btn-amber" href="${datosUrl}"   target="_blank">🖨 Imprimir en hoja pre-impresa (solo datos)</a>
+  <a class="btn btn-green" href="${remitoxUrl}" target="_blank">🖨 Imprimir en hoja en blanco (con formulario)</a>
+  <a class="btn btn-blue"  href="${remitoxUrl}" download>📄 Descargar PDF</a>
 </div>
-<div class="frame-container active" id="f-control">
-  <iframe src="${controlUrl}" id="frame-control"></iframe>
-</div>
-<div class="frame-container" id="f-fiscal">
-  <iframe src="${fiscalUrl}" id="frame-fiscal" data-loaded="false"></iframe>
-</div>
-<script>
-var current = 'control';
-var urls = { control: '${controlUrl}', fiscal: '${fiscalUrl}' };
-
-function show(doc) {
-  current = doc;
-  ['control','fiscal'].forEach(function(d) {
-    document.getElementById('f-' + d).classList.toggle('active', d === doc);
-    document.getElementById('t' + (d === 'control' ? '1' : '2')).classList.toggle('active', d === doc);
-  });
-  document.getElementById('dl').href = urls[doc];
-  document.getElementById('dl').download = doc + '-despacho.pdf';
-  document.getElementById('pr').href = urls[doc];
-  // Lazy load fiscal iframe
-  var iframe = document.getElementById('frame-' + doc);
-  if (iframe.dataset.loaded === 'false') {
-    iframe.src = urls[doc];
-    iframe.dataset.loaded = 'true';
-  }
-}
-</script>
+<iframe src="${remitoxUrl}"></iframe>
 </body>
 </html>`
 }

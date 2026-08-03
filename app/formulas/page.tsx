@@ -72,6 +72,8 @@ export default function FormulasPage() {
 
   // Parse formula code to extract components
   const parseFormulaCode = (code: string) => {
+    // Ignorar la etiqueta de planta u otra al final, ej: "H25-620-10 C (CAN)" -> "H25-620-10 C"
+    code = code.replace(/\s*\([^)]*\)\s*$/, "").trim()
     // Format: H21-6/20-10 C (nuevo formato con tipo piedra como "6/20")
     const newMatch = code.match(/^(H\d+)-([^-]+)-(\d+)\s*([CB])?$/i)
     if (newMatch) {

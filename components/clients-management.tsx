@@ -152,6 +152,19 @@ export function ClientsManagement() {
     }
 
     const supabase = createClient()
+
+    // Anti-duplicado por CUIT (excluyendo el propio cliente al editar)
+    const { data: dupCuit } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("cuit", clientForm.cuit.trim())
+      .neq("active", false)
+      .limit(5)
+    const conflict = (dupCuit || []).find((c: any) => c.id !== editingClient?.id)
+    if (conflict) {
+      toast({ title: "CUIT duplicado", description: `Ya existe un cliente con ese CUIT: ${conflict.name}.`, variant: "destructive" })
+      return
+    }
     const payload = {
       name:              clientForm.name.trim(),
       razon_social:      clientForm.razon_social.trim() || clientForm.name.trim(),
@@ -315,32 +328,30 @@ export function ClientsManagement() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Lista de clientes */}
         <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="text-lg">Clientes ({filteredClients.length})</CardTitle>
+          <CardHeader className="py-3">
+            <CardTitle className="text-base">Clientes ({filteredClients.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y max-h-[600px] overflow-y-auto">
               {filteredClients.map((client) => (
                 <div
                   key={client.id}
-                  className={`p-4 cursor-pointer hover:bg-muted/50 transition-colors ${selectedClient?.id === client.id ? "bg-muted" : ""}`}
+                  className={`px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors ${selectedClient?.id === client.id ? "bg-muted" : ""}`}
                   onClick={() => setSelectedClient(client)}
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium">{client.name}</p>
-                      {client.razon_social && client.razon_social !== client.name && (
-                        <p className="text-xs text-muted-foreground">{client.razon_social}</p>
-                      )}
-                      {client.cuit && <p className="text-sm text-muted-foreground">CUIT: {client.cuit}</p>}
-                      <p className="text-sm text-muted-foreground mt-1">{client.construction_sites?.length || 0} obra(s)</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm truncate">{client.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {client.cuit ? `CUIT ${client.cuit}` : "Sin CUIT"} · {client.construction_sites?.length || 0} obra(s)
+                      </p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEditClient(client) }}>
-                        <Pencil className="h-4 w-4" />
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); openEditClient(client) }}>
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteClientConfirm(client); setDeleteClientStep(1) }}>
-                        <Trash2 className="h-4 w-4" />
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteClientConfirm(client); setDeleteClientStep(1) }}>
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </div>
@@ -354,52 +365,53 @@ export function ClientsManagement() {
         <Card className="lg:col-span-2">
           {selectedClient ? (
             <>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>{selectedClient.name}</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
+              <CardHeader className="flex flex-row items-center justify-between py-3">
+                <div className="min-w-0">
+                  <CardTitle className="text-base truncate">{selectedClient.name}</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
                     {selectedClient.cuit && `CUIT: ${selectedClient.cuit}`}
-                    {selectedClient.phone && ` | Tel: ${selectedClient.phone}`}
-                    {selectedClient.cond_iva && ` | ${selectedClient.cond_iva}`}
+                    {selectedClient.phone && ` · Tel: ${selectedClient.phone}`}
+                    {selectedClient.cond_iva && ` · ${selectedClient.cond_iva}`}
                   </p>
                 </div>
-                <Button onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setIsSiteDialogOpen(true) }} className="gap-2">
+                <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
                   <Plus className="h-4 w-4" /> Nueva Obra
                 </Button>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-0">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Obra</TableHead>
-                      <TableHead>Dirección</TableHead>
-                      <TableHead>Localidad</TableHead>
-                      <TableHead className="text-center">T. Viaje</TableHead>
-                      <TableHead className="text-center">Descarga</TableHead>
-                      <TableHead className="text-center">Bomba</TableHead>
-                      <TableHead></TableHead>
+                      <TableHead className="h-9 text-xs">Obra</TableHead>
+                      <TableHead className="h-9 text-xs">Localidad</TableHead>
+                      <TableHead className="h-9 text-xs text-center">Viaje</TableHead>
+                      <TableHead className="h-9 text-xs text-center">Descarga</TableHead>
+                      <TableHead className="h-9 text-xs text-center">Bomba</TableHead>
+                      <TableHead className="h-9 w-[70px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {selectedClient.construction_sites?.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No hay obras registradas</TableCell>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8 text-sm">No hay obras registradas</TableCell>
                       </TableRow>
                     ) : (
                       selectedClient.construction_sites?.map((site) => (
                         <TableRow key={site.id}>
-                          <TableCell className="font-medium">{site.name}</TableCell>
-                          <TableCell className="max-w-[130px] truncate">{site.address || "-"}</TableCell>
-                          <TableCell>{site.localidad || "-"}</TableCell>
-                          <TableCell className="text-center">{site.travel_time_minutes} min</TableCell>
-                          <TableCell className="text-center">{site.unload_time_minutes} min</TableCell>
-                          <TableCell className="text-center">
-                            {site.requires_pump ? <Badge>Sí</Badge> : <span className="text-muted-foreground">No</span>}
+                          <TableCell className="py-2 font-medium text-sm">
+                            <div className="truncate max-w-[200px]">{site.name}</div>
+                            {site.address && <div className="text-xs text-muted-foreground font-normal truncate max-w-[200px]">{site.address}</div>}
                           </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              <Button variant="ghost" size="sm" onClick={() => openEditSite(site)}><Pencil className="h-4 w-4" /></Button>
-                              <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => { setDeleteSiteConfirm(site); setDeleteSiteStep(1) }}><Trash2 className="h-4 w-4" /></Button>
+                          <TableCell className="py-2 text-sm">{site.localidad || "-"}</TableCell>
+                          <TableCell className="py-2 text-center text-sm whitespace-nowrap">{site.travel_time_minutes}'</TableCell>
+                          <TableCell className="py-2 text-center text-sm whitespace-nowrap">{site.unload_time_minutes}'</TableCell>
+                          <TableCell className="py-2 text-center">
+                            {site.requires_pump ? <Badge className="text-xs">Sí</Badge> : <span className="text-muted-foreground text-sm">No</span>}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="flex items-center gap-0.5">
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSite(site)}><Pencil className="h-3.5 w-3.5" /></Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeleteSiteConfirm(site); setDeleteSiteStep(1) }}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                           </TableCell>
                         </TableRow>

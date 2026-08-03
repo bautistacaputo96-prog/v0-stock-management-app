@@ -10,10 +10,13 @@ import { MaterialFilter } from "@/components/material-filter"
 import { HumidityExcessTable } from "@/components/humidity-excess-table"
 import { StockEvolutionChart } from "@/components/stock-evolution-chart"
 import { SuppliersTable } from "@/components/suppliers-table"
-import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck } from "lucide-react"
+import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import * as XLSX from "xlsx"
 
 export default function MateriasPrimasPage() {
   return (
@@ -120,6 +123,38 @@ function MateriasPrimasContent() {
     setEndDate(end)
   }
 
+  async function exportIngresos(scope: "current" | "both") {
+    let matQuery = supabase.from("materials").select("id, name, plant_id")
+    if (scope === "current") matQuery = matQuery.eq("plant_id", selectedPlant)
+    const { data: mats } = await matQuery
+    const matIds = (mats || []).map((m: any) => m.id)
+    if (matIds.length === 0) return
+    let q = supabase
+      .from("stock_entries")
+      .select("entry_date, quantity, humidity_percentage, remito, notes, materials(name, plant_id), suppliers(name)")
+      .in("material_id", matIds)
+    if (startDate) q = q.gte("entry_date", `${startDate}T00:00:00`)
+    if (endDate) q = q.lte("entry_date", `${endDate}T23:59:59`)
+    if (scope === "current" && selectedMaterial && selectedMaterial !== "all") q = q.eq("material_id", selectedMaterial)
+    const { data } = await q.order("entry_date", { ascending: false }).limit(10000)
+    const plantName: Record<string, string> = {}
+    plants.forEach((p: any) => (plantName[p.id] = p.name))
+    const rows = (data || []).map((e: any) => ({
+      Planta: plantName[e.materials?.plant_id] || "-",
+      Fecha: e.entry_date ? e.entry_date.split("T")[0].split("-").reverse().join("/") : "-",
+      Material: e.materials?.name || "-",
+      Proveedor: e.suppliers?.name || "-",
+      Remito: e.remito || "-",
+      "Cantidad (kg)": e.quantity,
+      "Humedad %": e.humidity_percentage ?? "-",
+      Notas: e.notes || "-",
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Ingresos")
+    XLSX.writeFile(wb, `ingresos_${scope === "both" ? "ambas" : "planta"}_${startDate || "todo"}_${endDate || "todo"}.xlsx`)
+  }
+
   const tabs = [
     { id: "stock", label: "Evolucion Stock", icon: BarChart3 },
     { id: "ingresos", label: "Ingresos", icon: TrendingUp },
@@ -134,7 +169,7 @@ function MateriasPrimasContent() {
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">Materias Primas</h1>
           <p className="text-xs md:text-sm text-foreground/70 font-medium mt-1">Gestion de stock e ingresos de materia prima</p>
         </div>
-        {activeTab === "ingresos" && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} />}
+        {activeTab === "ingresos" && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
       </div>
 
       {/* Tabs */}
@@ -177,6 +212,22 @@ function MateriasPrimasContent() {
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <PlantSelector plants={plants} selectedPlant={selectedPlant} onPlantChange={setSelectedPlant} />
               <DateRangeFilter onFilterChange={handleDateFilterChange} />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2">
+                    <Download className="h-4 w-4" />
+                    Exportar Excel
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => exportIngresos("current")}>
+                    Planta actual
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportIngresos("both")}>
+                    Ambas plantas
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <MaterialFilter
               materials={materials}

@@ -299,8 +299,8 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
 
       {/* Table */}
       <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
+        <Table containerClassName="max-h-[65vh]">
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
             <TableRow className="bg-muted/50">
               <TableHead className="text-xs font-semibold whitespace-nowrap sticky left-0 z-20 bg-muted">N Remito</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Tipo Hormigon</TableHead>

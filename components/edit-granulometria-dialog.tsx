@@ -52,6 +52,7 @@ export function EditGranulometriaDialog({
 
   const [formData, setFormData] = useState({
     extraction_date: "",
+    test_date: "",
     material_id: "",
     supplier_id: "",
     dry_weight_grams: "",
@@ -169,12 +170,15 @@ export function EditGranulometriaDialog({
         supplierId = supplier?.id || ""
       }
 
-      const extractionDate = testData.extraction_date 
-        ? new Date(testData.extraction_date).toISOString().split("T")[0]
+      // Tomamos solo la parte de fecha (YYYY-MM-DD) sin convertir a Date para evitar desfase de timezone
+      const extractionDate = testData.extraction_date
+        ? String(testData.extraction_date).split("T")[0]
         : new Date().toISOString().split("T")[0]
+      const testDate = testData.test_date ? String(testData.test_date).split("T")[0] : ""
 
       setFormData({
         extraction_date: extractionDate,
+        test_date: testDate,
         material_id: materialId,
         supplier_id: supplierId,
         dry_weight_grams: testData.dry_weight_grams?.toString() || "",
@@ -330,12 +334,12 @@ export function EditGranulometriaDialog({
       const selectedMaterial = materials.find((m) => m.id === formData.material_id)
       const selectedSupplier = filteredSuppliers.find((s) => s.id === formData.supplier_id)
 
-      const extractionDate = `${formData.extraction_date}T12:00:00Z`
-
+      // Guardamos las fechas como YYYY-MM-DD puro (la columna es tipo date) para evitar desfase de timezone
       const { error: testError } = await supabase
         .from("granulometria_tests")
         .update({
-          extraction_date: extractionDate,
+          extraction_date: formData.extraction_date,
+          test_date: formData.test_date || null,
           provider: selectedSupplier?.name || "",
           aggregate_type: selectedMaterial?.name || "",
           sample_weight_grams: WET_SAMPLE_WEIGHT,
@@ -418,6 +422,16 @@ export function EditGranulometriaDialog({
                 value={formData.extraction_date}
                 onChange={(e) => setFormData({ ...formData, extraction_date: e.target.value })}
                 required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="test_date">Fecha de Ensayo</Label>
+              <Input
+                id="test_date"
+                type="date"
+                value={formData.test_date}
+                onChange={(e) => setFormData({ ...formData, test_date: e.target.value })}
               />
             </div>
 

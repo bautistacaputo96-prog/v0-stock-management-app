@@ -5,11 +5,22 @@ import { createClient } from "@/lib/supabase/client"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Check, Loader2, Settings2, AlertTriangle, Search } from "lucide-react"
+import { Check, Loader2, Settings2, AlertTriangle, Search, Trash2 } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+// La ecuación de calibración calcula la fuerza Y; según su unidad se convierte a Newton y luego a MPa
+const FUERZA_A_NEWTON: Record<string, number> = { tf: 9806.65, kN: 1000, kgf: 9.80665, N: 1 }
+const UNIDADES_FUERZA: { value: string; label: string }[] = [
+  { value: "tf", label: "Toneladas fuerza (tf)" },
+  { value: "kN", label: "Kilonewton (kN)" },
+  { value: "kgf", label: "Kilogramo fuerza (kgf)" },
+  { value: "N", label: "Newton (N)" },
+]
+const factorN = (u?: string | null) => FUERZA_A_NEWTON[u || "tf"] ?? FUERZA_A_NEWTON.tf
 
 interface PressCalibration {
   id: string
@@ -20,6 +31,7 @@ interface PressCalibration {
   calibration_date: string
   cylinder_diameter_cm: number
   is_active: boolean
+  force_unit: string
 }
 
 interface CylinderBreakingRow {
@@ -54,7 +66,10 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     Record<string, { weight?: string; dial?: string; comments?: string; testDate?: string }>
   >({})
   const [saving, setSaving] = useState<Record<string, boolean>>({})
-  
+  const [discardTarget, setDiscardTarget] = useState<CylinderBreakingRow | null>(null)
+  const [discardReason, setDiscardReason] = useState("")
+  const [discarding, setDiscarding] = useState(false)
+
   // Calibration state
   const [calibration, setCalibration] = useState<PressCalibration | null>(null)
   const [calibrationDialog, setCalibrationDialog] = useState(false)
@@ -65,6 +80,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     constant_d: "1.0243",
     calibration_date: new Date().toISOString().split("T")[0],
     cylinder_diameter_cm: "10",
+    force_unit: "tf",
   })
   const [savingCalibration, setSavingCalibration] = useState(false)
 
@@ -93,6 +109,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
         constant_d: data[0].constant_d.toString(),
         calibration_date: data[0].calibration_date,
         cylinder_diameter_cm: data[0].cylinder_diameter_cm.toString(),
+        force_unit: data[0].force_unit || "tf",
       })
     }
   }
@@ -115,6 +132,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
           constant_d: parseFloat(calibrationForm.constant_d),
           calibration_date: calibrationForm.calibration_date,
           cylinder_diameter_cm: parseFloat(calibrationForm.cylinder_diameter_cm),
+          force_unit: calibrationForm.force_unit,
           is_active: true,
         })
         .select()
@@ -167,11 +185,12 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     const b = calibration.constant_b
     const c = calibration.constant_c
     const d = calibration.constant_d
-    const tf = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
+    const y = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
     const diameterM = calibration.cylinder_diameter_cm / 100
     const radius = diameterM / 2
     const area = Math.PI * Math.pow(radius, 2)
-    const mpa = (tf * 9.80665) / area / 1000
+    // Y (en su unidad) -> Newton -> Pa (N/m2) -> MPa
+    const mpa = (y * factorN(calibration.force_unit)) / area / 1_000_000
     return mpa.toFixed(2)
   }
 
@@ -187,15 +206,14 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     const c = calibration.constant_c
     const d = calibration.constant_d
 
-    // Calculate tf (toneladas fuerza)
-    const tf = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
+    // Fuerza Y según la ecuación (en la unidad elegida en la calibración)
+    const y = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
 
-    // Convert to MPa: tf * 9.80665 / Area (in m²) / 1000
-    // Area = π * r² where r = diameter_cm / 100 / 2 (convert cm to m, then to radius)
+    // Y -> Newton (según unidad) -> MPa (N/m² / 1e6). Área = π·r², r = diámetro_cm/100/2
     const diameterM = calibration.cylinder_diameter_cm / 100
     const radius = diameterM / 2
     const area = Math.PI * Math.pow(radius, 2)
-    const mpa = (tf * 9.80665) / area / 1000
+    const mpa = (y * factorN(calibration.force_unit)) / area / 1_000_000
 
     return mpa
   }
@@ -226,6 +244,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
         )
       `)
       .is("actual_test_date", null)
+      .eq("discarded", false)
       .order("scheduled_test_date", { ascending: true })
 
     if (selectedPlantId !== "all") {
@@ -246,6 +265,25 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
       setCylinders(data || [])
     }
     setLoading(false)
+  }
+
+  const handleDiscard = async () => {
+    if (!discardTarget) return
+    setDiscarding(true)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("test_cylinders")
+      .update({ discarded: true, discard_reason: discardReason || null, updated_at: new Date().toISOString() })
+      .eq("id", discardTarget.id)
+    if (error) {
+      toast({ title: "Error", description: "No se pudo descartar la probeta", variant: "destructive" })
+    } else {
+      toast({ title: "Probeta descartada", description: "Se quitó de la lista de pendientes/vencidas" })
+      setDiscardTarget(null)
+      setDiscardReason("")
+      loadCylinders()
+    }
+    setDiscarding(false)
   }
 
   const calculateDaysUntilTest = (scheduledDate: string) => {
@@ -446,8 +484,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
       </div>
 
       <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
+        <Table containerClassName="max-h-[65vh]">
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
             <TableRow className="bg-muted/50">
               <TableHead className="text-xs font-semibold sticky left-0 z-20 bg-muted">Probeta ID</TableHead>
               <TableHead className="text-xs font-semibold">Fecha de Ensayo</TableHead>
@@ -544,14 +582,25 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                     />
                   </TableCell>
                   <TableCell className="py-2 px-3">
-                    <Button
-                      size="sm"
-                      onClick={() => handleSave(cylinder.id)}
-                      disabled={!hasDialReading || isSaving}
-                      className="h-7 w-full text-xs"
-                    >
-                      {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        onClick={() => handleSave(cylinder.id)}
+                        disabled={!hasDialReading || isSaving}
+                        className="h-7 flex-1 text-xs"
+                      >
+                        {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => { setDiscardTarget(cylinder); setDiscardReason("") }}
+                        className="h-7 px-2 text-destructive hover:text-destructive"
+                        title="Descartar (no se va a romper)"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               )
@@ -559,6 +608,32 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
           </TableBody>
         </Table>
       </div>
+
+      {/* Discard Dialog */}
+      <Dialog open={!!discardTarget} onOpenChange={(o) => { if (!o) { setDiscardTarget(null); setDiscardReason("") } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Descartar probeta</DialogTitle>
+            <DialogDescription>
+              {discardTarget && `${discardTarget.dispatch?.sample_number || "-"}-${discardTarget.cylinder_number}`} — se saca de la lista de pendientes/vencidas sin registrar rotura. Queda en el histórico como descartada.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Motivo (opcional)</Label>
+            <Input
+              value={discardReason}
+              onChange={(e) => setDiscardReason(e.target.value)}
+              placeholder="Ej: muestra perdida, no se hizo, dato viejo..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDiscardTarget(null); setDiscardReason("") }}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDiscard} disabled={discarding}>
+              {discarding ? "Descartando..." : "Descartar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Calibration Dialog */}
       <Dialog open={calibrationDialog} onOpenChange={setCalibrationDialog}>
@@ -642,6 +717,22 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label className="text-xs">Unidad de Y (resultado de la ecuación)</Label>
+              <Select
+                value={calibrationForm.force_unit}
+                onValueChange={(v) => setCalibrationForm({ ...calibrationForm, force_unit: v })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {UNIDADES_FUERZA.map((u) => (
+                    <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">El sistema convierte esa unidad a MPa dividiendo por el área de la probeta.</p>
+            </div>
+
             {/* Preview calculation */}
             <Card className="bg-muted/50">
               <CardContent className="py-3">
@@ -653,14 +744,14 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                     const b = parseFloat(calibrationForm.constant_b) || 0
                     const c = parseFloat(calibrationForm.constant_c) || 0
                     const d = parseFloat(calibrationForm.constant_d) || 0
-                    const tf = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
+                    const y = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
                     const diameterM = (parseFloat(calibrationForm.cylinder_diameter_cm) || 10) / 100
                     const r = diameterM / 2
                     const area = Math.PI * Math.pow(r, 2)
-                    const mpa = (tf * 9.80665) / area / 1000
+                    const mpa = (y * factorN(calibrationForm.force_unit)) / area / 1_000_000
                     return (
                       <>
-                        <p>Y (tf) = {tf.toFixed(4)}</p>
+                        <p>Y ({calibrationForm.force_unit}) = {y.toFixed(4)}</p>
                         <p>Area = {area.toFixed(6)} m2</p>
                         <p className="font-semibold">Resultado = {mpa.toFixed(2)} MPa</p>
                       </>

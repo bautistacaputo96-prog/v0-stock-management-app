@@ -466,8 +466,8 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
       </div>
 
       <div className="rounded-md border">
-        <Table>
-          <TableHeader>
+        <Table containerClassName="max-h-[65vh]">
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
             <TableRow className="h-10">
               <TableHead className="w-[100px] py-2 px-3 text-xs sticky left-0 z-20 bg-card">
                 <div className="flex items-center">

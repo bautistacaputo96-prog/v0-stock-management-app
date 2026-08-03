@@ -15,6 +15,7 @@ import { EditGranulometriaDialog } from "@/components/edit-granulometria-dialog"
 interface GranulometriaTest {
   id: string
   extraction_date: string
+  test_date: string | null
   provider: string
   aggregate_type: string
   fineness_modulus: number | null
@@ -83,12 +84,12 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return ""
-    const date = new Date(dateStr)
-    return date.toLocaleDateString("es-AR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    })
+    // PostgREST devuelve columnas date como "YYYY-MM-DD". Formateamos el string
+    // directo para evitar el desfase de timezone (new Date() interpreta UTC y resta un dia en Argentina)
+    const datePart = dateStr.split("T")[0]
+    const [y, m, d] = datePart.split("-")
+    if (!y || !m || !d) return dateStr
+    return `${d}/${m}/${y}`
   }
 
   const getFinenessModulusColor = (fm: number | null) => {
@@ -143,10 +144,11 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
         </div>
       ) : (
         <div className="rounded-md border">
-          <Table>
-            <TableHeader>
+          <Table containerClassName="max-h-[65vh]">
+            <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
               <TableRow className="bg-muted/50">
                 <TableHead className="font-semibold">Fecha Extracción</TableHead>
+                <TableHead className="font-semibold">Fecha Ensayo</TableHead>
                 <TableHead className="font-semibold">Proveedor</TableHead>
                 <TableHead className="font-semibold">Remito</TableHead>
                 <TableHead className="font-semibold">Módulo Finura</TableHead>
@@ -170,6 +172,7 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
                         )}
                       </div>
                     </TableCell>
+                    <TableCell>{test.test_date ? formatDate(test.test_date) : "-"}</TableCell>
                     <TableCell>{test.provider}</TableCell>
                     <TableCell>{test.remito || "-"}</TableCell>
                     <TableCell className={getFinenessModulusColor(test.fineness_modulus)}>

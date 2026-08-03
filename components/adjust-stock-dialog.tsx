@@ -133,7 +133,6 @@ export function AdjustStockDialog({
               id="counted-stock"
               type="number"
               step="0.01"
-              min="0"
               value={countedStock}
               onChange={(e) => setCountedStock(e.target.value)}
               required

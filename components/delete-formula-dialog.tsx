@@ -39,6 +39,27 @@ export function DeleteFormulaDialog({
 
     try {
       const supabase = createClient()
+
+      // Verificar si la fórmula está en uso (para no perder histórico)
+      const [dispRes, schedRes] = await Promise.all([
+        supabase.from("dispatches").select("id", { count: "exact", head: true }).eq("formula_id", formula.id),
+        supabase.from("scheduled_dispatches").select("id", { count: "exact", head: true }).eq("formula_id", formula.id),
+      ])
+      const dispCount = dispRes.count || 0
+      const schedCount = schedRes.count || 0
+
+      if (dispCount > 0 || schedCount > 0) {
+        toast({
+          variant: "destructive",
+          title: "No se puede eliminar",
+          description: `${formula.code} tiene ${dispCount} despacho(s) y ${schedCount} programación(es) asociadas. No se puede borrar para no perder el histórico.`,
+        })
+        setLoading(false)
+        return
+      }
+
+      // Borrar primero los materiales de la fórmula (FK), luego la fórmula
+      await supabase.from("formula_materials").delete().eq("formula_id", formula.id)
       const { error } = await supabase.from("formulas").delete().eq("id", formula.id)
 
       if (error) throw error

@@ -17,6 +17,11 @@ type Material = {
   unit: string
 }
 
+type Plant = {
+  id: string
+  name: string
+}
+
 type AddSupplierDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -24,6 +29,7 @@ type AddSupplierDialogProps = {
   selectedMaterialId?: string
   onSupplierAdded: (supplierId: string) => void
   plantId: string
+  plants?: Plant[]
 }
 
 export function AddSupplierDialog({
@@ -33,8 +39,10 @@ export function AddSupplierDialog({
   selectedMaterialId,
   onSupplierAdded,
   plantId,
+  plants = [],
 }: AddSupplierDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [plantMode, setPlantMode] = useState<string>(plantId)
   const [formData, setFormData] = useState({
     name: "",
     contact: "",
@@ -60,33 +68,65 @@ export function AddSupplierDialog({
     try {
       const supabase = createClient()
 
-      // Create supplier
-      const { data: supplier, error: supplierError } = await supabase
-        .from("suppliers")
-        .insert({
-          name: formData.name,
-          contact: formData.contact || null,
-          phone: formData.phone || null,
-          plant_id: plantId,
-        })
-        .select()
-        .single()
+      // Determine which plants to create the supplier for
+      const targetPlantIds = plantMode === "ambas"
+        ? plants.map((p) => p.id)
+        : [plantMode || plantId]
 
-      if (supplierError) throw supplierError
+      const selectedMaterialNames = materials
+        .filter((m) => formData.materialIds.includes(m.id))
+        .map((m) => m.name)
 
-      // Create material-supplier relationships
-      const materialSuppliers = formData.materialIds.map((materialId) => ({
-        supplier_id: supplier.id,
-        material_id: materialId,
-      }))
+      let returnedSupplierId = ""
 
-      const { error: relationError } = await supabase.from("material_suppliers").insert(materialSuppliers)
+      for (const pid of targetPlantIds) {
+        // Create supplier for this plant
+        const { data: supplier, error: supplierError } = await supabase
+          .from("suppliers")
+          .insert({
+            name: formData.name,
+            contact: formData.contact || null,
+            phone: formData.phone || null,
+            plant_id: pid,
+          })
+          .select()
+          .single()
 
-      if (relationError) throw relationError
+        if (supplierError) throw supplierError
+
+        // Get material IDs for this specific plant
+        let matIds = formData.materialIds
+        if (pid !== plantId) {
+          // Fetch equivalent materials from the other plant by name
+          const { data: plantMats } = await supabase
+            .from("materials")
+            .select("id, name")
+            .eq("plant_id", pid)
+            .in("name", selectedMaterialNames)
+          matIds = plantMats?.map((m: any) => m.id) || []
+        }
+
+        // Create material-supplier links
+        if (matIds.length > 0) {
+          const materialSuppliers = matIds.map((materialId) => ({
+            supplier_id: supplier.id,
+            material_id: materialId,
+          }))
+          const { error: relationError } = await supabase.from("material_suppliers").insert(materialSuppliers)
+          if (relationError) throw relationError
+        }
+
+        // Return the supplier ID for the current plant
+        if (pid === plantId || !returnedSupplierId) {
+          returnedSupplierId = supplier.id
+        }
+      }
+
+      const plantLabel = plantMode === "ambas" ? "ambas plantas" : plants.find((p) => p.id === plantMode)?.name || "la planta"
 
       toast({
         title: "Proveedor agregado",
-        description: `${formData.name} fue agregado exitosamente`,
+        description: `${formData.name} fue agregado para ${plantLabel}`,
       })
 
       setFormData({
@@ -95,7 +135,8 @@ export function AddSupplierDialog({
         phone: "",
         materialIds: selectedMaterialId ? [selectedMaterialId] : [],
       })
-      onSupplierAdded(supplier.id)
+      setPlantMode(plantId)
+      onSupplierAdded(returnedSupplierId)
       onOpenChange(false)
     } catch (error) {
       toast({
@@ -128,6 +169,26 @@ export function AddSupplierDialog({
               required
             />
           </div>
+
+          {plants.length > 1 && (
+            <div className="space-y-2">
+              <Label>Planta</Label>
+              <Select value={plantMode} onValueChange={setPlantMode}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {plants.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="ambas">Ambas plantas</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="supplier-materials">
               Materiales que suministra <span className="text-red-500">*</span>

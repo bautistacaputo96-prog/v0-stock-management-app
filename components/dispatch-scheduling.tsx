@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Plus, ChevronLeft, ChevronRight, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, addDays, startOfWeek, addWeeks, subWeeks, isSameDay, parseISO, setHours, setMinutes, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
@@ -27,14 +27,14 @@ import { AddConstructionSiteDialog } from "@/components/add-construction-site-di
 import { UserSelector } from "@/components/user-selector"
 
 type Plant = { id: string; name: string }
-type Client = { id: string; name: string; construction_sites?: ConstructionSite[] }
+type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
 type ConstructionSite = {
   id: string; name: string; address: string | null; client_id: string;
   travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean;
   reception_hours_start: string | null; reception_hours_end: string | null;
 }
 type Mixer = { id: string; license_plate: string; capacity_m3: number; status: string }
-type Formula = { id: string; name: string; code: string; useful_life_minutes: number }
+type Formula = { id: string; name: string; code: string; useful_life_minutes: number; plant_id: string }
 type ScheduledDispatch = {
   id: string; plant_id: string; client_id: string; construction_site_id: string;
   formula_id: string; mixer_id: string | null; quantity_m3: number;
@@ -49,8 +49,16 @@ const STATUS_COLORS: Record<string, string> = {
   loading: "bg-yellow-100 text-yellow-800 border-yellow-300",
   in_transit: "bg-purple-100 text-purple-800 border-purple-300",
   delivered: "bg-gray-100 text-gray-800 border-gray-300",
+  completed: "bg-green-100 text-green-800 border-green-400",
   cancelled: "bg-red-100 text-red-800 border-red-300 line-through",
 }
+
+const PLANT_BADGE_COLORS = [
+  "bg-emerald-100 text-emerald-800 border-emerald-300",
+  "bg-orange-100 text-orange-800 border-orange-300",
+  "bg-sky-100 text-sky-800 border-sky-300",
+  "bg-pink-100 text-pink-800 border-pink-300",
+]
 
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 6) // 6:00 to 19:00
 
@@ -69,7 +77,7 @@ function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; v
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between font-normal">
-          {selectedFormula ? `${selectedFormula.name} (${selectedFormula.code})` : "Buscar formula..."}
+          {selectedFormula ? (selectedFormula.name && selectedFormula.name !== selectedFormula.code ? `${selectedFormula.name} (${selectedFormula.code})` : selectedFormula.code) : "Buscar formula..."}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -89,8 +97,8 @@ function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; v
                   }}
                 >
                   <Check className={cn("mr-2 h-4 w-4", value === f.id ? "opacity-100" : "opacity-0")} />
-                  <span className="font-medium">{f.name}</span>
-                  <span className="ml-2 text-muted-foreground text-xs">({f.code})</span>
+                  <span className="font-medium">{f.code}</span>
+                  {f.name && f.name !== f.code && <span className="ml-2 text-muted-foreground text-xs">{f.name}</span>}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -123,9 +131,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     }
   }, [plants, newDispatchPlant])
   const [saving, setSaving] = useState(false)
+  const [cuitPrompt, setCuitPrompt] = useState("")
   const { toast } = useToast()
 
   const [form, setForm] = useState({
+    plant_id: "",
     client_id: "",
     construction_site_id: "",
     formula_id: "",
@@ -137,6 +147,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     is_urgent: false,
     created_by: "",
   })
+
+  // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
+  const plantNameById = useMemo(() => {
+    const map: Record<string, string> = {}
+    plants.forEach((p) => (map[p.id] = p.name))
+    return map
+  }, [plants])
 
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => addDays(currentWeekStart, i))
@@ -169,8 +186,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       dispatchesQuery,
       supabase.from("clients").select("*, construction_sites(*)").eq("active", true).order("name"),
       supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
-      // Cargar todas las fórmulas (la columna active no existe en formulas)
-      supabase.from("formulas").select("id, name, code, useful_life_minutes").order("code"),
+      // Cargar todas las fórmulas con su planta (para filtrar el combo por planta del despacho)
+      supabase.from("formulas").select("id, name, code, useful_life_minutes, plant_id").order("code"),
     ])
 
     setDispatches(dispatchesRes.data || [])
@@ -195,6 +212,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setSelectedHour(hour)
     setEditingDispatch(null)
     setForm({
+      plant_id: selectedPlant === "all" ? (newDispatchPlant || plants[0]?.id || "") : selectedPlant,
       client_id: "",
       construction_site_id: "",
       formula_id: "",
@@ -207,6 +225,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       created_by: "",
     })
     setEditingDispatch(null)
+    setCuitPrompt("")
     setIsDialogOpen(true)
   }
 
@@ -214,6 +233,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setEditingDispatch(dispatch)
     const arrival = parseISO(dispatch.scheduled_arrival_time)
     setForm({
+      plant_id: dispatch.plant_id,
       client_id: dispatch.client_id,
       construction_site_id: dispatch.construction_site_id,
       formula_id: dispatch.formula_id,
@@ -226,6 +246,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       created_by: dispatch.created_by || "",
     })
     setEditingDispatch(dispatch)
+    setCuitPrompt("")
     setIsDialogOpen(true)
   }
 
@@ -235,8 +256,23 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     
     try {
       const supabase = createClient()
-      // Determinar planta a usar: si el filtro es "all", usar newDispatchPlant
-      const plantToUse = selectedPlant === "all" ? newDispatchPlant : selectedPlant
+
+      // Si el cliente seleccionado no tiene CUIT y se ingresó uno en el aviso, lo asociamos ahora (con anti-duplicado)
+      if (selectedClient && !selectedClient.cuit && cuitPrompt.trim()) {
+        const { data: dup } = await supabase
+          .from("clients").select("id, name").eq("cuit", cuitPrompt.trim()).neq("active", false).limit(1)
+        if (dup && dup.length > 0 && dup[0].id !== selectedClient.id) {
+          toast({ title: "CUIT duplicado", description: `Ese CUIT ya es de ${dup[0].name}.`, variant: "destructive" })
+          setSaving(false)
+          return
+        }
+        await supabase.from("clients").update({ cuit: cuitPrompt.trim() }).eq("id", selectedClient.id)
+        setClients(clients.map((c) => (c.id === selectedClient.id ? { ...c, cuit: cuitPrompt.trim() } : c)))
+      }
+
+      // La planta a usar viene del formulario (preseleccionada con la planta real del despacho al editar,
+      // o con la planta del filtro/selector al crear). Esto evita reasignar la planta por accidente al editar.
+      const plantToUse = form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)
       // Convertir hora local del browser a UTC para guardar con timezone correcta
       const arrivalTime = new Date(`${form.arrival_date}T${form.arrival_time}:00`).toISOString()
       const departureTime = calculateDepartureTime(arrivalTime, selectedSite)
@@ -357,6 +393,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <Button onClick={() => setCurrentWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))} variant="outline" size="sm" className="ml-2">
               Hoy
             </Button>
+            <Button onClick={() => loadData()} variant="outline" size="sm" className="gap-2" disabled={loading}>
+              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+              <span className="hidden sm:inline">Actualizar</span>
+            </Button>
           </div>
         </div>
         <p className="text-xs text-muted-foreground md:hidden">Desliza horizontalmente para ver toda la semana</p>
@@ -408,6 +448,16 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                         >
                           <div className="flex items-start justify-between">
                             <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openEditDispatch(d)}>
+                              {selectedPlant === "all" && plantNameById[d.plant_id] && (
+                                <span
+                                  className={cn(
+                                    "inline-block text-[9px] font-semibold px-1 py-0 rounded border mb-0.5 leading-tight",
+                                    PLANT_BADGE_COLORS[plants.findIndex((p) => p.id === d.plant_id) % PLANT_BADGE_COLORS.length] || "bg-gray-100 text-gray-700 border-gray-300",
+                                  )}
+                                >
+                                  {plantNameById[d.plant_id]}
+                                </span>
+                              )}
                               <div className="font-medium truncate">{d.clients?.name}</div>
                               <div className="flex items-center gap-1 text-[10px]">
                                 <span>{d.quantity_m3}m3</span>
@@ -454,18 +504,16 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <DialogTitle>{editingDispatch ? "Editar Despacho" : "Nuevo Despacho Programado"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-            {/* Selector de planta solo si el filtro es "Todas" */}
-            {selectedPlant === "all" && (
-              <div className="space-y-2">
-                <Label>Planta *</Label>
-                <Select value={newDispatchPlant} onValueChange={setNewDispatchPlant}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar planta" /></SelectTrigger>
-                  <SelectContent>
-                    {plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            {/* Selector de planta: siempre visible para ver/elegir a qué planta pertenece el despacho */}
+            <div className="space-y-2">
+              <Label>Planta *</Label>
+              <Select value={form.plant_id} onValueChange={(v) => setForm({ ...form, plant_id: v })}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar planta" /></SelectTrigger>
+                <SelectContent>
+                  {plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -482,7 +530,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               <div className="flex items-center justify-between">
                 <Label>Cliente *</Label>
                 <AddClientDialog
-                  plantId={selectedPlant === "all" ? newDispatchPlant : selectedPlant}
+                  plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
                   trigger={
                     <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
                       <UserPlus className="h-3 w-3 mr-1" />
@@ -502,6 +550,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 </SelectContent>
               </Select>
             </div>
+
+            {selectedClient && !selectedClient.cuit && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+                <p className="text-xs text-amber-800 dark:text-amber-200 font-medium">
+                  Este cliente no tiene CUIT. Agregalo para identificarlo y evitar duplicados.
+                </p>
+                <Input value={cuitPrompt} onChange={(e) => setCuitPrompt(e.target.value)} placeholder="CUIT del cliente" />
+              </div>
+            )}
 
             {selectedClient && (
               <div className="space-y-2">
@@ -568,10 +625,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
 
             <div className="space-y-2">
               <Label>Formula *</Label>
-              <FormulaCombobox 
-                formulas={formulas} 
-                value={form.formula_id} 
-                onChange={(v) => setForm({ ...form, formula_id: v })} 
+              <FormulaCombobox
+                formulas={formulas.filter((f) => !form.plant_id || f.plant_id === form.plant_id)}
+                value={form.formula_id}
+                onChange={(v) => setForm({ ...form, formula_id: v })}
               />
             </div>
 
@@ -584,7 +641,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               <div className="flex items-center justify-between">
                 <Label>Camion (opcional)</Label>
                 <AddMixerDialog
-                  plantId={selectedPlant === "all" ? newDispatchPlant : selectedPlant}
+                  plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
                   trigger={
                     <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
                       <TruckIcon className="h-3 w-3 mr-1" />
@@ -630,7 +687,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               </Button>
             )}
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
-<Button onClick={handleSave} disabled={saving || !form.client_id || !form.construction_site_id || !form.formula_id}>
+<Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id}>
   {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
             </Button>
           </DialogFooter>

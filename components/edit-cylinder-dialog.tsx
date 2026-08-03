@@ -40,7 +40,11 @@ interface PressCalibration {
   constant_c: number
   constant_d: number
   cylinder_diameter_cm: number
+  force_unit: string
 }
+
+// Factor para convertir la fuerza Y (según su unidad) a Newton
+const FUERZA_A_NEWTON: Record<string, number> = { tf: 9806.65, kN: 1000, kgf: 9.80665, N: 1 }
 
 export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinderDialogProps) {
   const [formData, setFormData] = useState({
@@ -66,7 +70,7 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
     const supabase = createClient()
     supabase
       .from("press_calibrations")
-      .select("constant_a, constant_b, constant_c, constant_d, cylinder_diameter_cm")
+      .select("constant_a, constant_b, constant_c, constant_d, cylinder_diameter_cm, force_unit")
       .eq("is_active", true)
       .order("calibration_date", { ascending: false })
       .limit(1)
@@ -80,9 +84,10 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
     const x = parseFloat(dialStr)
     if (isNaN(x)) return ""
     const { constant_a: a, constant_b: b, constant_c: c, constant_d: d, cylinder_diameter_cm } = calibration
-    const tf = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
+    const y = a * Math.pow(x, 3) + b * Math.pow(x, 2) + c * x + d
     const r = cylinder_diameter_cm / 100 / 2
-    const mpa = (tf * 9.80665) / (Math.PI * r * r) / 1000
+    const factor = FUERZA_A_NEWTON[calibration.force_unit || "tf"] ?? FUERZA_A_NEWTON.tf
+    const mpa = (y * factor) / (Math.PI * r * r) / 1_000_000
     return mpa.toFixed(2)
   }
 

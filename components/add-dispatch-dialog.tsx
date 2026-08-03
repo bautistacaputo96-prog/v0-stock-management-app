@@ -17,8 +17,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, X } from "lucide-react"
+import { Plus, X, Check, ChevronsUpDown } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -76,8 +79,46 @@ interface AddDispatchDialogProps {
   clients: Client[]
   mixers: Mixer[]
   plantId: string
+  plants?: { id: string; name: string }[]
   onSuccess?: () => void
   triggerLabel?: string
+}
+
+function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const selected = formulas.find((f) => f.id === value)
+  const sorted = [...formulas].sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code))
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between font-normal">
+          {selected ? (selected.name && selected.name !== selected.code ? `${selected.name} (${selected.code})` : selected.code) : "Buscar fórmula..."}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar fórmula..." />
+          <CommandList className="max-h-[220px]">
+            <CommandEmpty>No se encontró fórmula.</CommandEmpty>
+            <CommandGroup>
+              {sorted.map((f) => (
+                <CommandItem
+                  key={f.id}
+                  value={`${f.name} ${f.code}`}
+                  onSelect={() => { onChange(f.id); setOpen(false) }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === f.id ? "opacity-100" : "opacity-0")} />
+                  <span className="font-medium">{f.code}</span>
+                  {f.name && f.name !== f.code && <span className="ml-2 text-muted-foreground text-xs">{f.name}</span>}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 export function AddDispatchDialog({
@@ -85,11 +126,14 @@ export function AddDispatchDialog({
   clients: initialClients,
   mixers: initialMixers,
   plantId,
+  plants = [],
   onSuccess,
   triggerLabel = "Nuevo Despacho",
 }: AddDispatchDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [dispatchPlantId, setDispatchPlantId] = useState(plantId)
+  const [dialogFormulas, setDialogFormulas] = useState(formulas)
   const [clients, setClients] = useState(initialClients)
   const [mixers, setMixers] = useState(initialMixers)
   const [constructionSites, setConstructionSites] = useState<ConstructionSite[]>([])
@@ -117,13 +161,31 @@ export function AddDispatchDialog({
     created_by: "",
   })
 
+  // Mantener la planta del diálogo sincronizada con la planta que llega por prop
   useEffect(() => {
-    setClients(initialClients)
-  }, [initialClients])
+    setDispatchPlantId(plantId)
+  }, [plantId])
 
+  // Cargar fórmulas (de la planta elegida), clientes y camiones (compartidos) al abrir o cambiar de planta
   useEffect(() => {
-    setMixers(initialMixers)
-  }, [initialMixers])
+    if (!open || !dispatchPlantId) return
+    const load = async () => {
+      const supabase = createClient()
+      const [fRes, cRes, mRes] = await Promise.all([
+        supabase
+          .from("formulas")
+          .select("*, formula_materials(id, quantity, materials(id, name, unit))")
+          .eq("plant_id", dispatchPlantId)
+          .order("code"),
+        supabase.from("clients").select("id, name").neq("active", false).order("name"),
+        supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
+      ])
+      setDialogFormulas(fRes.data || [])
+      setClients(cRes.data || [])
+      setMixers(mRes.data || [])
+    }
+    load()
+  }, [open, dispatchPlantId])
 
   useEffect(() => {
     if (formData.client_id) {
@@ -203,7 +265,7 @@ export function AddDispatchDialog({
           .from("manual_material_withdrawals")
           .insert({
             withdrawal_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
-            plant_id: plantId,
+            plant_id: dispatchPlantId,
             observations: formData.notes,
           })
           .select()
@@ -251,7 +313,7 @@ export function AddDispatchDialog({
         return
       }
 
-      const selectedFormula = formulas.find((f) => f.id === formData.formula_id)
+      const selectedFormula = dialogFormulas.find((f) => f.id === formData.formula_id)
       console.log("[v0] Selected formula:", selectedFormula?.code)
 
       if (!selectedFormula) {
@@ -288,6 +350,20 @@ export function AddDispatchDialog({
         return
       }
 
+      // Anti-duplicado: no permitir cargar un remito que ya existe en el sistema
+      if (formData.remito.trim()) {
+        const { data: dupRemito } = await supabase
+          .from("dispatches")
+          .select("id")
+          .eq("remito", formData.remito.trim())
+          .limit(1)
+        if (dupRemito && dupRemito.length > 0) {
+          toast.error(`Ya existe un despacho con el remito ${formData.remito.trim()} en el sistema. No se puede cargar dos veces.`)
+          setLoading(false)
+          return
+        }
+      }
+
       console.log("[v0] Stock check passed, creating dispatch")
 
       const dispatchData = {
@@ -309,6 +385,7 @@ export function AddDispatchDialog({
         notes: formData.notes || null,
         is_test_dispatch: isTestDispatch,
         created_by: formData.created_by || null,
+        plant_id: dispatchPlantId,
       }
 
       console.log("[v0] Inserting dispatch data")
@@ -347,7 +424,7 @@ export function AddDispatchDialog({
         }
 
         let requiredQty = fm.quantity * quantityM3
-        
+
         // If material is sand/arena and has humidity, compensate for moisture content
         const materialName = material?.name?.toLowerCase() || fm.materials.name?.toLowerCase() || ""
         const humidity = material?.stockpile_humidity || 0
@@ -355,25 +432,26 @@ export function AddDispatchDialog({
           // Add extra quantity to compensate: wet_qty = dry_qty * (1 + humidity/100)
           requiredQty = requiredQty * (1 + humidity / 100)
         }
-        
-        if (!material || material.current_stock < requiredQty) {
-          toast.error(
-            `Stock insuficiente de ${material?.name || fm.materials.name}. Disponible: ${material?.current_stock?.toFixed(2) || 0} kg, Necesario: ${requiredQty.toFixed(2)} kg. Por favor ajuste la cantidad o actualice el stock.`,
-            { duration: 5000 }
-          )
-          setLoading(false)
-          return
-        }
 
-        // Discount stock
-        const { error: updateError } = await supabase.rpc("update_material_stock", {
-          p_material_id: fm.materials.id,
-          p_quantity_change: -requiredQty,
-        })
+        // Insumos que NO se descuentan del stock por despacho:
+        // - Agua: stock infinito. - Sikament 33S: aditivo que se agrega en obra, no en planta.
+        const isNonDeductible =
+          materialName.includes("agua") || materialName.includes("water") || materialName.includes("sikament 33")
 
-        if (updateError) {
-          console.error("[v0] Error updating stock:", updateError)
-          throw updateError
+        // NO se bloquea el despacho por stock insuficiente: el operario siempre debe poder despachar,
+        // aunque el stock quede negativo (se corrige luego con recuento físico).
+
+        // Discount stock (excepto agua y Sikament 33S)
+        if (!isNonDeductible) {
+          const { error: updateError } = await supabase.rpc("update_material_stock", {
+            p_material_id: fm.materials.id,
+            p_quantity_change: -requiredQty,
+          })
+
+          if (updateError) {
+            console.error("[v0] Error updating stock:", updateError)
+            throw updateError
+          }
         }
 
         // Create dispatch_material record
@@ -395,8 +473,11 @@ export function AddDispatchDialog({
         })
       }
 
-      // Auto-create test cylinders if sample was taken
-      if (formData.sample_taken && formData.sample_number) {
+      // Auto-create test cylinders if sample was taken.
+      // No crear probetas si el N° de muestra no es real (vacío, "NO", "PRUEBA") -> evita probetas fantasma.
+      const sampleNumTrim = (formData.sample_number || "").trim().toUpperCase()
+      const isRealSample = sampleNumTrim !== "" && sampleNumTrim !== "NO" && sampleNumTrim !== "PRUEBA"
+      if (formData.sample_taken && isRealSample) {
         const [year, month, day] = formData.dispatch_date.split("-").map(Number)
         const addDays = (n: number) => {
           const d = new Date(year, month - 1, day)
@@ -474,8 +555,8 @@ export function AddDispatchDialog({
           {triggerLabel}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-        <form onSubmit={handleSubmit}>
+      <DialogContent className="sm:max-w-[600px] flex flex-col max-h-[90vh]">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <div>
@@ -507,7 +588,28 @@ export function AddDispatchDialog({
               </div>
             </div>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-4 overflow-y-auto flex-1">
+            {plants.length > 1 && (
+              <div className="grid gap-2">
+                <Label>Planta *</Label>
+                <Select
+                  value={dispatchPlantId}
+                  onValueChange={(v) => {
+                    setDispatchPlantId(v)
+                    setFormData((prev) => ({ ...prev, formula_id: "" }))
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar planta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {plants.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {isTestDispatch && (
               <div className="grid gap-3 p-4 border rounded-lg bg-muted/50">
                 <div className="flex items-center space-x-2">
@@ -540,22 +642,11 @@ export function AddDispatchDialog({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="formula">Fórmula *</Label>
-                    <Select
+                    <FormulaCombobox
+                      formulas={dialogFormulas}
                       value={formData.formula_id}
-                      onValueChange={(value) => setFormData({ ...formData, formula_id: value })}
-                      required
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar fórmula" />
-                      </SelectTrigger>
-  <SelectContent className="max-h-[200px]">
-  {[...formulas].sort((a, b) => a.name.localeCompare(b.name)).map((formula) => (
-  <SelectItem key={formula.id} value={formula.id}>
-  {formula.name} ({formula.code})
-  </SelectItem>
-  ))}
-  </SelectContent>
-                    </Select>
+                      onChange={(value) => setFormData({ ...formData, formula_id: value })}
+                    />
                   </div>
 
                   <div className="grid gap-2">
@@ -583,6 +674,9 @@ export function AddDispatchDialog({
                       onChange={(e) => setFormData({ ...formData, quantity_m3: e.target.value })}
                       required
                     />
+                    {Number.parseFloat(formData.quantity_m3) > 12 && (
+                      <p className="text-xs text-amber-600 font-medium">Supera los 12 m³ por camión. Podés continuar igual.</p>
+                    )}
                   </div>
 
                   <div className="grid gap-2">
@@ -678,7 +772,7 @@ export function AddDispatchDialog({
                       </SelectContent>
                     </Select>
                     <AddMixerDialog
-                      plantId={plantId}
+                      plantId={dispatchPlantId}
                       trigger={
                         <Button type="button" variant="outline" size="icon">
                           <Plus className="h-4 w-4" />
@@ -721,7 +815,7 @@ export function AddDispatchDialog({
                       </SelectContent>
                     </Select>
                     <AddClientDialog
-                      plantId={plantId}
+                      plantId={dispatchPlantId}
                       trigger={
                         <Button type="button" variant="outline" size="icon">
                           <Plus className="h-4 w-4" />
@@ -877,7 +971,7 @@ export function AddDispatchDialog({
               required
             />
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t pt-4 shrink-0">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
               Cancelar
             </Button>

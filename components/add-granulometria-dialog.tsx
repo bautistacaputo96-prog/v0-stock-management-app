@@ -46,6 +46,7 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
 
   const [formData, setFormData] = useState({
     extraction_date: new Date().toISOString().split("T")[0],
+    test_date: "",
     material_id: "",
     supplier_id: "",
     sample_weight_grams: "",
@@ -314,7 +315,8 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
       const selectedMaterial = materials.find((m) => m.id === formData.material_id)
       const selectedSupplier = filteredSuppliers.find((s) => s.id === formData.supplier_id)
 
-      const extractionDate = `${formData.extraction_date}T12:00:00Z`
+      // La columna es tipo date: guardamos YYYY-MM-DD puro para evitar desfase de timezone
+      const extractionDate = formData.extraction_date
 
       const wetWeight = Number.parseFloat(formData.sample_weight_grams)
 
@@ -334,6 +336,7 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
         .from("granulometria_tests")
         .insert({
           extraction_date: extractionDate,
+          test_date: formData.test_date || null,
           provider: selectedSupplier?.name || "",
           aggregate_type: selectedMaterial?.name || "",
           sample_weight_grams: wetWeight,
@@ -406,6 +409,7 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
   const resetForm = () => {
     setFormData({
       extraction_date: new Date().toISOString().split("T")[0],
+      test_date: "",
       material_id: "",
       supplier_id: "",
       sample_weight_grams: "",
@@ -438,6 +442,16 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
                 value={formData.extraction_date}
                 onChange={(e) => setFormData({ ...formData, extraction_date: e.target.value })}
                 required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="test_date">Fecha de Ensayo</Label>
+              <Input
+                id="test_date"
+                type="date"
+                value={formData.test_date}
+                onChange={(e) => setFormData({ ...formData, test_date: e.target.value })}
               />
             </div>
 

@@ -42,6 +42,11 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
       return
     }
 
+    if (!formData.cuit.trim()) {
+      toast.error("El CUIT es obligatorio para no duplicar clientes")
+      return
+    }
+
     if (!plantId || plantId === "all" || plantId === "") {
       toast.error("Primero seleccione una planta en el formulario de programacion")
       return
@@ -50,13 +55,27 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
     setLoading(true)
 
     try {
+      // Anti-duplicado: si ya existe un cliente activo con el mismo CUIT, no permitir
+      const { data: existing } = await supabase
+        .from("clients")
+        .select("id, name")
+        .eq("cuit", formData.cuit.trim())
+        .neq("active", false)
+        .limit(1)
+
+      if (existing && existing.length > 0) {
+        toast.error(`Ya existe un cliente con ese CUIT: ${existing[0].name}. Usá ese cliente en lugar de crear uno nuevo.`)
+        setLoading(false)
+        return
+      }
+
       console.log("[v0] Inserting client:", { name: formData.name, plant_id: plantId })
       const { data, error } = await supabase
         .from("clients")
         .insert({
           name: formData.name,
           razon_social: formData.razon_social || formData.name,
-          cuit: formData.cuit || null,
+          cuit: formData.cuit.trim(),
           cond_iva: formData.cond_iva || null,
           contact: formData.contact || null,
           phone: formData.phone || null,
@@ -111,12 +130,13 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="cuit">CUIT</Label>
+              <Label htmlFor="cuit">CUIT *</Label>
               <Input
                 id="cuit"
                 value={formData.cuit}
                 onChange={(e) => setFormData({ ...formData, cuit: e.target.value })}
                 placeholder="XX-XXXXXXXX-X"
+                required
               />
             </div>
             <div className="space-y-2">

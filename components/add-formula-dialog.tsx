@@ -51,6 +51,7 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
     asentamiento: "",
     metodo: "none",
     yield_m3: "1.0",
+    tag: "",
   })
   // Store quantities keyed by material_id
   const [materialQuantities, setMaterialQuantities] = useState<Record<string, string>>({})
@@ -71,29 +72,8 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
     }
     
     const code = parts.join("-")
-    return formData.metodo && formData.metodo !== "none" ? `${code} ${formData.metodo}` : code
-  }, [formData])
-
-  // Auto-generate name
-  const generatedName = useMemo(() => {
-    if (!formData.resistencia) return ""
-    
-    let name = `Hormigon ${formData.resistencia}`
-    
-    if (formData.tipoPiedra) {
-      name += ` Piedra ${formData.tipoPiedra}`
-    }
-    
-    if (formData.asentamiento) {
-      name += ` Asentamiento ${formData.asentamiento}cm`
-    }
-    
-    if (formData.metodo && formData.metodo !== "none") {
-      const metodoText = formData.metodo === "B" ? "Bombeable" : "Canaleta"
-      name += ` ${metodoText}`
-    }
-    
-    return name
+    const codeWithMethod = formData.metodo && formData.metodo !== "none" ? `${code} ${formData.metodo}` : code
+    return formData.tag ? `${codeWithMethod} - ${formData.tag}` : codeWithMethod
   }, [formData])
 
   const updateMaterialQuantity = (materialId: string, quantity: string) => {
@@ -110,6 +90,7 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
       asentamiento: "",
       metodo: "none",
       yield_m3: "1.0",
+      tag: "",
     })
     setMaterialQuantities({})
     setResistenciaInput("")
@@ -153,8 +134,8 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
         .from("formulas")
         .insert({
           code: generatedCode,
-          name: generatedName,
-          description: null,
+          name: generatedCode,
+          description: formData.tag || null,
           yield_m3: Number.parseFloat(formData.yield_m3),
           plant_id: plantId,
         })
@@ -329,6 +310,18 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
               onChange={(e) => setFormData({ ...formData, yield_m3: e.target.value })}
               required
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Etiqueta (opcional)</Label>
+            <Input
+              value={formData.tag}
+              onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
+              placeholder="Ej: Pirelli, Obra ABC, Cliente XYZ..."
+            />
+            <p className="text-xs text-muted-foreground">
+              Se agrega al código de la fórmula para identificarla al despachar. Ej: H30-620-10 C - Pirelli
+            </p>
           </div>
 
           {/* Materials Table */}
