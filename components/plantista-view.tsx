@@ -313,6 +313,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         sample_number: dispatchForm.sampleTaken ? dispatchForm.sampleNumber.trim() : null,
         actual_slump_cm: dispatchForm.sampleTaken ? parseFloat(dispatchForm.actualSlump) : null,
         scheduled_dispatch_id: dispatchDialog.id,
+        plant_id: selectedPlant,
       }).select().single()
 
       if (dispatchError) throw dispatchError

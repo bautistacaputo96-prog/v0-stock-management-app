@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter } from "lucide-react"
+import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -32,7 +32,9 @@ type ScheduledDispatch = {
   formulas?: { name: string; code: string }; mixers?: { license_plate: string };
   created_by?: string | null; remito?: string | null; extra_water_liters?: number | null;
   client_id?: string; construction_site_id?: string; formula_id?: string; mixer_id?: string;
-  dispatch_id?: string | null;
+  dispatch_id?: string | null; plant_id?: string | null;
+  /** Litros de superfluidificante agregados en obra (registrados al volver el camión) */
+  superplasticizer_liters?: number | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,6 +45,13 @@ const STATUS_LABELS: Record<string, string> = {
   delivered: "Entregado",
   cancelled: "Cancelado",
 }
+
+const ALL_PLANTS = "all"
+
+/** Material que representa el superfluidificante agregado en obra */
+export const SUPERPLASTICIZER_NAME = "Superfluidificante (obra)"
+export const isSuperplasticizer = (name?: string | null) =>
+  (name || "").toLowerCase().includes("superfluidificante")
 
 export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [selectedPlant, setSelectedPlant] = useState(plants[0]?.id || "")
@@ -85,6 +94,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [mixers, setMixers] = useState<{ id: string; license_plate: string }[]>([])
   const [deleteDispatch, setDeleteDispatch] = useState<ScheduledDispatch | null>(null)
   const [sampleDispatch, setSampleDispatch] = useState<ScheduledDispatch | null>(null)
+  const [superDispatch, setSuperDispatch] = useState<ScheduledDispatch | null>(null)
+  const [superLiters, setSuperLiters] = useState("")
   const [sampleNumber, setSampleNumber] = useState("")
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -192,23 +203,27 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const supabase = createClient()
 
     // Load scheduled dispatches
-    const { data: scheduledData, error: scheduledError } = await supabase
+    let scheduledQuery = supabase
       .from("scheduled_dispatches")
-      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
-      .eq("plant_id", selectedPlant)
+      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, plant_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
       .gte("scheduled_arrival_time", `${dateFrom}T00:00:00`)
       .lte("scheduled_arrival_time", `${dateTo}T23:59:59`)
       .order("scheduled_arrival_time", { ascending: false })
       .limit(10000)
+    if (selectedPlant !== ALL_PLANTS) scheduledQuery = scheduledQuery.eq("plant_id", selectedPlant)
+    const { data: scheduledData, error: scheduledError } = await scheduledQuery
 
-    // Load manual dispatches
-    const { data: manualData, error: manualError } = await supabase
+    // Load manual dispatches (también filtrados por planta: antes se traían
+    // los de todas las plantas y el filtro parecía no funcionar)
+    let manualQuery = supabase
       .from("dispatches")
-      .select("id, quantity_m3, dispatch_date, notes, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate)")
+      .select("id, quantity_m3, dispatch_date, notes, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, plant_id, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit))")
       .gte("dispatch_date", `${dateFrom}T00:00:00`)
       .lte("dispatch_date", `${dateTo}T23:59:59`)
       .order("dispatch_date", { ascending: false })
       .limit(10000)
+    if (selectedPlant !== ALL_PLANTS) manualQuery = manualQuery.eq("plant_id", selectedPlant)
+    const { data: manualData, error: manualError } = await manualQuery
 
     if (scheduledError || manualError) {
       toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" })
@@ -217,6 +232,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       const transformedManual: ScheduledDispatch[] = (manualData || []).map((d: any) => ({
         id: d.id,
         quantity_m3: d.quantity_m3,
+        plant_id: d.plant_id,
+        superplasticizer_liters:
+          (d.dispatch_materials || [])
+            .filter((dm: any) => isSuperplasticizer(dm.materials?.name))
+            .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
         scheduled_arrival_time: d.dispatch_date,
         scheduled_departure_time: d.dispatch_date,
         actual_departure_time: d.dispatch_date,
@@ -322,6 +342,124 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     }
     return acc
   }, []).reverse()
+
+  function openSuperDialog(dispatch: ScheduledDispatch) {
+    setSuperDispatch(dispatch)
+    setSuperLiters(dispatch.superplasticizer_liters ? String(dispatch.superplasticizer_liters) : "")
+  }
+
+  /**
+   * Registra el superfluidificante agregado en obra cuando vuelve el camión.
+   * Se guarda como material del despacho y descuenta stock por la diferencia
+   * con lo que ya estuviera registrado (permite corregir un valor cargado antes).
+   */
+  async function handleSaveSuperplasticizer() {
+    if (!superDispatch) return
+    const liters = Number.parseFloat(superLiters)
+    if (Number.isNaN(liters) || liters < 0) {
+      toast({ title: "Cantidad inválida", description: "Ingresá los litros agregados en obra", variant: "destructive" })
+      return
+    }
+    setSaving(true)
+    const supabase = createClient()
+    try {
+      const { data: material, error: matError } = await supabase
+        .from("materials")
+        .select("id")
+        .eq("plant_id", superDispatch.plant_id)
+        .ilike("name", "%superfluidificante%")
+        .maybeSingle()
+      if (matError) throw matError
+      if (!material) throw new Error("No se encontró el material Superfluidificante (obra) para esta planta")
+
+      const previous = superDispatch.superplasticizer_liters || 0
+      const diff = liters - previous
+
+      const { data: existing } = await supabase
+        .from("dispatch_materials")
+        .select("id")
+        .eq("dispatch_id", superDispatch.id)
+        .eq("material_id", material.id)
+        .maybeSingle()
+
+      if (liters === 0 && existing) {
+        await supabase.from("dispatch_materials").delete().eq("id", existing.id)
+      } else if (existing) {
+        await supabase.from("dispatch_materials").update({ quantity: liters }).eq("id", existing.id)
+      } else if (liters > 0) {
+        await supabase.from("dispatch_materials").insert({
+          dispatch_id: superDispatch.id,
+          material_id: material.id,
+          quantity: liters,
+        })
+      }
+
+      if (diff !== 0) {
+        // El stock puede quedar negativo a propósito (se corrige con recuento)
+        await supabase.rpc("update_material_stock", { p_material_id: material.id, p_quantity_change: -diff })
+        await supabase.from("stock_movements").insert({
+          material_id: material.id,
+          movement_type: "consumo",
+          quantity_kg: diff,
+          reference_type: "dispatch",
+          reference_id: superDispatch.id,
+          movement_date: new Date().toISOString().substring(0, 10),
+          notes: `Superfluidificante agregado en obra — remito ${superDispatch.remito || "s/n"}`,
+        })
+      }
+
+      toast({
+        title: "Registrado",
+        description: liters > 0 ? `${liters} lts de superfluidificante en obra` : "Se quitó el registro de superfluidificante",
+      })
+      setSuperDispatch(null)
+      loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "No se pudo registrar",
+        variant: "destructive",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Exporta la tabla completa (con los filtros aplicados) a un archivo .xlsx
+  async function exportToExcel() {
+    const XLSX = await import("xlsx")
+    const plantName = (id?: string | null) => plants.find((p) => p.id === id)?.name || "-"
+
+    const rows = filteredDispatches.map((d) => ({
+      Fecha: d.scheduled_arrival_time ? format(parseISO(d.scheduled_arrival_time), "dd/MM/yyyy HH:mm") : "-",
+      Planta: plantName(d.plant_id),
+      Remito: d.remito || "-",
+      Cliente: d.clients?.name || "-",
+      Obra: d.construction_sites?.name || "-",
+      "Fórmula": d.formulas?.code || "-",
+      m3: d.quantity_m3 ?? 0,
+      "Camión": d.mixers?.license_plate || "-",
+      Estado: STATUS_LABELS[d.status] || d.status,
+      Responsable: d.created_by || "-",
+      "Agua extra (L)": d.extra_water_liters ?? "",
+      "Superfluidificante (L)": d.superplasticizer_liters ?? "",
+      Origen: d.source === "manual" ? "Despacho" : "Programado",
+      Observaciones: d.observations || "",
+    }))
+
+    const ws = XLSX.utils.json_to_sheet(rows)
+    ws["!cols"] = [
+      { wch: 17 }, { wch: 12 }, { wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 20 },
+      { wch: 8 }, { wch: 12 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 20 },
+      { wch: 12 }, { wch: 40 },
+    ]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Despachos")
+
+    const plantTag = selectedPlant === ALL_PLANTS ? "todas" : plantName(selectedPlant).toLowerCase().replace(/\s+/g, "-")
+    XLSX.writeFile(wb, `despachos_${plantTag}_${dateFrom}_${dateTo}.xlsx`)
+    toast({ title: "Exportado", description: `${rows.length} despachos exportados a Excel` })
+  }
 
   async function handleDelete() {
     if (!deleteDispatch) return
@@ -630,6 +768,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
             <SelectValue placeholder="Planta" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ALL_PLANTS}>Todas las plantas</SelectItem>
             {plants.map((p) => (
               <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
             ))}
@@ -653,6 +792,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
             ))}
           </SelectContent>
         </Select>
+
+        <Button variant="outline" onClick={exportToExcel} disabled={filteredDispatches.length === 0} className="gap-2">
+          <Download className="h-4 w-4" />
+          Exportar a Excel
+        </Button>
       </div>
 
       {/* Metrics */}
@@ -778,8 +922,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="relative max-h-[600px] overflow-auto rounded-md border">
-            <Table>
+          {/* El scroll debe vivir en el contenedor propio de <Table> (containerClassName):
+              si el scroll está en un div externo, el thead sticky no se pega. */}
+          <div className="relative rounded-md border">
+            <Table containerClassName="max-h-[600px] overflow-auto">
               <TableHeader className="sticky top-0 z-30 bg-card">
                 <TableRow>
                   <TableHead className="sticky left-0 z-40 bg-card w-[90px]">
@@ -789,6 +935,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                     </div>
                   </TableHead>
                   <TableHead>Fecha</TableHead>
+                  {selectedPlant === ALL_PLANTS && <TableHead>Planta</TableHead>}
                   <TableHead>
                     <div className="flex items-center gap-1">
                       Cliente
@@ -827,7 +974,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               <TableBody>
                 {filteredDispatches.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={selectedPlant === ALL_PLANTS ? 11 : 10} className="text-center text-muted-foreground py-8">
                       No hay despachos en el periodo seleccionado
                     </TableCell>
                   </TableRow>
@@ -836,11 +983,24 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                     return (
                       <TableRow key={dispatch.id}>
                         <TableCell className="sticky left-0 z-10 bg-card font-mono font-medium w-[90px] truncate">
-                          {dispatch.remito || "-"}
+                          <span className="flex items-center gap-1">
+                            {dispatch.remito || "-"}
+                            {!!dispatch.superplasticizer_liters && (
+                              <Beaker
+                                className="h-3.5 w-3.5 text-purple-600 shrink-0"
+                                aria-label={`Superfluidificante en obra: ${dispatch.superplasticizer_liters} lts`}
+                              />
+                            )}
+                          </span>
                         </TableCell>
                         <TableCell>
                           {format(parseISO(dispatch.scheduled_arrival_time), "dd/MM/yyyy")}
                         </TableCell>
+                        {selectedPlant === ALL_PLANTS && (
+                          <TableCell className="text-muted-foreground">
+                            {plants.find((p) => p.id === dispatch.plant_id)?.name || "-"}
+                          </TableCell>
+                        )}
                         <TableCell className="font-medium">{dispatch.clients?.name || "-"}</TableCell>
                         <TableCell>{dispatch.construction_sites?.name}</TableCell>
                         <TableCell>{dispatch.formulas?.code}</TableCell>
@@ -864,6 +1024,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                 <FlaskConical className="h-4 w-4 mr-2" />
                                 Agregar Muestra
                               </DropdownMenuItem>
+                              {dispatch.source === "manual" && (
+                                <DropdownMenuItem onClick={() => openSuperDialog(dispatch)}>
+                                  <Beaker className="h-4 w-4 mr-2" />
+                                  Superfluidificante en obra
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
                                 <Pencil className="h-4 w-4 mr-2" />
                                 Editar
@@ -1022,6 +1188,49 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingDispatch(null)}>Cancelar</Button>
             <Button disabled={saving} onClick={handleUpdateDispatch}>
+              {saving ? "Guardando..." : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Superfluidificante agregado en obra (se registra cuando vuelve el camión) */}
+      <Dialog open={!!superDispatch} onOpenChange={(open) => !open && setSuperDispatch(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Beaker className="h-5 w-5" />
+              Superfluidificante agregado en obra
+            </DialogTitle>
+          </DialogHeader>
+          {superDispatch && (
+            <div className="space-y-4 py-4">
+              <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
+                <p><span className="text-muted-foreground">Remito:</span> <span className="font-medium">{superDispatch.remito || "-"}</span></p>
+                <p><span className="text-muted-foreground">Cliente:</span> <span className="font-medium">{superDispatch.clients?.name || "-"}</span></p>
+                <p><span className="text-muted-foreground">Obra:</span> <span className="font-medium">{superDispatch.construction_sites?.name || "-"}</span></p>
+                <p><span className="text-muted-foreground">Cantidad:</span> <span className="font-medium">{superDispatch.quantity_m3} m3</span></p>
+              </div>
+              <div className="space-y-2">
+                <Label>Litros agregados en obra</Label>
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  autoFocus
+                  placeholder="0"
+                  value={superLiters}
+                  onChange={(e) => setSuperLiters(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Se descuenta del stock de &quot;Superfluidificante (obra)&quot;. Dejalo en 0 para quitar el registro.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuperDispatch(null)}>Cancelar</Button>
+            <Button disabled={saving} onClick={handleSaveSuperplasticizer}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
           </DialogFooter>

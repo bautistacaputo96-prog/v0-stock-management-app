@@ -52,6 +52,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   const [editQuantity, setEditQuantity] = useState("")
   const [editRemito, setEditRemito] = useState("")
   const [editNotes, setEditNotes] = useState("")
+  const [editDate, setEditDate] = useState("")
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
 
@@ -93,10 +94,12 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       await supabase.rpc("decrement_stock", { material_id: editingEntry.materials.id, amount: Math.abs(quantityDiff) })
     }
     
-    const { error } = await supabase.from("stock_entries").update({ 
+    const { error } = await supabase.from("stock_entries").update({
       quantity: newQuantity,
       remito: editRemito || null,
-      notes: editNotes || null
+      notes: editNotes || null,
+      // Se guarda al mediodía UTC para que la fecha mostrada no cambie por zona horaria
+      ...(editDate ? { entry_date: `${editDate}T12:00:00Z` } : {}),
     }).eq("id", editingEntry.id)
     
     if (error) {
@@ -114,6 +117,8 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     setEditQuantity(entry.quantity.toString())
     setEditRemito(entry.remito || "")
     setEditNotes(entry.notes || "")
+    // yyyy-MM-dd en UTC, igual criterio que formatDate
+    setEditDate(entry.entry_date ? new Date(entry.entry_date).toISOString().slice(0, 10) : "")
   }
 
   const formatDate = (dateString: string) => {
@@ -280,12 +285,20 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                 </div>
               </div>
               <div className="space-y-2">
+                <Label>Fecha de ingreso</Label>
+                <Input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
                 <Label>Cantidad ({editingEntry.materials.unit})</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  value={editQuantity} 
-                  onChange={(e) => setEditQuantity(e.target.value)} 
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editQuantity}
+                  onChange={(e) => setEditQuantity(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
                   Si cambias la cantidad, el stock se ajustara automaticamente.

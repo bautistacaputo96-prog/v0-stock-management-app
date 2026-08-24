@@ -37,6 +37,9 @@ type Supplier = {
   name: string
 }
 
+/** Valor del selector de planta para "Todas las plantas" */
+const ALL_PLANTS = "all"
+
 export function HumidityExcessTable({ plantId }: { plantId: string }) {
   const [entries, setEntries] = useState<HumidityExcessEntry[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -57,11 +60,9 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
   }, [plantId, selectedSupplier, selectedMonth])
 
   async function loadSuppliers() {
-    const { data } = await supabase
-      .from("suppliers")
-      .select("id, name")
-      .eq("plant_id", plantId)
-      .order("name")
+    let query = supabase.from("suppliers").select("id, name").order("name")
+    if (plantId !== ALL_PLANTS) query = query.eq("plant_id", plantId)
+    const { data } = await query
     setSuppliers(data || [])
   }
 
@@ -80,9 +81,11 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
         materials (name),
         suppliers (name)
       `)
-      .eq("plant_id", plantId)
       .gte("entry_date", startDate)
       .lte("entry_date", endDateStr)
+
+    // "all" = todas las plantas (antes buscaba una planta llamada "all" y la planilla quedaba vacía)
+    if (plantId !== ALL_PLANTS) query = query.eq("plant_id", plantId)
 
     if (selectedSupplier !== "all") {
       query = query.eq("supplier_id", selectedSupplier)

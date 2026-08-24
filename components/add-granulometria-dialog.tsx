@@ -62,12 +62,16 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
 
   useEffect(() => {
     const loadMaterials = async () => {
+      if (!formData.plant_id) return
       const supabase = createClient()
-      // Solo Arena Fina para ensayos granulométricos
+      // Solo Arena Fina para ensayos granulométricos, y solo la de la planta
+      // elegida: cada planta tiene su propio registro de Arena Fina, y sin
+      // filtrar aparecían duplicadas con proveedores de la otra planta.
       const { data, error } = await supabase
         .from("materials")
         .select("id, name")
         .eq("name", "Arena Fina")
+        .eq("plant_id", formData.plant_id)
         .order("name")
 
       if (error) {
@@ -77,13 +81,15 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
 
       setMaterials(data || [])
       // Auto-select Arena Fina if it's the only material
-      if (data && data.length === 1) {
-        setFormData(prev => ({ ...prev, material_id: data[0].id }))
-      }
+      setFormData(prev => ({
+        ...prev,
+        material_id: data && data.length === 1 ? data[0].id : "",
+        supplier_id: "",
+      }))
     }
 
     loadMaterials()
-  }, [])
+  }, [formData.plant_id])
 
   useEffect(() => {
     const loadSuppliers = async () => {

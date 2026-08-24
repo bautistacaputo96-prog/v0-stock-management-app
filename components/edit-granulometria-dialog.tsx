@@ -65,9 +65,11 @@ export function EditGranulometriaDialog({
     SIEVES.reduce((acc, sieve) => ({ ...acc, [sieve]: "" }), {}),
   )
 
-  // Load materials
+  // Load materials (solo los de la planta del ensayo: cada planta tiene su
+  // propio registro de cada material, y sin filtrar aparecían duplicados)
   useEffect(() => {
     const loadMaterials = async () => {
+      if (!formData.plant_id) return
       const supabase = createClient()
       const { data, error } = await supabase
         .from("materials")
@@ -79,6 +81,7 @@ export function EditGranulometriaDialog({
           "Piedra Partida 6/20",
           "Piedra Partida 10/30",
         ])
+        .eq("plant_id", formData.plant_id)
         .order("name")
 
       if (!error && data) {
@@ -87,7 +90,7 @@ export function EditGranulometriaDialog({
     }
 
     loadMaterials()
-  }, [])
+  }, [formData.plant_id])
 
   // Load suppliers for each material
   useEffect(() => {

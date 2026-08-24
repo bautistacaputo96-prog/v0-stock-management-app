@@ -21,7 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, X, Check, ChevronsUpDown } from "lucide-react"
+import { Plus, X, Check, ChevronsUpDown, Truck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -247,7 +247,7 @@ export function AddDispatchDialog({
       const supabase = createClient()
 
       if (isTestDispatch && !formData.notes.trim()) {
-        toast.error("Las observaciones son obligatorias para despachos de prueba")
+        toast.error("Las observaciones son obligatorias para el despacho por árido")
         setLoading(false)
         return
       }
@@ -563,10 +563,21 @@ export function AddDispatchDialog({
                 <DialogTitle>Registrar Despacho</DialogTitle>
                 <DialogDescription>Complete los datos del despacho de hormigón</DialogDescription>
               </div>
-              <div className="flex items-center space-x-2">
+              {/* Despacho por árido: permite cargar manualmente los materiales
+                  despachados en vez de calcularlos desde la fórmula */}
+              <label
+                htmlFor="is_test_dispatch"
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-md border-2 cursor-pointer transition-colors select-none",
+                  isTestDispatch
+                    ? "bg-amber-500 border-amber-600 text-white hover:bg-amber-600"
+                    : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-200",
+                )}
+              >
                 <Checkbox
                   id="is_test_dispatch"
                   checked={isTestDispatch}
+                  className={cn(isTestDispatch && "border-white data-[state=checked]:bg-white data-[state=checked]:text-amber-600")}
                   onCheckedChange={(checked) => {
                     setIsTestDispatch(checked as boolean)
                     if (!checked) {
@@ -582,10 +593,9 @@ export function AddDispatchDialog({
                     }
                   }}
                 />
-                <Label htmlFor="is_test_dispatch" className="text-xs cursor-pointer">
-                  Prueba
-                </Label>
-              </div>
+                <Truck className="h-4 w-4" />
+                <span className="text-sm font-semibold whitespace-nowrap">Despacho por árido</span>
+              </label>
             </div>
           </DialogHeader>
           <div className="grid gap-4 py-4 overflow-y-auto flex-1">
@@ -954,7 +964,7 @@ export function AddDispatchDialog({
                 id="notes"
                 placeholder={
                   isTestDispatch
-                    ? "Observaciones obligatorias (indique el motivo de la prueba o ingreso manual)"
+                    ? "Observaciones obligatorias (indique el motivo del despacho por árido)"
                     : "Observaciones adicionales (opcional)"
                 }
                 value={formData.notes}

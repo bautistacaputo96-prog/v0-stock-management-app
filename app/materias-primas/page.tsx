@@ -26,6 +26,9 @@ export default function MateriasPrimasPage() {
   )
 }
 
+/** Valor del selector de planta para "Todas las plantas" */
+const ALL_PLANTS = "all"
+
 function MateriasPrimasContent() {
   const [entries, setEntries] = useState<any[]>([])
   const [materials, setMaterials] = useState<any[]>([])
@@ -58,14 +61,13 @@ function MateriasPrimasContent() {
   }
 
   async function loadEntries() {
-    // First get material IDs for this plant
-    const { data: plantMaterials } = await supabase
-      .from("materials")
-      .select("id")
-      .eq("plant_id", selectedPlant)
-    
+    // First get material IDs for this plant ("all" = todas las plantas)
+    let plantMaterialsQuery = supabase.from("materials").select("id")
+    if (selectedPlant !== ALL_PLANTS) plantMaterialsQuery = plantMaterialsQuery.eq("plant_id", selectedPlant)
+    const { data: plantMaterials } = await plantMaterialsQuery
+
     const materialIds = plantMaterials?.map(m => m.id) || []
-    
+
     if (materialIds.length === 0) {
       setEntries([])
       return
@@ -109,12 +111,13 @@ function MateriasPrimasContent() {
   }
 
   async function loadMaterials() {
-    const { data } = await supabase
+    let query = supabase
       .from("materials")
       .select("*")
-      .eq("plant_id", selectedPlant)
       .neq("name", "Agua")
       .order("name", { ascending: true })
+    if (selectedPlant !== ALL_PLANTS) query = query.eq("plant_id", selectedPlant)
+    const { data } = await query
     setMaterials(data || [])
   }
 
@@ -125,7 +128,7 @@ function MateriasPrimasContent() {
 
   async function exportIngresos(scope: "current" | "both") {
     let matQuery = supabase.from("materials").select("id, name, plant_id")
-    if (scope === "current") matQuery = matQuery.eq("plant_id", selectedPlant)
+    if (scope === "current" && selectedPlant !== ALL_PLANTS) matQuery = matQuery.eq("plant_id", selectedPlant)
     const { data: mats } = await matQuery
     const matIds = (mats || []).map((m: any) => m.id)
     if (matIds.length === 0) return
