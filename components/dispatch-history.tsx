@@ -97,6 +97,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [superDispatch, setSuperDispatch] = useState<ScheduledDispatch | null>(null)
   const [superLiters, setSuperLiters] = useState("")
   const [sampleNumber, setSampleNumber] = useState("")
+  const [sampleSlump, setSampleSlump] = useState("")
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -605,8 +606,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
   async function openSampleDialog(dispatch: ScheduledDispatch) {
     setSampleNumber("")
+    setSampleSlump("")
     setSampleDispatch(dispatch)
-    
+
     // Load last sample number
     const supabase = createClient()
     const { data } = await supabase
@@ -625,6 +627,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       toast({ title: "Error", description: "Ingrese el numero de muestra", variant: "destructive" })
       return
     }
+    if (!sampleSlump.trim() || Number.isNaN(Number.parseFloat(sampleSlump))) {
+      toast({ title: "Error", description: "Ingrese el asentamiento real (cm)", variant: "destructive" })
+      return
+    }
+    const slumpValue = Number.parseFloat(sampleSlump)
 
     setSaving(true)
     const supabase = createClient()
@@ -642,9 +649,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       // Update existing dispatch
       const { error } = await supabase
         .from("dispatches")
-        .update({ 
-          sample_taken: true, 
-          sample_number: sampleNumber.trim() 
+        .update({
+          sample_taken: true,
+          sample_number: sampleNumber.trim(),
+          actual_slump_cm: slumpValue,
         })
         .eq("id", sampleDispatch.id)
 
@@ -666,9 +674,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         // Update the linked dispatch
         const { error } = await supabase
           .from("dispatches")
-          .update({ 
-            sample_taken: true, 
-            sample_number: sampleNumber.trim() 
+          .update({
+            sample_taken: true,
+            sample_number: sampleNumber.trim(),
+            actual_slump_cm: slumpValue,
           })
           .eq("id", scheduledDispatch.dispatch_id)
 
@@ -1258,13 +1267,29 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   className="font-mono"
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="sampleSlump">Asentamiento real (cm) *</Label>
+                <Input
+                  id="sampleSlump"
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={sampleSlump}
+                  onChange={(e) => setSampleSlump(e.target.value)}
+                  placeholder="Ej: 10"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Medido en el cono de Abrams al extraer la muestra.
+                </p>
+              </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSampleDispatch(null)}>
               Cancelar
             </Button>
-            <Button onClick={handleSaveSample} disabled={saving || !sampleNumber.trim()}>
+            <Button onClick={handleSaveSample} disabled={saving || !sampleNumber.trim() || !sampleSlump.trim()}>
               {saving ? "Guardando..." : "Guardar Muestra"}
             </Button>
           </DialogFooter>
