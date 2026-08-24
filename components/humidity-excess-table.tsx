@@ -68,11 +68,13 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
 
   async function loadEntries() {
     setLoading(true)
+    // Último día del mes calculado con fechas UTC. Con new Date("2026-08-01")
+    // + setMonth/setDate (que operan en hora local) el resultado en GMT-3 caía
+    // en el día 1 y la planilla salía vacía.
+    const [year, month] = selectedMonth.split("-").map(Number)
     const startDate = `${selectedMonth}-01`
-    const endDate = new Date(selectedMonth + "-01")
-    endDate.setMonth(endDate.getMonth() + 1)
-    endDate.setDate(0)
-    const endDateStr = endDate.toISOString().slice(0, 10)
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    const endDateStr = `${selectedMonth}-${String(lastDay).padStart(2, "0")}`
 
     let query = supabase
       .from("humidity_excess_log")

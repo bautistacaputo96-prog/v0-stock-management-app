@@ -202,16 +202,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     setLoading(true)
     const supabase = createClient()
 
-    // Load scheduled dispatches
-    let scheduledQuery = supabase
-      .from("scheduled_dispatches")
-      .select("id, quantity_m3, scheduled_arrival_time, scheduled_departure_time, actual_departure_time, actual_arrival_time, status, observations, is_urgent, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, dispatch_id, plant_id, clients(name), construction_sites(name, travel_time_minutes), formulas(name, code), mixers(license_plate)")
-      .gte("scheduled_arrival_time", `${dateFrom}T00:00:00`)
-      .lte("scheduled_arrival_time", `${dateTo}T23:59:59`)
-      .order("scheduled_arrival_time", { ascending: false })
-      .limit(10000)
-    if (selectedPlant !== ALL_PLANTS) scheduledQuery = scheduledQuery.eq("plant_id", selectedPlant)
-    const { data: scheduledData, error: scheduledError } = await scheduledQuery
+    // Este historial muestra únicamente despachos realizados (tabla "dispatches").
+    // Los pedidos programados que todavía no salieron se ven en Programación.
+    const scheduledError = null
 
     // Load manual dispatches (también filtrados por planta: antes se traían
     // los de todas las plantas y el filtro parecía no funcionar)
@@ -258,18 +251,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         mixer_id: d.mixer_id,
       }))
 
-      // Add source to scheduled dispatches
-      // Excluir los programados que ya fueron cargados (tienen dispatch_id),
-      // porque esos aparecen desde la tabla "dispatches" con todos los datos editables (remito, etc.)
-      const scheduledWithSource = (scheduledData || [])
-        .filter((d: any) => !d.dispatch_id)
-        .map((d: any) => ({ ...d, source: "scheduled" as const }))
-
-      // Combine and sort by date
-      const combined = [...scheduledWithSource, ...transformedManual].sort((a, b) => 
+      const combined = [...transformedManual].sort((a, b) =>
         new Date(b.scheduled_arrival_time).getTime() - new Date(a.scheduled_arrival_time).getTime()
       )
-      
+
       setDispatches(combined)
     }
     setLoading(false)
