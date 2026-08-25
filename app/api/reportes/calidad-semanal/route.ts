@@ -48,7 +48,7 @@ export async function GET(req: Request) {
   const hasta = searchParams.get("hasta") ? new Date(searchParams.get("hasta") + "T23:59:59") : rango.hasta
 
   // ── Datos ───────────────────────────────────────────────────────────────────
-  const [{ data: plants }, { data: despachos }, { data: roturas }, { data: vencidas }] = await Promise.all([
+  const [{ data: plants }, { data: despachos }, { data: roturas }, { data: vencidas }, { data: granulometrias }] = await Promise.all([
     supabase.from("plants").select("id, name"),
     supabase
       .from("dispatches")
@@ -70,6 +70,15 @@ export async function GET(req: Request) {
       .eq("discarded", false)
       .lt("scheduled_test_date", now.toISOString().slice(0, 10))
       .limit(10000),
+    // Granulometrías de arena del período (módulo de finura y humedad)
+    supabase
+      .from("granulometria_tests")
+      .select("extraction_date, fineness_modulus, moisture_percent, aggregate_type, provider, remito, plant_id, materials(name), suppliers(name)")
+      .not("fineness_modulus", "is", null)
+      .gte("extraction_date", desde.toISOString().slice(0, 10))
+      .lte("extraction_date", hasta.toISOString().slice(0, 10))
+      .order("extraction_date", { ascending: false })
+      .limit(1000),
   ])
 
   const plantName: Record<string, string> = {}
@@ -142,10 +151,44 @@ export async function GET(req: Request) {
   // Probetas que no alcanzaron la resistencia especificada (evaluadas a 28 días)
   const noCumplen = e28.filter(e => e.cumple === false)
 
+  // ── Granulometrías: módulo de finura por planta y material ──────────────────
+  // Lo relevante para el hormigón es el promedio y, sobre todo, la dispersión:
+  // un MF que salta entre ensayos cambia la demanda de agua del pastón.
+  type FilaGranul = {
+    planta: string; material: string; proveedor: string
+    n: number; mfs: number[]; humedades: number[]
+  }
+  const granulPorGrupo: Record<string, FilaGranul> = {}
+  ;(granulometrias || []).forEach((g: any) => {
+    const material = g.materials?.name || g.aggregate_type || "Sin especificar"
+    const proveedor = g.suppliers?.name?.trim() || g.provider?.trim() || "-"
+    const planta = plantName[g.plant_id] || "Sin planta"
+    const key = `${planta}|${material}|${proveedor}`
+    if (!granulPorGrupo[key]) granulPorGrupo[key] = { planta, material, proveedor, n: 0, mfs: [], humedades: [] }
+    const fila = granulPorGrupo[key]
+    fila.n++
+    fila.mfs.push(Number(g.fineness_modulus))
+    if (g.moisture_percent !== null && g.moisture_percent !== undefined) fila.humedades.push(Number(g.moisture_percent))
+  })
+  const prom = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null)
+  const resumenGranul = Object.values(granulPorGrupo)
+    .map(f => ({
+      planta: f.planta,
+      material: f.material,
+      proveedor: f.proveedor,
+      n: f.n,
+      mfProm: prom(f.mfs),
+      mfMin: Math.min(...f.mfs),
+      mfMax: Math.max(...f.mfs),
+      humProm: prom(f.humedades),
+    }))
+    .sort((a, b) => a.planta.localeCompare(b.planta) || a.material.localeCompare(b.material))
+
   const html = buildHtml({
     desde, hasta, filasPlanta, totM3, totMuestras, totObjetivo, totDespachos,
     ensayos, e28, e7, cumplen28, pctCumple28, resumenFormula, noCumplen,
     vencidas: (vencidas || []).length,
+    resumenGranul, granulometrias: granulometrias || [],
   })
 
   // ── 4. Envío por mail (si está configurado el servicio) ─────────────────────
@@ -213,6 +256,7 @@ function buildHtml(d: any) {
   const {
     desde, hasta, filasPlanta, totM3, totMuestras, totObjetivo, totDespachos,
     ensayos, e28, e7, cumplen28, pctCumple28, resumenFormula, noCumplen, vencidas,
+    resumenGranul = [], granulometrias = [],
   } = d
 
   const color = (pct: number) => (pct >= 100 ? "#15803d" : pct >= 70 ? "#b45309" : "#b91c1c")
@@ -232,6 +276,25 @@ function buildHtml(d: any) {
   }).join("")
 
   const pctTot = totObjetivo > 0 ? (totMuestras / totObjetivo) * 100 : 0
+
+  // Granulometría: una fila por planta/material/proveedor.
+  // La variación (máx − mín) se marca en ámbar desde 0,20 y en rojo desde 0,40:
+  // a partir de ahí el cambio de finura ya se nota en la demanda de agua.
+  const granulHtml = resumenGranul.map((g: any) => {
+    const variacion = g.mfMax - g.mfMin
+    const colorVar = variacion >= 0.4 ? "#b91c1c" : variacion >= 0.2 ? "#b45309" : "#15803d"
+    return `<tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${g.planta}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0">${g.material}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0">${g.proveedor}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right">${g.n}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${g.mfProm !== null ? g.mfProm.toFixed(2) : "-"}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b">${g.mfMin.toFixed(2)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b">${g.mfMax.toFixed(2)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;color:${colorVar}">${variacion.toFixed(2)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right">${g.humProm !== null ? g.humProm.toFixed(2) + "%" : "-"}</td>
+    </tr>`
+  }).join("")
 
   const resumenHtml = resumenFormula.length ? resumenFormula.map((r: any) => {
     const prom = r.suma / r.n
@@ -280,6 +343,15 @@ function buildHtml(d: any) {
   const bajas = resumenFormula.filter((r: any) => r.cumplen < r.n)
   if (bajas.length) alertas.push(`Fórmulas con ensayos por debajo de lo especificado: <b>${bajas.map((b: any) => b.formula).join(", ")}</b>.`)
   if (vencidas > 0) alertas.push(`Hay <b>${vencidas} probetas vencidas</b> pendientes de romper.`)
+  const granulInestable = resumenGranul.filter((g: any) => g.n > 1 && g.mfMax - g.mfMin >= 0.4)
+  if (granulInestable.length) {
+    alertas.push(
+      `Granulometría con <b>variación marcada del módulo de finura</b>: ` +
+      granulInestable.map((g: any) => `${g.material} (${g.planta}) ${g.mfMin.toFixed(2)}–${g.mfMax.toFixed(2)}`).join(", ") +
+      `. Revisar la constancia del árido: incide en la demanda de agua.`,
+    )
+  }
+  if (resumenGranul.length === 0) alertas.push("No se registraron ensayos de granulometría en el período.")
   if (pctCumple28 !== null && pctCumple28 >= 100 && pctTot >= 100 && vencidas === 0) alertas.push("Sin desvíos: muestreo y resistencias dentro de lo esperado.")
   if (!alertas.length) alertas.push("Sin observaciones para el período.")
 
@@ -313,6 +385,35 @@ function buildHtml(d: any) {
       Total del período: ${totMuestras} muestras sobre ${totObjetivo} objetivo (${totDespachos} camiones) ·
       <b style="color:${color(pctTot)}">${pctTot.toFixed(0)}% de cumplimiento</b>.
     </div>
+
+    <!-- Granulometría de áridos -->
+    <h3 style="font-size:15px;margin:0 0 8px">Granulometría de áridos — módulo de finura (${granulometrias.length} ensayos)</h3>
+    ${resumenGranul.length === 0 ? `
+      <div style="padding:14px;text-align:center;color:#64748b;font-size:13px;background:#f8fafc;border-radius:6px;margin-bottom:24px">
+        Sin ensayos de granulometría en el período
+      </div>
+    ` : `
+    <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;margin-bottom:8px">
+      <thead><tr style="background:#f1f5f9">
+        <th style="padding:8px 10px;text-align:left">Planta</th>
+        <th style="padding:8px 10px;text-align:left">Material</th>
+        <th style="padding:8px 10px;text-align:left">Proveedor</th>
+        <th style="padding:8px 10px;text-align:right">Ensayos</th>
+        <th style="padding:8px 10px;text-align:right">MF promedio</th>
+        <th style="padding:8px 10px;text-align:right">Mín</th>
+        <th style="padding:8px 10px;text-align:right">Máx</th>
+        <th style="padding:8px 10px;text-align:right">Variación</th>
+        <th style="padding:8px 10px;text-align:right">Humedad prom.</th>
+      </tr></thead>
+      <tbody>${granulHtml}</tbody>
+    </table>
+    <div style="font-size:12px;color:#64748b;margin-bottom:24px">
+      El <b>módulo de finura (MF)</b> indica qué tan gruesa es la arena: a mayor MF, más gruesa.
+      Lo importante es que se mantenga estable entre partidas — una <b>variación</b> marcada
+      (diferencia entre el máximo y el mínimo) cambia la demanda de agua del pastón y, con ella,
+      la resistencia final.
+    </div>
+    `}
 
     <!-- Resumen por fórmula -->
     <h3 style="font-size:15px;margin:0 0 8px">Resistencias a 28 días por fórmula</h3>
