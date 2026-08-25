@@ -97,22 +97,29 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
       const suppliersByMaterial: Record<string, Supplier[]> = {}
 
       for (const material of materials) {
-        const { data, error } = await supabase
-          .from("stock_entries")
-          .select(`
-            supplier_id,
-            suppliers (id, name)
-          `)
-          .eq("material_id", material.id)
+        // Proveedores habilitados para el material (Materias Primas → Proveedores).
+        // Antes se deducían del historial de ingresos, así que un proveedor que
+        // todavía no había entregado en esa planta no se podía elegir.
+        const [{ data: linked }, { data: fromEntries }] = await Promise.all([
+          supabase
+            .from("material_suppliers")
+            .select("suppliers (id, name)")
+            .eq("material_id", material.id),
+          supabase
+            .from("stock_entries")
+            .select("suppliers (id, name)")
+            .eq("material_id", material.id),
+        ])
 
-        if (!error && data) {
-          const uniqueSuppliers = Array.from(
-            new Map(
-              data.filter((entry: any) => entry.suppliers).map((entry: any) => [entry.suppliers.id, entry.suppliers]),
-            ).values(),
-          )
-          suppliersByMaterial[material.id] = uniqueSuppliers
-        }
+        // Se suman los del historial para no perder proveedores usados antes
+        // de que existiera el vínculo material-proveedor.
+        const merged = [...(linked || []), ...(fromEntries || [])]
+          .map((row: any) => row.suppliers)
+          .filter(Boolean)
+
+        suppliersByMaterial[material.id] = Array.from(
+          new Map(merged.map((s: any) => [s.id, s])).values(),
+        ).sort((a: any, b: any) => a.name.localeCompare(b.name))
       }
 
       setAllSuppliers(suppliersByMaterial)

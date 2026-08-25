@@ -99,20 +99,21 @@ export function EditGranulometriaDialog({
       const suppliersByMaterial: Record<string, Supplier[]> = {}
 
       for (const material of materials) {
-        const { data, error } = await supabase
-          .from("stock_entries")
-          .select(`
-            supplier_id,
-            suppliers (id, name)
-          `)
-          .eq("material_id", material.id)
+        // Igual que en el alta: proveedores habilitados para el material,
+        // más los que ya figuran en el historial de ingresos.
+        const [{ data: linked }, { data: fromEntries }] = await Promise.all([
+          supabase.from("material_suppliers").select("suppliers (id, name)").eq("material_id", material.id),
+          supabase.from("stock_entries").select("suppliers (id, name)").eq("material_id", material.id),
+        ])
+        const data = [...(linked || []), ...(fromEntries || [])]
+        const error = null
 
         if (!error && data) {
           const uniqueSuppliers = Array.from(
             new Map(
               data.filter((entry: any) => entry.suppliers).map((entry: any) => [entry.suppliers.id, entry.suppliers]),
             ).values(),
-          )
+          ).sort((a: any, b: any) => a.name.localeCompare(b.name))
           suppliersByMaterial[material.id] = uniqueSuppliers
         }
       }
