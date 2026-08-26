@@ -86,6 +86,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     mixer_id: "",
     observations: "",
     extra_water_liters: "",
+    dispatch_date: "",
   })
   const [formulaSearch, setFormulaSearch] = useState("")
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
@@ -509,6 +510,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       mixer_id: dispatch.mixer_id || "",
       observations: dispatch.observations || "",
       extra_water_liters: dispatch.extra_water_liters?.toString() || "",
+      dispatch_date: dispatch.scheduled_arrival_time
+        ? format(parseISO(dispatch.scheduled_arrival_time), "yyyy-MM-dd")
+        : "",
     })
     setFormulaSearch("")
     
@@ -536,12 +540,17 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const updateData: any = {
       quantity_m3: parseFloat(editForm.quantity_m3),
     }
-    
+
+    // Fecha editable: se guarda al mediodía de Argentina para que el día
+    // mostrado no cambie por zona horaria.
+    const nuevaFecha = editForm.dispatch_date ? `${editForm.dispatch_date}T12:00:00-03:00` : null
+
     // Different tables have different fields
     if (editingDispatch.source === "manual") {
       // Update dispatches table (usa "notes", no "observations")
       const { data, error } = await supabase.from("dispatches").update({
         ...updateData,
+        ...(nuevaFecha ? { dispatch_date: nuevaFecha } : {}),
         notes: editForm.observations || null,
         remito: editForm.remito || null,
         extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
@@ -566,6 +575,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       // Update scheduled_dispatches table (esta tabla si tiene "observations")
       const { data, error } = await supabase.from("scheduled_dispatches").update({
         ...updateData,
+        ...(nuevaFecha ? { scheduled_arrival_time: nuevaFecha } : {}),
         observations: editForm.observations || null,
         remito: editForm.remito || null,
         extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
@@ -1054,11 +1064,19 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           {editingDispatch && (
             <div className="space-y-4 py-4">
               <div className="text-sm text-muted-foreground mb-2">
-                Fecha: {format(parseISO(editingDispatch.scheduled_arrival_time), "dd/MM/yyyy HH:mm")}
+                Cargado: {format(parseISO(editingDispatch.scheduled_arrival_time), "dd/MM/yyyy HH:mm")}
                 <span className="ml-4">Tipo: {editingDispatch.source === "manual" ? "Manual" : "Programado"}</span>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Fecha del despacho</Label>
+                  <Input
+                    type="date"
+                    value={editForm.dispatch_date}
+                    onChange={(e) => setEditForm({ ...editForm, dispatch_date: e.target.value })}
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label>Remito</Label>
                   <Input 
