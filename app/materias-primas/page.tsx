@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { StockEntriesTable } from "@/components/stock-entries-table"
 import { AddStockEntryDialog } from "@/components/add-stock-entry-dialog"
+import { AddMaterialDialog } from "@/components/add-material-dialog"
 import { PlantSelector } from "@/components/plant-selector"
 import { DateRangeFilter } from "@/components/date-range-filter"
 import { MaterialFilter } from "@/components/material-filter"
@@ -172,7 +173,12 @@ function MateriasPrimasContent() {
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">Materias Primas</h1>
           <p className="text-xs md:text-sm text-foreground/70 font-medium mt-1">Gestion de stock e ingresos de materia prima</p>
         </div>
-        {activeTab === "ingresos" && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
+        <div className="flex items-center gap-2">
+          {activeTab === "stock" && (
+            <AddMaterialDialog plantId={selectedPlant} plants={plants} onSuccess={loadMaterials} />
+          )}
+          {activeTab === "ingresos" && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
+        </div>
       </div>
 
       {/* Tabs */}

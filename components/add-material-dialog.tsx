@@ -20,7 +20,15 @@ import { Plus } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 
-export function AddMaterialDialog() {
+export function AddMaterialDialog({
+  plantId,
+  plants = [],
+  onSuccess,
+}: {
+  plantId?: string
+  plants?: { id: string; name: string }[]
+  onSuccess?: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
@@ -28,31 +36,43 @@ export function AddMaterialDialog() {
     unit: "kg",
     min_stock: "0",
   })
+  // Planta destino: la seleccionada en la pantalla, o la primera si se está viendo "Todas"
+  const [targetPlant, setTargetPlant] = useState(
+    plantId && plantId !== "all" ? plantId : plants[0]?.id || "",
+  )
   const router = useRouter()
   const { toast } = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!targetPlant) {
+      toast({ variant: "destructive", title: "Falta la planta", description: "Elegí a qué planta pertenece el material" })
+      return
+    }
     setLoading(true)
 
     try {
       const supabase = createClient()
+      // El material se crea siempre asociado a una planta: cada planta lleva su
+      // propio stock, por eso los materiales existen duplicados por planta.
       const { error } = await supabase.from("materials").insert({
-        name: formData.name,
+        name: formData.name.trim(),
         unit: formData.unit,
         min_stock: Number.parseFloat(formData.min_stock),
         current_stock: 0,
+        plant_id: targetPlant,
       })
 
       if (error) throw error
 
       toast({
         title: "Material agregado",
-        description: `${formData.name} se agregó correctamente`,
+        description: `${formData.name} se agregó a ${plants.find(p => p.id === targetPlant)?.name || "la planta"}`,
       })
 
       setFormData({ name: "", unit: "kg", min_stock: "0" })
       setOpen(false)
+      onSuccess?.()
       router.refresh()
     } catch (error) {
       toast({
@@ -79,6 +99,21 @@ export function AddMaterialDialog() {
           <DialogDescription>Registra un nuevo material para el acopio</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {plants.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="material-plant">Planta</Label>
+              <Select value={targetPlant} onValueChange={setTargetPlant}>
+                <SelectTrigger id="material-plant">
+                  <SelectValue placeholder="Seleccionar planta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {plants.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="name">Nombre del Material</Label>
             <Input

@@ -64,6 +64,9 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     sampleTaken: false,
     sampleNumber: "",
     actualSlump: "",
+    // Fibra de vidrio agregada al camión, dosificada en kg por m³
+    fiberEnabled: false,
+    fiberKgPerM3: "",
   })
   const [submitting, setSubmitting] = useState(false)
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
@@ -261,6 +264,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       sampleTaken: false,
       sampleNumber: "",
       actualSlump: "",
+      fiberEnabled: false,
+      fiberKgPerM3: "",
     })
     setDispatchDialog(pedido)
     loadLastSampleNumber()
@@ -350,6 +355,45 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
             reference_id: newDispatch.id,
             movement_date: format(today, "yyyy-MM-dd"),
             notes: `Despacho remito ${dispatchForm.remito}`,
+          })
+        }
+      }
+
+      // 2b. Fibra de vidrio agregada al camión (dosificada en kg por m³)
+      const fiberPerM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
+      if (dispatchForm.fiberEnabled && fiberPerM3 > 0 && newDispatch) {
+        const fiberTotal = fiberPerM3 * quantityThisTruck
+        const { data: fiberMaterial } = await supabase
+          .from("materials")
+          .select("id")
+          .eq("plant_id", selectedPlant)
+          .ilike("name", "%fibra de vidrio%")
+          .maybeSingle()
+
+        if (fiberMaterial) {
+          await supabase.rpc("update_material_stock", {
+            p_material_id: fiberMaterial.id,
+            p_quantity_change: -fiberTotal,
+          })
+          await supabase.from("dispatch_materials").insert({
+            dispatch_id: newDispatch.id,
+            material_id: fiberMaterial.id,
+            quantity: fiberTotal,
+          })
+          await supabase.from("stock_movements").insert({
+            material_id: fiberMaterial.id,
+            movement_type: "consumo",
+            quantity_kg: fiberTotal,
+            reference_type: "dispatch",
+            reference_id: newDispatch.id,
+            movement_date: format(today, "yyyy-MM-dd"),
+            notes: `Fibra de vidrio ${fiberPerM3} kg/m³ × ${quantityThisTruck} m³ — remito ${dispatchForm.remito}`,
+          })
+        } else {
+          toast({
+            title: "Fibra no registrada",
+            description: "No se encontró el material 'Fibra de vidrio' en esta planta. El despacho se guardó igual.",
+            variant: "destructive",
           })
         }
       }
@@ -774,6 +818,60 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
               <div className="space-y-2">
                 <Label>Agua Extra en Planta (litros)</Label>
                 <Input type="number" value={dispatchForm.extraWater} onChange={e => setDispatchForm({ ...dispatchForm, extraWater: e.target.value })} placeholder="0" />
+              </div>
+
+              {/* Fibra de vidrio: se carga por m³ y el sistema calcula el total del camión */}
+              <div className="rounded-lg border p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Fibra de Vidrio</Label>
+                    <p className="text-xs text-muted-foreground">Se agrega al camion en el despacho</p>
+                  </div>
+                  <Switch
+                    checked={dispatchForm.fiberEnabled}
+                    onCheckedChange={checked => setDispatchForm({ ...dispatchForm, fiberEnabled: checked, fiberKgPerM3: checked ? dispatchForm.fiberKgPerM3 : "" })}
+                  />
+                </div>
+
+                {dispatchForm.fiberEnabled && (() => {
+                  const perM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
+                  const m3 = parseFloat(dispatchForm.quantity_m3) || 0
+                  const total = perM3 * m3
+                  return (
+                    <div className="flex items-end gap-3">
+                      <div className="space-y-1 flex-1">
+                        <Label className="text-xs">Dosificacion (kg por m³)</Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          inputMode="decimal"
+                          value={dispatchForm.fiberKgPerM3}
+                          onChange={e => setDispatchForm({ ...dispatchForm, fiberKgPerM3: e.target.value })}
+                          placeholder="Ej: 0.5"
+                        />
+                      </div>
+                      <div className="flex-1 pb-1">
+                        {total > 0 ? (
+                          <p className="text-xs text-muted-foreground leading-tight">
+                            Total en el camion:{" "}
+                            <span className="font-semibold text-foreground">
+                              {total.toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
+                            </span>
+                            <br />
+                            <span className="text-[11px]">
+                              {perM3.toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg/m³ × {m3.toLocaleString("es-AR", { maximumFractionDigits: 1 })} m³
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground leading-tight">
+                            Ingresá los kg por m³ para ver el total del camion.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="flex items-center justify-between rounded-lg border p-3">
