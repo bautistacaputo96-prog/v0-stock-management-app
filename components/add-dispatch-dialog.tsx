@@ -31,6 +31,7 @@ import { AddClientDialog } from "./add-client-dialog"
 import { AddConstructionSiteDialog } from "./add-construction-site-dialog"
 import { AddMixerDialog } from "./add-mixer-dialog"
 import { UserSelector } from "./user-selector"
+import { SearchableSelect } from "@/components/dispatch-scheduling"
 
 type Formula = {
   id: string
@@ -161,6 +162,8 @@ export function AddDispatchDialog({
     dispatch_date: new Date().toISOString().split("T")[0],
     notes: "",
     created_by: "",
+    // Fibra de vidrio agregada al camión, en kg por m³
+    fiber_kg_per_m3: "",
   })
 
   // Mantener la planta del diálogo sincronizada con la planta que llega por prop
@@ -507,6 +510,41 @@ export function AddDispatchDialog({
         console.log("[v0] Test cylinders created for sample", formData.sample_number)
       }
 
+      // Fibra de vidrio agregada al camión (kg/m³ × m³ del despacho)
+      const fiberPerM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
+      if (fiberPerM3 > 0) {
+        const fiberTotal = fiberPerM3 * quantityM3
+        const { data: fiberMaterial } = await supabase
+          .from("materials")
+          .select("id")
+          .eq("plant_id", dispatchPlantId)
+          .ilike("name", "%fibra de vidrio%")
+          .maybeSingle()
+
+        if (fiberMaterial) {
+          await supabase.rpc("update_material_stock", {
+            p_material_id: fiberMaterial.id,
+            p_quantity_change: -fiberTotal,
+          })
+          await supabase.from("dispatch_materials").insert({
+            dispatch_id: dispatch.id,
+            material_id: fiberMaterial.id,
+            quantity: fiberTotal,
+          })
+          await supabase.from("stock_movements").insert({
+            material_id: fiberMaterial.id,
+            movement_type: "consumo",
+            quantity_kg: fiberTotal,
+            reference_type: "dispatch",
+            reference_id: dispatch.id,
+            movement_date: formData.dispatch_date,
+            notes: `Fibra de vidrio ${fiberPerM3} kg/m³ × ${quantityM3} m³ — remito ${formData.remito}`,
+          })
+        } else {
+          toast.error("No se encontró el material 'Fibra de vidrio' en esta planta; el despacho se guardó sin descontarla")
+        }
+      }
+
       console.log("[v0] Dispatch saved successfully with stock updated")
       toast.success(
         formData.sample_taken
@@ -542,6 +580,7 @@ export function AddDispatchDialog({
       sample_taken: false,
       sample_number: "",
       actual_slump_cm: "",
+      fiber_kg_per_m3: "",
       dispatch_date: new Date().toISOString().split("T")[0],
       notes: "",
       created_by: "",
@@ -814,31 +853,15 @@ export function AddDispatchDialog({
                 <div className="grid gap-2">
                   <Label htmlFor="client">Cliente *</Label>
                   <div className="flex gap-2">
-                    <Select
-                      value={formData.client_id}
-                      onValueChange={(value) => {
-                        if (value === "add_new") {
-                          // Will be handled by dialog trigger
-                        } else {
-                          setFormData({ ...formData, client_id: value })
-                        }
-                      }}
-                      required
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Seleccionar cliente" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clients.map((client) => (
-                          <SelectItem key={client.id} value={client.id}>
-                            {client.name}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="add_new" className="text-primary">
-                          + Agregar nuevo cliente
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex-1">
+                      <SearchableSelect
+                        items={clients.map((c) => ({ id: c.id, label: c.name }))}
+                        value={formData.client_id}
+                        onChange={(value) => setFormData({ ...formData, client_id: value })}
+                        placeholder="Escribí para buscar el cliente..."
+                        emptyText="No se encontró el cliente"
+                      />
+                    </div>
                     <AddClientDialog
                       plantId={dispatchPlantId}
                       trigger={
@@ -857,30 +880,16 @@ export function AddDispatchDialog({
                 <div className="grid gap-2">
                   <Label htmlFor="construction_site">Obra *</Label>
                   <div className="flex gap-2">
-                    <Select
-                      value={formData.construction_site_id}
-                      onValueChange={(value) => setFormData({ ...formData, construction_site_id: value })}
-                      disabled={!formData.client_id}
-                      required
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue
-                          placeholder={formData.client_id ? "Seleccionar obra" : "Primero seleccione un cliente"}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {constructionSites.map((site) => (
-                          <SelectItem key={site.id} value={site.id}>
-                            {site.name}
-                          </SelectItem>
-                        ))}
-                        {formData.client_id && (
-                          <SelectItem value="add_new" className="text-primary">
-                            + Agregar nueva obra
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex-1">
+                      <SearchableSelect
+                        items={constructionSites.map((s) => ({ id: s.id, label: s.name, hint: s.address || "" }))}
+                        value={formData.construction_site_id}
+                        onChange={(value) => setFormData({ ...formData, construction_site_id: value })}
+                        disabled={!formData.client_id}
+                        placeholder={formData.client_id ? "Escribí para buscar la obra..." : "Primero elegí un cliente"}
+                        emptyText="No se encontró la obra"
+                      />
+                    </div>
                     {formData.client_id && (
                       <AddConstructionSiteDialog
                         clientId={formData.client_id}
@@ -912,6 +921,38 @@ export function AddDispatchDialog({
                     value={formData.extra_water_liters}
                     onChange={(e) => setFormData({ ...formData, extra_water_liters: e.target.value })}
                   />
+                </div>
+
+                {/* Fibra de vidrio: se carga por m³ y se muestra el total del camión */}
+                <div className="grid gap-2">
+                  <Label htmlFor="fiber_kg_per_m3">Fibra de vidrio (kg por m³)</Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id="fiber_kg_per_m3"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="Dejar vacío si no lleva"
+                      value={formData.fiber_kg_per_m3}
+                      onChange={(e) => setFormData({ ...formData, fiber_kg_per_m3: e.target.value })}
+                      className="flex-1"
+                    />
+                    {(() => {
+                      const perM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
+                      const m3 = Number.parseFloat(formData.quantity_m3) || 0
+                      if (perM3 <= 0 || m3 <= 0) return null
+                      return (
+                        <p className="text-xs text-muted-foreground flex-1 leading-tight">
+                          Total en el camión:{" "}
+                          <span className="font-semibold text-foreground">
+                            {(perM3 * m3).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
+                          </span>
+                          <br />
+                          <span className="text-[11px]">{perM3} kg/m³ × {m3} m³</span>
+                        </p>
+                      )
+                    })()}
+                  </div>
                 </div>
 
                 <div className="grid gap-3 p-4 border rounded-lg">

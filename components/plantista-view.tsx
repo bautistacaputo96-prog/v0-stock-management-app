@@ -77,6 +77,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   // Edit pedido total dialog
   const [editDialog, setEditDialog] = useState<ScheduledDispatch | null>(null)
   const [editQuantity, setEditQuantity] = useState("")
+  const [finalizarDialog, setFinalizarDialog] = useState<ScheduledDispatch | null>(null)
 
   // Daily humidity state
   const [humidityMaterials, setHumidityMaterials] = useState<any[]>([])
@@ -223,6 +224,31 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setClients(clientsRes.data || [])
     setDailyDispatches(dailyDispatchesRes.data || [])
     setLoading(false)
+  }
+
+  /**
+   * Cierra un pedido aunque falten m³ por despachar (ej: se pidieron 40 y la
+   * obra recibió 38). El pedido queda como completado con lo realmente
+   * despachado; los m³ pendientes se anotan en las observaciones.
+   */
+  async function finalizarPedido(pedido: ScheduledDispatch) {
+    const supabase = createClient()
+    if (!supabase) return
+    const despachado = pedido.dispatched_m3 || 0
+    const pendiente = Math.max(0, pedido.quantity_m3 - despachado)
+    const nota = pendiente > 0
+      ? `Cerrado con ${despachado.toFixed(1)} de ${pedido.quantity_m3} m3 (${pendiente.toFixed(1)} m3 sin despachar)`
+      : `Cerrado con ${despachado.toFixed(1)} m3`
+    await supabase
+      .from("scheduled_dispatches")
+      .update({
+        status: "completed",
+        observations: pedido.observations ? `${pedido.observations} · ${nota}` : nota,
+      })
+      .eq("id", pedido.id)
+    setFinalizarDialog(null)
+    toast({ title: "Pedido finalizado", description: nota })
+    loadData()
   }
 
   async function cancelPedido(pedido: ScheduledDispatch) {
@@ -695,6 +721,17 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                                 <Truck className="h-3 w-3" />Despachar
                               </Button>
                             )}
+                            {dispatched > 0 && remaining > 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setFinalizarDialog(pedido)}
+                                className="gap-1 border-emerald-500 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap"
+                              >
+                                <CheckCircle className="h-3 w-3" />
+                                Finalizar ({remaining.toFixed(1)} m3 sin enviar)
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </CardContent>
@@ -922,6 +959,53 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       </Dialog>
 
       {/* Edit quantity dialog */}
+      {/* Confirmacion de cierre con m3 pendientes */}
+      <Dialog open={!!finalizarDialog} onOpenChange={(open) => !open && setFinalizarDialog(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Finalizar pedido</DialogTitle>
+            <DialogDescription>
+              El pedido se cierra con lo que ya se despacho. No se puede despachar mas sobre este pedido.
+            </DialogDescription>
+          </DialogHeader>
+          {finalizarDialog && (() => {
+            const despachado = finalizarDialog.dispatched_m3 || 0
+            const pendiente = Math.max(0, finalizarDialog.quantity_m3 - despachado)
+            return (
+              <div className="space-y-3 py-2">
+                <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
+                  <p><span className="text-muted-foreground">Cliente:</span> <strong>{finalizarDialog.clients?.name}</strong></p>
+                  <p><span className="text-muted-foreground">Obra:</span> <strong>{finalizarDialog.construction_sites?.name}</strong></p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg border p-2">
+                    <p className="text-[11px] text-muted-foreground">Programado</p>
+                    <p className="text-lg font-bold">{finalizarDialog.quantity_m3}</p>
+                  </div>
+                  <div className="rounded-lg border p-2">
+                    <p className="text-[11px] text-muted-foreground">Despachado</p>
+                    <p className="text-lg font-bold text-emerald-600">{despachado.toFixed(1)}</p>
+                  </div>
+                  <div className="rounded-lg border p-2">
+                    <p className="text-[11px] text-muted-foreground">Sin enviar</p>
+                    <p className="text-lg font-bold text-orange-600">{pendiente.toFixed(1)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Queda registrado que se cerro con {pendiente.toFixed(1)} m3 sin despachar.
+                </p>
+              </div>
+            )
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFinalizarDialog(null)}>Cancelar</Button>
+            <Button onClick={() => finalizarDialog && finalizarPedido(finalizarDialog)}>
+              Finalizar pedido
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!editDialog} onOpenChange={(open) => !open && setEditDialog(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
