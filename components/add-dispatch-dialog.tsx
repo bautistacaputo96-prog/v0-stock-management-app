@@ -20,6 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
+import { currentUserName } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, X, Check, ChevronsUpDown, Truck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -384,7 +386,7 @@ export function AddDispatchDialog({
         dispatch_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
         notes: formData.notes || null,
         is_test_dispatch: isTestDispatch,
-        created_by: formData.created_by || null,
+        created_by: formData.created_by || currentUserName(),
         plant_id: dispatchPlantId,
       }
 
@@ -399,6 +401,19 @@ export function AddDispatchDialog({
       console.log("[v0] Dispatch insert result:", { success: !!dispatch, error: dispatchError })
 
       if (dispatchError) throw dispatchError
+
+      await logActivity({
+        action: "crear",
+        entity: "despacho",
+        entityId: dispatch?.id,
+        reference: formData.remito || null,
+        plantId: dispatchPlantId,
+        details: {
+          Remito: formData.remito || "-",
+          "m3": quantityM3,
+          Formula: selectedFormula?.code || "-",
+        },
+      })
 
       console.log("[v0] Creating dispatch_materials and updating stock")
 

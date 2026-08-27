@@ -17,6 +17,8 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { AddDispatchDialog } from "@/components/add-dispatch-dialog"
+import { currentUserName } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -24,6 +26,7 @@ type ScheduledDispatch = {
   quantity_m3: number; dispatched_m3: number;
   scheduled_arrival_time: string; scheduled_departure_time: string;
   status: string; observations: string | null; is_urgent: boolean;
+  fiber_kg_per_m3?: number | null;
   clients?: { id: string; name: string };
   construction_sites?: { id: string; name: string; address: string | null; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean };
   formulas?: { id: string; name: string; code: string; useful_life_minutes: number };
@@ -264,8 +267,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       sampleTaken: false,
       sampleNumber: "",
       actualSlump: "",
-      fiberEnabled: false,
-      fiberKgPerM3: "",
+      fiberEnabled: pedido.fiber_kg_per_m3 != null && pedido.fiber_kg_per_m3 > 0,
+      fiberKgPerM3: pedido.fiber_kg_per_m3 != null ? String(pedido.fiber_kg_per_m3) : "",
     })
     setDispatchDialog(pedido)
     loadLastSampleNumber()
@@ -319,6 +322,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         actual_slump_cm: dispatchForm.sampleTaken ? parseFloat(dispatchForm.actualSlump) : null,
         scheduled_dispatch_id: dispatchDialog.id,
         plant_id: selectedPlant,
+        created_by: currentUserName(),
       }).select().single()
 
       if (dispatchError) throw dispatchError
@@ -648,6 +652,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-semibold truncate">{pedido.clients?.name}</span>
                               {pedido.is_urgent && <Badge variant="destructive" className="shrink-0">URGENTE</Badge>}
+                              {!!pedido.fiber_kg_per_m3 && (
+                                <Badge variant="outline" className="shrink-0 border-purple-400 text-purple-700 bg-purple-50">
+                                  FIBRA {pedido.fiber_kg_per_m3} kg/m³
+                                </Badge>
+                              )}
                             </div>
                             <div className="text-sm text-muted-foreground flex items-center gap-1 mb-1">
                               <MapPin className="h-3 w-3 shrink-0" />

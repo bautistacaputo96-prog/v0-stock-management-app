@@ -25,6 +25,8 @@ import { AddClientDialog } from "@/components/add-client-dialog"
 import { AddMixerDialog } from "@/components/add-mixer-dialog"
 import { AddConstructionSiteDialog } from "@/components/add-construction-site-dialog"
 import { UserSelector } from "@/components/user-selector"
+import { currentUserName } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
@@ -39,7 +41,7 @@ type ScheduledDispatch = {
   id: string; plant_id: string; client_id: string; construction_site_id: string;
   formula_id: string; mixer_id: string | null; quantity_m3: number;
   scheduled_arrival_time: string; scheduled_departure_time: string; status: string;
-  observations: string | null; is_urgent: boolean;
+  observations: string | null; is_urgent: boolean; fiber_kg_per_m3?: number | null;
   clients?: Client; construction_sites?: ConstructionSite; formulas?: Formula; mixers?: Mixer;
 }
 
@@ -109,6 +111,67 @@ function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; v
   )
 }
 
+/** Selector con búsqueda por texto, para listas largas (clientes, obras). */
+export function SearchableSelect({
+  items,
+  value,
+  onChange,
+  placeholder = "Buscar...",
+  emptyText = "Sin resultados",
+  disabled = false,
+}: {
+  items: { id: string; label: string; hint?: string }[]
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  emptyText?: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = items.find((i) => i.id === value)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full justify-between font-normal"
+        >
+          <span className="truncate">{selected ? selected.label : placeholder}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[280px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder={placeholder} />
+          <CommandList className="max-h-[220px]">
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {items.map((i) => (
+                <CommandItem
+                  key={i.id}
+                  value={`${i.label} ${i.hint || ""}`}
+                  onSelect={() => {
+                    onChange(i.id)
+                    setOpen(false)
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === i.id ? "opacity-100" : "opacity-0")} />
+                  <span className="truncate">{i.label}</span>
+                  {i.hint && <span className="ml-2 text-muted-foreground text-xs truncate">{i.hint}</span>}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [selectedPlant, setSelectedPlant] = useState("all") // "all" para todas las plantas
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }))
@@ -146,6 +209,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     observations: "",
     is_urgent: false,
     created_by: "",
+    fiber_kg_per_m3: "",
   })
 
   // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
@@ -223,6 +287,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       observations: "",
       is_urgent: false,
       created_by: "",
+      fiber_kg_per_m3: "",
     })
     setEditingDispatch(null)
     setCuitPrompt("")
@@ -244,6 +309,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       observations: dispatch.observations || "",
       is_urgent: dispatch.is_urgent,
       created_by: dispatch.created_by || "",
+      fiber_kg_per_m3: dispatch.fiber_kg_per_m3 != null ? String(dispatch.fiber_kg_per_m3) : "",
     })
     setEditingDispatch(dispatch)
     setCuitPrompt("")
@@ -290,6 +356,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           scheduled_departure_time: departureTime,
           observations: form.observations || null,
           is_urgent: form.is_urgent,
+          fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
         }).eq("id", editingDispatch.id)
         if (error) {
           toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
@@ -310,7 +377,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           scheduled_departure_time: departureTime,
           observations: form.observations || null,
           is_urgent: form.is_urgent,
-          created_by: form.created_by || null,
+          created_by: form.created_by || currentUserName(),
+          fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
         })
         if (error) {
           toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
@@ -635,6 +703,29 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <div className="space-y-2">
               <Label>Cantidad Total (m3) *</Label>
               <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} placeholder="Ej: 40" />
+            </div>
+
+            {/* Fibra de vidrio: se define en el pedido para que el plantista sepa
+                que ese hormigón la lleva; el valor se propone al cargar cada camión. */}
+            <div className="space-y-2">
+              <Label>Fibra de vidrio (kg por m3)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="0"
+                value={form.fiber_kg_per_m3}
+                onChange={(e) => setForm({ ...form, fiber_kg_per_m3: e.target.value })}
+                placeholder="Dejar vacio si no lleva"
+              />
+              {form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && parseFloat(form.quantity_m3) > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Total estimado del pedido:{" "}
+                  <span className="font-semibold text-foreground">
+                    {(parseFloat(form.fiber_kg_per_m3) * parseFloat(form.quantity_m3)).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
+                  </span>{" "}
+                  ({form.fiber_kg_per_m3} kg/m³ × {form.quantity_m3} m³)
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

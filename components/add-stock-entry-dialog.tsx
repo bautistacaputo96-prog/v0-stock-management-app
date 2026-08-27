@@ -20,6 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Plus, UserPlus, Truck, Calculator, AlertTriangle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { currentUserName } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 import { useToast } from "@/hooks/use-toast"
 import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
@@ -210,6 +212,7 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
           humidity_percentage: requiresGranulometry ? humidity : null,
           sample_taken_granulometry: requiresGranulometry ? formData.sample_taken_granulometry === "yes" : false,
           notes: formData.notes || null,
+          created_by: currentUserName(),
           entry_date: `${formData.entry_date}T12:00:00`,
         })
         .select()
@@ -305,6 +308,18 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
       }
 
       const displayQuantity = `${originalQuantity.toLocaleString("es-AR")} ${selectedMaterial?.unit}`
+
+      await logActivity({
+        action: "crear",
+        entity: "ingreso",
+        entityId: entryData?.id,
+        reference: formData.remito.trim() || null,
+        details: {
+          Material: selectedMaterial?.name || "-",
+          Cantidad: displayQuantity,
+          Remito: formData.remito.trim() || "-",
+        },
+      })
 
       toast({
         title: "Ingreso registrado",

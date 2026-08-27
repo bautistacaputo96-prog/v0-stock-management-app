@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
+import { logDeletion } from "@/lib/activity-log"
 
 type Material = {
   id: string
@@ -67,6 +68,19 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       amount: deleteEntry.quantity 
     })
     
+    await logDeletion({
+      entity: "ingreso",
+      entityId: deleteEntry.id,
+      reference: deleteEntry.remito || null,
+      details: {
+        Material: deleteEntry.materials?.name || "-",
+        Proveedor: deleteEntry.suppliers?.name || "-",
+        Remito: deleteEntry.remito || "-",
+        Cantidad: `${deleteEntry.quantity} ${deleteEntry.materials?.unit || ""}`.trim(),
+        Fecha: deleteEntry.entry_date ? new Date(deleteEntry.entry_date).toLocaleDateString("es-AR") : "-",
+      },
+    })
+
     const { error } = await supabase.from("stock_entries").delete().eq("id", deleteEntry.id)
     if (error) {
       toast({ title: "Error", description: "No se pudo eliminar el ingreso", variant: "destructive" })

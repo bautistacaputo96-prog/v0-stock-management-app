@@ -18,8 +18,10 @@ import {
   Calendar,
   Menu,
   X,
+  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { getCurrentUser, clearCurrentUser } from "@/lib/current-user"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { HighContrastToggle } from "@/components/high-contrast-toggle"
@@ -54,6 +56,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   )
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  // El registro de actividad solo se ofrece a supervisores
+  const [supervisor, setSupervisor] = useState(false)
+  const [userName, setUserName] = useState("")
+  useEffect(() => {
+    const u = getCurrentUser()
+    setSupervisor(u?.role === "supervisor")
+    setUserName(u?.name || "")
+  }, [])
+
+  function handleLogout() {
+    clearCurrentUser()
+    window.localStorage.removeItem("rebucret-auth")
+    window.location.reload()
+  }
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -168,6 +184,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <FileBarChart className="h-[18px] w-[18px] flex-shrink-0" />
         <span>Informes</span>
       </Link>
+
+      {supervisor && (
+        <Link
+          href="/actividad"
+          onClick={() => isMobile && setMobileOpen(false)}
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+            isActive("/actividad")
+              ? "bg-[#1e293b] text-white"
+              : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
+          )}
+        >
+          <ShieldCheck className="h-[18px] w-[18px] flex-shrink-0" />
+          <span>Actividad</span>
+        </Link>
+      )}
     </div>
   )
 
@@ -263,6 +295,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           )}
         </nav>
+
+        {/* Usuario en sesión */}
+        {userName && (
+          <div className="border-t border-[#1e293b] px-3 py-2.5">
+            {!collapsed ? (
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-white truncate font-medium">{userName}</p>
+                  <p className="text-[10px] text-[#64748b]">{supervisor ? "Supervisor" : "Operario"}</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Cerrar sesion"
+                  className="text-[#94a3b8] hover:text-white transition-colors shrink-0"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleLogout}
+                title={`${userName} — Cerrar sesion`}
+                className="w-full flex justify-center text-[#94a3b8] hover:text-white transition-colors"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Collapse toggle */}
         <div className="border-t border-[#1e293b] p-3">

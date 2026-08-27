@@ -20,6 +20,7 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
+import { logDeletion } from "@/lib/activity-log"
 import { es } from "date-fns/locale"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
@@ -459,6 +460,25 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     }
 
     try {
+      // Queda asentado en Actividad y se avisa a los supervisores
+      await logDeletion({
+        entity: "despacho",
+        entityId: deleteDispatch.id,
+        reference: deleteDispatch.remito || null,
+        plantId: deleteDispatch.plant_id || null,
+        details: {
+          Remito: deleteDispatch.remito || "-",
+          Cliente: deleteDispatch.clients?.name || "-",
+          Obra: deleteDispatch.construction_sites?.name || "-",
+          Formula: deleteDispatch.formulas?.code || "-",
+          "m3": deleteDispatch.quantity_m3,
+          Fecha: deleteDispatch.scheduled_arrival_time
+            ? format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy")
+            : "-",
+          "Cargado por": deleteDispatch.created_by || "-",
+        },
+      })
+
       if (deleteDispatch.source === "manual") {
         // Es un despacho real (tabla "dispatches"): eliminar primero los registros hijos
         // para evitar errores de clave foránea.
