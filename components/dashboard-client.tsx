@@ -76,6 +76,8 @@ interface Dispatch {
   remito: string
   formula_id: string
   client_id: string
+  /** Planta que despachó. Puede faltar en despachos muy viejos. */
+  plant_id?: string | null
   formulas: {
     id: string
     code: string
@@ -261,9 +263,13 @@ export function DashboardClient({
   }, [materials, selectedPlant])
 
   const filteredDispatches = useMemo(() => {
+    // Se agrupa por la planta que despachó, no por la planta de la fórmula:
+    // una planta puede despachar con una fórmula cargada en la otra (Hudson
+    // usando fórmulas de Canning) y esos m³ deben contar para quien despachó.
+    // Los despachos viejos sin planta caen de nuevo en la fórmula.
     return selectedPlant === "all"
       ? dispatches
-      : dispatches.filter((d) => d.formulas?.plant_id === selectedPlant)
+      : dispatches.filter((d) => (d.plant_id || d.formulas?.plant_id) === selectedPlant)
   }, [dispatches, selectedPlant])
 
   const filteredEntries = useMemo(() => {

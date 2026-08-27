@@ -61,7 +61,9 @@ export default function ProductionReport({ plants, formulas, mixers }: Productio
 
     if (startDate) query = query.gte("dispatch_date", startDate)
     if (endDate) query = query.lte("dispatch_date", endDate)
-    if (selectedPlants.length > 0) query = query.in("formulas.plant_id", selectedPlants)
+    // Por la planta que despachó, no por la de la fórmula: una planta puede
+    // despachar con fórmulas cargadas en la otra.
+    if (selectedPlants.length > 0) query = query.in("plant_id", selectedPlants)
     if (selectedFormulas.length > 0) query = query.in("formula_id", selectedFormulas)
     if (selectedMixers.length > 0) query = query.in("mixer_id", selectedMixers)
 
