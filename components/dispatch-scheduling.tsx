@@ -705,10 +705,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} placeholder="Ej: 40" />
             </div>
 
-            {/* Fibra de vidrio: se define en el pedido para que el plantista sepa
+            {/* Fibra: se define en el pedido para que el plantista sepa
                 que ese hormigón la lleva; el valor se propone al cargar cada camión. */}
             <div className="space-y-2">
-              <Label>Fibra de vidrio (kg por m3)</Label>
+              <Label>Fibra (kg por m3)</Label>
               <Input
                 type="number"
                 step="0.1"

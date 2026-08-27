@@ -162,7 +162,7 @@ export function AddDispatchDialog({
     dispatch_date: new Date().toISOString().split("T")[0],
     notes: "",
     created_by: "",
-    // Fibra de vidrio agregada al camión, en kg por m³
+    // Fibra agregada al camión, en kg por m³
     fiber_kg_per_m3: "",
   })
 
@@ -510,7 +510,7 @@ export function AddDispatchDialog({
         console.log("[v0] Test cylinders created for sample", formData.sample_number)
       }
 
-      // Fibra de vidrio agregada al camión (kg/m³ × m³ del despacho)
+      // Fibra agregada al camión (kg/m³ × m³ del despacho)
       const fiberPerM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
       if (fiberPerM3 > 0) {
         const fiberTotal = fiberPerM3 * quantityM3
@@ -518,7 +518,7 @@ export function AddDispatchDialog({
           .from("materials")
           .select("id")
           .eq("plant_id", dispatchPlantId)
-          .ilike("name", "%fibra de vidrio%")
+          .ilike("name", "%fibra%")
           .maybeSingle()
 
         if (fiberMaterial) {
@@ -538,10 +538,10 @@ export function AddDispatchDialog({
             reference_type: "dispatch",
             reference_id: dispatch.id,
             movement_date: formData.dispatch_date,
-            notes: `Fibra de vidrio ${fiberPerM3} kg/m³ × ${quantityM3} m³ — remito ${formData.remito}`,
+            notes: `Fibra ${fiberPerM3} kg/m³ × ${quantityM3} m³ — remito ${formData.remito}`,
           })
         } else {
-          toast.error("No se encontró el material 'Fibra de vidrio' en esta planta; el despacho se guardó sin descontarla")
+          toast.error("No se encontró el material 'Fibra' en esta planta; el despacho se guardó sin descontarla")
         }
       }
 
@@ -923,9 +923,9 @@ export function AddDispatchDialog({
                   />
                 </div>
 
-                {/* Fibra de vidrio: se carga por m³ y se muestra el total del camión */}
+                {/* Fibra: se carga por m³ y se muestra el total del camión */}
                 <div className="grid gap-2">
-                  <Label htmlFor="fiber_kg_per_m3">Fibra de vidrio (kg por m³)</Label>
+                  <Label htmlFor="fiber_kg_per_m3">Fibra (kg por m³)</Label>
                   <div className="flex items-center gap-3">
                     <Input
                       id="fiber_kg_per_m3"

@@ -67,7 +67,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     sampleTaken: false,
     sampleNumber: "",
     actualSlump: "",
-    // Fibra de vidrio agregada al camión, dosificada en kg por m³
+    // Fibra agregada al camión, dosificada en kg por m³
     fiberEnabled: false,
     fiberKgPerM3: "",
   })
@@ -389,7 +389,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         }
       }
 
-      // 2b. Fibra de vidrio agregada al camión (dosificada en kg por m³)
+      // 2b. Fibra agregada al camión (dosificada en kg por m³)
       const fiberPerM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
       if (dispatchForm.fiberEnabled && fiberPerM3 > 0 && newDispatch) {
         const fiberTotal = fiberPerM3 * quantityThisTruck
@@ -397,7 +397,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           .from("materials")
           .select("id")
           .eq("plant_id", selectedPlant)
-          .ilike("name", "%fibra de vidrio%")
+          .ilike("name", "%fibra%")
           .maybeSingle()
 
         if (fiberMaterial) {
@@ -417,12 +417,12 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
             reference_type: "dispatch",
             reference_id: newDispatch.id,
             movement_date: format(today, "yyyy-MM-dd"),
-            notes: `Fibra de vidrio ${fiberPerM3} kg/m³ × ${quantityThisTruck} m³ — remito ${dispatchForm.remito}`,
+            notes: `Fibra ${fiberPerM3} kg/m³ × ${quantityThisTruck} m³ — remito ${dispatchForm.remito}`,
           })
         } else {
           toast({
             title: "Fibra no registrada",
-            description: "No se encontró el material 'Fibra de vidrio' en esta planta. El despacho se guardó igual.",
+            description: "No se encontró el material 'Fibra' en esta planta. El despacho se guardó igual.",
             variant: "destructive",
           })
         }
@@ -866,11 +866,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                 <Input type="number" value={dispatchForm.extraWater} onChange={e => setDispatchForm({ ...dispatchForm, extraWater: e.target.value })} placeholder="0" />
               </div>
 
-              {/* Fibra de vidrio: se carga por m³ y el sistema calcula el total del camión */}
+              {/* Fibra: se carga por m³ y el sistema calcula el total del camión */}
               <div className="rounded-lg border p-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label>Fibra de Vidrio</Label>
+                    <Label>Fibra</Label>
                     <p className="text-xs text-muted-foreground">Se agrega al camion en el despacho</p>
                   </div>
                   <Switch
