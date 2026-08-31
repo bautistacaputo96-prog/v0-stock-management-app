@@ -31,6 +31,11 @@ const STATUS_OPTIONS = [
   { value: "unavailable", label: "No Disponible", color: "bg-red-500", icon: XCircle },
 ]
 
+/** Compara patentes ignorando guiones, espacios y mayúsculas. */
+function normalizarPatente(p: string) {
+  return (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+}
+
 export function MixersManagement() {
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [loading, setLoading] = useState(true)
@@ -94,11 +99,26 @@ export function MixersManagement() {
     const supabase = createClient()
 
     const data = {
-      license_plate: form.license_plate,
+      license_plate: form.license_plate.trim(),
       brand: form.brand || null,
       capacity_m3: parseFloat(form.capacity_m3) || 8,
       model: form.model || null,
       status: form.status,
+    }
+
+    // Aviso de patente repetida ignorando guiones, espacios y mayúsculas
+    // (evita cargar dos veces el mismo camión como "AF431GU" y "AF-431-GU").
+    const patenteNorm = normalizarPatente(data.license_plate)
+    const repetido = mixers.find(
+      (m) => normalizarPatente(m.license_plate) === patenteNorm && m.id !== editingMixer?.id,
+    )
+    if (repetido) {
+      toast({
+        title: "Camion repetido",
+        description: `${repetido.license_plate} ya esta cargado`,
+        variant: "destructive",
+      })
+      return
     }
 
     if (editingMixer) {

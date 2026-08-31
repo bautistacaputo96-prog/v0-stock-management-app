@@ -30,6 +30,11 @@ interface AddMixerDialogProps {
   onMixerAdded?: (mixer: Mixer) => void
 }
 
+/** Compara patentes ignorando guiones, espacios y mayúsculas. */
+function normalizarPatente(p: string) {
+  return (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+}
+
 export function AddMixerDialog({ plantId, trigger, onMixerAdded }: AddMixerDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -46,12 +51,29 @@ export function AddMixerDialog({ plantId, trigger, onMixerAdded }: AddMixerDialo
     try {
       const supabase = createClient()
 
+      // Los camiones son compartidos entre plantas: se guardan sin planta para
+      // que aparezcan en las dos y no se dupliquen por no verlos.
+      const patente = formData.license_plate.trim()
+      const patenteNorm = normalizarPatente(patente)
+
+      // Aviso de duplicado ignorando guiones, espacios y mayúsculas
+      // (así "AF-431-GU" reconoce al "AF431GU" ya cargado).
+      const { data: existentes } = await supabase.from("mixers").select("id, license_plate")
+      const yaExiste = (existentes || []).find(
+        (m: { license_plate: string }) => normalizarPatente(m.license_plate) === patenteNorm,
+      )
+      if (yaExiste) {
+        toast.error(`El camión ${yaExiste.license_plate} ya está cargado`)
+        setLoading(false)
+        return
+      }
+
       const { data, error } = await supabase
         .from("mixers")
         .insert({
-          license_plate: formData.license_plate,
+          license_plate: patente,
           brand: formData.brand || null,
-          plant_id: plantId,
+          plant_id: null,
           capacity_m3: parseFloat(formData.capacity_m3) || 8,
         })
         .select()
