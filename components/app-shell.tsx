@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   LogOut,
+  Wrench,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getCurrentUser, clearCurrentUser } from "@/lib/current-user"
@@ -32,6 +33,7 @@ const mainNavItems = [
   { href: "/formulas", label: "Formulas", icon: FlaskConical },
   { href: "/clientes", label: "Clientes", icon: Users },
   { href: "/camiones", label: "Camiones", icon: Truck },
+  { href: "/mantenimiento", label: "Mantenimiento", icon: Wrench },
 ]
 
 const dispatchSubItems = [
