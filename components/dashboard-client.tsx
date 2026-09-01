@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { MantenimientoWidget } from "@/components/mantenimiento-widget"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -768,6 +769,11 @@ export function DashboardClient({
             </a>
           </div>
         )}
+
+        {/* Mantenimiento a programar */}
+        <div className="mb-4 md:mb-6">
+          <MantenimientoWidget plantId={selectedPlant} />
+        </div>
 
         {/* Stock Alerts & Dispatch Evolution */}
         <div className="grid gap-3 md:gap-4 lg:grid-cols-2 mb-4 md:mb-6">

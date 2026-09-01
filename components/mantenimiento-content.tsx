@@ -17,20 +17,25 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { currentUserName } from "@/lib/current-user"
-import { CheckCircle2, AlertTriangle, Clock, Wrench, Package, ChevronDown, ChevronUp, History } from "lucide-react"
+import { CheckCircle2, AlertTriangle, Clock, Wrench, Package, ChevronDown, ChevronUp, History, ListChecks, Image as ImageIcon } from "lucide-react"
 import { format, differenceInCalendarDays, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 
 type Equipo = { id: string; nombre: string; modelo: string | null; fabricante: string | null; plant_id: string; plants?: { name: string } }
 type Item = { id: string; item: string; cantidad: number | null; unidad: string | null; tipo: string; codigo_repuesto: string | null }
+type Foto = { id: string; url: string; epigrafe: string | null }
+type Paso = { id: string; texto: string; orden: number }
 type Tarea = {
   id: string; codigo: string | null; titulo: string; detalle: string | null; componente: string | null
   frecuencia_dias: number | null; frecuencia_m3: number | null; referencia_manual: string | null
   maint_task_items: Item[]
+  maint_task_images: Foto[]
+  maint_task_steps: Paso[]
   ultima?: { fecha: string; realizado_por: string | null; m3_acumulado: number | null } | null
 }
 
@@ -65,6 +70,8 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
   const [expandida, setExpandida] = useState<string | null>(null)
   const [registrar, setRegistrar] = useState<Tarea | null>(null)
   const [obs, setObs] = useState("")
+  const [pasosMarcados, setPasosMarcados] = useState<Record<string, boolean>>({})
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
   const [fecha, setFecha] = useState(format(new Date(), "yyyy-MM-dd"))
   const [guardando, setGuardando] = useState(false)
   const { toast } = useToast()
@@ -84,7 +91,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
     const [{ data: ts }, { data: ejec }, { data: desp }] = await Promise.all([
       supabase
         .from("maint_tasks")
-        .select("*, maint_task_items(*)")
+        .select("*, maint_task_items(*), maint_task_images(*), maint_task_steps(*)")
         .eq("equipment_id", equipoId)
         .eq("activo", true)
         .order("frecuencia_dias")
@@ -181,6 +188,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       realizado_por: currentUserName(),
       observaciones: obs || null,
       m3_acumulado: m3Actual,
+      pasos: Object.keys(pasosMarcados).length ? pasosMarcados : null,
     })
     if (error) {
       toast({ title: "Error", description: "No se pudo registrar", variant: "destructive" })
@@ -188,6 +196,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       toast({ title: "Registrado", description: registrar.titulo })
       setRegistrar(null)
       setObs("")
+      setPasosMarcados({})
       cargar()
     }
     setGuardando(false)
@@ -317,6 +326,38 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
                             </div>
                           </div>
                         )}
+                        {t.maint_task_steps?.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
+                              <ListChecks className="h-3 w-3" /> Pasos
+                            </p>
+                            <ol className="space-y-1 list-decimal list-inside">
+                              {[...t.maint_task_steps].sort((a,b)=>a.orden-b.orden).map((s) => (
+                                <li key={s.id} className="text-xs text-muted-foreground">{s.texto}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
+
+                        {t.maint_task_images?.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
+                              <ImageIcon className="h-3 w-3" /> Fotos del manual — tocá para ampliar
+                            </p>
+                            <div className="flex gap-2 flex-wrap">
+                              {t.maint_task_images.map((f) => (
+                                <button key={f.id} onClick={() => setFotoAmpliada(f.url)} className="shrink-0">
+                                  <img
+                                    src={f.url}
+                                    alt={f.epigrafe || t.titulo}
+                                    className="h-24 w-auto rounded border object-cover hover:opacity-80 transition-opacity"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         <p className="text-[11px] text-muted-foreground">
                           {t.referencia_manual && <>Manual: {t.referencia_manual} · </>}
                           {t.frecuencia_m3 && <>También vence cada {t.frecuencia_m3.toLocaleString("es-AR")} m³</>}
@@ -353,6 +394,31 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
                   ))}
                 </div>
               )}
+              {registrar.maint_task_steps?.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1.5">
+                    <ListChecks className="h-4 w-4" /> Checklist
+                  </Label>
+                  <div className="space-y-1.5 rounded-lg border p-3">
+                    {[...registrar.maint_task_steps].sort((a,b)=>a.orden-b.orden).map((paso) => (
+                      <label key={paso.id} className="flex items-start gap-2 cursor-pointer text-sm">
+                        <Checkbox
+                          checked={!!pasosMarcados[paso.id]}
+                          onCheckedChange={(v) => setPasosMarcados((p) => ({ ...p, [paso.id]: !!v }))}
+                          className="mt-0.5"
+                        />
+                        <span className={cn(pasosMarcados[paso.id] && "line-through text-muted-foreground")}>
+                          {paso.texto}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {Object.values(pasosMarcados).filter(Boolean).length} de {registrar.maint_task_steps.length} pasos marcados
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Fecha en que se hizo</Label>
                 <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
@@ -377,6 +443,16 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
               {guardando ? "Guardando..." : "Registrar"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Foto ampliada */}
+      <Dialog open={!!fotoAmpliada} onOpenChange={(o) => !o && setFotoAmpliada(null)}>
+        <DialogContent className="max-w-3xl p-2">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Foto del manual</DialogTitle>
+          </DialogHeader>
+          {fotoAmpliada && <img src={fotoAmpliada} alt="Detalle del manual" className="w-full h-auto rounded" />}
         </DialogContent>
       </Dialog>
     </div>
