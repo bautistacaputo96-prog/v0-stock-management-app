@@ -283,14 +283,24 @@ async function fillRemitoFiscal(data: Record<string, string>): Promise<Uint8Arra
 // withBackground=false dibuja SOLO los datos (para imprimir sobre la hoja ya impresa)
 // ══════════════════════════════════════════════════════════════════════════════
 async function fillRemitoX(data: Record<string, string>, withBackground: boolean): Promise<Uint8Array> {
-  let pdfDoc: PDFDocument
-  let page
+  // Siempre se parte de una hoja A4 en blanco con los datos del despacho.
+  // "Con formulario" solo agrega la tabla de control de obra (agregado de agua,
+  // probetas, asentamiento, horarios), que la hoja pre-impresa no trae.
+  const pdfDoc = await PDFDocument.create()
+  const page = pdfDoc.addPage([pt(210), pt(297)]) // A4
+
   if (withBackground) {
-    pdfDoc = await PDFDocument.load(loadTemplate("remito-x.pdf"))
-    page = pdfDoc.getPages()[0]
-  } else {
-    pdfDoc = await PDFDocument.create()
-    page = pdfDoc.addPage([pt(210), pt(297)]) // A4
+    // Se recorta la tabla del remito original en lugar de redibujarla, para que
+    // quede idéntica. Coordenadas en puntos, origen abajo-izquierda.
+    const tpl = await PDFDocument.load(loadTemplate("remito-x.pdf"))
+    const TABLA = { left: 100, bottom: 232, right: 570, top: 440 }
+    const tabla = await pdfDoc.embedPage(tpl.getPages()[0], TABLA)
+    page.drawPage(tabla, {
+      x: TABLA.left,
+      y: TABLA.bottom,
+      width: TABLA.right - TABLA.left,
+      height: TABLA.top - TABLA.bottom,
+    })
   }
   const font  = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontB = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
