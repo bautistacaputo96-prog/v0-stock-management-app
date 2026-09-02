@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker } from "lucide-react"
+import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker, Printer } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -1044,6 +1044,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => window.open(`/api/remito/${dispatch.id}`, "_blank")}>
+                                <Printer className="h-4 w-4 mr-2" />
+                                Visualizar Remito
+                              </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => openSampleDialog(dispatch)}>
                                 <FlaskConical className="h-4 w-4 mr-2" />
                                 Agregar Muestra
