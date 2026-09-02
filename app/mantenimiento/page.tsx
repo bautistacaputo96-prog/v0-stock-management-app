@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { MantenimientoContent } from "@/components/mantenimiento-content"
 
@@ -17,10 +18,12 @@ export default async function MantenimientoPage() {
       <div className="mb-4 md:mb-6">
         <h1 className="text-xl md:text-2xl font-bold tracking-tight">Mantenimiento</h1>
         <p className="text-xs md:text-sm text-muted-foreground mt-1">
-          Plan preventivo de la planta dosificadora
+          Órdenes de trabajo, plan preventivo y fallas de la planta
         </p>
       </div>
-      <MantenimientoContent equipos={equipos || []} />
+      <Suspense fallback={<p className="text-sm text-muted-foreground">Cargando...</p>}>
+        <MantenimientoContent equipos={equipos || []} />
+      </Suspense>
     </div>
   )
 }

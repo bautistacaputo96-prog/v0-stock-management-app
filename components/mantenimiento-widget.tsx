@@ -127,7 +127,7 @@ export function MantenimientoWidget({ plantId }: { plantId?: string }) {
             Mantenimiento a programar
           </CardTitle>
           <Link
-            href="/mantenimiento"
+            href="/mantenimiento?tab=hoy"
             className="text-xs text-primary hover:underline flex items-center gap-0.5"
           >
             Ver plan completo <ChevronRight className="h-3 w-3" />
@@ -159,7 +159,7 @@ export function MantenimientoWidget({ plantId }: { plantId?: string }) {
               {pendientes.slice(0, 6).map((p) => (
                 <Link
                   key={p.id}
-                  href="/mantenimiento"
+                  href="/mantenimiento?tab=hoy"
                   className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors"
                 >
                   <div className="min-w-0">
@@ -179,7 +179,7 @@ export function MantenimientoWidget({ plantId }: { plantId?: string }) {
                 </Link>
               ))}
               {pendientes.length > 6 && (
-                <Link href="/mantenimiento" className="block text-xs text-primary hover:underline pt-1">
+                <Link href="/mantenimiento?tab=hoy" className="block text-xs text-primary hover:underline pt-1">
                   Ver las {pendientes.length - 6} restantes
                 </Link>
               )}
