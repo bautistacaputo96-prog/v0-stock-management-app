@@ -373,11 +373,31 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
       return
     }
 
-    setSaving((prev) => ({ ...prev, [cylinderId]: true }))
-    const supabase = createClient()
-
     const testDate = values.testDate || getTodayDate()
     const dialReading = Number.parseFloat(values.dial)
+
+    // La fecha de rotura tiene que ser real: ni futura ni anterior al moldeo.
+    // Si la edad real se aleja de la nominal, se avisa antes de guardar.
+    const cyl = cylinders.find((c) => c.id === cylinderId)
+    const moldeo = cyl?.dispatch?.dispatch_date?.slice(0, 10)
+    if (testDate > getTodayDate()) {
+      toast({ title: "Fecha de rotura futura", description: `Pusiste ${formatDate(testDate)}. La rotura no puede ser posterior a hoy.`, variant: "destructive" })
+      return
+    }
+    if (moldeo && testDate < moldeo) {
+      toast({ title: "Fecha anterior al moldeo", description: `La probeta se moldeó el ${formatDate(moldeo)}; no puede romperse antes.`, variant: "destructive" })
+      return
+    }
+    if (moldeo && cyl) {
+      const edadReal = Math.round((new Date(testDate + "T12:00:00").getTime() - new Date(moldeo + "T12:00:00").getTime()) / 86400000)
+      if (Math.abs(edadReal - cyl.test_age_days) > 3) {
+        const ok = confirm(`Esta probeta es de ${cyl.test_age_days} días, pero entre el moldeo (${formatDate(moldeo)}) y la rotura (${formatDate(testDate)}) pasaron ${edadReal} días.\n\n¿Es correcta la fecha de rotura?`)
+        if (!ok) return
+      }
+    }
+
+    setSaving((prev) => ({ ...prev, [cylinderId]: true }))
+    const supabase = createClient()
 
     const updateData: Record<string, unknown> = {
       actual_test_date: testDate,
@@ -531,6 +551,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       type="date"
                       value={editingValues[cylinder.id]?.testDate ?? getTodayDate()}
                       onChange={(e) => handleInputChange(cylinder.id, "testDate", e.target.value)}
+                      min={cylinder.dispatch?.dispatch_date?.slice(0, 10)}
+                      max={getTodayDate()}
                       className="h-8 text-xs"
                     />
                   </TableCell>

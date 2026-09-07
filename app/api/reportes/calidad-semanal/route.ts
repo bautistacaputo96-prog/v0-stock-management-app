@@ -108,7 +108,10 @@ export async function GET(req: Request) {
     edad: number; mpa: number; esp: number | null; cumple: boolean | null; pct: number | null
     probetaId: string; remito: string; moldeo: string; cliente: string; obra: string
     aguaExtra: number | null; asentamiento: number | null
+    /** Días reales entre moldeo y rotura; si se aleja de la edad nominal, el ensayo no es comparable */
+    edadReal: number | null; desfasada: boolean
   }
+  const diasEntre = (a: string, b: string) => Math.round((new Date(b.slice(0, 10) + "T12:00:00Z").getTime() - new Date(a.slice(0, 10) + "T12:00:00Z").getTime()) / 86400000)
   const ensayos: Ensayo[] = (roturas || []).map((r: any) => {
     const disp = r.dispatches || {}
     const code = disp.formulas?.code || ""
@@ -118,7 +121,10 @@ export async function GET(req: Request) {
     // Solo se evalúa cumplimiento a 28 días (a 7 días es informativo)
     const cumple = esp && edad >= 28 ? mpa >= esp : null
     const pct = esp ? (mpa / esp) * 100 : null
+    const edadReal = disp.dispatch_date && r.actual_test_date ? diasEntre(disp.dispatch_date, r.actual_test_date) : null
+    const desfasada = edadReal !== null && Math.abs(edadReal - edad) > 3
     return {
+      edadReal, desfasada,
       fecha: r.actual_test_date, planta: plantName[disp.plant_id] || "-",
       muestra: disp.sample_number || "-", formula: code || "-",
       edad, mpa, esp, cumple, pct,
@@ -315,7 +321,7 @@ function buildHtml(d: any) {
       <td style="${td}">${e.remito}</td>
       <td style="${td};font-family:monospace;font-size:11px">${e.formula}</td>
       <td style="${td}">${e.moldeo ? fmtCorta(e.moldeo) : "-"}</td>
-      <td style="${td}">${fmtCorta(e.fecha)}</td>
+      <td style="${td}">${fmtCorta(e.fecha)}${e.desfasada ? `<br><span style="color:#b91c1c;font-size:11px;font-weight:700">⚠ ${e.edadReal} días reales</span>` : ""}</td>
       <td style="${td}">${e.cliente}</td>
       <td style="${td}">${e.obra}</td>
       <td style="${td};text-align:right;font-weight:700">${e.aguaExtra ?? "-"}</td>
@@ -329,7 +335,7 @@ function buildHtml(d: any) {
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.planta}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.muestra}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;font-family:monospace;font-size:12px">${e.formula}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center">${e.edad}d</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center">${e.edad}d${e.desfasada ? `<br><span style="color:#b91c1c;font-size:11px;font-weight:700">real ${e.edadReal}d</span>` : ""}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right;font-weight:700">${e.mpa.toFixed(1)}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right">${e.esp ?? "-"}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center;color:${bgOk(e.cumple)};font-weight:700">
@@ -342,6 +348,8 @@ function buildHtml(d: any) {
   if (pctTot < 100) alertas.push(`El muestreo estuvo <b>por debajo del objetivo</b>: se tomaron ${totMuestras} muestras sobre ${totObjetivo} recomendadas (${pctTot.toFixed(0)}%).`)
   const bajas = resumenFormula.filter((r: any) => r.cumplen < r.n)
   if (bajas.length) alertas.push(`Fórmulas con ensayos por debajo de lo especificado: <b>${bajas.map((b: any) => b.formula).join(", ")}</b>.`)
+  const desfasadas = ensayos.filter(e => e.desfasada)
+  if (desfasadas.length) alertas.push(`<b>${desfasadas.length} ${desfasadas.length === 1 ? "probeta se rompió" : "probetas se rompieron"} a una edad distinta de la nominal</b> (más de 3 días de diferencia): ${desfasadas.map(e => `${e.probetaId} (${e.edad}d nominal, ${e.edadReal}d reales)`).join(", ")}. Esos resultados no son comparables con la resistencia especificada; revisar la fecha de moldeo o de rotura cargada.`)
   if (vencidas > 0) alertas.push(`Hay <b>${vencidas} probetas vencidas</b> pendientes de romper.`)
   const granulInestable = resumenGranul.filter((g: any) => g.n > 1 && g.mfMax - g.mfMin >= 0.4)
   if (granulInestable.length) {
