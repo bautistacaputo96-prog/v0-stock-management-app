@@ -733,25 +733,28 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         .limit(1)
 
       if (!existingCylinders || existingCylinders.length === 0) {
-        const today = new Date()
+        // El moldeo es siempre la fecha del despacho: la rotura se programa desde
+        // ahí, no desde el día en que se registra la muestra (que puede ser semanas después).
+        const { data: dRow } = await supabase.from("dispatches").select("dispatch_date").eq("id", dispatchId).single()
+        const moldeo = dRow?.dispatch_date ? parseISO(dRow.dispatch_date) : new Date()
         const cylinders = [
           {
             dispatch_id: dispatchId,
             cylinder_number: 1,
             test_age_days: 7,
-            scheduled_test_date: format(addDays(today, 7), "yyyy-MM-dd"),
+            scheduled_test_date: format(addDays(moldeo, 7), "yyyy-MM-dd"),
           },
           {
             dispatch_id: dispatchId,
             cylinder_number: 2,
             test_age_days: 28,
-            scheduled_test_date: format(addDays(today, 28), "yyyy-MM-dd"),
+            scheduled_test_date: format(addDays(moldeo, 28), "yyyy-MM-dd"),
           },
           {
             dispatch_id: dispatchId,
             cylinder_number: 3,
             test_age_days: 28,
-            scheduled_test_date: format(addDays(today, 28), "yyyy-MM-dd"),
+            scheduled_test_date: format(addDays(moldeo, 28), "yyyy-MM-dd"),
           },
         ]
 
