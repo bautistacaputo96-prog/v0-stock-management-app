@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   BarChart,
   Bar,
@@ -40,6 +42,8 @@ import {
   Activity,
   Target,
   Lightbulb,
+  Droplets,
+  Search,
 } from "lucide-react"
 import { DateRangeFilter } from "./date-range-filter"
 
@@ -66,8 +70,13 @@ interface TestCylinder {
     sample_number: string | null
     actual_slump_cm: number | null
     extra_water_liters: number | null
+    quantity_m3: number | null
+    sand_stockpile_humidity: number | null
+    notes: string | null
     obra: string | null
     client: string | null
+    mixer: { license_plate: string } | null
+    dispatch_materials: { quantity: number; materials: { name: string } | null }[] | null
     formula: {
       code: string
       name: string
@@ -144,6 +153,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
   const [selectedFormulaType, setSelectedFormulaType] = useState<string>("all")
   const [selectedFormulaCode, setSelectedFormulaCode] = useState<string>("all")
   const [quantileType, setQuantileType] = useState<"10" | "5">("10") // 10% CIRSOC 201:2005, 5% for older
+  const [busquedaMuestra, setBusquedaMuestra] = useState("")
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
     from: new Date(new Date().setFullYear(new Date().getFullYear() - 5)).toISOString().split("T")[0],
     to: new Date().toISOString().split("T")[0],
@@ -170,8 +180,13 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         sample_number,
         actual_slump_cm,
         extra_water_liters,
+        quantity_m3,
+        sand_stockpile_humidity,
+        notes,
         obra,
         client,
+        mixer:mixers(license_plate),
+        dispatch_materials(quantity, materials(name)),
         formula:formulas(code, name, plant_id),
         client_rel:clients(name),
         construction_site:construction_sites(name)
@@ -279,6 +294,59 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         comments: c.comments || null,
       }))
   }, [filteredCylinders])
+
+  // Tabla de muestras: cada probeta con lo que hay que mirar cuando un resultado da bajo
+  // (agua extra en planta y asentamiento). Las que no cumplen van primero.
+  const tablaMuestras = useMemo(() => {
+    const q = busquedaMuestra.trim().toLowerCase()
+    return filteredCylinders
+      .map(c => {
+        const code = c.dispatch?.formula?.code || ""
+        const fc = getFcFromFormulaCode(code)
+        const m3 = Number(c.dispatch?.quantity_m3 || 0)
+        const agua = c.dispatch?.extra_water_liters != null ? Number(c.dispatch.extra_water_liters) : null
+        // A 28 días se exige f'c; a 7 días se toma ~70% como referencia
+        const objetivo = c.test_age_days === 28 ? fc : c.test_age_days === 7 ? fc * 0.7 : 0
+        const bajo = objetivo > 0 && c.strength_mpa !== null && c.strength_mpa < objetivo
+        // Materiales reales de la carga: cemento y agua de fórmula, para la relación a/c efectiva
+        const mats = c.dispatch?.dispatch_materials || []
+        const kgDe = (pat: RegExp) => mats.filter(m => pat.test(m.materials?.name || "")).reduce((s, m) => s + Number(m.quantity || 0), 0)
+        const cemento = kgDe(/cemento|cpc|cph|cpn/i)
+        const aguaFormula = kgDe(/^agua/i)
+        const ac = cemento > 0 ? (aguaFormula + (agua || 0)) / cemento : null
+        const fechaCarga = c.dispatch?.dispatch_date ? new Date(c.dispatch.dispatch_date) : null
+        return {
+          id: c.id,
+          fecha: c.actual_test_date || c.scheduled_test_date,
+          muestra: c.dispatch?.sample_number || "",
+          remito: c.dispatch?.remito || "",
+          probeta: c.cylinder_number,
+          formula: code,
+          edad: c.test_age_days,
+          mpa: c.strength_mpa,
+          fc,
+          objetivo,
+          bajo,
+          slump: c.dispatch?.actual_slump_cm,
+          agua,
+          aguaPorM3: agua != null && m3 > 0 ? agua / m3 : null,
+          obra: c.dispatch?.obra || c.dispatch?.construction_site?.name || "",
+          cliente: c.dispatch?.client || c.dispatch?.client_rel?.name || "",
+          camion: c.dispatch?.mixer?.license_plate || "",
+          cargaFecha: fechaCarga ? fechaCarga.toLocaleDateString("es-AR") : "",
+          cargaHora: fechaCarga && (fechaCarga.getHours() !== 12 || fechaCarga.getMinutes() !== 0) ? fechaCarga.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "",
+          m3,
+          humArena: c.dispatch?.sand_stockpile_humidity,
+          cemento,
+          aguaFormula,
+          ac,
+          notas: c.dispatch?.notes || "",
+          comentario: c.comments,
+        }
+      })
+      .filter(r => !q || [r.muestra, r.remito, r.formula, r.obra, r.cliente, r.camion].some(v => v.toLowerCase().includes(q)))
+      .sort((a, b) => Number(b.bajo) - Number(a.bajo) || (b.fecha || "").localeCompare(a.fecha || ""))
+  }, [filteredCylinders, busquedaMuestra])
 
   // Get 7-day results
   const results7Days = useMemo(() => {
@@ -789,7 +857,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
 
       {/* Charts Tabs */}
       <Tabs defaultValue="histogram" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5">
+        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-6">
+          <TabsTrigger value="muestras">Muestras</TabsTrigger>
           <TabsTrigger value="histogram">Distribucion</TabsTrigger>
           <TabsTrigger value="temporal">Evolucion</TabsTrigger>
           <TabsTrigger value="correlation">Correlacion 7/28</TabsTrigger>
@@ -1200,6 +1269,105 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                   No hay datos de granulometria disponibles
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Muestras: buscar una probeta y ver agua extra y asentamiento */}
+        <TabsContent value="muestras">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Droplets className="h-5 w-5" /> Resultados por muestra</CardTitle>
+              <CardDescription>
+                Cada probeta con el agua extra agregada en planta y el asentamiento real del camión. Las que no cumplen aparecen primero.
+              </CardDescription>
+              <div className="relative max-w-sm pt-2">
+                <Search className="absolute left-2.5 top-4.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={busquedaMuestra}
+                  onChange={e => setBusquedaMuestra(e.target.value)}
+                  placeholder="Buscar por remito, muestra, fórmula u obra"
+                  className="pl-8"
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tablaMuestras.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">No hay probetas para los filtros elegidos.</p>
+              ) : (
+                <Table containerClassName="max-h-[600px] overflow-auto">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Rotura</TableHead>
+                      <TableHead>Muestra / Remito</TableHead>
+                      <TableHead>Carga</TableHead>
+                      <TableHead>Fórmula</TableHead>
+                      <TableHead className="text-right">Edad</TableHead>
+                      <TableHead className="text-right">MPa</TableHead>
+                      <TableHead>Cumple</TableHead>
+                      <TableHead className="text-right">Asent.</TableHead>
+                      <TableHead className="text-right">Agua extra</TableHead>
+                      <TableHead className="text-right">a/c efectiva</TableHead>
+                      <TableHead className="text-right">Hum. arena</TableHead>
+                      <TableHead>Cliente / Obra</TableHead>
+                      <TableHead>Notas</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tablaMuestras.slice(0, 300).map(r => (
+                      <TableRow key={r.id} className={r.bajo ? "bg-red-50/60" : undefined}>
+                        <TableCell className="whitespace-nowrap text-xs">{r.fecha ? new Date(r.fecha + (r.fecha.length === 10 ? "T12:00:00" : "")).toLocaleDateString("es-AR") : "-"}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          <div className="font-medium">{r.muestra || "—"}</div>
+                          <div className="text-muted-foreground">Remito {r.remito || "—"} · P{r.probeta}</div>
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          <div>{r.cargaFecha}{r.cargaHora && <span className="text-muted-foreground"> {r.cargaHora}</span>}</div>
+                          <div className="text-muted-foreground">{r.m3 > 0 && `${r.m3} m³`}{r.camion && ` · ${r.camion}`}</div>
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          <div>{r.formula}</div>
+                          {r.cemento > 0 && <div className="text-muted-foreground">{Math.round(r.cemento)} kg cem · {Math.round(r.aguaFormula)} L agua</div>}
+                        </TableCell>
+                        <TableCell className="text-right text-xs">{r.edad} d</TableCell>
+                        <TableCell className={`text-right font-mono font-semibold ${r.bajo ? "text-red-600" : ""}`}>{r.mpa?.toFixed(1)}</TableCell>
+                        <TableCell>
+                          {r.objetivo > 0 ? (
+                            r.bajo
+                              ? <Badge className="bg-red-600 text-[10px] whitespace-nowrap">Bajo · obj. {r.objetivo.toFixed(0)}</Badge>
+                              : <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px]">Cumple</Badge>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right text-xs whitespace-nowrap">{r.slump != null ? `${r.slump} cm` : <span className="text-muted-foreground">sin dato</span>}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {r.agua == null ? (
+                            <span className="text-xs text-muted-foreground">sin dato</span>
+                          ) : r.agua === 0 ? (
+                            <span className="text-xs text-muted-foreground">0 L</span>
+                          ) : (
+                            <span className={`text-xs font-semibold ${r.aguaPorM3 != null && r.aguaPorM3 > 20 ? "text-red-600" : "text-orange-600"}`}>
+                              <Droplets className="inline h-3 w-3 mr-0.5" />{r.agua.toFixed(0)} L
+                              {r.aguaPorM3 != null && <span className="font-normal text-muted-foreground"> · {r.aguaPorM3.toFixed(1)} L/m³</span>}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className={`text-right font-mono text-xs ${r.ac != null && r.ac > 0.6 ? "text-red-600 font-semibold" : ""}`}>{r.ac != null ? r.ac.toFixed(2) : <span className="text-muted-foreground font-sans">—</span>}</TableCell>
+                        <TableCell className="text-right text-xs">{r.humArena != null ? `${Number(r.humArena).toFixed(1)}%` : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className="text-xs max-w-[200px]">
+                          <div className="truncate" title={r.cliente}>{r.cliente || "—"}</div>
+                          <div className="text-muted-foreground truncate" title={r.obra}>{r.obra}</div>
+                        </TableCell>
+                        <TableCell className="text-xs max-w-[220px]">
+                          {r.notas && <div className="truncate" title={r.notas}>{r.notas}</div>}
+                          {r.comentario && <div className="text-blue-700 italic truncate" title={r.comentario}>{r.comentario}</div>}
+                          {!r.notas && !r.comentario && <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              {tablaMuestras.length > 300 && <p className="text-xs text-muted-foreground mt-2">Se muestran las primeras 300. Usá la búsqueda o el rango de fechas para acotar.</p>}
             </CardContent>
           </Card>
         </TabsContent>
