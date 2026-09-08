@@ -112,7 +112,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       ) : tab === "historial" ? (
         <VistaHistorial ordenes={ordenes} onAbrir={setOrdenAbierta} />
       ) : (
-        <VistaHoy ordenes={ordenes} tareas={tareas} onAbrir={setOrdenAbierta} />
+        <VistaHoy ordenes={ordenes} tareas={tareas} ultimaPorTarea={ultimaPorTarea} onAbrir={setOrdenAbierta} />
       )}
 
       <OrdenTrabajoDialog

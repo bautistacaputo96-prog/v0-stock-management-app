@@ -13,21 +13,41 @@ import { differenceInCalendarDays, parseISO, format } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { currentUserName } from "@/lib/current-user"
-import { etiquetaFrecuencia, type OrdenTrabajo, type Tarea } from "@/lib/mantenimiento"
+import { etiquetaFrecuencia, type OrdenTrabajo, type Tarea, type Ejecucion } from "@/lib/mantenimiento"
 
 type Props = {
   ordenes: OrdenTrabajo[]
   tareas: Tarea[]
+  ultimaPorTarea?: Record<string, Ejecucion>
   onAbrir: (o: OrdenTrabajo) => void
 }
 
-export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
+/** Grupos del filtro de frecuencia, en el orden en que se muestran. */
+const GRUPOS: { clave: string; label: string; incluye: (dias: number | null, tipo: string) => boolean }[] = [
+  { clave: "diaria", label: "Diarias", incluye: (d) => d !== null && d <= 1 },
+  { clave: "semanal", label: "Semanales", incluye: (d) => d !== null && d > 1 && d <= 7 },
+  { clave: "quincenal", label: "Quincenales", incluye: (d) => d !== null && d > 7 && d <= 15 },
+  { clave: "mensual", label: "Mensuales", incluye: (d) => d !== null && d > 15 && d <= 31 },
+  { clave: "trimestral", label: "Bi/trimestrales", incluye: (d) => d !== null && d > 31 && d <= 93 },
+  { clave: "semestral", label: "Semestrales", incluye: (d) => d !== null && d > 93 && d <= 186 },
+  { clave: "anual", label: "Anuales o más", incluye: (d) => d !== null && d > 186 },
+  { clave: "falla", label: "Fallas", incluye: (_d, tipo) => tipo === "correctiva" },
+]
+
+export function VistaHoy({ ordenes, tareas, ultimaPorTarea = {}, onAbrir }: Props) {
   const usuario = currentUserName()
   const [filtro, setFiltro] = useState<"mias" | "todas">("todas")
+  const [grupo, setGrupo] = useState<string>("todas")
   const tareaDe = (o: OrdenTrabajo) => tareas.find((t) => t.id === o.task_id)
+  const grupoDe = (o: OrdenTrabajo) => {
+    const t = tareaDe(o)
+    return GRUPOS.find((g) => g.incluye(o.tipo === "correctiva" ? null : t?.frecuencia_dias ?? null, o.tipo))?.clave
+  }
 
   const abiertas = ordenes.filter((o) => o.estado === "pendiente" || o.estado === "en_curso")
-  const visibles = filtro === "mias" ? abiertas.filter((o) => o.asignado_a === usuario) : abiertas
+  const porPersona = filtro === "mias" ? abiertas.filter((o) => o.asignado_a === usuario) : abiertas
+  const conteo = Object.fromEntries(GRUPOS.map((g) => [g.clave, porPersona.filter((o) => grupoDe(o) === g.clave).length]))
+  const visibles = grupo === "todas" ? porPersona : porPersona.filter((o) => grupoDe(o) === grupo)
 
   const peso = (o: OrdenTrabajo) => {
     if (o.prioridad === "urgente") return 0
@@ -39,7 +59,9 @@ export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
   }
   const ordenadas = [...visibles].sort((a, b) => peso(a) - peso(b) || a.fecha_programada.localeCompare(b.fecha_programada))
 
-  const vencidas = abiertas.filter((o) => differenceInCalendarDays(new Date(), parseISO(o.fecha_programada)) > 0).length
+  const esSinRegistro = (o: OrdenTrabajo) => o.tipo === "preventiva" && !!o.task_id && !ultimaPorTarea[o.task_id]
+  const vencidas = abiertas.filter((o) => !esSinRegistro(o) && differenceInCalendarDays(new Date(), parseISO(o.fecha_programada)) > 0).length
+  const sinRegistroN = abiertas.filter(esSinRegistro).length
   const enCurso = abiertas.filter((o) => o.estado === "en_curso").length
   const completadasHoy = ordenes.filter((o) => o.estado === "completada" && o.fecha_fin && differenceInCalendarDays(new Date(), parseISO(o.fecha_fin)) === 0)
 
@@ -56,6 +78,7 @@ export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
           </h2>
           <div className="flex gap-3 text-sm mt-1">
             {vencidas > 0 && <span className="text-red-600 font-medium flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />{vencidas} vencida{vencidas > 1 && "s"}</span>}
+            {sinRegistroN > 0 && <span className="text-slate-600 font-medium">{sinRegistroN} sin registro</span>}
             {enCurso > 0 && <span className="text-blue-600 font-medium flex items-center gap-1"><Play className="h-3.5 w-3.5" />{enCurso} en curso</span>}
             {completadasHoy.length > 0 && <span className="text-emerald-600 font-medium flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />{completadasHoy.length} hecha{completadasHoy.length > 1 && "s"} hoy</span>}
           </div>
@@ -67,6 +90,31 @@ export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
           </div>
         )}
       </div>
+
+      {/* Filtro por frecuencia */}
+      {porPersona.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap">
+          <button
+            onClick={() => setGrupo("todas")}
+            className={cn("rounded-full border px-3 py-1 text-xs", grupo === "todas" ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted")}
+          >
+            Todas ({porPersona.length})
+          </button>
+          {GRUPOS.filter((g) => conteo[g.clave] > 0).map((g) => (
+            <button
+              key={g.clave}
+              onClick={() => setGrupo(grupo === g.clave ? "todas" : g.clave)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs",
+                grupo === g.clave ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted",
+                g.clave === "falla" && grupo !== g.clave && "border-amber-400 text-amber-800",
+              )}
+            >
+              {g.label} ({conteo[g.clave]})
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Tarjetas */}
       {ordenadas.length === 0 ? (
@@ -80,7 +128,9 @@ export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
           {ordenadas.map((o) => {
             const t = tareaDe(o)
             const dias = differenceInCalendarDays(new Date(), parseISO(o.fecha_programada))
-            const vencida = dias > 0
+            // Si la tarea nunca se registró, no está "vencida": simplemente no hay dato
+            const sinRegistro = o.tipo === "preventiva" && !!o.task_id && !ultimaPorTarea[o.task_id]
+            const vencida = dias > 0 && !sinRegistro
             const urgente = o.prioridad === "urgente"
             const foto = t?.maint_task_images?.[0]?.url || o.maint_work_order_photos?.[0]?.url
             const pasosTotal = t?.maint_task_steps?.length || 0
@@ -106,6 +156,8 @@ export function VistaHoy({ ordenes, tareas, onAbrir }: Props) {
                       <Badge className="bg-red-600 shrink-0 text-[10px]">Urgente</Badge>
                     ) : vencida ? (
                       <Badge className="bg-red-600 shrink-0 text-[10px]">Vencida {dias}d</Badge>
+                    ) : sinRegistro ? (
+                      <Badge className="bg-slate-500 shrink-0 text-[10px]">Sin registro · {t ? etiquetaFrecuencia(t.frecuencia_dias) : ""}</Badge>
                     ) : (
                       <Badge variant="outline" className="shrink-0 text-[10px]">{t ? etiquetaFrecuencia(t.frecuencia_dias) : "Falla"}</Badge>
                     )}
