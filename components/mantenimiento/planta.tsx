@@ -8,14 +8,14 @@
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
-import { ArrowLeftRight, Cog, Wind, Warehouse, Scale, Droplets, FlaskConical, Zap, Settings2, AlertTriangle, CheckCircle2, Package, Clock, History } from "lucide-react"
+import { ArrowLeftRight, Cog, Wind, Warehouse, Scale, Droplets, FlaskConical, Zap, Settings2, AlertTriangle, CheckCircle2, Package, Clock, History, Eye, Truck } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { cn } from "@/lib/utils"
 import { COMPONENTES, proximoVencimiento, nivelDeFecha, textoVencimiento, etiquetaFrecuencia, type Tarea, type Ejecucion, type OrdenTrabajo } from "@/lib/mantenimiento"
 
 const ICONOS: Record<string, any> = {
   conveyor: ArrowLeftRight, screw: Settings2, gear: Cog, air: Wind, hopper: Warehouse,
-  scale: Scale, water: Droplets, flask: FlaskConical, bolt: Zap,
+  scale: Scale, water: Droplets, flask: FlaskConical, bolt: Zap, eye: Eye, truck: Truck,
 }
 
 type Props = {

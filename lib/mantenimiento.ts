@@ -73,6 +73,8 @@ export const COMPONENTES: Record<string, { icono: string; descripcion: string }>
   "Circuito de agua": { icono: "water", descripcion: "Tanque, bomba, filtro y válvulas de dosificación de agua" },
   "Dosificador de aditivos": { icono: "flask", descripcion: "Bombas y circuito de aditivos químicos" },
   "Tablero eléctrico": { icono: "bolt", descripcion: "Tablero de potencia y comando de la planta" },
+  "Planta completa": { icono: "eye", descripcion: "Recorrida visual diaria de toda la planta" },
+  "Pala cargadora": { icono: "truck", descripcion: "Pala que carga los áridos en las tolvas: motor, hidráulico, neumáticos y balde" },
 }
 
 /** Nombre legible de la frecuencia. */
