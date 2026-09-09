@@ -220,39 +220,19 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
 
       if (entryError) throw entryError
 
-      // Update material stock - always use dry_stock for materials with humidity control
+      // El stock (current_stock) lo suma la base sola al insertar el ingreso
+      // (trigger update_stock_after_entry). Acá NO se vuelve a sumar: hacerlo
+      // duplicaba cada camión (pasó entre el 03/08 y el 09/09/2026).
+      // Lo único que la base no lleva es el stock seco de los materiales con humedad.
       if (requiresGranulometry) {
-        // Get current stocks
         const { data: materialData } = await supabase
           .from("materials")
-          .select("dry_stock, current_stock")
+          .select("dry_stock")
           .eq("id", formData.material_id)
           .single()
-
-        const currentDryStock = materialData?.dry_stock || 0
-        const currentWetStock = materialData?.current_stock || 0
-        const newDryStock = currentDryStock + dryQuantity
-        const newWetStock = currentWetStock + originalQuantity // wet kg, consistent with dispatch deduction
-
         await supabase
           .from("materials")
-          .update({
-            dry_stock: newDryStock,    // dry weight reference for humidity tracking
-            current_stock: newWetStock // wet weight, consistent with how dispatch deducts
-          })
-          .eq("id", formData.material_id)
-      } else {
-        // For non-humidity materials, update current_stock normally
-        const { data: materialData } = await supabase
-          .from("materials")
-          .select("current_stock")
-          .eq("id", formData.material_id)
-          .single()
-        
-        const currentStock = materialData?.current_stock || 0
-        await supabase
-          .from("materials")
-          .update({ current_stock: currentStock + originalQuantity })
+          .update({ dry_stock: (materialData?.dry_stock || 0) + dryQuantity })
           .eq("id", formData.material_id)
       }
 
