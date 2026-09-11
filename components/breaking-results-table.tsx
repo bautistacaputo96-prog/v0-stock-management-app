@@ -59,6 +59,7 @@ interface BreakingResult {
   diameter_cm: number | null
   strength_mpa: number | null
   expected_strength: number | null
+  dispatch_id?: string | null
   client_name: string | null
   site_address: string | null
   comments: string | null
@@ -144,6 +145,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
 
         return {
           id: item.id,
+          dispatch_id: item.dispatches?.id || null,
           remito: item.dispatches?.remito || null,
           formula_code: item.dispatches?.formulas?.code || null,
           formula_name: item.dispatches?.formulas?.name || null,
@@ -197,11 +199,27 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
     return true
   })
 
-  // Calculate summary stats
+  // Resultado de la MUESTRA a 28 días: promedio de las probetas de 28 días del mismo camión.
+  // Se calcula sobre todos los resultados cargados (no sobre el filtro) para que el
+  // promedio no cambie según lo que se esté mirando.
+  const promedio28PorCamion = new Map<string, { prom: number; n: number }>()
+  results.forEach((r) => {
+    if (r.test_age_days !== 28 || !r.strength_mpa || !r.dispatch_id) return
+    const acc = promedio28PorCamion.get(r.dispatch_id) || { prom: 0, n: 0 }
+    acc.prom = (acc.prom * acc.n + r.strength_mpa) / (acc.n + 1)
+    acc.n += 1
+    promedio28PorCamion.set(r.dispatch_id, acc)
+  })
+  const muestras28 = Array.from(new Set(filteredResults.filter((r) => r.test_age_days === 28 && r.dispatch_id).map((r) => r.dispatch_id!)))
+    .map((id) => ({ id, ...promedio28PorCamion.get(id)!, esp: filteredResults.find((r) => r.dispatch_id === id)?.expected_strength || null }))
+    .filter((m) => m.prom)
+
+  // Calculate summary stats (aprobado / no conforme se cuenta por muestra, a 28 días)
   const stats = {
     total: filteredResults.length,
-    passed: filteredResults.filter((r) => r.strength_mpa && r.expected_strength && r.strength_mpa >= r.expected_strength).length,
-    failed: filteredResults.filter((r) => r.strength_mpa && r.expected_strength && r.strength_mpa < r.expected_strength).length,
+    muestras: muestras28.length,
+    passed: muestras28.filter((m) => m.esp && m.prom >= m.esp).length,
+    failed: muestras28.filter((m) => m.esp && m.prom < m.esp).length,
     avgStrength: filteredResults.length > 0
       ? filteredResults.filter((r) => r.strength_mpa).reduce((sum, r) => sum + (r.strength_mpa || 0), 0) /
         filteredResults.filter((r) => r.strength_mpa).length
@@ -247,13 +265,13 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
         <Card className="bg-green-50 dark:bg-green-950/30">
           <CardContent className="py-3 text-center">
             <p className="text-2xl font-bold text-green-600">{stats.passed}</p>
-            <p className="text-xs text-muted-foreground">Aprobados</p>
+            <p className="text-xs text-muted-foreground">Muestras que cumplen (28d)</p>
           </CardContent>
         </Card>
         <Card className="bg-red-50 dark:bg-red-950/30">
           <CardContent className="py-3 text-center">
             <p className="text-2xl font-bold text-red-600">{stats.failed}</p>
-            <p className="text-xs text-muted-foreground">No Conformes</p>
+            <p className="text-xs text-muted-foreground">Muestras que no cumplen (28d)</p>
           </CardContent>
         </Card>
         <Card className="bg-blue-50 dark:bg-blue-950/30">
@@ -316,6 +334,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
               <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Altura (cm)</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Diametro (cm)</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Resistencia (MPa)</TableHead>
+              <TableHead className="text-xs font-semibold whitespace-nowrap text-center">Prom. muestra 28d</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Direccion Obra</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Cliente</TableHead>
               <TableHead className="text-xs font-semibold whitespace-nowrap">Observaciones</TableHead>
@@ -325,7 +344,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={18} className="text-center py-8">
+                <TableCell colSpan={19} className="text-center py-8">
                   <div className="flex items-center justify-center">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                   </div>
@@ -333,7 +352,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
               </TableRow>
             ) : filteredResults.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={18} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={19} className="text-center py-8 text-muted-foreground">
                   No se encontraron resultados
                 </TableCell>
               </TableRow>
@@ -397,6 +416,20 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
                       ) : (
                         "-"
                       )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {(() => {
+                        if (result.test_age_days !== 28 || !result.dispatch_id) return <span className="text-muted-foreground">-</span>
+                        const m = promedio28PorCamion.get(result.dispatch_id)
+                        if (!m) return <span className="text-muted-foreground">-</span>
+                        const ok = result.expected_strength ? m.prom >= result.expected_strength : null
+                        return (
+                          <div>
+                            <span className={`font-mono font-semibold ${ok === false ? "text-red-600" : ok ? "text-green-700" : ""}`}>{m.prom.toFixed(1)}</span>
+                            <div className="text-[10px] text-muted-foreground">{m.n === 1 ? "1 probeta" : `${m.n} probetas`}</div>
+                          </div>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell className="text-xs max-w-[150px] truncate" title={result.site_address || ""}>
                       {result.site_address || "-"}

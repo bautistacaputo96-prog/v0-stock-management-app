@@ -278,36 +278,65 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
   }, [cylinders, dateRange, selectedFormulaType, selectedFormulaCode])
 
   // Get 28-day results only for statistical analysis
+  // Un resultado a 28 días por MUESTRA: las probetas de 28 días de un mismo camión
+  // se promedian (normalmente P2 y P3). El detalle de cada probeta queda en `probetas`.
   const results28Days = useMemo(() => {
-    return filteredCylinders
+    const porCamion = new Map<string, TestCylinder[]>()
+    filteredCylinders
       .filter(c => c.test_age_days === 28 && c.strength_mpa !== null)
-      .map(c => ({
+      .forEach(c => {
+        const k = c.dispatch_id
+        if (!porCamion.has(k)) porCamion.set(k, [])
+        porCamion.get(k)!.push(c)
+      })
+    return Array.from(porCamion.values()).map(grupo => {
+      const orden = [...grupo].sort((a, b) => a.cylinder_number - b.cylinder_number)
+      const c = orden[0]
+      const probetas = orden.map(x => ({ n: x.cylinder_number, mpa: x.strength_mpa!, fecha: x.actual_test_date || x.scheduled_test_date, comentario: x.comments }))
+      const promedio = probetas.reduce((s, x) => s + x.mpa, 0) / probetas.length
+      const fechas = probetas.map(x => x.fecha).filter(Boolean).sort()
+      return {
         ...c,
-        strength: c.strength_mpa!,
-        date: c.actual_test_date || c.scheduled_test_date,
+        strength: Math.round(promedio * 100) / 100,
+        probetas,
+        parcial: probetas.length < 2,
+        date: fechas[fechas.length - 1] || c.scheduled_test_date,
         formulaCode: c.dispatch?.formula?.code || "N/A",
         slump: c.dispatch?.actual_slump_cm || null,
         extraWater: c.dispatch?.extra_water_liters || null,
         // Use direct field first, then relation
         constructionSite: c.dispatch?.obra || c.dispatch?.construction_site?.name || null,
         client: c.dispatch?.client || c.dispatch?.client_rel?.name || null,
-        comments: c.comments || null,
-      }))
+        comments: probetas.map(x => x.comentario).filter(Boolean).join(" · ") || null,
+      }
+    })
   }, [filteredCylinders])
 
-  // Tabla de muestras: cada probeta con lo que hay que mirar cuando un resultado da bajo
-  // (agua extra en planta y asentamiento). Las que no cumplen van primero.
+  // Tabla de muestras: UNA fila por muestra (camión). El resultado a 28 días es el
+  // promedio de sus probetas de 28 días; el 7 días es la P1. Se ve cada probeta al lado.
   const tablaMuestras = useMemo(() => {
     const q = busquedaMuestra.trim().toLowerCase()
-    return filteredCylinders
-      .map(c => {
+    const porCamion = new Map<string, TestCylinder[]>()
+    filteredCylinders.forEach(c => {
+      if (!porCamion.has(c.dispatch_id)) porCamion.set(c.dispatch_id, [])
+      porCamion.get(c.dispatch_id)!.push(c)
+    })
+    return Array.from(porCamion.values())
+      .map(grupo => {
+        const c = grupo[0]
         const code = c.dispatch?.formula?.code || ""
         const fc = getFcFromFormulaCode(code)
         const m3 = Number(c.dispatch?.quantity_m3 || 0)
         const agua = c.dispatch?.extra_water_liters != null ? Number(c.dispatch.extra_water_liters) : null
-        // A 28 días se exige f'c; a 7 días se toma ~70% como referencia
-        const objetivo = c.test_age_days === 28 ? fc : c.test_age_days === 7 ? fc * 0.7 : 0
-        const bajo = objetivo > 0 && c.strength_mpa !== null && c.strength_mpa < objetivo
+        const p7 = grupo.filter(x => x.test_age_days === 7 && x.strength_mpa !== null).sort((a, b) => a.cylinder_number - b.cylinder_number)
+        const p28 = grupo.filter(x => x.test_age_days === 28 && x.strength_mpa !== null).sort((a, b) => a.cylinder_number - b.cylinder_number)
+        const pend28 = grupo.filter(x => x.test_age_days === 28 && x.strength_mpa === null).length
+        const prom28 = p28.length ? p28.reduce((s, x) => s + x.strength_mpa!, 0) / p28.length : null
+        const mpa7 = p7.length ? p7[0].strength_mpa! : null
+        // Cumplimiento: a 28 días con el promedio; si todavía no hay 28d, orientativo con 7d (~70%)
+        const bajo = prom28 !== null ? (fc > 0 && prom28 < fc) : (mpa7 !== null && fc > 0 && mpa7 < fc * 0.7)
+        const fechas28 = p28.map(x => x.actual_test_date || "").filter(Boolean).sort()
+        const fecha = fechas28[fechas28.length - 1] || (p7[0]?.actual_test_date) || c.scheduled_test_date
         // Materiales reales de la carga: cemento y agua de fórmula, para la relación a/c efectiva
         const mats = c.dispatch?.dispatch_materials || []
         const kgDe = (pat: RegExp) => mats.filter(m => pat.test(m.materials?.name || "")).reduce((s, m) => s + Number(m.quantity || 0), 0)
@@ -316,16 +345,16 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         const ac = cemento > 0 ? (aguaFormula + (agua || 0)) / cemento : null
         const fechaCarga = c.dispatch?.dispatch_date ? new Date(c.dispatch.dispatch_date) : null
         return {
-          id: c.id,
-          fecha: c.actual_test_date || c.scheduled_test_date,
+          id: c.dispatch_id,
+          fecha,
           muestra: c.dispatch?.sample_number || "",
           remito: c.dispatch?.remito || "",
-          probeta: c.cylinder_number,
           formula: code,
-          edad: c.test_age_days,
-          mpa: c.strength_mpa,
           fc,
-          objetivo,
+          mpa7,
+          prom28,
+          p28: p28.map(x => ({ n: x.cylinder_number, mpa: x.strength_mpa!, fecha: x.actual_test_date })),
+          pend28,
           bajo,
           slump: c.dispatch?.actual_slump_cm,
           agua,
@@ -341,7 +370,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
           aguaFormula,
           ac,
           notas: c.dispatch?.notes || "",
-          comentario: c.comments,
+          comentario: grupo.map(x => x.comments).filter(Boolean).join(" · "),
         }
       })
       .filter(r => !q || [r.muestra, r.remito, r.formula, r.obra, r.cliente, r.camion].some(v => v.toLowerCase().includes(q)))
@@ -461,6 +490,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
       movingAvg: Math.round(movingAvg * 10) / 10,
       movingAvg3: Math.round(movingAvg3 * 10) / 10,
       sampleNumber: r.dispatch?.sample_number,
+      probetas: (r as any).probetas?.map((p: any) => `P${p.n} ${p.mpa.toFixed(1)}`).join(" · "),
       formulaCode: r.formulaCode,
       slump: r.slump,
       extraWater: r.extraWater,
@@ -1007,7 +1037,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                               <p className="font-semibold text-base border-b pb-1 mb-2">{data.sampleNumber || "Sin ID"}</p>
                               <div className="space-y-1 text-sm">
                                 <p><span className="text-muted-foreground">Fecha:</span> {data.date}</p>
-                                <p><span className="text-muted-foreground">Resistencia:</span> <strong>{data.strength} MPa</strong></p>
+                                <p><span className="text-muted-foreground">Resistencia (prom. muestra):</span> <strong>{data.strength} MPa</strong></p>
+                                {data.probetas && <p className="text-xs text-muted-foreground">{data.probetas}</p>}
                                 <p><span className="text-muted-foreground">Media movil:</span> {data.movingAvg} MPa</p>
                                 {data.formulaCode && <p><span className="text-muted-foreground">Formula:</span> {data.formulaCode}</p>}
                                 {data.constructionSite && <p><span className="text-muted-foreground">Obra:</span> {data.constructionSite}</p>}
@@ -1279,7 +1310,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Droplets className="h-5 w-5" /> Resultados por muestra</CardTitle>
               <CardDescription>
-                Cada probeta con el agua extra agregada en planta y el asentamiento real del camión. Las que no cumplen aparecen primero.
+                Una fila por muestra (camión): el resultado a 28 días es el promedio de sus probetas, que se ven al lado. Las que no cumplen aparecen primero.
               </CardDescription>
               <div className="relative max-w-sm pt-2">
                 <Search className="absolute left-2.5 top-4.5 h-4 w-4 text-muted-foreground" />
@@ -1302,8 +1333,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                       <TableHead>Muestra / Remito</TableHead>
                       <TableHead>Carga</TableHead>
                       <TableHead>Fórmula</TableHead>
-                      <TableHead className="text-right">Edad</TableHead>
-                      <TableHead className="text-right">MPa</TableHead>
+                      <TableHead className="text-right">7 días</TableHead>
+                      <TableHead className="text-right">28 días</TableHead>
                       <TableHead>Cumple</TableHead>
                       <TableHead className="text-right">Asent.</TableHead>
                       <TableHead className="text-right">Agua extra</TableHead>
@@ -1319,7 +1350,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                         <TableCell className="whitespace-nowrap text-xs">{r.fecha ? new Date(r.fecha + (r.fecha.length === 10 ? "T12:00:00" : "")).toLocaleDateString("es-AR") : "-"}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
                           <div className="font-medium">{r.muestra || "—"}</div>
-                          <div className="text-muted-foreground">Remito {r.remito || "—"} · P{r.probeta}</div>
+                          <div className="text-muted-foreground">Remito {r.remito || "—"}</div>
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
                           <div>{r.cargaFecha}{r.cargaHora && <span className="text-muted-foreground"> {r.cargaHora}</span>}</div>
@@ -1329,13 +1360,27 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                           <div>{r.formula}</div>
                           {r.cemento > 0 && <div className="text-muted-foreground">{Math.round(r.cemento)} kg cem · {Math.round(r.aguaFormula)} L agua</div>}
                         </TableCell>
-                        <TableCell className="text-right text-xs">{r.edad} d</TableCell>
-                        <TableCell className={`text-right font-mono font-semibold ${r.bajo ? "text-red-600" : ""}`}>{r.mpa?.toFixed(1)}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.mpa7 != null ? r.mpa7.toFixed(1) : <span className="text-muted-foreground font-sans">—</span>}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {r.prom28 != null ? (
+                            <>
+                              <div className={`font-mono font-semibold ${r.bajo ? "text-red-600" : ""}`}>{r.prom28.toFixed(1)}</div>
+                              <div className="text-[11px] text-muted-foreground font-mono">
+                                {r.p28.map(p => `P${p.n} ${p.mpa.toFixed(1)}`).join(" · ")}
+                                {r.pend28 > 0 && <span className="text-amber-600"> · {r.pend28} pend.</span>}
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">{r.pend28 > 0 ? `${r.pend28} pendiente${r.pend28 > 1 ? "s" : ""}` : "—"}</span>
+                          )}
+                        </TableCell>
                         <TableCell>
-                          {r.objetivo > 0 ? (
+                          {r.fc > 0 && r.prom28 != null ? (
                             r.bajo
-                              ? <Badge className="bg-red-600 text-[10px] whitespace-nowrap">Bajo · obj. {r.objetivo.toFixed(0)}</Badge>
+                              ? <Badge className="bg-red-600 text-[10px] whitespace-nowrap">Bajo · f'c {r.fc}</Badge>
                               : <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px]">Cumple</Badge>
+                          ) : r.fc > 0 && r.mpa7 != null ? (
+                            <Badge variant="outline" className={`text-[10px] whitespace-nowrap ${r.bajo ? "text-red-600 border-red-300" : "text-muted-foreground"}`}>7d: {Math.round((r.mpa7 / r.fc) * 100)}% de f'c</Badge>
                           ) : <span className="text-xs text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="text-right text-xs whitespace-nowrap">{r.slump != null ? `${r.slump} cm` : <span className="text-muted-foreground">sin dato</span>}</TableCell>

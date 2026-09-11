@@ -58,7 +58,7 @@ export async function GET(req: Request) {
       .limit(10000),
     supabase
       .from("test_cylinders")
-      .select("id, cylinder_number, test_age_days, strength_mpa, actual_test_date, dispatches!inner(sample_number, plant_id, remito, dispatch_date, extra_water_liters, actual_slump_cm, formulas(code), clients(name), construction_sites(name))")
+      .select("id, dispatch_id, cylinder_number, test_age_days, strength_mpa, actual_test_date, dispatches!inner(id, sample_number, plant_id, remito, dispatch_date, extra_water_liters, actual_slump_cm, formulas(code), clients(name), construction_sites(name))")
       .not("strength_mpa", "is", null)
       .gte("actual_test_date", desde.toISOString().slice(0, 10))
       .lte("actual_test_date", hasta.toISOString().slice(0, 10))
@@ -102,6 +102,13 @@ export async function GET(req: Request) {
   // Objetivo: 1 muestra cada 3 camiones, redondeado para abajo
   const totObjetivo = Math.floor(totDespachos / CAMIONES_POR_MUESTRA)
 
+  // Las otras probetas de 28 días de los mismos camiones (aunque se hayan roto otra
+  // semana): el resultado de la muestra es el promedio de todas sus probetas de 28 días.
+  const camiones28 = Array.from(new Set((roturas || []).filter((r: any) => Number(r.test_age_days) >= 28).map((r: any) => r.dispatch_id).filter(Boolean)))
+  const { data: hermanas } = camiones28.length
+    ? await supabase.from("test_cylinders").select("dispatch_id, cylinder_number, strength_mpa, actual_test_date").gte("test_age_days", 28).not("strength_mpa", "is", null).in("dispatch_id", camiones28)
+    : { data: [] as any[] }
+
   // ── 2. Ensayos de la semana ─────────────────────────────────────────────────
   type Ensayo = {
     fecha: string; planta: string; muestra: string; formula: string
@@ -110,6 +117,9 @@ export async function GET(req: Request) {
     aguaExtra: number | null; asentamiento: number | null
     /** Días reales entre moldeo y rotura; si se aleja de la edad nominal, el ensayo no es comparable */
     edadReal: number | null; desfasada: boolean
+    dispatchId: string | null
+    /** Para las muestras a 28 días: las probetas que se promediaron, ej. "P2 37,7 · P3 33,1" */
+    detalle?: string
   }
   const diasEntre = (a: string, b: string) => Math.round((new Date(b.slice(0, 10) + "T12:00:00Z").getTime() - new Date(a.slice(0, 10) + "T12:00:00Z").getTime()) / 86400000)
   const ensayos: Ensayo[] = (roturas || []).map((r: any) => {
@@ -124,7 +134,7 @@ export async function GET(req: Request) {
     const edadReal = disp.dispatch_date && r.actual_test_date ? diasEntre(disp.dispatch_date, r.actual_test_date) : null
     const desfasada = edadReal !== null && Math.abs(edadReal - edad) > 3
     return {
-      edadReal, desfasada,
+      edadReal, desfasada, dispatchId: r.dispatch_id || disp.id || null,
       fecha: r.actual_test_date, planta: plantName[disp.plant_id] || "-",
       muestra: disp.sample_number || "-", formula: code || "-",
       edad, mpa, esp, cumple, pct,
@@ -138,7 +148,31 @@ export async function GET(req: Request) {
     }
   }).sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
 
-  const e28 = ensayos.filter(e => e.edad >= 28 && e.esp)
+  // A 28 días la unidad es la MUESTRA (camión): promedio de sus probetas de 28 días.
+  const vistos = new Set<string>()
+  const e28: Ensayo[] = []
+  ensayos.filter(e => e.edad >= 28 && e.esp).forEach(e => {
+    const key = e.dispatchId || e.probetaId
+    if (vistos.has(key)) return
+    vistos.add(key)
+    const probetas = (hermanas || [])
+      .filter((h: any) => h.dispatch_id === e.dispatchId)
+      .map((h: any) => ({ n: Number(h.cylinder_number), mpa: Number(h.strength_mpa) }))
+      .sort((a, b) => a.n - b.n)
+    const lista = probetas.length ? probetas : [{ n: 0, mpa: e.mpa }]
+    const prom = lista.reduce((s, p) => s + p.mpa, 0) / lista.length
+    const desfasadas = ensayos.filter(x => x.dispatchId === e.dispatchId && x.edad >= 28 && x.desfasada)
+    e28.push({
+      ...e,
+      mpa: Math.round(prom * 100) / 100,
+      cumple: e.esp ? prom >= e.esp : null,
+      pct: e.esp ? (prom / e.esp) * 100 : null,
+      probetaId: e.muestra,
+      detalle: lista.length > 1 ? lista.map(p => `P${p.n} ${p.mpa.toFixed(1)}`).join(" · ") : (lista.length === 1 && probetas.length === 1 ? "una sola probeta" : undefined),
+      desfasada: desfasadas.length > 0,
+      edadReal: desfasadas[0]?.edadReal ?? e.edadReal,
+    })
+  })
   const e7 = ensayos.filter(e => e.edad < 28)
   const cumplen28 = e28.filter(e => e.cumple).length
   const pctCumple28 = e28.length ? (cumplen28 / e28.length) * 100 : null
@@ -190,9 +224,11 @@ export async function GET(req: Request) {
     }))
     .sort((a, b) => a.planta.localeCompare(b.planta) || a.material.localeCompare(b.material))
 
+  // El detalle lista muestras a 28 días y probetas individuales a 7 días
+  const detalleEnsayos = [...e7, ...e28].sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
   const html = buildHtml({
     desde, hasta, filasPlanta, totM3, totMuestras, totObjetivo, totDespachos,
-    ensayos, e28, e7, cumplen28, pctCumple28, resumenFormula, noCumplen,
+    ensayos: detalleEnsayos, e28, e7, cumplen28, pctCumple28, resumenFormula, noCumplen,
     vencidas: (vencidas || []).length,
     resumenGranul, granulometrias: granulometrias || [],
   })
@@ -326,7 +362,7 @@ function buildHtml(d: any) {
       <td style="${td}">${e.obra}</td>
       <td style="${td};text-align:right;font-weight:700">${e.aguaExtra ?? "-"}</td>
       <td style="${td};text-align:right">${e.asentamiento ?? "-"}</td>
-      <td style="${td};text-align:right;font-weight:700;color:#b91c1c">${e.mpa.toFixed(1)}</td>
+      <td style="${td};text-align:right;font-weight:700;color:#b91c1c">${e.mpa.toFixed(1)}${e.detalle ? `<br><span style="font-weight:400;font-size:11px;color:#64748b;white-space:nowrap">${e.detalle}</span>` : ""}</td>
       <td style="${td};text-align:right">${e.esp}</td>
     </tr>`).join("") : `<tr><td colspan="11" style="padding:14px;text-align:center;color:#15803d;font-weight:600">Todas las probetas ensayadas a 28 días cumplieron la resistencia especificada</td></tr>`
 
@@ -336,7 +372,7 @@ function buildHtml(d: any) {
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.muestra}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;font-family:monospace;font-size:12px">${e.formula}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center">${e.edad}d${e.desfasada ? `<br><span style="color:#b91c1c;font-size:11px;font-weight:700">real ${e.edadReal}d</span>` : ""}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right;font-weight:700">${e.mpa.toFixed(1)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right;font-weight:700">${e.mpa.toFixed(1)}${e.detalle ? `<br><span style="font-weight:400;font-size:11px;color:#64748b;white-space:nowrap">${e.detalle}</span>` : ""}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right">${e.esp ?? "-"}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center;color:${bgOk(e.cumple)};font-weight:700">
         ${e.cumple === null ? (e.pct ? e.pct.toFixed(0) + "% del esp." : "-") : e.cumple ? "CUMPLE" : "NO CUMPLE"}
@@ -438,7 +474,7 @@ function buildHtml(d: any) {
     </table>
 
     <!-- Probetas que NO cumplieron -->
-    <h3 style="font-size:15px;margin:0 0 8px;color:#b91c1c">Probetas que no alcanzaron la resistencia (${noCumplen.length})</h3>
+    <h3 style="font-size:15px;margin:0 0 8px;color:#b91c1c">Muestras que no alcanzaron la resistencia (${noCumplen.length}) · promedio de las probetas de 28 días de cada camión</h3>
     <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:11px;margin-bottom:8px;background:#fef2f2">
       <thead><tr style="background:#fee2e2">
         <th style="padding:8px;text-align:left">Probeta</th>
@@ -461,7 +497,7 @@ function buildHtml(d: any) {
     </div>
 
     <!-- Detalle de ensayos -->
-    <h3 style="font-size:15px;margin:0 0 8px">Detalle de ensayos (${ensayos.length} roturas · ${e28.length} a 28d · ${e7.length} a 7d)</h3>
+    <h3 style="font-size:15px;margin:0 0 8px">Detalle de ensayos (${e28.length} muestras a 28d · ${e7.length} probetas a 7d)</h3>
     <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;margin-bottom:24px">
       <thead><tr style="background:#f1f5f9">
         <th style="padding:8px 10px;text-align:left">Fecha</th>
@@ -475,7 +511,7 @@ function buildHtml(d: any) {
       </tr></thead>
       <tbody>${ensayosHtml}</tbody>
     </table>
-    <div style="font-size:12px;color:#64748b;margin:-18px 0 24px">El cumplimiento se evalúa a 28 días. Los ensayos a 7 días se informan como referencia (% de la resistencia especificada alcanzado).</div>
+    <div style="font-size:12px;color:#64748b;margin:-18px 0 24px">El cumplimiento se evalúa a 28 días con el promedio de las probetas de la muestra (normalmente P2 y P3); debajo del promedio se ve cada una. Los ensayos a 7 días se informan como referencia (% de la resistencia especificada alcanzado).</div>
 
     <!-- Análisis -->
     <h3 style="font-size:15px;margin:0 0 8px">Estado de situación</h3>
