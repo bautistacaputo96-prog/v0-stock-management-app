@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Truck, CheckCircle, Clock, MapPin, AlertTriangle, RefreshCw, ArrowRight, ChevronLeft, ChevronRight, CalendarDays, Pencil, X, MoreHorizontal, XCircle } from "lucide-react"
+import { Truck, CheckCircle, Clock, MapPin, AlertTriangle, RefreshCw, ArrowRight, ChevronLeft, ChevronRight, CalendarDays, Pencil, X, MoreHorizontal, XCircle, Printer } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { format, parseISO, differenceInMinutes, addMinutes, addDays, subDays, isToday, isTomorrow, isYesterday } from "date-fns"
 import { es } from "date-fns/locale"
@@ -78,6 +78,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [editDialog, setEditDialog] = useState<ScheduledDispatch | null>(null)
   const [editQuantity, setEditQuantity] = useState("")
   const [finalizarDialog, setFinalizarDialog] = useState<ScheduledDispatch | null>(null)
+  // Al confirmar una carga se abre esto para que el operario imprima el remito en el momento
+  const [remitoListo, setRemitoListo] = useState<{ id: string; remito: string; m3: number; cliente: string; obra: string; patente: string } | null>(null)
 
   // Daily humidity state
   const [humidityMaterials, setHumidityMaterials] = useState<any[]>([])
@@ -471,6 +473,16 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       })
 
       setDispatchDialog(null)
+      if (newDispatch?.id) {
+        setRemitoListo({
+          id: newDispatch.id,
+          remito: dispatchForm.remito,
+          m3: quantityThisTruck,
+          cliente: dispatchDialog.clients?.name || "",
+          obra: dispatchDialog.construction_sites?.name || "",
+          patente: mixers.find(m => m.id === dispatchForm.mixer_id)?.license_plate || "",
+        })
+      }
       loadData()
     } catch (error) {
       console.error("Error:", error)
@@ -954,6 +966,38 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDispatchDialog(null)}>Cancelar</Button>
             <Button onClick={handleDispatch} disabled={submitting}>{submitting ? "Registrando..." : "Confirmar Despacho"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remito listo para imprimir: aparece apenas se confirma la carga */}
+      <Dialog open={!!remitoListo} onOpenChange={(open) => !open && setRemitoListo(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-emerald-600" /> Camión despachado
+            </DialogTitle>
+            <DialogDescription>El camión ya está registrado. Imprimí el remito antes de que salga.</DialogDescription>
+          </DialogHeader>
+          {remitoListo && (
+            <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
+              <p><span className="text-muted-foreground">Remito:</span> <strong className="text-base">{remitoListo.remito || "sin número"}</strong></p>
+              <p><span className="text-muted-foreground">Camión:</span> <strong>{remitoListo.patente || "-"}</strong> · <strong>{remitoListo.m3} m³</strong></p>
+              <p><span className="text-muted-foreground">Cliente:</span> {remitoListo.cliente}</p>
+              {remitoListo.obra && <p><span className="text-muted-foreground">Obra:</span> {remitoListo.obra}</p>}
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="ghost" className="text-muted-foreground" onClick={() => setRemitoListo(null)}>Sin remito</Button>
+            <Button
+              className="h-11 text-base flex-1"
+              onClick={() => {
+                if (remitoListo) window.open(`/api/remito/${remitoListo.id}`, "_blank")
+                setRemitoListo(null)
+              }}
+            >
+              <Printer className="h-5 w-5 mr-2" /> Imprimir remito
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
