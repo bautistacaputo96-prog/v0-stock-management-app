@@ -495,6 +495,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   // Derived data
   const pedidosActivos = dispatches.filter(d => !["completed", "cancelled"].includes(d.status))
   const pedidosCompletados = dispatches.filter(d => d.status === "completed")
+  // Despachos del día cargados a mano (sin pedido programado). No son pedidos, pero salieron.
+  const despachosManuales = dailyDispatches.filter(d => !d.scheduled_dispatch_id && !d.is_test_dispatch)
 
   // Trucks currently in transit: pick the most recent dispatch per mixer where mixer.status = "in_transit"
   const seenMixers = new Set<string>()
@@ -558,7 +560,14 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         </div>
 
         <div className="flex gap-2">
-          <AddDispatchDialog formulas={formulas} clients={clients} mixers={mixers} plantId={selectedPlant} onSuccess={loadData} triggerLabel="Carga despacho manual" />
+          <AddDispatchDialog
+            formulas={formulas}
+            clients={clients}
+            mixers={mixers}
+            plantId={selectedPlant}
+            onSuccess={(d) => { loadData(); if (d?.id) setRemitoListo(d) }}
+            triggerLabel="Carga despacho manual"
+          />
           <Button variant="outline" onClick={loadData} className="gap-2"><RefreshCw className="h-4 w-4" />Actualizar</Button>
         </div>
       </div>
@@ -639,19 +648,28 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           )}
           {dailyDispatches.length > 0 && (
             <div className="mt-6 pt-4 border-t">
-              <h4 className="text-sm font-semibold mb-3">Ultimos Despachos</h4>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {dailyDispatches.slice(0, 10).map(d => (
-                  <div key={d.id} className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/30">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground w-14">{format(parseISO(d.dispatch_date), "HH:mm")}</span>
-                      <Badge variant="outline" className="text-xs">{d.formulas?.code || "N/A"}</Badge>
-                      <span className="truncate max-w-[150px]">{d.clients?.name}</span>
+              <h4 className="text-sm font-semibold mb-3">Ultimos Despachos <span className="font-normal text-muted-foreground text-xs">(el último cargado, primero)</span></h4>
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {[...dailyDispatches]
+                  .sort((a, b) => (b.created_at || b.dispatch_date).localeCompare(a.created_at || a.dispatch_date))
+                  .slice(0, 15)
+                  .map(d => (
+                  <div key={d.id} className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/30 gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-xs text-muted-foreground w-14 shrink-0">{format(parseISO(d.dispatch_date), "HH:mm")}</span>
+                      <Badge variant="outline" className="text-xs shrink-0">{d.formulas?.code || "N/A"}</Badge>
+                      <span className="truncate">{d.clients?.name}</span>
+                      {!d.scheduled_dispatch_id && <Badge variant="secondary" className="text-[10px] shrink-0">manual</Badge>}
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 shrink-0">
                       <span className="font-medium">{d.quantity_m3} m3</span>
                       {d.remito && <span className="text-xs text-muted-foreground">R: {d.remito}</span>}
                       {d.mixers?.license_plate && <span className="text-xs text-muted-foreground">{d.mixers.license_plate}</span>}
+                      {!d.is_test_dispatch && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>
+                          <Printer className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -673,7 +691,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {pedidosActivos.length === 0 && pedidosCompletados.length === 0 ? (
+            {pedidosActivos.length === 0 && pedidosCompletados.length === 0 && despachosManuales.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">No hay pedidos para este dia</p>
             ) : (
               <>
@@ -750,6 +768,26 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                     </Card>
                   )
                 })}
+
+                {despachosManuales.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Despachos manuales (sin pedido)</p>
+                    {despachosManuales.map(d => (
+                      <div key={d.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/50 text-sm gap-2">
+                        <div className="min-w-0">
+                          <span className="font-medium">{d.clients?.name || "Sin cliente"}</span>
+                          <span className="text-muted-foreground ml-2">{d.formulas?.code}{d.remito ? ` · R: ${d.remito}` : ""}{d.mixers?.license_plate ? ` · ${d.mixers.license_plate}` : ""}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-green-600 font-medium">{d.quantity_m3} m3</span>
+                          <Button variant="outline" size="sm" className="h-7 gap-1" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>
+                            <Printer className="h-3 w-3" />Remito
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {pedidosCompletados.length > 0 && (
                   <div className="mt-2 space-y-2">

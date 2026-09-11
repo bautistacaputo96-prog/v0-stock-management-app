@@ -83,7 +83,8 @@ interface AddDispatchDialogProps {
   mixers: Mixer[]
   plantId: string
   plants?: { id: string; name: string }[]
-  onSuccess?: () => void
+  /** Se llama al guardar. Para un despacho con remito recibe sus datos, para poder imprimirlo. */
+  onSuccess?: (despacho?: { id: string; remito: string; m3: number; cliente: string; obra: string; patente: string }) => void
   triggerLabel?: string
 }
 
@@ -551,11 +552,19 @@ export function AddDispatchDialog({
           ? "Despacho registrado con 3 probetas (7d, 28d, 28d)"
           : "Despacho registrado y stock actualizado"
       )
+      const resumen = {
+        id: dispatch.id as string,
+        remito: formData.remito,
+        m3: quantityM3,
+        cliente: clients.find((c) => c.id === formData.client_id)?.name || "",
+        obra: "",
+        patente: mixers.find((m) => m.id === formData.mixer_id)?.license_plate || "",
+      }
       // Close dialog immediately - setLoading(false) AFTER setOpen(false) to avoid race condition
       setOpen(false)
       resetForm()
       setLoading(false)
-      if (onSuccess) onSuccess()
+      if (onSuccess) onSuccess(isTestDispatch ? undefined : resumen)
       router.refresh()
     } catch (error: any) {
       console.error("[v0] Error creating dispatch:", error)
