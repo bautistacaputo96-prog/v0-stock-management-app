@@ -5,6 +5,7 @@ import { TestTube2, Hammer, Filter, BarChart3, TrendingUp } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { TestCylindersTable } from "@/components/test-cylinders-table"
+import { MuestreoResumen } from "@/components/muestreo-resumen"
 import { CylinderBreakingTable } from "@/components/cylinder-breaking-table"
 import { GranulometriaTable } from "@/components/granulometria-table"
 import { BreakingResultsTable } from "@/components/breaking-results-table"
@@ -89,6 +90,8 @@ function CalidadContent() {
         )}
 
         {activeTab === "probetas" && (
+          <>
+          <MuestreoResumen plants={plantsData} />
           <Card>
             <CardHeader>
               <CardTitle>Probetas de Hormigon</CardTitle>
@@ -98,6 +101,7 @@ function CalidadContent() {
               <TestCylindersTable plants={plantsData} selectedPlantId={initialPlantId} onPlantChange={() => {}} />
             </CardContent>
           </Card>
+          </>
         )}
 
         {activeTab === "rotura" && (
