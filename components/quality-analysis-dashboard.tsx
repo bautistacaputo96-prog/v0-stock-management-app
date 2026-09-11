@@ -314,6 +314,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
 
   // Tabla de muestras: UNA fila por muestra (camión). El resultado a 28 días es el
   // promedio de sus probetas de 28 días; el 7 días es la P1. Se ve cada probeta al lado.
+  // Orden: por fecha de rotura, la más reciente arriba.
   const tablaMuestras = useMemo(() => {
     const q = busquedaMuestra.trim().toLowerCase()
     const porCamion = new Map<string, TestCylinder[]>()
@@ -374,7 +375,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         }
       })
       .filter(r => !q || [r.muestra, r.remito, r.formula, r.obra, r.cliente, r.camion].some(v => v.toLowerCase().includes(q)))
-      .sort((a, b) => Number(b.bajo) - Number(a.bajo) || (b.fecha || "").localeCompare(a.fecha || ""))
+      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""))
   }, [filteredCylinders, busquedaMuestra])
 
   // Get 7-day results
@@ -1310,7 +1311,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Droplets className="h-5 w-5" /> Resultados por muestra</CardTitle>
               <CardDescription>
-                Una fila por muestra (camión): el resultado a 28 días es el promedio de sus probetas, que se ven al lado. Las que no cumplen aparecen primero.
+                Una fila por muestra (camión), la más reciente arriba: el resultado a 28 días es el promedio de sus probetas, que se ven al lado. Las que no cumplen van en rojo.
               </CardDescription>
               <div className="relative max-w-sm pt-2">
                 <Search className="absolute left-2.5 top-4.5 h-4 w-4 text-muted-foreground" />
