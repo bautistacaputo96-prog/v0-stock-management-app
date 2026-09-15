@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import {
   BarChart,
   Bar,
@@ -44,6 +45,7 @@ import {
   Lightbulb,
   Droplets,
   Search,
+  FileDown,
 } from "lucide-react"
 import { DateRangeFilter } from "./date-range-filter"
 
@@ -154,6 +156,14 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
   const [selectedFormulaCode, setSelectedFormulaCode] = useState<string>("all")
   const [quantileType, setQuantileType] = useState<"10" | "5">("10") // 10% CIRSOC 201:2005, 5% for older
   const [busquedaMuestra, setBusquedaMuestra] = useState("")
+  const [filtroEdad, setFiltroEdad] = useState<"todas" | "7" | "28">("todas")
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportRango, setExportRango] = useState(() => {
+    const hoy = new Date()
+    const p = (n: number) => String(n).padStart(2, "0")
+    return { desde: `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-01`, hasta: `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-${p(hoy.getDate())}` }
+  })
+  const [exportando, setExportando] = useState(false)
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
     from: new Date(new Date().setFullYear(new Date().getFullYear() - 5)).toISOString().split("T")[0],
     to: new Date().toISOString().split("T")[0],
@@ -364,6 +374,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
           cliente: c.dispatch?.client || c.dispatch?.client_rel?.name || "",
           camion: c.dispatch?.mixer?.license_plate || "",
           cargaFecha: fechaCarga ? fechaCarga.toLocaleDateString("es-AR") : "",
+          // Fecha de moldeo en formato ordenable (yyyy-mm-dd), en hora local
+          moldeoISO: fechaCarga ? `${fechaCarga.getFullYear()}-${String(fechaCarga.getMonth() + 1).padStart(2, "0")}-${String(fechaCarga.getDate()).padStart(2, "0")}` : "",
           cargaHora: fechaCarga && (fechaCarga.getHours() !== 12 || fechaCarga.getMinutes() !== 0) ? fechaCarga.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "",
           m3,
           humArena: c.dispatch?.sand_stockpile_humidity,
@@ -375,8 +387,78 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         }
       })
       .filter(r => !q || [r.muestra, r.remito, r.formula, r.obra, r.cliente, r.camion].some(v => v.toLowerCase().includes(q)))
-      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""))
-  }, [filteredCylinders, busquedaMuestra])
+      // 7 días: muestras con rotura a 7; 28 días: muestras con rotura a 28; todas: sin filtro
+      .filter(r => filtroEdad === "todas" ? true : filtroEdad === "7" ? r.mpa7 !== null : r.prom28 !== null)
+      // Orden: fecha de moldeo, la más reciente arriba
+      .sort((a, b) => b.moldeoISO.localeCompare(a.moldeoISO) || (b.fecha || "").localeCompare(a.fecha || ""))
+  }, [filteredCylinders, busquedaMuestra, filtroEdad])
+
+  /** Exporta a PDF las muestras moldeadas entre dos fechas (respeta el filtro 7/28 y la búsqueda). */
+  async function exportarMuestrasPDF() {
+    setExportando(true)
+    try {
+      const { default: jsPDF } = await import("jspdf")
+      const { default: autoTable } = await import("jspdf-autotable")
+      const filas = tablaMuestras.filter(r => r.moldeoISO >= exportRango.desde && r.moldeoISO <= exportRango.hasta)
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
+      const fmt = (iso: string) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("es-AR") : "-"
+      const plantaNombre = selectedPlantId === "all" ? "Todas las plantas" : (plants.find(p => p.id === selectedPlantId)?.name || "")
+      doc.setFontSize(14)
+      doc.text("Muestras de hormigón — resultados de rotura", 14, 14)
+      doc.setFontSize(9)
+      doc.setTextColor(90)
+      doc.text(
+        `${plantaNombre} · Moldeadas del ${fmt(exportRango.desde)} al ${fmt(exportRango.hasta)} · ${filas.length} muestra${filas.length === 1 ? "" : "s"}` +
+        (filtroEdad !== "todas" ? ` · solo con rotura a ${filtroEdad} días` : "") +
+        ` · Generado el ${new Date().toLocaleDateString("es-AR")}`,
+        14, 20,
+      )
+      doc.setTextColor(0)
+      autoTable(doc, {
+        startY: 24,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [30, 41, 59] },
+        head: [["Moldeo", "Muestra", "Remito", "Fórmula", "Camión", "m³", "7 d", "28 d prom.", "P2", "P3", "f'c", "Cumple", "Asent.", "Agua extra", "L/m³", "a/c", "Cliente", "Obra"]],
+        body: filas.map(r => [
+          fmt(r.moldeoISO),
+          r.muestra || "-",
+          r.remito || "-",
+          r.formula,
+          r.camion || "-",
+          r.m3 ? r.m3.toFixed(1) : "-",
+          r.mpa7 != null ? r.mpa7.toFixed(1) : "-",
+          r.prom28 != null ? r.prom28.toFixed(1) : (r.pend28 ? `${r.pend28} pend.` : "-"),
+          r.p28[0] ? r.p28[0].mpa.toFixed(1) : "-",
+          r.p28[1] ? r.p28[1].mpa.toFixed(1) : "-",
+          r.fc || "-",
+          r.prom28 != null && r.fc ? (r.bajo ? "NO" : "Sí") : "-",
+          r.slump != null ? `${r.slump} cm` : "-",
+          r.agua != null ? `${r.agua.toFixed(0)} L` : "-",
+          r.aguaPorM3 != null ? r.aguaPorM3.toFixed(1) : "-",
+          r.ac != null ? r.ac.toFixed(2) : "-",
+          r.cliente || "-",
+          r.obra || "-",
+        ]),
+        didParseCell: (data: any) => {
+          if (data.section === "body" && filas[data.row.index]?.bajo) {
+            data.cell.styles.textColor = [185, 28, 28]
+            if (data.column.index === 7 || data.column.index === 11) data.cell.styles.fontStyle = "bold"
+          }
+        },
+        columnStyles: { 16: { cellWidth: 32 }, 17: { cellWidth: 36 } },
+      })
+      const pages = (doc as any).internal.getNumberOfPages()
+      for (let i = 1; i <= pages; i++) {
+        doc.setPage(i)
+        doc.setFontSize(7); doc.setTextColor(120)
+        doc.text(`Rebucret S.A. · Control de calidad · página ${i} de ${pages}`, 14, doc.internal.pageSize.getHeight() - 5)
+      }
+      doc.save(`muestras_${exportRango.desde}_${exportRango.hasta}.pdf`)
+      setExportOpen(false)
+    } finally {
+      setExportando(false)
+    }
+  }
 
   // Get 7-day results
   const results7Days = useMemo(() => {
@@ -1311,18 +1393,57 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Droplets className="h-5 w-5" /> Resultados por muestra</CardTitle>
               <CardDescription>
-                Una fila por muestra (camión), la más reciente arriba: el resultado a 28 días es el promedio de sus probetas, que se ven al lado. Las que no cumplen van en rojo.
+                Una fila por muestra (camión), ordenadas por fecha de moldeo con la más reciente arriba. El resultado a 28 días es el promedio de sus probetas, que se ven al lado. Las que no cumplen van en rojo.
               </CardDescription>
-              <div className="relative max-w-sm pt-2">
-                <Search className="absolute left-2.5 top-4.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  value={busquedaMuestra}
-                  onChange={e => setBusquedaMuestra(e.target.value)}
-                  placeholder="Buscar por remito, muestra, fórmula u obra"
-                  className="pl-8"
-                />
+              <div className="flex items-center gap-2 flex-wrap pt-2">
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={busquedaMuestra}
+                    onChange={e => setBusquedaMuestra(e.target.value)}
+                    placeholder="Buscar por remito, muestra, fórmula u obra"
+                    className="pl-8"
+                  />
+                </div>
+                <div className="flex rounded-lg border p-0.5 text-xs">
+                  {([["todas", "Todas"], ["7", "Rotura a 7 días"], ["28", "Rotura a 28 días"]] as const).map(([v, l]) => (
+                    <button key={v} onClick={() => setFiltroEdad(v)} className={`px-3 py-1.5 rounded-md whitespace-nowrap ${filtroEdad === v ? "bg-muted font-medium" : ""}`}>{l}</button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground">{tablaMuestras.length} muestra{tablaMuestras.length === 1 ? "" : "s"}</span>
+                <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={() => setExportOpen(true)}>
+                  <FileDown className="h-4 w-4" /> Exportar PDF
+                </Button>
               </div>
             </CardHeader>
+
+            <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+              <DialogContent className="sm:max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>Exportar muestras a PDF</DialogTitle>
+                  <DialogDescription>Elegí el rango por fecha de moldeo. Se exporta con el filtro actual ({filtroEdad === "todas" ? "todas las roturas" : `rotura a ${filtroEdad} días`}).</DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-2 gap-3 py-2">
+                  <div className="space-y-1.5">
+                    <Label>Moldeadas desde</Label>
+                    <Input type="date" value={exportRango.desde} max={exportRango.hasta} onChange={e => setExportRango(r => ({ ...r, desde: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Hasta</Label>
+                    <Input type="date" value={exportRango.hasta} min={exportRango.desde} onChange={e => setExportRango(r => ({ ...r, hasta: e.target.value }))} />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {tablaMuestras.filter(r => r.moldeoISO >= exportRango.desde && r.moldeoISO <= exportRango.hasta).length} muestras en ese rango.
+                </p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setExportOpen(false)}>Cancelar</Button>
+                  <Button onClick={exportarMuestrasPDF} disabled={exportando || !exportRango.desde || !exportRango.hasta}>
+                    <FileDown className="h-4 w-4 mr-2" />{exportando ? "Generando..." : "Descargar PDF"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
             <CardContent>
               {tablaMuestras.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">No hay probetas para los filtros elegidos.</p>
@@ -1332,7 +1453,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                     <TableRow>
                       <TableHead>Rotura</TableHead>
                       <TableHead>Muestra / Remito</TableHead>
-                      <TableHead>Carga</TableHead>
+                      <TableHead>Moldeo</TableHead>
                       <TableHead>Fórmula</TableHead>
                       <TableHead className="text-right">7 días</TableHead>
                       <TableHead className="text-right">28 días</TableHead>
