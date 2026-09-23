@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker, Printer } from "lucide-react"
+import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker, Printer, Sparkles } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -36,6 +36,8 @@ type ScheduledDispatch = {
   dispatch_id?: string | null; plant_id?: string | null;
   /** Litros de superfluidificante agregados en obra (registrados al volver el camión) */
   superplasticizer_liters?: number | null;
+  /** Kg totales de fibra cargados en el camión (dosificada por m³) */
+  fiber_kg?: number | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -98,6 +100,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [sampleDispatch, setSampleDispatch] = useState<ScheduledDispatch | null>(null)
   const [superDispatch, setSuperDispatch] = useState<ScheduledDispatch | null>(null)
   const [superLiters, setSuperLiters] = useState("")
+  // Fibra agregada a un despacho ya cargado (se dosifica en kg por m³)
+  const [fiberDispatch, setFiberDispatch] = useState<ScheduledDispatch | null>(null)
+  const [fiberPerM3, setFiberPerM3] = useState("")
   const [sampleNumber, setSampleNumber] = useState("")
   const [sampleSlump, setSampleSlump] = useState("")
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
@@ -233,6 +238,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           (d.dispatch_materials || [])
             .filter((dm: any) => isSuperplasticizer(dm.materials?.name))
             .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
+        fiber_kg:
+          (d.dispatch_materials || [])
+            .filter((dm: any) => /fibra/i.test(dm.materials?.name || ""))
+            .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
         scheduled_arrival_time: d.dispatch_date,
         scheduled_departure_time: d.dispatch_date,
         actual_departure_time: d.dispatch_date,
@@ -341,6 +350,78 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
    * Se guarda como material del despacho y descuenta stock por la diferencia
    * con lo que ya estuviera registrado (permite corregir un valor cargado antes).
    */
+  function openFiberDialog(dispatch: ScheduledDispatch) {
+    setFiberDispatch(dispatch)
+    const m3 = Number(dispatch.quantity_m3) || 0
+    setFiberPerM3(dispatch.fiber_kg && m3 > 0 ? String(Math.round((dispatch.fiber_kg / m3) * 100) / 100) : "")
+  }
+
+  /** Guarda la fibra del despacho: kg/m³ × m³ del camión. Ajusta el stock por la diferencia. */
+  async function handleSaveFiber() {
+    if (!fiberDispatch) return
+    const perM3 = Number.parseFloat(fiberPerM3)
+    if (Number.isNaN(perM3) || perM3 < 0) {
+      toast({ title: "Dosificación inválida", description: "Ingresá los kg de fibra por m³", variant: "destructive" })
+      return
+    }
+    const m3 = Number(fiberDispatch.quantity_m3) || 0
+    const total = Math.round(perM3 * m3 * 1000) / 1000
+    setSaving(true)
+    const supabase = createClient()
+    try {
+      const { data: material, error: matError } = await supabase
+        .from("materials")
+        .select("id")
+        .eq("plant_id", fiberDispatch.plant_id)
+        .ilike("name", "%fibra%")
+        .maybeSingle()
+      if (matError) throw matError
+      if (!material) throw new Error("No se encontró el material Fibra en esta planta")
+
+      const previous = fiberDispatch.fiber_kg || 0
+      const diff = total - previous
+
+      const { data: existing } = await supabase
+        .from("dispatch_materials")
+        .select("id")
+        .eq("dispatch_id", fiberDispatch.id)
+        .eq("material_id", material.id)
+        .maybeSingle()
+
+      if (total === 0 && existing) {
+        await supabase.from("dispatch_materials").delete().eq("id", existing.id)
+      } else if (existing) {
+        await supabase.from("dispatch_materials").update({ quantity: total }).eq("id", existing.id)
+      } else if (total > 0) {
+        await supabase.from("dispatch_materials").insert({ dispatch_id: fiberDispatch.id, material_id: material.id, quantity: total })
+      }
+
+      if (diff !== 0) {
+        await supabase.rpc("update_material_stock", { p_material_id: material.id, p_quantity_change: -diff })
+        await supabase.from("stock_movements").insert({
+          material_id: material.id,
+          movement_type: "consumo",
+          quantity_kg: diff,
+          reference_type: "dispatch",
+          reference_id: fiberDispatch.id,
+          movement_date: new Date().toISOString().substring(0, 10),
+          notes: `Fibra ${perM3} kg/m³ × ${m3} m³ cargada desde el historial — remito ${fiberDispatch.remito || "s/n"}`,
+        })
+      }
+
+      toast({
+        title: "Fibra registrada",
+        description: total > 0 ? `${perM3} kg/m³ × ${m3} m³ = ${total} kg descontados del stock` : "Se quitó la fibra del despacho",
+      })
+      setFiberDispatch(null)
+      loadData()
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "No se pudo registrar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleSaveSuperplasticizer() {
     if (!superDispatch) return
     const liters = Number.parseFloat(superLiters)
@@ -431,6 +512,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       Responsable: d.created_by || "-",
       "Agua extra (L)": d.extra_water_liters ?? "",
       "Superfluidificante (L)": d.superplasticizer_liters ?? "",
+      "Fibra (kg)": d.fiber_kg ?? "",
       Origen: d.source === "manual" ? "Despacho" : "Programado",
       Observaciones: d.observations || "",
     }))
@@ -1018,6 +1100,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                 aria-label={`Superfluidificante en obra: ${dispatch.superplasticizer_liters} lts`}
                               />
                             )}
+                            {!!dispatch.fiber_kg && (
+                              <Sparkles
+                                className="h-3.5 w-3.5 text-violet-600 shrink-0"
+                                aria-label={`Fibra: ${dispatch.fiber_kg} kg`}
+                              />
+                            )}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -1059,6 +1147,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                 <DropdownMenuItem onClick={() => openSuperDialog(dispatch)}>
                                   <Beaker className="h-4 w-4 mr-2" />
                                   Superfluidificante en obra
+                                </DropdownMenuItem>
+                              )}
+                              {dispatch.source === "manual" && (
+                                <DropdownMenuItem onClick={() => openFiberDialog(dispatch)}>
+                                  <Sparkles className="h-4 w-4 mr-2" />
+                                  {dispatch.fiber_kg ? "Editar fibra" : "Agregar fibra"}
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
@@ -1272,6 +1366,46 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
             <Button disabled={saving} onClick={handleSaveSuperplasticizer}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fibra agregada a un despacho ya cargado */}
+      <Dialog open={!!fiberDispatch} onOpenChange={(open) => !open && setFiberDispatch(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-violet-600" />
+              Fibra en el despacho
+            </DialogTitle>
+          </DialogHeader>
+          {fiberDispatch && (() => {
+            const m3 = Number(fiberDispatch.quantity_m3) || 0
+            const perM3 = Number.parseFloat(fiberPerM3) || 0
+            const total = Math.round(perM3 * m3 * 100) / 100
+            return (
+              <div className="space-y-4 py-4">
+                <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
+                  <p><span className="text-muted-foreground">Remito:</span> <span className="font-medium">{fiberDispatch.remito || "-"}</span></p>
+                  <p><span className="text-muted-foreground">Cliente:</span> <span className="font-medium">{fiberDispatch.clients?.name || "-"}</span></p>
+                  <p><span className="text-muted-foreground">Cantidad:</span> <span className="font-medium">{m3} m³</span></p>
+                  {!!fiberDispatch.fiber_kg && <p><span className="text-muted-foreground">Fibra cargada hoy:</span> <span className="font-medium">{fiberDispatch.fiber_kg} kg</span></p>}
+                </div>
+                <div className="space-y-2">
+                  <Label>Dosificación (kg de fibra por m³)</Label>
+                  <Input type="number" step="0.1" min="0" inputMode="decimal" autoFocus placeholder="Ej: 1" value={fiberPerM3} onChange={(e) => setFiberPerM3(e.target.value)} />
+                  <p className="text-sm">
+                    Total en el camión: <span className="font-semibold">{total > 0 ? `${total} kg` : "—"}</span>
+                    <span className="text-muted-foreground text-xs"> ({perM3 || 0} kg/m³ × {m3} m³)</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">Se descuenta del stock de &quot;Fibra&quot; de la planta. Dejalo en 0 para quitarla.</p>
+                </div>
+              </div>
+            )
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFiberDispatch(null)}>Cancelar</Button>
+            <Button disabled={saving} onClick={handleSaveFiber}>{saving ? "Guardando..." : "Guardar"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
