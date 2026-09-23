@@ -70,7 +70,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     day: "2-digit", month: "2-digit", year: "numeric"
   })
 
-  const m3           = Number(row.quantity_m3 || 0).toFixed(0)
+  // Exactamente lo cargado: 2,5 queda "2,5", 8 queda "8" (sin redondear ni decimales de más)
+  const m3           = Number(row.quantity_m3 || 0).toLocaleString("es-AR", { maximumFractionDigits: 2 })
   const remito       = (!isScheduled && row.remito) ? row.remito : ""
   const productoCode = f.code || f.name || ""
 
