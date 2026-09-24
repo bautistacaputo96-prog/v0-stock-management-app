@@ -22,8 +22,11 @@ import {
   LayoutDashboard,
   BarChart3,
   Clock,
+  ArrowLeftRight,
 } from "lucide-react"
 import { AdjustStockDialog } from "@/components/adjust-stock-dialog"
+import { TransferStockDialog } from "@/components/transfer-stock-dialog"
+import { formatStock, esMaterialFino } from "@/lib/stock-format"
 import { format, subDays } from "date-fns"
 import { es } from "date-fns/locale"
 import {
@@ -83,6 +86,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   const [passwordInput, setPasswordInput] = useState("")
   const [passwordError, setPasswordError] = useState(false)
   const [adjustTarget, setAdjustTarget] = useState<Material | null>(null)
+  const [transferTarget, setTransferTarget] = useState<Material | null>(null)
   const [showAdjustDialog, setShowAdjustDialog] = useState(false)
 
   // Dashboard
@@ -490,8 +494,8 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                           )}
                         </div>
                         <div className="text-right">
-                          <p className="text-2xl font-bold">{(mat.current_stock / 1000).toFixed(1)} t</p>
-                          <p className="text-xs text-muted-foreground">Mín: {(mat.min_stock / 1000).toFixed(1)} t</p>
+                          <p className="text-2xl font-bold">{formatStock(mat.current_stock, mat.name, "kg", { decimalesT: 1 })}</p>
+                          <p className="text-xs text-muted-foreground">Mín: {formatStock(mat.min_stock, mat.name, "kg", { decimalesT: 1 })}</p>
                         </div>
                       </div>
 
@@ -522,7 +526,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                           </p>
                           <p className="font-semibold text-sm">
                             {mat.avgDailyConsumption > 0
-                              ? `${(mat.avgDailyConsumption / 1000).toFixed(2)} t/día`
+                              ? `${formatStock(mat.avgDailyConsumption, mat.name, "kg", { decimalesT: 2 })}/día`
                               : "Sin datos"}
                           </p>
                         </div>
@@ -551,6 +555,12 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                           <Pencil className="h-3 w-3 mr-1" />
                           Ajustar
                         </Button>
+                        {esMaterialFino(mat.name) && (
+                          <Button variant="outline" size="sm" className="text-xs" title="Mover a otra planta" onClick={() => setTransferTarget(mat as any)}>
+                            <ArrowLeftRight className="h-3 w-3 mr-1" />
+                            Mover
+                          </Button>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -639,8 +649,8 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                     <Package className="h-4 w-4" />
                     Stock Actual
                   </div>
-                  <p className="text-2xl font-bold">{(materialInfo.current_stock / 1000).toFixed(1)} t</p>
-                  <p className="text-xs text-muted-foreground">Min: {(materialInfo.min_stock / 1000).toFixed(1)} t</p>
+                  <p className="text-2xl font-bold">{formatStock(materialInfo.current_stock, materialInfo.name, "kg", { decimalesT: 1 })}</p>
+                  <p className="text-xs text-muted-foreground">Min: {formatStock(materialInfo.min_stock, materialInfo.name, "kg", { decimalesT: 1 })}</p>
                 </CardContent>
               </Card>
 
@@ -650,7 +660,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                     <TrendingUp className="h-4 w-4" />
                     Total Ingresos
                   </div>
-                  <p className="text-2xl font-bold text-green-600">{(stats.totalEntries / 1000).toFixed(1)} t</p>
+                  <p className="text-2xl font-bold text-green-600">{formatStock(stats.totalEntries, materialInfo.name, "kg", { decimalesT: 1 })}</p>
                   <p className="text-xs text-muted-foreground">Ultimos {dateRange} dias</p>
                 </CardContent>
               </Card>
@@ -667,9 +677,9 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                     </div>
                     <ExternalLink className="h-3 w-3 text-muted-foreground" />
                   </div>
-                  <p className="text-2xl font-bold text-red-600">{(stats.totalConsumption / 1000).toFixed(1)} t</p>
+                  <p className="text-2xl font-bold text-red-600">{formatStock(stats.totalConsumption, materialInfo.name, "kg", { decimalesT: 1 })}</p>
                   <p className="text-xs text-muted-foreground">
-                    Prom: {(stats.avgDailyConsumption / 1000).toFixed(2)} t/dia
+                    Prom: {formatStock(stats.avgDailyConsumption, materialInfo.name, "kg", { decimalesT: 2 })}/dia
                   </p>
                   <p className="text-xs text-blue-600 mt-1">Click para ver detalle</p>
                 </CardContent>
@@ -685,7 +695,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                     className={`text-2xl font-bold ${stats.stockChange >= 0 ? "text-green-600" : "text-red-600"}`}
                   >
                     {stats.stockChange >= 0 ? "+" : ""}
-                    {(stats.stockChange / 1000).toFixed(1)} t
+                    {formatStock(stats.stockChange, materialInfo.name, "kg", { decimalesT: 1 })}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {stats.stockChangePercent >= 0 ? "+" : ""}
@@ -818,20 +828,20 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                           {format(new Date(day.date + "T12:00:00"), "EEEE dd/MM", { locale: es })}
                         </td>
                         <td className="py-2 px-3 text-right text-green-600">
-                          {day.entries > 0 ? `+${(day.entries / 1000).toFixed(2)} t` : "-"}
+                          {day.entries > 0 ? `+${formatStock(day.entries, materialInfo?.name, "kg", { decimalesT: 2 })}` : "-"}
                         </td>
                         <td className="py-2 px-3 text-right text-red-600 font-medium">
                           {day.consumption > 0 ? (
                             <span className="inline-flex items-center gap-1">
-                              -{(day.consumption / 1000).toFixed(2)} t
+                              -{formatStock(day.consumption, materialInfo?.name, "kg", { decimalesT: 2 })}
                               <ExternalLink className="h-3 w-3 opacity-50" />
                             </span>
                           ) : "-"}
                         </td>
                         <td className="py-2 px-3 text-right text-blue-600 font-medium">
-                          {day.adjustments !== 0 ? `${day.adjustments > 0 ? "+" : ""}${(day.adjustments / 1000).toFixed(2)} t` : "-"}
+                          {day.adjustments !== 0 ? `${day.adjustments > 0 ? "+" : ""}${formatStock(day.adjustments, materialInfo?.name, "kg", { decimalesT: 2 })}` : "-"}
                         </td>
-                        <td className="py-2 px-3 text-right font-medium">{(day.stock / 1000).toFixed(2)} t</td>
+                        <td className="py-2 px-3 text-right font-medium">{formatStock(day.stock, materialInfo?.name, "kg", { decimalesT: 2 })}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -884,7 +894,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                         <td className="py-2 px-3 text-right text-muted-foreground">{row.count}</td>
                         <td className="py-2 px-3 text-right font-medium">{row.totalM3.toFixed(1)} m³</td>
                         <td className="py-2 px-3 text-right font-bold text-red-600">
-                          {(row.totalKg / 1000).toFixed(3)} t
+                          {formatStock(row.totalKg, materialInfo?.name, "kg", { decimalesT: 3 })}
                           <span className="text-xs font-normal text-muted-foreground ml-1">({Math.round(row.totalKg).toLocaleString()} kg)</span>
                         </td>
                         <td className="py-2 px-3 text-right text-muted-foreground text-xs">
@@ -899,7 +909,7 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                         {dayDetailByFormula.reduce((s, r) => s + r.totalM3, 0).toFixed(1)} m³
                       </td>
                       <td className="py-2 px-3 text-right text-red-600">
-                        {(dayDetailByFormula.reduce((s, r) => s + r.totalKg, 0) / 1000).toFixed(3)} t
+                        {formatStock(dayDetailByFormula.reduce((s, r) => s + r.totalKg, 0), materialInfo?.name, "kg", { decimalesT: 3 })}
                       </td>
                       <td className="py-2 px-3 text-right text-muted-foreground text-xs">
                         {(() => {
@@ -1092,6 +1102,17 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
         open={showAdjustDialog}
         onOpenChange={setShowAdjustDialog}
         onSuccess={() => {
+          loadMaterials()
+          if (view === "detail") loadChartData()
+          else loadDashboardData()
+        }}
+      />
+      <TransferStockDialog
+        material={transferTarget as any}
+        plants={[]}
+        open={!!transferTarget}
+        onOpenChange={(open) => !open && setTransferTarget(null)}
+        onDone={() => {
           loadMaterials()
           if (view === "detail") loadChartData()
           else loadDashboardData()

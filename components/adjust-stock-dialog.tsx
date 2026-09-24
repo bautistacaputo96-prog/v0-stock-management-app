@@ -1,5 +1,7 @@
 "use client"
 
+import { formatStock } from "@/lib/stock-format"
+
 import type React from "react"
 
 import { useState, useEffect } from "react"
@@ -58,8 +60,7 @@ export function AdjustStockDialog({
   const newStock = Number.parseFloat(countedStock)
   const difference = !Number.isNaN(newStock) ? newStock - currentStock : 0
 
-  const formatValue = (value: number) =>
-    Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(2)} t` : `${Math.round(value)} ${material.unit}`
+  const formatValue = (value: number) => formatStock(value, material.name, material.unit, { decimalesT: 2 })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

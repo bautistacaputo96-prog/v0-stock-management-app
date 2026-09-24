@@ -1,5 +1,6 @@
 "use client"
 
+import { formatStock } from "@/lib/stock-format"
 import { useState, useEffect, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -436,16 +437,10 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                       <p className="text-2xl font-bold">
-                        {material.current_stock >= 1000 
-                          ? `${(material.current_stock / 1000).toFixed(1)}t`
-                          : `${Math.round(material.current_stock)}kg`
-                        }
+                        {formatStock(material.current_stock, material.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Min: {material.min_stock >= 1000 
-                          ? `${(material.min_stock / 1000).toFixed(1)}t`
-                          : `${Math.round(material.min_stock)}kg`
-                        }
+                        Min: {formatStock(material.min_stock, material.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                     </div>
                   </div>
@@ -496,16 +491,10 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                   <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50">
                     <td className="py-2 px-3 font-medium">{m.name}</td>
                     <td className="py-2 px-3 text-right">
-                      {m.current_stock >= 1000 
-                        ? `${(m.current_stock / 1000).toFixed(2)} t`
-                        : `${Math.round(m.current_stock)} kg`
-                      }
+                      {formatStock(m.current_stock, m.name, "kg", { decimalesT: 2, espacio: true })}
                     </td>
                     <td className="py-2 px-3 text-right">
-                      {m.avgDailyConsumption >= 1000 
-                        ? `${(m.avgDailyConsumption / 1000).toFixed(2)} t`
-                        : `${Math.round(m.avgDailyConsumption)} kg`
-                      }
+                      {formatStock(m.avgDailyConsumption, m.name, "kg", { decimalesT: 2, espacio: true })}
                     </td>
                     <td className="py-2 px-3 text-right">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -549,19 +538,13 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                   <div className="flex items-center gap-4 text-sm">
                     <div className="text-right">
                       <p className="font-semibold">
-                        {m.entriesToday >= 1000 
-                          ? `${(m.entriesToday / 1000).toFixed(1)}t`
-                          : `${Math.round(m.entriesToday)}kg`
-                        }
+                        {formatStock(m.entriesToday, m.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                       <p className="text-xs text-muted-foreground">Hoy</p>
                     </div>
                     <div className="text-right">
                       <p className="font-semibold">
-                        {m.entriesWeek >= 1000 
-                          ? `${(m.entriesWeek / 1000).toFixed(1)}t`
-                          : `${Math.round(m.entriesWeek)}kg`
-                        }
+                        {formatStock(m.entriesWeek, m.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                       <p className="text-xs text-muted-foreground">Semana</p>
                     </div>
@@ -593,19 +576,13 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                   <div className="flex items-center gap-4 text-sm">
                     <div className="text-right">
                       <p className="font-semibold">
-                        {m.consumptionToday >= 1000 
-                          ? `${(m.consumptionToday / 1000).toFixed(1)}t`
-                          : `${Math.round(m.consumptionToday)}kg`
-                        }
+                        {formatStock(m.consumptionToday, m.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                       <p className="text-xs text-muted-foreground">Hoy</p>
                     </div>
                     <div className="text-right">
                       <p className="font-semibold">
-                        {m.consumptionWeek >= 1000 
-                          ? `${(m.consumptionWeek / 1000).toFixed(1)}t`
-                          : `${Math.round(m.consumptionWeek)}kg`
-                        }
+                        {formatStock(m.consumptionWeek, m.name, "kg", { decimalesT: 1, espacio: false })}
                       </p>
                       <p className="text-xs text-muted-foreground">Semana</p>
                     </div>
@@ -654,7 +631,7 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                           borderRadius: "8px"
                         }}
                         formatter={(value: number) => [
-                          value >= 1000 ? `${(value / 1000).toFixed(1)}t` : `${value}kg`,
+                          formatStock(value, m.name, "kg", { decimalesT: 1, espacio: false }),
                           ""
                         ]}
                       />
@@ -704,10 +681,7 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="p-3 rounded-lg bg-muted/50 text-center">
                     <p className="text-2xl font-bold">
-                      {selectedMaterial.current_stock >= 1000 
-                        ? `${(selectedMaterial.current_stock / 1000).toFixed(1)}t`
-                        : `${Math.round(selectedMaterial.current_stock)}kg`
-                      }
+                      {formatStock(selectedMaterial.current_stock, selectedMaterial.name, "kg", { decimalesT: 1, espacio: false })}
                     </p>
                     <p className="text-xs text-muted-foreground">Stock Actual</p>
                   </div>
@@ -717,7 +691,7 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                         const total = materialMovements
                           .filter(m => m.type === "entry")
                           .reduce((sum, m) => sum + m.quantity, 0)
-                        return total >= 1000 ? `${(total / 1000).toFixed(1)}t` : `${Math.round(total)}kg`
+                        return formatStock(total, selectedMaterial.name, "kg", { decimalesT: 1, espacio: false })
                       })()}
                     </p>
                     <p className="text-xs text-muted-foreground">Ingresos (30d)</p>
@@ -728,7 +702,7 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                         const total = materialMovements
                           .filter(m => m.type === "consumption")
                           .reduce((sum, m) => sum + m.quantity, 0)
-                        return total >= 1000 ? `${(total / 1000).toFixed(1)}t` : `${Math.round(total)}kg`
+                        return formatStock(total, selectedMaterial.name, "kg", { decimalesT: 1, espacio: false })
                       })()}
                     </p>
                     <p className="text-xs text-muted-foreground">Consumos (30d)</p>
@@ -778,10 +752,7 @@ export function MaterialsDashboard({ plantId }: MaterialsDashboardProps) {
                           <div className="text-right">
                             <p className={`font-bold ${movement.type === "entry" ? "text-green-600" : "text-blue-600"}`}>
                               {movement.type === "entry" ? "+" : "-"}
-                              {movement.quantity >= 1000 
-                                ? `${(movement.quantity / 1000).toFixed(2)}t`
-                                : `${Math.round(movement.quantity)}kg`
-                              }
+                              {formatStock(movement.quantity, movement.name, "kg", { decimalesT: 2, espacio: false })}
                             </p>
                             {movement.humidity !== undefined && movement.humidity !== null && (
                               <p className="text-xs text-muted-foreground">

@@ -4,7 +4,9 @@ import { useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Pencil, Trash2, Eye } from "lucide-react"
+import { Pencil, Trash2, Eye, ArrowLeftRight } from "lucide-react"
+import { TransferStockDialog } from "@/components/transfer-stock-dialog"
+import { formatStock, esMaterialFino } from "@/lib/stock-format"
 import { EditMaterialDialog } from "@/components/edit-material-dialog"
 import { DeleteMaterialDialog } from "@/components/delete-material-dialog"
 import { MaterialDetailDialog } from "@/components/material-detail-dialog"
@@ -18,12 +20,14 @@ type Material = {
   dry_stock?: number
   stockpile_humidity?: number
   requires_humidity_control?: boolean
+  plant_id?: string
 }
 
-export function MaterialsTable({ materials, onUpdate }: { materials: Material[]; onUpdate?: () => void }) {
+export function MaterialsTable({ materials, onUpdate, plants = [], onChanged }: { materials: Material[]; onUpdate?: () => void; plants?: { id: string; name: string }[]; onChanged?: () => void }) {
   const [editMaterial, setEditMaterial] = useState<Material | null>(null)
   const [deleteMaterial, setDeleteMaterial] = useState<Material | null>(null)
   const [viewMaterial, setViewMaterial] = useState<Material | null>(null)
+  const [transferMaterial, setTransferMaterial] = useState<Material | null>(null)
 
   const visibleMaterials = materials.filter((material) => material.name.toLowerCase() !== "agua")
 
@@ -64,7 +68,9 @@ export function MaterialsTable({ materials, onUpdate }: { materials: Material[];
                     <TableCell className="font-medium">{material.name}</TableCell>
                     <TableCell>{material.unit}</TableCell>
                     <TableCell className="text-right font-mono">
-                      {displayStock.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                      {esMaterialFino(material.name, material.unit)
+                        ? displayStock.toLocaleString("es-AR", { maximumFractionDigits: 1 })
+                        : displayStock.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
                     </TableCell>
                     <TableCell className="text-right font-mono">{material.min_stock.toLocaleString("es-AR")}</TableCell>
                     <TableCell>
@@ -81,6 +87,11 @@ export function MaterialsTable({ materials, onUpdate }: { materials: Material[];
                         <Button variant="ghost" size="sm" onClick={() => setViewMaterial(material)}>
                           <Eye className="h-4 w-4" />
                         </Button>
+                        {esMaterialFino(material.name, material.unit) && plants.length > 1 && (
+                          <Button variant="ghost" size="sm" title="Mover a otra planta" onClick={() => setTransferMaterial(material)}>
+                            <ArrowLeftRight className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" onClick={() => setEditMaterial(material)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -112,6 +123,14 @@ export function MaterialsTable({ materials, onUpdate }: { materials: Material[];
           onOpenChange={(open) => !open && setDeleteMaterial(null)}
         />
       )}
+
+      <TransferStockDialog
+        material={transferMaterial}
+        plants={plants}
+        open={!!transferMaterial}
+        onOpenChange={(open) => !open && setTransferMaterial(null)}
+        onDone={onChanged}
+      />
 
       {viewMaterial && (
         <MaterialDetailDialog
