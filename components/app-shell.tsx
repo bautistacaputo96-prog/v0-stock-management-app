@@ -20,6 +20,7 @@ import {
   X,
   LogOut,
   Wrench,
+  MapPinned,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getCurrentUser, clearCurrentUser } from "@/lib/current-user"
@@ -34,6 +35,7 @@ const mainNavItems = [
   { href: "/clientes", label: "Clientes", icon: Users },
   { href: "/camiones", label: "Camiones", icon: Truck },
   { href: "/mantenimiento", label: "Mantenimiento", icon: Wrench },
+  { href: "/logistica", label: "Logística", icon: MapPinned },
 ]
 
 const dispatchSubItems = [

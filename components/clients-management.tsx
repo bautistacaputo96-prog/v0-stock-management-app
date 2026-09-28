@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,6 +32,7 @@ type Client = {
   email: string | null
   contact: string | null
   active: boolean
+  plant_id?: string | null
   construction_sites?: ConstructionSite[]
 }
 
@@ -49,6 +51,10 @@ type ConstructionSite = {
   site_phone: string | null
   observations: string | null
   status: string
+  gps_lat?: number | null
+  gps_lng?: number | null
+  gps_source?: string | null
+  travel_distance_km?: number | null
 }
 
 const COND_IVA_OPTIONS = [
@@ -113,6 +119,8 @@ export function ClientsManagement() {
 
   const [clientForm, setClientForm] = useState({ ...EMPTY_CLIENT_FORM })
   const [siteForm, setSiteForm] = useState({ ...EMPTY_SITE_FORM })
+  const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
+  const [siteUbic, setSiteUbic] = useState<UbicacionObra>(UBIC_VACIA)
 
   useEffect(() => { loadClients() }, [])
 
@@ -225,6 +233,11 @@ export function ClientsManagement() {
       site_contact:           siteForm.site_contact.trim() || null,
       site_phone:             siteForm.site_phone.trim() || null,
       observations:           siteForm.observations.trim() || null,
+      gps_lat:                siteUbic.lat,
+      gps_lng:                siteUbic.lng,
+      gps_source:             siteUbic.fuente,
+      travel_distance_km:     siteUbic.km,
+      gps_updated_at:         siteUbic.lat != null ? new Date().toISOString() : null,
     }
 
     if (editingSite) {
@@ -240,6 +253,7 @@ export function ClientsManagement() {
     setIsSiteDialogOpen(false)
     setEditingSite(null)
     setSiteForm({ ...EMPTY_SITE_FORM })
+    setSiteUbic(UBIC_VACIA)
     loadClients()
   }
 
@@ -264,6 +278,13 @@ export function ClientsManagement() {
 
   function openEditSite(site: ConstructionSite) {
     setEditingSite(site)
+    setSiteUbic({
+      lat: site.gps_lat != null ? Number(site.gps_lat) : null,
+      lng: site.gps_lng != null ? Number(site.gps_lng) : null,
+      fuente: (site.gps_source as any) || null,
+      km: site.travel_distance_km != null ? Number(site.travel_distance_km) : null,
+      minutos: null,
+    })
     setSiteForm({
       name:                   site.name,
       address:                site.address      || "",
@@ -374,7 +395,7 @@ export function ClientsManagement() {
                     {selectedClient.cond_iva && ` · ${selectedClient.cond_iva}`}
                   </p>
                 </div>
-                <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
+                <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setSiteUbic(UBIC_VACIA); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
                   <Plus className="h-4 w-4" /> Nueva Obra
                 </Button>
               </CardHeader>
@@ -401,6 +422,7 @@ export function ClientsManagement() {
                           <TableCell className="py-2 font-medium text-sm">
                             <div className="truncate max-w-[200px]">{site.name}</div>
                             {site.address && <div className="text-xs text-muted-foreground font-normal truncate max-w-[200px]">{site.address}</div>}
+                            {site.gps_lat == null && <div className="text-[10px] text-amber-600 font-normal">Sin ubicar en el mapa</div>}
                           </TableCell>
                           <TableCell className="py-2 text-sm">{site.localidad || "-"}</TableCell>
                           <TableCell className="py-2 text-center text-sm whitespace-nowrap">{site.travel_time_minutes}'</TableCell>
@@ -557,7 +579,7 @@ export function ClientsManagement() {
 
       {/* ── Dialog Obra ── */}
       <Dialog open={isSiteDialogOpen} onOpenChange={setIsSiteDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingSite ? "Editar Obra" : "Nueva Obra"}</DialogTitle>
           </DialogHeader>
@@ -577,6 +599,17 @@ export function ClientsManagement() {
                 <div className="space-y-1">
                   <Label>Localidad <span className="text-destructive">*</span></Label>
                   <Input value={siteForm.localidad} onChange={(e) => setSiteForm({ ...siteForm, localidad: e.target.value })} placeholder="Ej: Quilmes" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Ubicación en el mapa</Label>
+                  <ObraUbicacion
+                    direccion={siteForm.address}
+                    localidad={siteForm.localidad}
+                    plantaId={selectedClient?.plant_id}
+                    valor={siteUbic}
+                    onChange={setSiteUbic}
+                    onTiempoViaje={(min) => setSiteForm((f) => ({ ...f, travel_time_minutes: String(min) }))}
+                  />
                 </div>
               </div>
             </div>

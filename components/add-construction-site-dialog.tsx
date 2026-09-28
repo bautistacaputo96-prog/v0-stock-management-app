@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { Plus } from "lucide-react"
+import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 
 interface AddConstructionSiteDialogProps {
   clientId: string
@@ -24,11 +25,22 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
   const [formData, setFormData] = useState({
     name: "",
     address: "",
+    localidad: "",
     travel_time_minutes: "30",
     unload_time_minutes: "20",
   })
+  const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
+  const [ubic, setUbic] = useState<UbicacionObra>(UBIC_VACIA)
+  const [plantaCliente, setPlantaCliente] = useState<string | null>(null)
 
   const supabase = createClient()
+
+  // La planta del cliente define desde dónde se calcula el viaje
+  const cargarPlanta = async () => {
+    if (!clientId) return
+    const { data } = await supabase.from("clients").select("plant_id").eq("id", clientId).maybeSingle()
+    setPlantaCliente(data?.plant_id || null)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,7 +58,13 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
         .insert({
           name: formData.name,
           address: formData.address || null,
+          localidad: formData.localidad || null,
           client_id: clientId,
+          gps_lat: ubic.lat,
+          gps_lng: ubic.lng,
+          gps_source: ubic.fuente,
+          travel_distance_km: ubic.km,
+          gps_updated_at: ubic.lat != null ? new Date().toISOString() : null,
           travel_time_minutes: parseInt(formData.travel_time_minutes) || 30,
           unload_time_minutes: parseInt(formData.unload_time_minutes) || 20,
         })
@@ -56,7 +74,8 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
       if (error) throw error
 
       toast.success("Obra agregada exitosamente")
-      setFormData({ name: "", address: "", travel_time_minutes: "30", unload_time_minutes: "20" })
+      setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20" })
+      setUbic(UBIC_VACIA)
       setOpen(false)
 
       if (onSiteAdded && data) {
@@ -80,7 +99,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) cargarPlanta() }}>
       <DialogTrigger asChild>
         {trigger || (
           <Button variant="outline" size="sm">
@@ -89,7 +108,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Agregar Nueva Obra</DialogTitle>
         </DialogHeader>
@@ -110,8 +129,28 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
               id="address"
               value={formData.address}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              placeholder="Direccion de la obra"
+              placeholder="Calle y número, o barrio y lote"
               rows={2}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="localidad">Localidad</Label>
+            <Input
+              id="localidad"
+              value={formData.localidad}
+              onChange={(e) => setFormData({ ...formData, localidad: e.target.value })}
+              placeholder="Ej: San Vicente"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Ubicación en el mapa</Label>
+            <ObraUbicacion
+              direccion={formData.address}
+              localidad={formData.localidad}
+              plantaId={plantaCliente}
+              valor={ubic}
+              onChange={setUbic}
+              onTiempoViaje={(min) => setFormData((f) => ({ ...f, travel_time_minutes: String(min) }))}
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
