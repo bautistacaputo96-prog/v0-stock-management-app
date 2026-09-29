@@ -27,6 +27,7 @@ type ScheduledDispatch = {
   scheduled_arrival_time: string; scheduled_departure_time: string;
   status: string; observations: string | null; is_urgent: boolean;
   fiber_kg_per_m3?: number | null;
+  metodo_descarga?: "bomba" | "directo" | null;
   clients?: { id: string; name: string };
   construction_sites?: { id: string; name: string; address: string | null; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean };
   formulas?: { id: string; name: string; code: string; useful_life_minutes: number };
@@ -708,6 +709,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-semibold truncate">{pedido.clients?.name}</span>
                               {pedido.is_urgent && <Badge variant="destructive" className="shrink-0">URGENTE</Badge>}
+                              {pedido.metodo_descarga && (
+                                <Badge variant="outline" className={pedido.metodo_descarga === "bomba" ? "shrink-0 border-sky-400 text-sky-700 bg-sky-50" : "shrink-0"}>
+                                  {pedido.metodo_descarga === "bomba" ? "BOMBA" : "DIRECTO"}
+                                </Badge>
+                              )}
                               {!!pedido.fiber_kg_per_m3 && (
                                 <Badge variant="outline" className="shrink-0 border-purple-400 text-purple-700 bg-purple-50">
                                   FIBRA {pedido.fiber_kg_per_m3} kg/m³

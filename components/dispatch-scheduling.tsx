@@ -41,7 +41,7 @@ type ScheduledDispatch = {
   id: string; plant_id: string; client_id: string; construction_site_id: string;
   formula_id: string; mixer_id: string | null; quantity_m3: number;
   scheduled_arrival_time: string; scheduled_departure_time: string; status: string;
-  observations: string | null; is_urgent: boolean; fiber_kg_per_m3?: number | null;
+  observations: string | null; is_urgent: boolean; fiber_kg_per_m3?: number | null; metodo_descarga?: "bomba" | "directo" | null;
   clients?: Client; construction_sites?: ConstructionSite; formulas?: Formula; mixers?: Mixer;
 }
 
@@ -210,6 +210,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     is_urgent: false,
     created_by: "",
     fiber_kg_per_m3: "",
+    metodo_descarga: "" as "" | "bomba" | "directo",
   })
 
   // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
@@ -288,6 +289,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       is_urgent: false,
       created_by: "",
       fiber_kg_per_m3: "",
+      metodo_descarga: "",
     })
     setEditingDispatch(null)
     setCuitPrompt("")
@@ -310,6 +312,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       is_urgent: dispatch.is_urgent,
       created_by: dispatch.created_by || "",
       fiber_kg_per_m3: dispatch.fiber_kg_per_m3 != null ? String(dispatch.fiber_kg_per_m3) : "",
+      metodo_descarga: dispatch.metodo_descarga || "",
     })
     setEditingDispatch(dispatch)
     setCuitPrompt("")
@@ -318,6 +321,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
 
   async function handleSave() {
     if (saving) return // Prevenir doble click
+    if (!form.metodo_descarga) {
+      toast({ title: "Falta el método de descarga", description: "Elegí si el pedido va con bomba o directo. Define cuánto tarda cada camión en obra.", variant: "destructive" })
+      return
+    }
     setSaving(true)
     
     try {
@@ -357,6 +364,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           observations: form.observations || null,
           is_urgent: form.is_urgent,
           fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
+          metodo_descarga: form.metodo_descarga,
         }).eq("id", editingDispatch.id)
         if (error) {
           toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
@@ -379,6 +387,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           is_urgent: form.is_urgent,
           created_by: form.created_by || currentUserName(),
           fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
+          metodo_descarga: form.metodo_descarga,
         })
         if (error) {
           toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
@@ -529,6 +538,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                               <div className="font-medium truncate">{d.clients?.name}</div>
                               <div className="flex items-center gap-1 text-[10px]">
                                 <span>{d.quantity_m3}m3</span>
+                                {d.metodo_descarga && <span>· {d.metodo_descarga === "bomba" ? "bomba" : "directo"}</span>}
                                 {d.mixers && <span>| {d.mixers.license_plate}</span>}
                               </div>
                             </div>
@@ -692,6 +702,29 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             )}
 
             <div className="space-y-2">
+              <Label>Descarga *</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {([["bomba", "Con bomba", "Más rápido: ~15 min por camión"], ["directo", "Directo / canaleta", "~25 min por camión"]] as const).map(([v, l, d]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setForm({ ...form, metodo_descarga: v })}
+                    className={cn(
+                      "rounded-lg border-2 p-2 text-left transition-colors",
+                      form.metodo_descarga === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
+                    )}
+                  >
+                    <p className="text-sm font-medium">{l}</p>
+                    <p className="text-xs text-muted-foreground">{d}</p>
+                  </button>
+                ))}
+              </div>
+              {!form.metodo_descarga && selectedSite?.requires_pump && (
+                <p className="text-xs text-muted-foreground">Esta obra suele trabajar con bomba.</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <Label>Formula *</Label>
               <FormulaCombobox
                 formulas={formulas.filter((f) => !form.plant_id || f.plant_id === form.plant_id)}
@@ -778,7 +811,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               </Button>
             )}
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
-<Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id}>
+<Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga}>
   {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
             </Button>
           </DialogFooter>
