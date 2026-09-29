@@ -133,7 +133,8 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
     e.preventDefault()
 
     const selectedMaterial = materials.find((m) => m.id === formData.material_id)
-    const isSandMaterial = selectedMaterial?.name.toLowerCase().includes("arena")
+    // Humedad (obligatoria y reclamo por exceso) solo en la Arena Fina: a la 0/6 no se le mide
+    const isSandMaterial = selectedMaterial?.name.trim().toLowerCase() === "arena fina"
     // Solo Arena Fina requiere ensayo granulométrico
     const requiresGranulometry = selectedMaterial?.name === "Arena Fina"
 
@@ -343,7 +344,8 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
 
   const selectedMaterial = materials.find((m) => m.id === formData.material_id)
   const selectedSupplier = filteredSuppliers.find((s) => s.id === formData.supplier_id)
-  const isSandMaterial = selectedMaterial?.name.toLowerCase().includes("arena")
+  // Humedad (obligatoria y reclamo por exceso) solo en la Arena Fina: a la 0/6 no se le mide
+  const isSandMaterial = selectedMaterial?.name.trim().toLowerCase() === "arena fina"
   const requiresGranulometry = isSandMaterial || selectedMaterial?.name.toLowerCase().includes("piedra") || selectedMaterial?.name.toLowerCase().includes("triturac")
   
   const humidity = Number.parseFloat(formData.humidity_percentage) || 0
