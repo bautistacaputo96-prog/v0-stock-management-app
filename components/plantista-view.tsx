@@ -129,7 +129,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       .from("materials")
       .select("id, name, stockpile_humidity")
       .eq("plant_id", selectedPlant)
-      .or("name.ilike.%arena%,name.ilike.%sand%")
+      // Solo la Arena Fina: es la única a la que se le mide la humedad (la de la 0/6 no se toma)
+      .ilike("name", "arena fina")
       .order("name")
     if (!materials || materials.length === 0) { setHumidityChecked(true); return }
     const { data: todayLogs } = await supabase
@@ -395,7 +396,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           let requiredQty = fm.quantity * quantityThisTruck
           const materialName = fm.materials.name?.toLowerCase() || ""
           const humidity = fm.materials.stockpile_humidity || 0
-          if ((materialName.includes("arena") || materialName.includes("sand")) && humidity > 0) {
+          // Corrección por humedad solo en la Arena Fina (la única a la que se le mide)
+          if (materialName.includes("arena fina") && humidity > 0) {
             requiredQty = requiredQty * (1 + humidity / 100)
           }
           // Igual que el despacho manual: no se descuentan del stock el Agua (stock infinito)

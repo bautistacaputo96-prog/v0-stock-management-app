@@ -444,10 +444,10 @@ export function AddDispatchDialog({
 
         let requiredQty = fm.quantity * quantityM3
 
-        // If material is sand/arena and has humidity, compensate for moisture content
+        // Corrección por humedad solo en la Arena Fina (la única a la que se le mide; la 0/6 no)
         const materialName = material?.name?.toLowerCase() || fm.materials.name?.toLowerCase() || ""
         const humidity = material?.stockpile_humidity || 0
-        if ((materialName.includes("arena") || materialName.includes("sand")) && humidity > 0) {
+        if (materialName.includes("arena fina") && humidity > 0) {
           // Add extra quantity to compensate: wet_qty = dry_qty * (1 + humidity/100)
           requiredQty = requiredQty * (1 + humidity / 100)
         }
