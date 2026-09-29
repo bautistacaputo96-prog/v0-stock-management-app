@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Download, TrendingUp, Clock, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker, Printer, Sparkles } from "lucide-react"
+import { Search, Download, TrendingUp, Truck, CheckCircle, XCircle, BarChart3, Pencil, Trash2, MoreHorizontal, FlaskConical, Filter, Beaker, Printer, Sparkles } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -310,14 +310,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const cancelledDispatches = dispatches.filter((d) => d.status === "cancelled")
   const totalM3 = deliveredDispatches.reduce((sum, d) => sum + d.quantity_m3, 0)
 
-  // Calculate on-time delivery
-  const onTimeDeliveries = deliveredDispatches.filter((d) => {
-    if (!d.actual_arrival_time) return true
-    const scheduled = parseISO(d.scheduled_arrival_time)
-    const actual = parseISO(d.actual_arrival_time)
-    return differenceInMinutes(actual, scheduled) <= 15 // 15 min tolerance
-  })
-  const onTimePercentage = deliveredDispatches.length > 0 ? (onTimeDeliveries.length / deliveredDispatches.length) * 100 : 0
+  // "A tiempo %" no se muestra: no hay horas reales de llegada (la de llegada es la del despacho,
+  // así que siempre daba 100 %). Vuelve con datos reales en la Fase 4 (GPS).
 
   // Chart data - dispatches per day
   const chartData = dispatches.reduce((acc: any[], d) => {
@@ -909,7 +903,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
@@ -945,19 +939,6 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               <div>
                 <p className="text-2xl font-bold">{totalM3.toLocaleString("es-AR")}</p>
                 <p className="text-sm text-muted-foreground">m3 Despachados</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-full bg-yellow-100">
-                <Clock className="h-5 w-5 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{onTimePercentage.toFixed(0)}%</p>
-                <p className="text-sm text-muted-foreground">A Tiempo</p>
               </div>
             </div>
           </CardContent>

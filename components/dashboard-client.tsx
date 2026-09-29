@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo } from "react"
 import { MantenimientoWidget } from "@/components/mantenimiento-widget"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -23,7 +22,6 @@ import {
   Activity,
   BarChart3,
   Users,
-  Beaker,
   Settings2,
   CalendarDays,
   Check,
@@ -480,67 +478,9 @@ export function DashboardClient({
     }
   }, [testCylinders, dateRangeStart, dateRangeEnd])
 
-  // Consumption real vs theoretical
-  const consumptionAnalysis = useMemo(() => {
-  const result: Array<{
-      formulaCode: string
-      formulaName: string
-      theoreticalCement: number
-      actualCement: number
-      m3Produced: number
-      deviation: number
-    }> = []
-
-    // Group dispatches by formula
-    const byFormula: Record<string, { m3: number; cementUsed: number }> = {}
-
-  filteredDispatches
-  .filter((d) => {
-    const date = new Date(d.dispatch_date)
-    return date >= dateRangeStart && date <= dateRangeEnd
-  })
-      .forEach((d) => {
-        if (!d.formula_id) return
-        if (!byFormula[d.formula_id]) {
-          byFormula[d.formula_id] = { m3: 0, cementUsed: 0 }
-        }
-        byFormula[d.formula_id].m3 += d.quantity_m3 || 0
-
-        // Sum cement usage
-        d.dispatch_materials?.forEach((dm) => {
-          if (dm.materials?.name?.toLowerCase().includes("cemento")) {
-            byFormula[d.formula_id].cementUsed += dm.quantity || 0
-          }
-        })
-      })
-
-    // Calculate deviation
-    formulas.forEach((f) => {
-      const usage = byFormula[f.id]
-      if (!usage || usage.m3 === 0) return
-
-      // Find cement in formula
-      const cementMaterial = f.formula_materials?.find((fm) =>
-        fm.materials?.name?.toLowerCase().includes("cemento")
-      )
-      if (!cementMaterial) return
-
-      const theoreticalPerM3 = cementMaterial.quantity / (f.yield_m3 || 1)
-      const actualPerM3 = usage.cementUsed / usage.m3
-      const deviation = theoreticalPerM3 > 0 ? ((actualPerM3 - theoreticalPerM3) / theoreticalPerM3) * 100 : 0
-
-      result.push({
-        formulaCode: f.code,
-        formulaName: f.name,
-        theoreticalCement: theoreticalPerM3,
-        actualCement: actualPerM3,
-        m3Produced: usage.m3,
-        deviation,
-      })
-    })
-
-    return result.sort((a, b) => Math.abs(b.deviation) - Math.abs(a.deviation))
-  }, [filteredDispatches, formulas, dateRangeStart, dateRangeEnd])
+  // "Consumo real vs teórico de cemento" no se muestra: buscaba "cemento" (el material es "CPC 40")
+  // y lo "real" salía de la misma fórmula, así que el desvío daba siempre 0. Vuelve cuando haya
+  // consumo real de la dosificadora.
 
   // Recent activity feed
   const recentActivity = useMemo(() => {
@@ -955,7 +895,7 @@ export function DashboardClient({
           </Card>
         </div>
 
-        {/* Quality Panel & Consumption Analysis */}
+        {/* Quality Panel */}
         <div className="grid gap-4 lg:grid-cols-2 mb-6">
           {/* Quality Panel */}
           <Card className="bg-background shadow-sm">
@@ -998,53 +938,6 @@ export function DashboardClient({
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Consumption Analysis */}
-          <Card className="bg-background shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <Beaker className="h-4 w-4" />
-                Consumo Real vs Teorico
-              </CardTitle>
-              <CardDescription className="text-xs">Desviacion de cemento por formula este mes</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[280px] overflow-y-auto">
-                {consumptionAnalysis.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">Sin datos de consumo</p>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Formula</TableHead>
-                        <TableHead className="text-xs text-right">Teorico</TableHead>
-                        <TableHead className="text-xs text-right">Real</TableHead>
-                        <TableHead className="text-xs text-right">Desvio</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {consumptionAnalysis.map((row) => {
-                        const absDeviation = Math.abs(row.deviation)
-                        const bgColor = absDeviation > 5 ? "bg-red-50 dark:bg-red-950/20" : absDeviation > 3 ? "bg-amber-50 dark:bg-amber-950/20" : ""
-                        return (
-                          <TableRow key={row.formulaCode} className={bgColor}>
-                            <TableCell className="font-medium text-xs">{row.formulaCode}</TableCell>
-                            <TableCell className="text-right text-xs">{row.theoreticalCement.toFixed(0)} kg</TableCell>
-                            <TableCell className="text-right text-xs">{row.actualCement.toFixed(0)} kg</TableCell>
-                            <TableCell className="text-right text-xs">
-                              <span className={absDeviation > 5 ? "text-red-600 font-bold" : absDeviation > 3 ? "text-amber-600 font-medium" : ""}>
-                                {row.deviation > 0 ? "+" : ""}{row.deviation.toFixed(1)}%
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
             </CardContent>
           </Card>
         </div>
