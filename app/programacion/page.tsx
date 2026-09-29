@@ -1,7 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { DispatchScheduling } from "@/components/dispatch-scheduling"
+import { ProgramacionTabs } from "@/components/programacion-tabs"
 
 export default async function ProgramacionPage() {
   const supabase = await createClient()
@@ -15,9 +15,9 @@ export default async function ProgramacionPage() {
     <div className="py-4 px-4 md:py-6 md:px-6">
       <div className="mb-4 md:mb-6">
         <h1 className="text-xl md:text-2xl font-bold">Programacion de Despachos</h1>
-        <p className="text-xs md:text-sm text-foreground/70 font-medium">Planifica los despachos de la semana</p>
+        <p className="text-xs md:text-sm text-foreground/70 font-medium">Planificá la semana y ordená los camiones de cada día</p>
       </div>
-      <DispatchScheduling plants={plants || []} />
+      <ProgramacionTabs plants={plants || []} />
     </div>
   )
 }
