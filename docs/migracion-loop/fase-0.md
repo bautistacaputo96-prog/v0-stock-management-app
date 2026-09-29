@@ -1,0 +1,128 @@
+# Fase 0 — Cimientos
+
+Aprobada por Bautista el 29/09/2026 ("Fase 0 primero"). Se programa en este orden: **0a → 0b → 0d**. La **0c (seguridad)** tiene su propia especificación (`fase-0c.md`, a escribir) y se hace en paralelo a las fases 1–3.
+
+Leer antes: `README.md` (principios) e `inventario-rebucret.md` (secciones 3.2, 3.9, 3.10, 4.6 y 8).
+
+## Reglas para esta fase
+
+- **El servidor local usa la base de PRODUCCIÓN** (`.env.local`). No probar nada que escriba desde la pantalla local. Las funciones SQL se prueban con `node` + `pg` dentro de `BEGIN … ROLLBACK`. La conexión es `POSTGRES_URL_NON_POOLING` de `.env.rebucret`: sacar `sslmode` de la URL, usar `ssl: { rejectUnauthorized: false }` y pasarla por la variable de entorno `PGCONN`, nunca impresa.
+- Los cambios de esquema van como archivos en `supabase/migrations/AAAAMMDDHHMM_nombre.sql` y se aplican a producción **recién con el OK de Bautista**, junto con el deploy.
+- Build: `export PATH="$HOME/.local/node/bin:$PATH"; npm run build`. No agregar dependencias: Vercel usa `pnpm-lock.yaml`.
+- Probar local: config `rebucret` de `.claude/launch.json` en el repo Concretus, puerto 3010. Para loguearse, setear en localStorage `rebucret-auth`=`true` y `rebucret_current_user`=`{"name":"Bautista Caputo","role":"supervisor"}`.
+- Rama: `loop/fase-0a-errores`, `loop/fase-0b-motor-despacho`, etc. Commits con el mail `bautistacaputo96@gmail.com`, en español, estilo `fix(…)`/`feat(…)` como el historial.
+- Al terminar cada parte: completar la sección "Hecho" al final de este archivo y agregar una línea al registro de avance del `README.md`.
+
+---
+
+## 0a — Errores encontrados en el inventario (una sesión)
+
+Cada ítem lista el problema, dónde está y cuándo está resuelto.
+
+1. **La humedad diaria de acopio no se guarda nunca.**
+   - `components/plantista-view.tsx` (`saveHumidity`, ~l.155–194) inserta `log_date` y `humidity_percentage`, pero las columnas reales de `daily_stockpile_humidity` son `reading_date` y `humidity_percent`. Hay que verificar el esquema real con una consulta de solo lectura. `checkDailyHumidity` también filtra por `log_date`. Además no se revisa el `error` del insert.
+   - **Resuelto cuando:** al guardar queda la fila; el trigger `trg_update_stockpile_humidity` actualiza `materials.stockpile_humidity`; el cartel no vuelve a aparecer ese día; si hay un error se muestra.
+2. **Editar la cantidad de un ingreso no corrige el stock.**
+   - `components/stock-entries-table.tsx` (~l.66 y ~l.106–108) llama a las RPC `increment_stock`/`decrement_stock`, que no existen.
+   - Hay que usar `update_material_stock(p_material_id, p_quantity_change)` con la diferencia y corregir también `dry_stock` según la humedad del ingreso.
+   - En el borrado, sacar la llamada a la RPC inexistente: el trigger `trigger_decrease_stock_on_entry_delete` ya descuenta.
+   - **Resuelto cuando:** editar de 30.000 a 28.000 kg baja 2.000 kg el stock, sin doble descuento al borrar.
+3. **"A tiempo %" siempre da 100 %** en `components/dispatch-history.tsx` (~l.314–320, tarjeta ~l.959). No existen horas reales de llegada. **Ocultar la tarjeta** hasta la Fase 4 (vuelve con datos reales).
+4. **El panel "Consumo real vs teórico de cemento" del Dashboard** (`components/dashboard-client.tsx` ~l.505–530 y ~l.1011) busca "cemento", pero el material se llama "CPC 40". Además, lo "real" sale de la misma fórmula, así que el desvío siempre es 0. **Ocultarlo**: vuelve cuando haya consumo real de la dosificadora.
+5. **El resumen de Despacho diario mezcla las dos plantas.**
+   - `loadData` en `plantista-view.tsx` trae `dispatches` del día sin filtrar por planta.
+   - Afecta "Resumen del día", "Últimos despachos", "Camiones en ruta" y "Despachos manuales".
+   - Filtrar por `plant_id = selectedPlant`.
+6. **Remito repetido sin aviso al despachar un pedido.**
+   - `handleDispatch` en `plantista-view.tsx` no hace la validación anti-duplicado que sí hace `add-dispatch-dialog.tsx` (~l.359–367).
+   - Aplicar la misma regla y el mismo mensaje.
+7. **Materiales que no deberían descontarse al despachar un pedido.**
+   - El despacho manual excluye Agua y "Sikament 33" (aditivo de obra); el del pedido no.
+   - Igualar el comportamiento (excluir los mismos) como arreglo provisorio. En la 0b se reemplaza por el tipo de material.
+
+No incluir en la 0a: borrar despacho sin devolver stock (va en la 0b como función transaccional).
+
+Prueba: build limpio; revisar local cada pantalla tocada, sin grabar nada. Los puntos 1, 2 y 6 se prueban con la lógica SQL equivalente en `BEGIN … ROLLBACK`. Pasarle a Bautista capturas de Despacho diario y de Historial.
+
+---
+
+## 0b — Un solo motor de despacho (2–3 sesiones)
+
+**Objetivo:** que registrar, editar y anular un despacho se haga en **una sola transacción en la base**, desde un único lugar, con las mismas reglas desde cualquier pantalla. Es la base de las fases 2–4: después se le suman viaje, chofer y horarios sin tocar la interfaz.
+
+### Datos
+- `materials`: agregar `tipo` (`arido_fino`, `arido_grueso`, `cemento`, `agua`, `aditivo_planta`, `aditivo_obra`, `fibra`, `otro`) y `descuenta_stock boolean default true`.
+  - Migración que los complete según los nombres actuales: Arena → `arido_fino` (corrige por humedad); Piedra → `arido_grueso`; CPC 40 → `cemento`; Agua → `agua`, `descuenta_stock=false`; Sikament 33S → `aditivo_obra`, `descuenta_stock=false`; Sikament 90E → `aditivo_planta`; Fibra → `fibra`; "Superfluidificante (obra)" → `aditivo_obra`.
+  - Confirmado por Bautista el 29/09: Agua y Sikament 33S no descuentan stock.
+- `dispatch_materials`: empezar a completar `dry_quantity`, `wet_quantity` y `humidity_at_dispatch`.
+
+### Funciones (plpgsql, `SECURITY DEFINER`, `search_path` fijo)
+1. `registrar_despacho(p jsonb) returns jsonb`
+   - **Entrada:** planta, pedido (opcional), fórmula, cliente, obra, mixer, m³, remito, fecha/hora, agua extra, fibra kg/m³, muestra (número y asentamiento), `es_prueba` (despacho por árido), materiales manuales (opcional), usuario, observaciones.
+   - **Qué hace, todo junto o nada:**
+     - valida el remito (no repetido) y los m³ (no superar el restante del pedido + 0,5);
+     - **fórmulas de otra planta están permitidas** (Bautista, 29/09: "hay fórmulas de Hudson que se utilizan en Canning", y al revés). Pero los materiales se descuentan del stock **de la planta que despacha**: cada material de la fórmula se busca por tipo y nombre en esa planta (p. ej. "CPC 40" de Canning → "CPC 40" de Hudson). Si falta el equivalente, frena y avisa. Hoy el sistema descuenta del stock de la planta dueña de la fórmula (visto en la 0a: 25/09, MERVA SA, despachado desde Hudson con H30-620-15 B (CAN) descontó materiales de Canning). Contar cuántos despachos cruzados hay desde el 25/06 (inicio de Hudson) y proponer a Bautista la corrección de stock entre plantas;
+     - inserta en `dispatches`;
+     - por cada material de la fórmula con `descuenta_stock`: kg = kg/m³ × m³ y, si es `arido_fino`, × (1 + humedad del acopio / 100). Inserta `dispatch_materials` con seco, húmedo y humedad, descuenta `current_stock` y inserta `stock_movements` 'consumo';
+     - fibra igual, sobre el material `tipo='fibra'` de la planta;
+     - probetas: las crea el trigger existente; no duplicar;
+     - pedido: `dispatched_m3 = dispatched_m3 + m3` (atómico) y `completed` si se llegó al total;
+     - mixer en `in_transit`;
+     - `dispatch_status_log` y `activity_log` ("crear despacho").
+   - **Devuelve:** `{ id, remito, m3, restante, completo }`.
+2. `anular_despacho(p_id uuid, p_usuario text, p_motivo text)`
+   - Devuelve el stock de cada `dispatch_materials` con movimiento 'ajuste' ("Anulación remito X").
+   - Resta `dispatched_m3` del pedido y lo reabre si corresponde.
+   - Borra probetas **sin resultados** y frena si alguna ya tiene rotura cargada.
+   - Borra `dispatch_materials` y el despacho.
+   - Deja la copia en `activity_log`. Mantener el mail de aviso de borrado.
+3. `editar_despacho(p_id uuid, p jsonb)`
+   - Si cambian m³, fórmula o planta, recalcula materiales y stock por diferencia y corrige el pedido.
+   - Si cambian solo datos (remito, cliente, obra, camión, observaciones), actualiza sin tocar stock.
+   - Registra lo anterior y lo nuevo en `activity_log`.
+
+### Pantallas que pasan a usar las funciones (misma interfaz, sin cambios visibles)
+- `plantista-view.tsx` → `handleDispatch`.
+- `add-dispatch-dialog.tsx` → `handleSubmit` (incluido el despacho por árido y los materiales manuales).
+- `dispatch-history.tsx` → borrar y editar. Agregar fibra y superfluidificante también por función (`ajustar_material_despacho`).
+- Quitar del front los cálculos de consumo duplicados. La cuenta en pantalla ("total en el camión: X kg") puede quedar solo para mostrar.
+
+### Resuelto cuando
+- Un despacho de prueba dentro de `BEGIN … ROLLBACK` deja exactamente: 1 despacho, N `dispatch_materials`, N movimientos, stock descontado, pedido actualizado y 3 probetas si hay muestra.
+- Si falla cualquier paso (por ejemplo, remito repetido) no queda nada grabado.
+- Comparación contra el código actual: para 5 despachos reales recientes (fórmula, m³, humedad), el motor calcula los mismos kg que se descontaron. Las únicas diferencias son las exclusiones acordadas.
+- Anular y editar dejan el stock y el pedido como si el despacho no hubiera existido o como si hubiera sido el corregido.
+- Ninguna pantalla cambia de aspecto.
+- **Deploy coordinado:** primero la migración (funciones + columnas, compatibles con el código viejo), después el front. Hacerlo fuera del horario de despacho, con Bautista avisado.
+
+---
+
+## 0d — Migraciones versionadas y tipos (una sesión, después de la 0b)
+
+- Volcar el esquema real actual (tablas, funciones, triggers, índices, checks) a `supabase/migrations/000000000000_esquema_base.sql` con una consulta de solo lectura (`pg_dump --schema-only` o `information_schema`/`pg_catalog`), para que la base pueda reconstruirse desde el repo.
+- Mover `scripts/*.sql` viejos a `scripts/legacy/` (no se borran).
+- Generar tipos TypeScript de las tablas (`types/database.ts`) y usarlos al menos en las funciones nuevas.
+- Actualizar `DOCUMENTACION_TECNICA.md` o marcarlo como histórico y apuntar a `docs/migracion-loop/`.
+
+---
+
+## Hecho
+_(lo completa cada sesión obrero: fecha, rama, commits, qué quedó pendiente)_
+
+### 0a — 29/09/2026 (obrero)
+Rama local `loop/fase-0a-errores` (sin push ni merge). Commits: `7695302` (despacho: ítems 1, 5, 6, 7), `26e43c7` (ingresos: ítem 2), `5b677dc` (indicadores: ítems 3, 4). Sin migraciones SQL: no hizo falta cambiar el esquema. Build limpio (`npm run build`); `tsc` no suma errores nuevos (los que hay ya estaban en `main`).
+
+1. **Humedad diaria** (`plantista-view.tsx`). El esquema real es `reading_date` / `humidity_percent` (+ `recorded_by`) con índice único `(plant_id, material_id, reading_date)`. Ahora hace upsert con esas columnas, fecha local (antes UTC: después de las 21 h daba el día siguiente), revisa el `error` y lo muestra, y no acepta el % vacío (antes lo guardaba como 0). Probado en `BEGIN…ROLLBACK`: al guardar 4,5 el trigger deja `materials.stockpile_humidity` = 4,5; un segundo guardado el mismo día reemplaza la fila (queda 1); la consulta de `checkDailyHumidity` la encuentra (el cartel no vuelve); el insert viejo falla con "column log_date does not exist". En local el modal aparece (hoy 0 filas) y se cerró con "Omitir por ahora".
+2. **Editar ingreso** (`stock-entries-table.tsx`). Usa `update_material_stock(diferencia)` después de actualizar la fila; actualiza `dry_quantity` del ingreso (si no, el trigger de borrado descontaría el seco viejo) y, solo en Arena Fina (mismo criterio que el alta), corrige `dry_stock` con la humedad del ingreso. Borrar ya no llama a la RPC inexistente. Probado en `BEGIN…ROLLBACK` con un ingreso de prueba: Piedra 6/12 30.000 → 28.000 baja 2.000 y al borrar baja 28.000 (neto 0, sin doble descuento); Arena Fina al 4 %: húmedo −2.000, seco −1.923,08, al borrar neto 0 (−0,01 kg de redondeo en seco).
+3. **"A tiempo %"** del Historial: tarjeta y cálculo quitados; quedan 3 tarjetas.
+4. **"Consumo real vs teórico"** del Dashboard: tarjeta y cálculo quitados. El Panel de Calidad queda solo en su fila (media pantalla, a la izquierda).
+5. **Resumen del Despacho diario** filtra `dispatches` por `plant_id` (0 de 1.317 despachos sin planta). Verificado local el 25/09: Canning 1 despacho / 8 m³ y Hudson 13 / 98 m³, igual que la base (antes cada planta mostraba 14 / 106).
+6. **Remito repetido** al despachar un pedido: misma consulta y mismo mensaje que el despacho manual (global, no por planta: de los 64 repetidos solo 1 es entre plantas). Consulta probada contra la base (remito existente → frena; inventado → pasa).
+7. **Agua y Sikament 33S** ya no se descuentan al despachar un pedido (misma regla por nombre que el manual). Igual que el manual, **siguen grabando `dispatch_materials` y el `stock_movements` 'consumo'** (el libro los cuenta aunque el stock no se mueva); se ordena en la 0b con `descuenta_stock`. Afecta 50 fórmulas con Agua y 38 con Sikament 33S (últimos 30 días: ~300.700 kg de agua y ~1.240 kg de Sikament 33S que ya no bajan stock).
+
+Capturas (local, sin grabar nada), en `/private/tmp/claude-501/-Users-bautistacaputo-Documents-v0-plant-production-control/aec4cd85-59dc-45a8-9077-b068ee49c837/scratchpad/fase0a/`: `01-despacho-modal-humedad.jpg`, `02-despacho-canning-25-09.jpg`, `03-despacho-hudson-25-09.jpg`, `04-historial-sin-a-tiempo.jpg`, `05-dashboard-sin-panel-cemento.jpg` (carpeta temporal de la sesión: copiarlas si se quieren guardar).
+
+Para el deploy / decisiones de Bautista:
+- **Con el ítem 1 la humedad diaria empieza a pesar en el descuento.** El modal lista todo lo que tenga "arena" en el nombre (Arena Fina y Arena Trituración 0/6 de cada planta) y el despacho multiplica esos materiales por (1 + h/100). Hoy solo Arena Fina de Canning tiene 3 %; si el plantista carga, por ejemplo, 6 % en la 0/6 de Hudson, desde ese momento cada despacho descuenta 6 % más de ese material. Avisar a los plantistas qué medir.
+- Los ítems 5 y 6 cambian lo que ve el plantista: cada planta ve solo sus despachos y camiones en ruta (un mixer despachado desde Hudson no aparece en "en ruta" de Canning), y un remito ya usado se rechaza.
+- Visto de paso (fuera de alcance): hay despachos de Hudson con fórmulas "(CAN)" (p. ej. 25/09, MERVA SA, H30-620-15 B (CAN)): descuentan materiales de Canning. En "Actividad reciente" del Dashboard los despachos dicen "a null".
