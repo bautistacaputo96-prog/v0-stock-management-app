@@ -10,8 +10,11 @@ import { createClient } from "@supabase/supabase-js"
 export const WIALON_HOST = "https://hst-api.wialon.us"
 /** Página donde el usuario autoriza el acceso con su usuario de B-Track. */
 export const WIALON_LOGIN = "https://hosting.wialon.us/login.html"
-/** Permisos del token: seguimiento en línea (256) + ver datos (512) + última posición (1024). Solo lectura. */
-export const WIALON_ACCESS = 256 + 512 + 1024
+/**
+ * Permisos del token: rastreo en línea (0x100) + ver datos (0x200). Solo lectura.
+ * Ojo: 0x400 NO es "última posición", es modificación de datos: no se pide.
+ */
+export const WIALON_ACCESS = 0x100 + 0x200
 
 export function sbAdmin() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
