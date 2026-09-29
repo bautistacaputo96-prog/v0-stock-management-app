@@ -123,7 +123,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (humidityChecked) return
     const supabase = createClient()
     if (!supabase) return
-    const today = new Date().toISOString().split("T")[0]
+    // Fecha local (Argentina), no UTC: a la noche toISOString ya daría el día siguiente
+    const today = format(new Date(), "yyyy-MM-dd")
     const { data: materials } = await supabase
       .from("materials")
       .select("id, name, stockpile_humidity")
@@ -134,7 +135,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     const { data: todayLogs } = await supabase
       .from("daily_stockpile_humidity")
       .select("material_id")
-      .eq("log_date", today)
+      .eq("reading_date", today)
       .eq("plant_id", selectedPlant)
       .in("material_id", materials.map(m => m.id))
     const loggedMaterialIds = new Set(todayLogs?.map(l => l.material_id) || [])
@@ -156,13 +157,18 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setSavingHumidity(true)
     const supabase = createClient()
     if (!supabase) { setSavingHumidity(false); return }
-    const today = new Date().toISOString().split("T")[0]
+    const today = format(new Date(), "yyyy-MM-dd")
     try {
       for (const material of humidityMaterials) {
         const form = humidityForm[material.id]
         let humidity: number
         if (form.mode === "direct") {
-          humidity = parseFloat(form.humidity) || 0
+          humidity = parseFloat(form.humidity)
+          if (isNaN(humidity) || humidity < 0) {
+            toast({ title: "Error", description: `Ingresá la humedad de ${material.name}`, variant: "destructive" })
+            setSavingHumidity(false)
+            return
+          }
         } else {
           const wet = parseFloat(form.wetWeight) || 0
           const dry = parseFloat(form.dryWeight) || 0
@@ -173,21 +179,26 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           }
           humidity = ((wet - dry) / dry) * 100
         }
-        await supabase.from("daily_stockpile_humidity").insert({
+        // Una lectura por material, planta y día (índice único): si ya había una, se reemplaza.
+        // El trigger trg_update_stockpile_humidity copia el valor a materials.stockpile_humidity,
+        // que es la humedad que usa el despacho para corregir la arena.
+        const { error } = await supabase.from("daily_stockpile_humidity").upsert({
           material_id: material.id,
           plant_id: selectedPlant,
-          log_date: today,
-          humidity_percentage: humidity,
+          reading_date: today,
+          humidity_percent: humidity,
           wet_weight_grams: form.mode === "calculate" ? parseFloat(form.wetWeight) : null,
           dry_weight_grams: form.mode === "calculate" ? parseFloat(form.dryWeight) : null,
-        })
+          recorded_by: currentUserName(),
+        }, { onConflict: "plant_id,material_id,reading_date" })
+        if (error) throw error
       }
       toast({ title: "Humedad registrada", description: "Los valores de humedad del acopio fueron actualizados" })
       setShowHumidityModal(false)
       setHumidityChecked(true)
-    } catch (error) {
+    } catch (error: any) {
       console.error("[v0] Error saving humidity:", error)
-      toast({ title: "Error", description: "No se pudo guardar la humedad", variant: "destructive" })
+      toast({ title: "Error", description: `No se pudo guardar la humedad${error?.message ? `: ${error.message}` : ""}`, variant: "destructive" })
     } finally {
       setSavingHumidity(false)
     }
@@ -216,6 +227,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       supabase
         .from("dispatches")
         .select("*, formulas(id, name, code), clients(id, name), construction_sites(name, travel_time_minutes), mixers(id, license_plate, status)")
+        .eq("plant_id", selectedPlant)
         .gte("dispatch_date", dayStart.toISOString())
         .lt("dispatch_date", dayEnd.toISOString())
         .order("dispatch_date", { ascending: false }),
@@ -336,6 +348,21 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     const today = new Date()
 
     try {
+      // Anti-duplicado: la misma regla y el mismo mensaje que el despacho manual
+      const { data: dupRemito } = await supabase
+        .from("dispatches")
+        .select("id")
+        .eq("remito", dispatchForm.remito.trim())
+        .limit(1)
+      if (dupRemito && dupRemito.length > 0) {
+        toast({
+          title: "Error",
+          description: `Ya existe un despacho con el remito ${dispatchForm.remito.trim()} en el sistema. No se puede cargar dos veces.`,
+          variant: "destructive",
+        })
+        return
+      }
+
       // 1. Create the dispatch record
       const { data: newDispatch, error: dispatchError } = await supabase.from("dispatches").insert({
         formula_id: dispatchDialog.formula_id,
@@ -371,10 +398,17 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           if ((materialName.includes("arena") || materialName.includes("sand")) && humidity > 0) {
             requiredQty = requiredQty * (1 + humidity / 100)
           }
-          await supabase.rpc("update_material_stock", {
-            p_material_id: fm.materials.id,
-            p_quantity_change: -requiredQty,
-          })
+          // Igual que el despacho manual: no se descuentan del stock el Agua (stock infinito)
+          // ni el Sikament 33S (aditivo que se agrega en obra). Provisorio hasta la fase 0b
+          // (tipo de material). Quedan registrados en el despacho y en los movimientos.
+          const isNonDeductible =
+            materialName.includes("agua") || materialName.includes("water") || materialName.includes("sikament 33")
+          if (!isNonDeductible) {
+            await supabase.rpc("update_material_stock", {
+              p_material_id: fm.materials.id,
+              p_quantity_change: -requiredQty,
+            })
+          }
           await supabase.from("dispatch_materials").insert({
             dispatch_id: newDispatch.id,
             material_id: fm.materials.id,
