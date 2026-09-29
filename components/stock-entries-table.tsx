@@ -35,6 +35,7 @@ type StockEntry = {
   id: string
   quantity: number
   original_quantity: number | null
+  dry_quantity?: number | null
   remito: string | null
   notes: string | null
   entry_date: string
@@ -61,13 +62,9 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     if (!deleteEntry) return
     setSaving(true)
     const supabase = createClient()
-    
-    // Restar la cantidad del stock actual del material
-    await supabase.rpc("decrement_stock", { 
-      material_id: deleteEntry.materials.id, 
-      amount: deleteEntry.quantity 
-    })
-    
+
+    // El stock lo descuenta la base sola al borrar el ingreso
+    // (trigger trigger_decrease_stock_on_entry_delete, también corrige el stock seco).
     await logDeletion({
       entity: "ingreso",
       entityId: deleteEntry.id,
@@ -99,29 +96,67 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     
     const oldQuantity = editingEntry.quantity
     const newQuantity = parseFloat(editQuantity)
-    const quantityDiff = newQuantity - oldQuantity
-    
-    // Ajustar el stock según la diferencia
-    if (quantityDiff > 0) {
-      await supabase.rpc("increment_stock", { material_id: editingEntry.materials.id, amount: quantityDiff })
-    } else if (quantityDiff < 0) {
-      await supabase.rpc("decrement_stock", { material_id: editingEntry.materials.id, amount: Math.abs(quantityDiff) })
+    if (isNaN(newQuantity) || newQuantity <= 0) {
+      toast({ title: "Error", description: "Ingresá una cantidad válida", variant: "destructive" })
+      setSaving(false)
+      return
     }
-    
+    const quantityDiff = newQuantity - oldQuantity
+
+    // Stock seco: mismo criterio que al cargar el ingreso (add-stock-entry-dialog):
+    // solo la Arena Fina lleva stock seco, y en seco entra cantidad / (1 + humedad/100).
+    const tracksDryStock = editingEntry.materials?.name === "Arena Fina"
+    const humidity = editingEntry.humidity_percentage || 0
+    const oldDry = editingEntry.dry_quantity ?? oldQuantity
+    const newDry = tracksDryStock && humidity > 0 ? newQuantity / (1 + humidity / 100) : newQuantity
+    const dryDiff = newDry - oldDry
+
     const { error } = await supabase.from("stock_entries").update({
       quantity: newQuantity,
+      // Se mantiene al día para que el trigger de borrado descuente lo correcto
+      dry_quantity: newDry,
       remito: editRemito || null,
       notes: editNotes || null,
       // Se guarda al mediodía UTC para que la fecha mostrada no cambie por zona horaria
       ...(editDate ? { entry_date: `${editDate}T12:00:00Z` } : {}),
     }).eq("id", editingEntry.id)
-    
+
     if (error) {
       toast({ title: "Error", description: "No se pudo actualizar el ingreso", variant: "destructive" })
-    } else {
-      toast({ title: "Ingreso actualizado" })
-      onRefresh?.()
+      setEditingEntry(null)
+      setSaving(false)
+      return
     }
+
+    // El trigger de la base solo suma al insertar: si cambió la cantidad, se corrige el stock por la diferencia
+    let stockError: any = null
+    if (Math.abs(quantityDiff) > 0.0001) {
+      const { error: rpcError } = await supabase.rpc("update_material_stock", {
+        p_material_id: editingEntry.materials.id,
+        p_quantity_change: quantityDiff,
+      })
+      stockError = rpcError
+    }
+    if (!stockError && tracksDryStock && Math.abs(dryDiff) > 0.0001) {
+      const { data: materialData } = await supabase
+        .from("materials")
+        .select("dry_stock")
+        .eq("id", editingEntry.materials.id)
+        .single()
+      const { error: dryError } = await supabase
+        .from("materials")
+        .update({ dry_stock: (materialData?.dry_stock || 0) + dryDiff })
+        .eq("id", editingEntry.materials.id)
+      stockError = dryError
+    }
+
+    if (stockError) {
+      console.error("Error ajustando stock del ingreso:", stockError)
+      toast({ title: "Error", description: "El ingreso se actualizó pero no se pudo corregir el stock. Avisá para revisarlo.", variant: "destructive" })
+    } else {
+      toast({ title: "Ingreso actualizado", description: Math.abs(quantityDiff) > 0.0001 ? "El stock fue ajustado" : undefined })
+    }
+    onRefresh?.()
     setEditingEntry(null)
     setSaving(false)
   }
