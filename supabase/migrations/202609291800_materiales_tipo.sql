@@ -15,10 +15,12 @@
 -- La columna vieja requires_humidity_control no se toca (la usa el recuento de stock).
 
 -- Única regla por nombre que queda: clasificar un material al darlo de alta.
+-- corrige_humedad: nombres que empiezan con "Arena Fina" (Arena Fina, "Arena Fina Lavada"…);
+-- la Arena Trituración 0/6 queda afuera.
 CREATE OR REPLACE FUNCTION public.clasificar_material(p_nombre text)
 RETURNS TABLE (tipo text, descuenta_stock boolean, corrige_humedad boolean)
 LANGUAGE sql IMMUTABLE
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT
     CASE
@@ -33,7 +35,7 @@ AS $$
       ELSE 'otro'
     END,
     NOT (n = 'agua' OR n LIKE 'agua %' OR n LIKE 'sikament 33%'),
-    n = 'arena fina'
+    n LIKE 'arena fina%'
   FROM (SELECT lower(btrim(coalesce(p_nombre, ''))) AS n) x
 $$;
 
@@ -56,18 +58,33 @@ COMMENT ON COLUMN public.materials.descuenta_stock IS 'Fase 0b: false = se regis
 COMMENT ON COLUMN public.materials.corrige_humedad IS 'Fase 0b: true = el despacho descuenta seco x (1 + stockpile_humidity/100). Solo Arena Fina';
 
 -- Alta sin tipo (pantallas viejas): se completa por el nombre.
+-- Renombrar (pantallas viejas, que no mandan tipo): se reclasifica por el nombre nuevo, salvo
+-- los campos que el mismo UPDATE cambió a propósito (tipo, descuenta_stock, corrige_humedad).
 CREATE OR REPLACE FUNCTION public.materials_tipo_por_defecto()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE c record;
 BEGIN
-  IF NEW.tipo IS NULL THEN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.tipo IS NULL THEN
+      SELECT * INTO c FROM public.clasificar_material(NEW.name);
+      NEW.tipo := c.tipo;
+      NEW.descuenta_stock := c.descuenta_stock;
+      NEW.corrige_humedad := c.corrige_humedad;
+    END IF;
+  ELSIF NEW.name IS DISTINCT FROM OLD.name THEN
     SELECT * INTO c FROM public.clasificar_material(NEW.name);
-    NEW.tipo := c.tipo;
-    NEW.descuenta_stock := c.descuenta_stock;
-    NEW.corrige_humedad := c.corrige_humedad;
+    IF NEW.tipo IS NOT DISTINCT FROM OLD.tipo THEN
+      NEW.tipo := c.tipo;
+    END IF;
+    IF NEW.descuenta_stock IS NOT DISTINCT FROM OLD.descuenta_stock THEN
+      NEW.descuenta_stock := c.descuenta_stock;
+    END IF;
+    IF NEW.corrige_humedad IS NOT DISTINCT FROM OLD.corrige_humedad THEN
+      NEW.corrige_humedad := c.corrige_humedad;
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -75,5 +92,5 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_materials_tipo_por_defecto ON public.materials;
 CREATE TRIGGER trg_materials_tipo_por_defecto
-  BEFORE INSERT ON public.materials
+  BEFORE INSERT OR UPDATE OF name ON public.materials
   FOR EACH ROW EXECUTE FUNCTION public.materials_tipo_por_defecto();

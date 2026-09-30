@@ -13,11 +13,21 @@
 --   * Los materiales se descuentan del stock de la PLANTA QUE DESPACHA. Una fórmula de la
 --     otra planta está permitida: cada material se busca por tipo + nombre en la planta que
 --     despacha ("CPC 40" de Canning -> "CPC 40" de Hudson). Si falta, frena con un mensaje.
---   * kg = kg/m³ × m³; si el material corrige_humedad (solo Arena Fina) × (1 + humedad/100).
+--   * kg = kg/m³ × m³; si el material corrige_humedad (Arena Fina) × (1 + humedad/100).
 --     dispatch_materials guarda seco, húmedo y humedad; quantity = húmedo (lo que baja el stock).
 --   * descuenta_stock = false (Agua, Sikament 33S): queda en dispatch_materials y en
---     stock_movements como hoy, pero no mueve current_stock (ni al registrar, ni al editar,
---     ni al anular).
+--     stock_movements como hoy, pero nunca mueve current_stock.
+--   * ANCLA DE STOCK (revisión 30/09, decidido por el arquitecto en nombre de Bautista): al
+--     anular, editar o ajustar un despacho, un material que tiene un recuento
+--     (reference_type 'recuento') o una corrección entre plantas (reference_type 'correccion'
+--     + movement_type 'transferencia') cargados DESPUÉS del despacho (created_at) no mueve
+--     current_stock: el recuento ya refleja el stock físico. Se deja igual el movimiento con
+--     cantidad 0 y la nota "no se devuelve stock: recuento posterior al despacho (fecha)".
+--     El pedido, las probetas y dispatch_materials se corrigen igual.
+--   * Movimientos: cada cambio de consumo se registra como 'consumo' (positivo al consumir,
+--     negativo al devolver: anulación o menos m³), así los promedios de consumo quedan bien.
+--   * Orden de bloqueos (evita deadlocks): despacho -> pedido -> materiales, y los materiales
+--     siempre en orden de id (_mover_stock).
 --   * Las probetas las sigue creando SOLO el trigger trigger_create_test_cylinders.
 --   * Las fechas se calculan en hora de Argentina (SET timezone de cada función; también
 --     vale para el trigger de probetas cuando corre dentro de registrar_despacho).
@@ -30,7 +40,7 @@
 CREATE OR REPLACE FUNCTION public._material_en_planta(p_material_id uuid, p_plant_id uuid, p_contexto text DEFAULT NULL)
 RETURNS public.materials
 LANGUAGE plpgsql STABLE
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_src public.materials;
@@ -66,7 +76,7 @@ CREATE OR REPLACE FUNCTION public._consumo_formula(p_formula_id uuid, p_plant_id
 RETURNS TABLE (mat_id uuid, mat_nombre text, mat_tipo text, descuenta boolean,
                kg_m3 numeric, kg_seco numeric, humedad_pct numeric, kg_humedo numeric)
 LANGUAGE plpgsql STABLE
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_code text;
@@ -98,6 +108,105 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Suma a un mapa {material_id: kg} (jsonb)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._sumar_kg(p_mapa jsonb, p_material_id uuid, p_kg numeric)
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_set(coalesce(p_mapa, '{}'::jsonb), ARRAY[p_material_id::text],
+                   to_jsonb(coalesce((p_mapa->>p_material_id::text)::numeric, 0) + p_kg))
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Descuenta del stock un mapa {material_id: kg} (negativo = devuelve), SIEMPRE en orden de
+-- id de material para que dos transacciones no se bloqueen cruzadas.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._mover_stock(p_mapa jsonb)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT key::uuid AS mid, round(value::numeric, 3) AS kg
+      FROM jsonb_each_text(coalesce(p_mapa, '{}'::jsonb))
+     ORDER BY key::uuid
+  LOOP
+    IF r.kg <> 0 THEN
+      UPDATE materials SET current_stock = coalesce(current_stock, 0) - r.kg, updated_at = now() WHERE id = r.mid;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Ancla de stock: primer recuento o corrección entre plantas de ese material cargado
+-- después de p_desde (created_at del despacho). NULL = no hay.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._ancla_stock(p_material_id uuid, p_desde timestamptz)
+RETURNS timestamptz
+LANGUAGE sql STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT min(created_at)
+    FROM stock_movements
+   WHERE material_id = p_material_id
+     AND created_at > p_desde
+     AND (reference_type = 'recuento' OR (reference_type = 'correccion' AND movement_type = 'transferencia'))
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Aplica a un despacho ya existente un cambio neto de consumo {material_id: kg}
+-- (positivo = se consumió más, negativo = se devuelve). Por material:
+--   * si hay un ancla de stock posterior al despacho: stock sin cambios, movimiento 'consumo'
+--     con cantidad 0 y la nota explicando por qué (queda la traza);
+--   * si no: movimiento 'consumo' con el neto y, si descuenta_stock, se mueve current_stock.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._aplicar_neto(p_dispatch_id uuid, p_desde timestamptz, p_neto jsonb, p_nota text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r        record;
+  v_ancla  timestamptz;
+  v_mover  jsonb := '{}'::jsonb;
+  v_sin    int := 0;
+  v_dia    date := (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date;
+BEGIN
+  FOR r IN
+    SELECT key::uuid AS mid, round(value::numeric, 3) AS kg, m.descuenta_stock, m.name
+      FROM jsonb_each_text(coalesce(p_neto, '{}'::jsonb)) e
+      JOIN materials m ON m.id = e.key::uuid
+     ORDER BY key::uuid
+  LOOP
+    CONTINUE WHEN r.kg = 0;
+    v_ancla := public._ancla_stock(r.mid, p_desde);
+    IF v_ancla IS NOT NULL THEN
+      INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
+      VALUES (r.mid, 'consumo', 0, 'dispatch', p_dispatch_id, v_dia,
+              p_nota || CASE WHEN r.kg < 0 THEN ' · no se devuelve stock' ELSE ' · no se descuenta stock' END
+                     || ': recuento posterior al despacho ('
+                     || to_char(v_ancla AT TIME ZONE 'America/Argentina/Buenos_Aires', 'DD/MM/YYYY') || '); '
+                     || abs(r.kg) || ' kg sin mover');
+      v_sin := v_sin + 1;
+    ELSE
+      INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
+      VALUES (r.mid, 'consumo', r.kg, 'dispatch', p_dispatch_id, v_dia, p_nota);
+      IF r.descuenta_stock THEN
+        v_mover := v_mover || jsonb_build_object(r.mid::text, r.kg);
+      END IF;
+    END IF;
+  END LOOP;
+  PERFORM public._mover_stock(v_mover);
+  RETURN jsonb_build_object('movidos', (SELECT count(*) FROM jsonb_object_keys(v_mover)), 'sin_mover_por_recuento', v_sin);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- registrar_despacho
 -- ---------------------------------------------------------------------------
 -- Entrada (jsonb): plant_id, scheduled_dispatch_id?, formula_id, client_id?, construction_site_id?,
@@ -112,7 +221,7 @@ CREATE OR REPLACE FUNCTION public.registrar_despacho(p jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 SET timezone TO 'America/Argentina/Buenos_Aires'
 AS $$
 DECLARE
@@ -145,6 +254,7 @@ DECLARE
   v_n          int := 0;
   v_probetas   int := 0;
   v_total      numeric;
+  v_mover      jsonb := '{}'::jsonb;
   v_m          public.materials;
   r            record;
 BEGIN
@@ -198,12 +308,13 @@ BEGIN
       INSERT INTO manual_withdrawal_items (withdrawal_id, material_id, quantity_kg)
       VALUES (v_id, v_m.id, r.q);
       IF v_m.descuenta_stock THEN
-        UPDATE materials SET current_stock = coalesce(current_stock, 0) - r.q, updated_at = now() WHERE id = v_m.id;
+        v_mover := public._sumar_kg(v_mover, v_m.id, r.q);
       END IF;
       INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
       VALUES (v_m.id, 'consumo', r.q, 'manual_withdrawal', v_id, v_dia, 'Descarga manual: ' || v_notes);
       v_n := v_n + 1;
     END LOOP;
+    PERFORM public._mover_stock(v_mover);
     INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
     VALUES (v_usuario, 'crear', 'despacho', v_id::text, 'Descarga manual', v_plant_id,
             jsonb_build_object('Tipo', 'Despacho por árido (ingreso manual)', 'Materiales', v_n, 'Observaciones', v_notes));
@@ -282,7 +393,7 @@ BEGIN
     INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
     VALUES (v_id, r.mat_id, r.kg_humedo, r.kg_seco, r.kg_humedo, r.humedad_pct);
     IF r.descuenta THEN
-      UPDATE materials SET current_stock = coalesce(current_stock, 0) - r.kg_humedo, updated_at = now() WHERE id = r.mat_id;
+      v_mover := public._sumar_kg(v_mover, r.mat_id, r.kg_humedo);
     END IF;
     INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
     VALUES (r.mat_id, 'consumo', r.kg_humedo, 'dispatch', v_id, v_dia, 'Despacho remito ' || coalesce(v_remito, 'N/A'));
@@ -299,13 +410,16 @@ BEGIN
     INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
     VALUES (v_id, v_m.id, v_total, v_total, v_total, 0);
     IF v_m.descuenta_stock THEN
-      UPDATE materials SET current_stock = coalesce(current_stock, 0) - v_total, updated_at = now() WHERE id = v_m.id;
+      v_mover := public._sumar_kg(v_mover, v_m.id, v_total);
     END IF;
     INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
     VALUES (v_m.id, 'consumo', v_total, 'dispatch', v_id, v_dia,
             'Fibra ' || v_fibra_m3 || ' kg/m³ × ' || v_m3 || ' m³ — remito ' || coalesce(v_remito, 'N/A'));
     v_n := v_n + 1;
   END IF;
+
+  -- Stock: todos los materiales juntos, en orden de id
+  PERFORM public._mover_stock(v_mover);
 
   -- 4. Pedido: acumulado atómico y completo si se llegó al total
   IF v_pedido_id IS NOT NULL THEN
@@ -355,7 +469,7 @@ $$;
 CREATE OR REPLACE FUNCTION public._ajustar_pedido(p_pedido_id uuid, p_delta_m3 numeric, p_usuario text, p_nota text)
 RETURNS void
 LANGUAGE plpgsql
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_ant text;
@@ -386,22 +500,24 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- anular_despacho: devuelve el stock, descuenta el pedido, borra probetas sin resultados,
--- materiales y el despacho. Frena si alguna probeta ya tiene rotura cargada.
+-- anular_despacho: devuelve el stock (salvo materiales con recuento posterior), descuenta el
+-- pedido, borra probetas sin resultados, materiales y el despacho. Frena si alguna probeta
+-- ya tiene rotura cargada.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.anular_despacho(p_id uuid, p_usuario text DEFAULT NULL, p_motivo text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 SET timezone TO 'America/Argentina/Buenos_Aires'
 AS $$
 DECLARE
   v_usuario  text := coalesce(nullif(btrim(coalesce(p_usuario, '')), ''), 'Sistema');
   v_motivo   text := nullif(btrim(coalesce(p_motivo, '')), '');
   v_d        public.dispatches;
-  v_dia      date := now()::date;
   v_resumen  text;
+  v_neto     jsonb := '{}'::jsonb;
+  v_res      jsonb;
   v_n        int := 0;
   v_prob     int;
   v_legacy   uuid[];
@@ -410,9 +526,13 @@ DECLARE
   v_formula  text;
   r          record;
 BEGIN
+  -- Orden de bloqueos: despacho -> pedido -> materiales
   SELECT * INTO v_d FROM dispatches WHERE id = p_id FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'El despacho no existe (puede que ya se haya borrado). Actualizá la pantalla.';
+  END IF;
+  IF v_d.scheduled_dispatch_id IS NOT NULL THEN
+    PERFORM 1 FROM scheduled_dispatches WHERE id = v_d.scheduled_dispatch_id FOR UPDATE;
   END IF;
 
   IF EXISTS (SELECT 1 FROM test_cylinders
@@ -422,22 +542,19 @@ BEGIN
       coalesce(v_d.sample_number, 's/n');
   END IF;
 
-  -- Stock: se devuelve lo que se había descontado (solo materiales que descuentan stock)
+  -- Stock: se devuelve lo consumido como 'consumo' negativo (salvo ancla de stock posterior)
   FOR r IN
-    SELECT dm.material_id, dm.quantity, m.name, m.unit, m.descuenta_stock
+    SELECT dm.material_id, dm.quantity, m.name, m.unit
       FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
      WHERE dm.dispatch_id = p_id
      ORDER BY m.name
   LOOP
-    IF r.descuenta_stock AND r.quantity <> 0 THEN
-      UPDATE materials SET current_stock = coalesce(current_stock, 0) + r.quantity, updated_at = now() WHERE id = r.material_id;
-      INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-      VALUES (r.material_id, 'ajuste', r.quantity, 'anulacion', p_id, v_dia,
-              'Anulación remito ' || coalesce(v_d.remito, 's/n') || coalesce(' · ' || v_motivo, '') || ' (' || v_usuario || ')');
-    END IF;
+    v_neto := public._sumar_kg(v_neto, r.material_id, -r.quantity);
     v_resumen := concat_ws(', ', v_resumen, r.name || ' ' || round(r.quantity, 1) || ' ' || r.unit);
     v_n := v_n + 1;
   END LOOP;
+  v_res := public._aplicar_neto(p_id, v_d.created_at, v_neto,
+             'Anulación remito ' || coalesce(v_d.remito, 's/n') || coalesce(' · ' || v_motivo, '') || ' (' || v_usuario || ')');
 
   -- Pedido (flujo actual: dispatches.scheduled_dispatch_id)
   PERFORM public._ajustar_pedido(v_d.scheduled_dispatch_id, -v_d.quantity_m3, v_usuario,
@@ -478,10 +595,14 @@ BEGIN
             'Cargado por', coalesce(v_d.created_by, '-'),
             'Motivo', coalesce(v_motivo, '-'),
             'Probetas borradas', v_prob,
-            'Materiales (stock devuelto)', coalesce(v_resumen, '-')));
+            'Materiales', coalesce(v_resumen, '-'),
+            'Stock devuelto', (v_res->>'movidos') || ' materiales',
+            'Sin devolver (recuento posterior)', (v_res->>'sin_mover_por_recuento') || ' materiales'));
 
   RETURN jsonb_build_object('id', p_id, 'remito', v_d.remito, 'm3', v_d.quantity_m3,
-                            'pedido_id', v_d.scheduled_dispatch_id, 'materiales', v_n, 'probetas', v_prob);
+                            'pedido_id', v_d.scheduled_dispatch_id, 'materiales', v_n, 'probetas', v_prob,
+                            'stock_devuelto', (v_res->>'movidos')::int,
+                            'sin_devolver_por_recuento', (v_res->>'sin_mover_por_recuento')::int);
 END;
 $$;
 
@@ -492,16 +613,18 @@ $$;
 --   client_id, construction_site_id, mixer_id, extra_water_liters, notes, usuario.
 -- * Cambian solo datos (remito, cliente, obra, camión, agua, observaciones, fecha): no toca stock.
 -- * Cambian los m³ (misma fórmula y planta): cada material de la fórmula y la fibra se escalan
---   por m³ nuevo / m³ viejo (conserva la humedad y las exclusiones con que se cargó); el stock
---   se corrige por la diferencia y el pedido también.
--- * Cambia la fórmula o la planta: se recalculan los materiales como en registrar_despacho
---   (humedad actual del acopio), el stock se corrige por la diferencia por material.
--- * Lo agregado aparte (superfluidificante en obra) no se toca.
+--   por m³ nuevo / m³ viejo (conserva la humedad y las exclusiones con que se cargó); las filas
+--   de materiales que ya no están en la fórmula se quitan (devolviendo su stock).
+-- * Cambia la fórmula o la planta: se quitan todas las filas y se recalculan como en
+--   registrar_despacho (humedad actual del acopio).
+-- * El superfluidificante agregado en obra (lo maneja ajustar_material_despacho) no se toca.
+-- * El stock se corrige por la diferencia neta por material, salvo ancla de stock posterior;
+--   el pedido se corrige por la diferencia de m³.
 CREATE OR REPLACE FUNCTION public.editar_despacho(p_id uuid, p jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 SET timezone TO 'America/Argentina/Buenos_Aires'
 AS $$
 DECLARE
@@ -522,20 +645,21 @@ DECLARE
   v_recalc   boolean;
   v_ratio    numeric;
   v_q        numeric;
-  v_diff     numeric;
   v_fibra_m3 numeric;
-  v_net      jsonb := '{}'::jsonb;
+  v_neto     jsonb := '{}'::jsonb;
+  v_res      jsonb;
   v_cambios  jsonb := '{}'::jsonb;
-  v_dia      date := now()::date;
   v_nota     text;
   v_m        public.materials;
   r          record;
-  k          text;
-  v          text;
 BEGIN
+  -- Orden de bloqueos: despacho -> pedido -> materiales
   SELECT * INTO v_d FROM dispatches WHERE id = p_id FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'El despacho no existe (puede que se haya borrado). Actualizá la pantalla.';
+  END IF;
+  IF v_d.scheduled_dispatch_id IS NOT NULL THEN
+    PERFORM 1 FROM scheduled_dispatches WHERE id = v_d.scheduled_dispatch_id FOR UPDATE;
   END IF;
 
   v_m3      := CASE WHEN p ? 'quantity_m3' THEN nullif(p->>'quantity_m3', '')::numeric ELSE v_d.quantity_m3 END;
@@ -570,62 +694,54 @@ BEGIN
 
   IF v_recalc THEN
     IF v_formula = v_d.formula_id AND v_plant IS NOT DISTINCT FROM v_d.plant_id AND v_d.quantity_m3 > 0 THEN
-      -- Solo cambian los m³: se escala cada material por m³ (fórmula + fibra)
+      -- Solo cambian los m³: se escalan fórmula y fibra; lo que ya no está en la fórmula se quita
       v_ratio := v_m3 / v_d.quantity_m3;
+      v_nota := v_nota || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3';
       FOR r IN
-        SELECT dm.id, dm.material_id, dm.quantity, dm.dry_quantity, m.descuenta_stock
+        SELECT dm.id, dm.material_id, dm.quantity, dm.dry_quantity,
+               (m.tipo = 'fibra' OR EXISTS (
+                  SELECT 1 FROM formula_materials fm JOIN materials fmm ON fmm.id = fm.material_id
+                   WHERE fm.formula_id = v_d.formula_id
+                     AND lower(btrim(fmm.name)) = lower(btrim(m.name)) AND fmm.tipo = m.tipo)) AS por_m3
           FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
          WHERE dm.dispatch_id = p_id
-           AND (m.tipo = 'fibra' OR EXISTS (
-                 SELECT 1 FROM formula_materials fm JOIN materials fmm ON fmm.id = fm.material_id
-                  WHERE fm.formula_id = v_d.formula_id
-                    AND lower(btrim(fmm.name)) = lower(btrim(m.name)) AND fmm.tipo = m.tipo))
+           AND NOT (m.tipo = 'aditivo_obra' AND m.name ILIKE '%superfluidificante%')
+         ORDER BY dm.material_id, dm.id
       LOOP
-        v_q := round(r.quantity * v_ratio, 3);
-        v_diff := v_q - r.quantity;
-        UPDATE dispatch_materials
-           SET quantity = v_q,
-               wet_quantity = v_q,
-               dry_quantity = CASE WHEN r.dry_quantity IS NULL THEN NULL ELSE round(r.dry_quantity * v_ratio, 3) END
-         WHERE id = r.id;
-        IF v_diff <> 0 THEN
-          IF r.descuenta_stock THEN
-            UPDATE materials SET current_stock = coalesce(current_stock, 0) - v_diff, updated_at = now() WHERE id = r.material_id;
-          END IF;
-          INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-          VALUES (r.material_id, 'consumo', v_diff, 'dispatch', p_id, v_dia, v_nota || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3');
+        IF r.por_m3 THEN
+          v_q := round(r.quantity * v_ratio, 3);
+          UPDATE dispatch_materials
+             SET quantity = v_q,
+                 wet_quantity = v_q,
+                 dry_quantity = CASE WHEN r.dry_quantity IS NULL THEN NULL ELSE round(r.dry_quantity * v_ratio, 3) END
+           WHERE id = r.id;
+          v_neto := public._sumar_kg(v_neto, r.material_id, v_q - r.quantity);
+        ELSE
+          DELETE FROM dispatch_materials WHERE id = r.id;
+          v_neto := public._sumar_kg(v_neto, r.material_id, -r.quantity);
         END IF;
       END LOOP;
     ELSE
-      -- Cambia la fórmula o la planta: se sacan los materiales por m³ y se recalculan
+      -- Cambia la fórmula o la planta: se sacan todas las filas (menos superfluidificante) y se recalculan
       v_calc_plant := coalesce(v_plant, (SELECT plant_id FROM formulas WHERE id = v_formula));
+      v_nota := v_nota || ': recálculo por cambio de fórmula/planta';
       SELECT coalesce(sum(dm.quantity), 0) / nullif(v_d.quantity_m3, 0) INTO v_fibra_m3
         FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
        WHERE dm.dispatch_id = p_id AND m.tipo = 'fibra';
       FOR r IN
-        SELECT dm.id, dm.material_id, dm.quantity, m.descuenta_stock
+        SELECT dm.id, dm.material_id, dm.quantity
           FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
          WHERE dm.dispatch_id = p_id
-           AND (m.tipo = 'fibra' OR EXISTS (
-                 SELECT 1 FROM formula_materials fm JOIN materials fmm ON fmm.id = fm.material_id
-                  WHERE fm.formula_id = v_d.formula_id
-                    AND lower(btrim(fmm.name)) = lower(btrim(m.name)) AND fmm.tipo = m.tipo))
+           AND NOT (m.tipo = 'aditivo_obra' AND m.name ILIKE '%superfluidificante%')
+         ORDER BY dm.material_id, dm.id
       LOOP
-        IF r.descuenta_stock THEN
-          UPDATE materials SET current_stock = coalesce(current_stock, 0) + r.quantity, updated_at = now() WHERE id = r.material_id;
-        END IF;
-        v_net := jsonb_set(v_net, ARRAY[r.material_id::text],
-                           to_jsonb(coalesce((v_net->>r.material_id::text)::numeric, 0) - r.quantity));
         DELETE FROM dispatch_materials WHERE id = r.id;
+        v_neto := public._sumar_kg(v_neto, r.material_id, -r.quantity);
       END LOOP;
       FOR r IN SELECT * FROM public._consumo_formula(v_formula, v_calc_plant, v_m3) LOOP
         INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
         VALUES (p_id, r.mat_id, r.kg_humedo, r.kg_seco, r.kg_humedo, r.humedad_pct);
-        IF r.descuenta THEN
-          UPDATE materials SET current_stock = coalesce(current_stock, 0) - r.kg_humedo, updated_at = now() WHERE id = r.mat_id;
-        END IF;
-        v_net := jsonb_set(v_net, ARRAY[r.mat_id::text],
-                           to_jsonb(coalesce((v_net->>r.mat_id::text)::numeric, 0) + r.kg_humedo));
+        v_neto := public._sumar_kg(v_neto, r.mat_id, r.kg_humedo);
       END LOOP;
       IF coalesce(v_fibra_m3, 0) > 0 THEN
         SELECT * INTO v_m FROM materials WHERE plant_id = v_calc_plant AND tipo = 'fibra' ORDER BY name LIMIT 1;
@@ -635,22 +751,16 @@ BEGIN
         v_q := round(v_fibra_m3 * v_m3, 3);
         INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
         VALUES (p_id, v_m.id, v_q, v_q, v_q, 0);
-        IF v_m.descuenta_stock THEN
-          UPDATE materials SET current_stock = coalesce(current_stock, 0) - v_q, updated_at = now() WHERE id = v_m.id;
-        END IF;
-        v_net := jsonb_set(v_net, ARRAY[v_m.id::text], to_jsonb(coalesce((v_net->>v_m.id::text)::numeric, 0) + v_q));
+        v_neto := public._sumar_kg(v_neto, v_m.id, v_q);
       END IF;
-      FOR k, v IN SELECT key, value FROM jsonb_each_text(v_net) LOOP
-        IF round(v::numeric, 3) <> 0 THEN
-          INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-          VALUES (k::uuid, 'consumo', round(v::numeric, 3), 'dispatch', p_id, v_dia, v_nota || ': recálculo por cambio de fórmula/planta');
-        END IF;
-      END LOOP;
     END IF;
+
+    -- Stock por diferencia neta (orden de id; ancla de stock respetada)
+    v_res := public._aplicar_neto(p_id, v_d.created_at, v_neto, v_nota);
 
     -- Pedido
     PERFORM public._ajustar_pedido(v_d.scheduled_dispatch_id, v_m3 - v_d.quantity_m3, v_usuario,
-                                   v_nota || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3');
+                                   'Edición remito ' || coalesce(v_remito, 's/n') || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3');
   END IF;
 
   -- Registro de lo anterior y lo nuevo (solo lo que cambió)
@@ -699,16 +809,22 @@ BEGIN
   IF v_cambios <> '{}'::jsonb THEN
     INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
     VALUES (v_usuario, 'editar', 'despacho', p_id::text, v_remito, v_plant,
-            v_cambios || jsonb_build_object('Stock', CASE WHEN v_recalc THEN 'recalculado' ELSE 'sin cambios' END));
+            v_cambios || jsonb_build_object('Stock',
+              CASE WHEN NOT v_recalc THEN 'sin cambios'
+                   WHEN (v_res->>'sin_mover_por_recuento')::int > 0
+                     THEN 'recalculado (' || (v_res->>'sin_mover_por_recuento') || ' materiales sin mover por recuento posterior)'
+                   ELSE 'recalculado' END));
   END IF;
 
-  RETURN jsonb_build_object('id', p_id, 'recalculado', v_recalc, 'cambios', v_cambios);
+  RETURN jsonb_build_object('id', p_id, 'recalculado', v_recalc, 'cambios', v_cambios,
+                            'sin_mover_por_recuento', coalesce((v_res->>'sin_mover_por_recuento')::int, 0));
 END;
 $$;
 
 -- ---------------------------------------------------------------------------
 -- ajustar_material_despacho: fibra o superfluidificante cargados desde el Historial.
--- Fija la cantidad total de ese material en el despacho y corrige el stock por la diferencia.
+-- Fija la cantidad total de ese material en el despacho y corrige el stock por la diferencia
+-- (misma regla de ancla de stock que anular/editar).
 -- p_material: 'fibra' (material tipo fibra de la planta) o 'superfluidificante'
 -- (aditivo de obra "Superfluidificante (obra)" de la planta).
 -- ---------------------------------------------------------------------------
@@ -717,7 +833,7 @@ CREATE OR REPLACE FUNCTION public.ajustar_material_despacho(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 SET timezone TO 'America/Argentina/Buenos_Aires'
 AS $$
 DECLARE
@@ -727,6 +843,7 @@ DECLARE
   v_prev    numeric;
   v_new     numeric;
   v_diff    numeric;
+  v_res     jsonb;
 BEGIN
   SELECT * INTO v_d FROM dispatches WHERE id = p_dispatch_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -763,26 +880,33 @@ BEGIN
   END IF;
 
   IF v_diff <> 0 THEN
-    IF v_m.descuenta_stock THEN
-      UPDATE materials SET current_stock = coalesce(current_stock, 0) - v_diff, updated_at = now() WHERE id = v_m.id;
-    END IF;
-    INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-    VALUES (v_m.id, 'consumo', v_diff, 'dispatch', p_dispatch_id, now()::date,
-            coalesce(nullif(btrim(coalesce(p_nota, '')), ''), v_m.name || ' — remito ' || coalesce(v_d.remito, 's/n')));
+    v_res := public._aplicar_neto(p_dispatch_id, v_d.created_at, jsonb_build_object(v_m.id::text, v_diff),
+               coalesce(nullif(btrim(coalesce(p_nota, '')), ''), v_m.name || ' — remito ' || coalesce(v_d.remito, 's/n')));
     INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
     VALUES (v_usuario, 'editar', 'despacho', p_dispatch_id::text, v_d.remito, v_d.plant_id,
             jsonb_build_object('Material', v_m.name, 'Antes', v_prev, 'Ahora', v_new));
   END IF;
 
-  RETURN jsonb_build_object('material_id', v_m.id, 'anterior', v_prev, 'nuevo', v_new, 'diferencia', v_diff);
+  RETURN jsonb_build_object('material_id', v_m.id, 'anterior', v_prev, 'nuevo', v_new, 'diferencia', v_diff,
+                            'sin_mover_por_recuento', coalesce((v_res->>'sin_mover_por_recuento')::int, 0));
 END;
 $$;
 
--- Permisos: como el resto de las funciones de hoy (RLS sigue apagado; la 0c agrega seguridad)
+-- Permisos: las 4 funciones públicas como el resto de hoy (RLS sigue apagado; la 0c agrega
+-- seguridad). Las auxiliares no se pueden llamar desde la API: solo las usan las 4 de arriba
+-- (que corren como dueño por SECURITY DEFINER).
 GRANT EXECUTE ON FUNCTION public.registrar_despacho(jsonb) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.editar_despacho(uuid, jsonb) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anular_despacho(uuid, text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ajustar_material_despacho(uuid, text, numeric, text, text) TO anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public._material_en_planta(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._consumo_formula(uuid, uuid, numeric) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._ajustar_pedido(uuid, numeric, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._sumar_kg(jsonb, uuid, numeric) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._mover_stock(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._ancla_stock(uuid, timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._aplicar_neto(uuid, timestamptz, jsonb, text) FROM PUBLIC, anon, authenticated;
 
 -- Que la API (PostgREST) vea las funciones nuevas sin esperar
 NOTIFY pgrst, 'reload schema';
