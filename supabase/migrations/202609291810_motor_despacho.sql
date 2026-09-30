@@ -18,10 +18,10 @@
 --   * descuenta_stock = false (Agua, Sikament 33S): queda en dispatch_materials y en
 --     stock_movements como hoy, pero nunca mueve current_stock.
 --   * ANCLA DE STOCK (revisión 30/09, decidido por el arquitecto en nombre de Bautista): al
---     anular, editar o ajustar un despacho, un material que tiene un recuento
---     (reference_type 'recuento') o una corrección entre plantas (reference_type 'correccion'
---     + movement_type 'transferencia') cargados DESPUÉS del despacho (created_at) no mueve
---     current_stock: el recuento ya refleja el stock físico. Se deja igual el movimiento con
+--     anular, editar o ajustar un despacho, un material que tiene un recuento físico
+--     (reference_type 'recuento') cargado DESPUÉS del despacho (created_at) no mueve
+--     current_stock: el recuento ya refleja el stock físico. Las correcciones entre plantas
+--     ('correccion'/'transferencia') son deltas y NO anclan. Se deja igual el movimiento con
 --     cantidad 0 y la nota "no se devuelve stock: recuento posterior al despacho (fecha)".
 --     El pedido, las probetas y dispatch_materials se corrigen igual.
 --   * Movimientos: cada cambio de consumo se registra como 'consumo' (positivo al consumir,
@@ -143,8 +143,9 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Ancla de stock: primer recuento o corrección entre plantas de ese material cargado
--- después de p_desde (created_at del despacho). NULL = no hay.
+-- Ancla de stock: primer recuento físico (reference_type 'recuento') de ese material cargado
+-- después de p_desde (created_at del despacho). NULL = no hay. Las correcciones entre plantas
+-- ('correccion'/'transferencia', p. ej. la del 30/09) son deltas, no fotos del stock: no anclan.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public._ancla_stock(p_material_id uuid, p_desde timestamptz)
 RETURNS timestamptz
@@ -155,7 +156,7 @@ AS $$
     FROM stock_movements
    WHERE material_id = p_material_id
      AND created_at > p_desde
-     AND (reference_type = 'recuento' OR (reference_type = 'correccion' AND movement_type = 'transferencia'))
+     AND reference_type = 'recuento'
 $$;
 
 -- ---------------------------------------------------------------------------
