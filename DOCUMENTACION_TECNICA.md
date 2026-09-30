@@ -1,5 +1,13 @@
 # Documentacion Tecnica - Sistema de Gestion de Planta de Hormigon
 
+> **Documento histórico (desactualizado).** Describe el sistema como era hasta agosto de 2026 y no se mantiene
+> más: hay datos que ya no son ciertos (autenticación, estados, tablas, carpeta `scripts/`).
+> Para el estado actual ver:
+> - [`docs/migracion-loop/`](docs/migracion-loop/): plan de trabajo, inventario del sistema al 29/09/2026 (`inventario-rebucret.md`) y especificación de cada fase.
+> - [`supabase/migrations/`](supabase/migrations/): esquema real de la base (`000000000000_esquema_base.sql`, volcado de producción del 30/09/2026) y migraciones posteriores. Los tipos TypeScript de las tablas están en `types/database.ts`.
+>
+> Los scripts SQL viejos que se mencionan acá quedaron en `scripts/legacy/` y no reconstruyen la base actual.
+
 ## Resumen del Proyecto
 
 Sistema web de gestion integral para plantas de hormigon elaborado, desarrollado con Next.js 16 y Supabase como backend.
