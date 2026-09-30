@@ -109,7 +109,7 @@ Tomadas el 29/09/2026:
 Pendientes:
 1. **Facturación:** ¿precios y facturación dentro del sistema, o el cierre del día solo arma el listado para facturar afuera? Bautista lo decide al llegar a la Fase 5.
 2. **Remito:** ¿correlativo del sistema o talonario tipeado (con aviso de repetido)? Se revisa con Bautista en la Fase 3; hay que ver qué exige el remito fiscal preimpreso.
-3. **Token de B-Track:** conseguirlo es condición para las fases 4 y 6.
+3. ~~Token de B-Track~~: **conectado el 30/09/2026** (Bilderit autorizó con el usuario Wialon 39910744; 5 mixers visibles en /logistica).
 
 Tomadas el 29/09/2026 (segunda tanda):
 - **Agua y Sikament 33S no descuentan stock** (confirmado para la 0b: `descuenta_stock=false`).
@@ -122,4 +122,7 @@ Tomadas el 29/09/2026 (segunda tanda):
 |---|---|---|
 | 29/09/2026 | — | Relevamiento de Loop e inventario de Rebucret. Propuesta de fases. |
 | 29/09/2026 | 0 | Bautista aprueba empezar por la Fase 0. Se escribe `fase-0.md` (0a errores, 0b motor de despacho, 0d migraciones). |
+| 30/09/2026 | 0b | Motor programado en rama `loop/fase-0b-motor-despacho`; revisión: "aprobado con cambios" (no devolver stock al borrar/editar despachos anteriores a un recuento, orden de bloqueos, edición completa, permisos, reclasificar al renombrar). Arreglos hechos (62/62 pruebas). **Publicada el 30/09/2026** con OK de Bautista, sin despachos: migraciones aplicadas + 238 filas de `dispatch_materials` de los 34 despachos cruzados reubicadas en la planta que despachó. Falta: controlar el primer despacho real. |
+| 30/09/2026 | — | B-Track conectado (Bilderit autorizó). Aplicada con OK de Bautista la corrección de stock de 14 despachos cruzados (Hudson con fórmulas CAN): Canning +79.202 Arena Fina, +25.605 0/6, +34.375 CPC 40, +104.950 Piedra 6/20, +309,2 Sikament 90E; Hudson lo mismo en negativo salvo Sikament 90E −633,5 (sin recuento). Movimientos 'transferencia'/'correccion' del 30/09. |
+| 29/09/2026 | 0a | Publicada en producción (commits 7695302…146ab9e). Además de los 7 ítems: la humedad de acopio e ingresos queda **solo para la Arena Fina** (pedido de Bautista: a la 0/6 no se le mide). |
 | 29/09/2026 | 0a | Obrero: los 7 errores arreglados en la rama local `loop/fase-0a-errores` (3 commits, build limpio, probado con `BEGIN…ROLLBACK` y en local sin grabar). Falta revisión y OK de Bautista para subir. Detalle en `fase-0.md` → Hecho. |
