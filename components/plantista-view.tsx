@@ -346,162 +346,39 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setSubmitting(true)
     const supabase = createClient()
     if (!supabase) { setSubmitting(false); return }
-    const today = new Date()
 
     try {
-      // Anti-duplicado: la misma regla y el mismo mensaje que el despacho manual
-      const { data: dupRemito } = await supabase
-        .from("dispatches")
-        .select("id")
-        .eq("remito", dispatchForm.remito.trim())
-        .limit(1)
-      if (dupRemito && dupRemito.length > 0) {
-        toast({
-          title: "Error",
-          description: `Ya existe un despacho con el remito ${dispatchForm.remito.trim()} en el sistema. No se puede cargar dos veces.`,
-          variant: "destructive",
-        })
+      // Todo el despacho en una sola transacción de la base (fase 0b): remito no repetido,
+      // m³ contra el restante, materiales de la fórmula en el stock de ESTA planta (con la
+      // humedad de la Arena Fina), fibra, probetas (trigger), pedido, camión en ruta y actividad.
+      // Si algo falla no queda nada grabado.
+      const fiberPerM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
+      const { data: result, error: rpcError } = await supabase.rpc("registrar_despacho", {
+        p: {
+          plant_id: selectedPlant,
+          scheduled_dispatch_id: dispatchDialog.id,
+          formula_id: dispatchDialog.formula_id,
+          client_id: dispatchDialog.client_id,
+          construction_site_id: dispatchDialog.construction_site_id,
+          mixer_id: dispatchForm.mixer_id,
+          quantity_m3: quantityThisTruck,
+          remito: dispatchForm.remito.trim(),
+          extra_water_liters: parseFloat(dispatchForm.extraWater) || 0,
+          fiber_kg_per_m3: dispatchForm.fiberEnabled && fiberPerM3 > 0 ? fiberPerM3 : 0,
+          sample_taken: dispatchForm.sampleTaken,
+          sample_number: dispatchForm.sampleTaken ? dispatchForm.sampleNumber.trim() : null,
+          actual_slump_cm: dispatchForm.sampleTaken ? parseFloat(dispatchForm.actualSlump) : null,
+          created_by: currentUserName(),
+          usuario: currentUserName(),
+        },
+      })
+      if (rpcError) {
+        toast({ title: "Error", description: rpcError.message || "No se pudo registrar el despacho", variant: "destructive" })
         return
       }
+      const newDispatch = result as { id: string; restante: number | null; completo: boolean } | null
 
-      // 1. Create the dispatch record
-      const { data: newDispatch, error: dispatchError } = await supabase.from("dispatches").insert({
-        formula_id: dispatchDialog.formula_id,
-        quantity_m3: quantityThisTruck,
-        dispatch_date: today.toISOString(),
-        remito: dispatchForm.remito.trim(),
-        client_id: dispatchDialog.client_id,
-        construction_site_id: dispatchDialog.construction_site_id,
-        mixer_id: dispatchForm.mixer_id,
-        extra_water_liters: parseFloat(dispatchForm.extraWater) || 0,
-        sample_taken: dispatchForm.sampleTaken,
-        sample_number: dispatchForm.sampleTaken ? dispatchForm.sampleNumber.trim() : null,
-        actual_slump_cm: dispatchForm.sampleTaken ? parseFloat(dispatchForm.actualSlump) : null,
-        scheduled_dispatch_id: dispatchDialog.id,
-        plant_id: selectedPlant,
-        created_by: currentUserName(),
-      }).select().single()
-
-      if (dispatchError) throw dispatchError
-
-      // 2. Get formula materials and discount stock (with humidity compensation for sand)
-      const { data: formulaData } = await supabase
-        .from("formulas")
-        .select("formula_materials(quantity, materials(id, name, stockpile_humidity))")
-        .eq("id", dispatchDialog.formula_id)
-        .single()
-
-      if (formulaData?.formula_materials) {
-        for (const fm of formulaData.formula_materials) {
-          let requiredQty = fm.quantity * quantityThisTruck
-          const materialName = fm.materials.name?.toLowerCase() || ""
-          const humidity = fm.materials.stockpile_humidity || 0
-          // Corrección por humedad solo en la Arena Fina (la única a la que se le mide)
-          if (materialName.includes("arena fina") && humidity > 0) {
-            requiredQty = requiredQty * (1 + humidity / 100)
-          }
-          // Igual que el despacho manual: no se descuentan del stock el Agua (stock infinito)
-          // ni el Sikament 33S (aditivo que se agrega en obra). Provisorio hasta la fase 0b
-          // (tipo de material). Quedan registrados en el despacho y en los movimientos.
-          const isNonDeductible =
-            materialName.includes("agua") || materialName.includes("water") || materialName.includes("sikament 33")
-          if (!isNonDeductible) {
-            await supabase.rpc("update_material_stock", {
-              p_material_id: fm.materials.id,
-              p_quantity_change: -requiredQty,
-            })
-          }
-          await supabase.from("dispatch_materials").insert({
-            dispatch_id: newDispatch.id,
-            material_id: fm.materials.id,
-            quantity: requiredQty,
-          })
-          await supabase.from("stock_movements").insert({
-            material_id: fm.materials.id,
-            movement_type: "consumo",
-            quantity_kg: requiredQty,
-            reference_type: "dispatch",
-            reference_id: newDispatch.id,
-            movement_date: format(today, "yyyy-MM-dd"),
-            notes: `Despacho remito ${dispatchForm.remito}`,
-          })
-        }
-      }
-
-      // 2b. Fibra agregada al camión (dosificada en kg por m³)
-      const fiberPerM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
-      if (dispatchForm.fiberEnabled && fiberPerM3 > 0 && newDispatch) {
-        const fiberTotal = fiberPerM3 * quantityThisTruck
-        const { data: fiberMaterial } = await supabase
-          .from("materials")
-          .select("id")
-          .eq("plant_id", selectedPlant)
-          .ilike("name", "%fibra%")
-          .maybeSingle()
-
-        if (fiberMaterial) {
-          await supabase.rpc("update_material_stock", {
-            p_material_id: fiberMaterial.id,
-            p_quantity_change: -fiberTotal,
-          })
-          await supabase.from("dispatch_materials").insert({
-            dispatch_id: newDispatch.id,
-            material_id: fiberMaterial.id,
-            quantity: fiberTotal,
-          })
-          await supabase.from("stock_movements").insert({
-            material_id: fiberMaterial.id,
-            movement_type: "consumo",
-            quantity_kg: fiberTotal,
-            reference_type: "dispatch",
-            reference_id: newDispatch.id,
-            movement_date: format(today, "yyyy-MM-dd"),
-            notes: `Fibra ${fiberPerM3} kg/m³ × ${quantityThisTruck} m³ — remito ${dispatchForm.remito}`,
-          })
-        } else {
-          toast({
-            title: "Fibra no registrada",
-            description: "No se encontró el material 'Fibra' en esta planta. El despacho se guardó igual.",
-            variant: "destructive",
-          })
-        }
-      }
-
-      // 3. Create test cylinders if sample taken (1×7d + 2×28d)
-      if (dispatchForm.sampleTaken && newDispatch) {
-        const { data: existing } = await supabase
-          .from("test_cylinders")
-          .select("id")
-          .eq("dispatch_id", newDispatch.id)
-          .limit(1)
-        if (!existing || existing.length === 0) {
-          await supabase.from("test_cylinders").insert([
-            { dispatch_id: newDispatch.id, cylinder_number: 1, test_age_days: 7, scheduled_test_date: format(addDays(today, 7), "yyyy-MM-dd") },
-            { dispatch_id: newDispatch.id, cylinder_number: 2, test_age_days: 28, scheduled_test_date: format(addDays(today, 28), "yyyy-MM-dd") },
-            { dispatch_id: newDispatch.id, cylinder_number: 3, test_age_days: 28, scheduled_test_date: format(addDays(today, 28), "yyyy-MM-dd") },
-          ])
-        }
-      }
-
-      // 4. Increment dispatched_m3 on the scheduled dispatch; mark completed if done
-      const newDispatched = (dispatchDialog.dispatched_m3 || 0) + quantityThisTruck
-      const schedUpdates: Record<string, unknown> = { dispatched_m3: newDispatched }
-      if (newDispatched >= dispatchDialog.quantity_m3 - 0.01) {
-        schedUpdates.status = "completed"
-      }
-      await supabase.from("scheduled_dispatches").update(schedUpdates).eq("id", dispatchDialog.id)
-
-      // 5. Set mixer in transit
-      await supabase.from("mixers").update({ status: "in_transit" }).eq("id", dispatchForm.mixer_id)
-
-      // 6. Log status change (non-critical)
-      supabase.from("dispatch_status_log").insert({
-        scheduled_dispatch_id: dispatchDialog.id,
-        previous_status: dispatchDialog.status,
-        new_status: schedUpdates.status || dispatchDialog.status,
-      }).then(() => {}).catch(() => {})
-
-      const remainingAfter = Math.max(0, remaining - quantityThisTruck)
+      const remainingAfter = Math.max(0, newDispatch?.restante ?? remaining - quantityThisTruck)
       toast({
         title: "Camion despachado",
         description: dispatchForm.sampleTaken

@@ -20,7 +20,8 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
-import { logDeletion } from "@/lib/activity-log"
+import { logDeletion, notifyDeletion } from "@/lib/activity-log"
+import { currentUserName } from "@/lib/current-user"
 import { es } from "date-fns/locale"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
@@ -363,45 +364,15 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     setSaving(true)
     const supabase = createClient()
     try {
-      const { data: material, error: matError } = await supabase
-        .from("materials")
-        .select("id")
-        .eq("plant_id", fiberDispatch.plant_id)
-        .ilike("name", "%fibra%")
-        .maybeSingle()
-      if (matError) throw matError
-      if (!material) throw new Error("No se encontró el material Fibra en esta planta")
-
-      const previous = fiberDispatch.fiber_kg || 0
-      const diff = total - previous
-
-      const { data: existing } = await supabase
-        .from("dispatch_materials")
-        .select("id")
-        .eq("dispatch_id", fiberDispatch.id)
-        .eq("material_id", material.id)
-        .maybeSingle()
-
-      if (total === 0 && existing) {
-        await supabase.from("dispatch_materials").delete().eq("id", existing.id)
-      } else if (existing) {
-        await supabase.from("dispatch_materials").update({ quantity: total }).eq("id", existing.id)
-      } else if (total > 0) {
-        await supabase.from("dispatch_materials").insert({ dispatch_id: fiberDispatch.id, material_id: material.id, quantity: total })
-      }
-
-      if (diff !== 0) {
-        await supabase.rpc("update_material_stock", { p_material_id: material.id, p_quantity_change: -diff })
-        await supabase.from("stock_movements").insert({
-          material_id: material.id,
-          movement_type: "consumo",
-          quantity_kg: diff,
-          reference_type: "dispatch",
-          reference_id: fiberDispatch.id,
-          movement_date: new Date().toISOString().substring(0, 10),
-          notes: `Fibra ${perM3} kg/m³ × ${m3} m³ cargada desde el historial — remito ${fiberDispatch.remito || "s/n"}`,
-        })
-      }
+      // En la base, en una transacción: fija la fibra del despacho y corrige el stock por la diferencia
+      const { error } = await supabase.rpc("ajustar_material_despacho", {
+        p_dispatch_id: fiberDispatch.id,
+        p_material: "fibra",
+        p_cantidad: total,
+        p_usuario: currentUserName(),
+        p_nota: `Fibra ${perM3} kg/m³ × ${m3} m³ cargada desde el historial — remito ${fiberDispatch.remito || "s/n"}`,
+      })
+      if (error) throw new Error(error.message)
 
       toast({
         title: "Fibra registrada",
@@ -426,50 +397,16 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     setSaving(true)
     const supabase = createClient()
     try {
-      const { data: material, error: matError } = await supabase
-        .from("materials")
-        .select("id")
-        .eq("plant_id", superDispatch.plant_id)
-        .ilike("name", "%superfluidificante%")
-        .maybeSingle()
-      if (matError) throw matError
-      if (!material) throw new Error("No se encontró el material Superfluidificante (obra) para esta planta")
-
-      const previous = superDispatch.superplasticizer_liters || 0
-      const diff = liters - previous
-
-      const { data: existing } = await supabase
-        .from("dispatch_materials")
-        .select("id")
-        .eq("dispatch_id", superDispatch.id)
-        .eq("material_id", material.id)
-        .maybeSingle()
-
-      if (liters === 0 && existing) {
-        await supabase.from("dispatch_materials").delete().eq("id", existing.id)
-      } else if (existing) {
-        await supabase.from("dispatch_materials").update({ quantity: liters }).eq("id", existing.id)
-      } else if (liters > 0) {
-        await supabase.from("dispatch_materials").insert({
-          dispatch_id: superDispatch.id,
-          material_id: material.id,
-          quantity: liters,
-        })
-      }
-
-      if (diff !== 0) {
-        // El stock puede quedar negativo a propósito (se corrige con recuento)
-        await supabase.rpc("update_material_stock", { p_material_id: material.id, p_quantity_change: -diff })
-        await supabase.from("stock_movements").insert({
-          material_id: material.id,
-          movement_type: "consumo",
-          quantity_kg: diff,
-          reference_type: "dispatch",
-          reference_id: superDispatch.id,
-          movement_date: new Date().toISOString().substring(0, 10),
-          notes: `Superfluidificante agregado en obra — remito ${superDispatch.remito || "s/n"}`,
-        })
-      }
+      // En la base, en una transacción: fija los litros del despacho y corrige el stock por la
+      // diferencia (el stock puede quedar negativo a propósito: se corrige con recuento)
+      const { error } = await supabase.rpc("ajustar_material_despacho", {
+        p_dispatch_id: superDispatch.id,
+        p_material: "superfluidificante",
+        p_cantidad: liters,
+        p_usuario: currentUserName(),
+        p_nota: `Superfluidificante agregado en obra — remito ${superDispatch.remito || "s/n"}`,
+      })
+      if (error) throw new Error(error.message)
 
       toast({
         title: "Registrado",
@@ -535,49 +472,40 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       return
     }
 
+    const deletionDetails = {
+      Remito: deleteDispatch.remito || "-",
+      Cliente: deleteDispatch.clients?.name || "-",
+      Obra: deleteDispatch.construction_sites?.name || "-",
+      Formula: deleteDispatch.formulas?.code || "-",
+      "m3": deleteDispatch.quantity_m3,
+      Fecha: deleteDispatch.scheduled_arrival_time
+        ? format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy")
+        : "-",
+      "Cargado por": deleteDispatch.created_by || "-",
+    }
+
     try {
-      // Queda asentado en Actividad y se avisa a los supervisores
-      await logDeletion({
-        entity: "despacho",
-        entityId: deleteDispatch.id,
-        reference: deleteDispatch.remito || null,
-        plantId: deleteDispatch.plant_id || null,
-        details: {
-          Remito: deleteDispatch.remito || "-",
-          Cliente: deleteDispatch.clients?.name || "-",
-          Obra: deleteDispatch.construction_sites?.name || "-",
-          Formula: deleteDispatch.formulas?.code || "-",
-          "m3": deleteDispatch.quantity_m3,
-          Fecha: deleteDispatch.scheduled_arrival_time
-            ? format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy")
-            : "-",
-          "Cargado por": deleteDispatch.created_by || "-",
-        },
-      })
-
       if (deleteDispatch.source === "manual") {
-        // Es un despacho real (tabla "dispatches"): eliminar primero los registros hijos
-        // para evitar errores de clave foránea.
-        await supabase.from("test_cylinders").delete().eq("dispatch_id", deleteDispatch.id)
-        await supabase.from("dispatch_materials").delete().eq("dispatch_id", deleteDispatch.id)
-
-        // Eliminar la programación vinculada a este despacho (si existe), junto con su log.
-        // Antes solo se desvinculaba (dispatch_id = null), lo que hacía que la programación
-        // volviera a aparecer en el historial y pareciera que el despacho no se eliminaba.
-        const { data: linkedScheduled } = await supabase
-          .from("scheduled_dispatches")
-          .select("id")
-          .eq("dispatch_id", deleteDispatch.id)
-
-        if (linkedScheduled && linkedScheduled.length > 0) {
-          const scheduledIds = linkedScheduled.map((s: { id: string }) => s.id)
-          await supabase.from("dispatch_status_log").delete().in("scheduled_dispatch_id", scheduledIds)
-          await supabase.from("scheduled_dispatches").delete().in("id", scheduledIds)
-        }
-
-        const { error } = await supabase.from("dispatches").delete().eq("id", deleteDispatch.id)
-        if (error) throw error
+        // Es un despacho real (tabla "dispatches"). La base lo anula en una transacción:
+        // devuelve el stock, descuenta los m³ del pedido (y lo reabre si corresponde), borra
+        // probetas sin resultados (frena si alguna ya tiene rotura), materiales y el despacho,
+        // y deja la copia en Actividad. Después se avisa por mail a los supervisores.
+        const { error } = await supabase.rpc("anular_despacho", {
+          p_id: deleteDispatch.id,
+          p_usuario: currentUserName(),
+          p_motivo: null,
+        })
+        if (error) throw new Error(error.message)
+        await notifyDeletion({ entity: "despacho", reference: deleteDispatch.remito || null, details: deletionDetails })
       } else {
+        // Queda asentado en Actividad y se avisa a los supervisores
+        await logDeletion({
+          entity: "despacho",
+          entityId: deleteDispatch.id,
+          reference: deleteDispatch.remito || null,
+          plantId: deleteDispatch.plant_id || null,
+          details: deletionDetails,
+        })
         // Es una programación (tabla "scheduled_dispatches")
         await supabase.from("dispatch_status_log").delete().eq("scheduled_dispatch_id", deleteDispatch.id)
         const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
@@ -643,25 +571,32 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
     // Different tables have different fields
     if (editingDispatch.source === "manual") {
-      // Update dispatches table (usa "notes", no "observations")
-      const { data, error } = await supabase.from("dispatches").update({
-        ...updateData,
-        ...(nuevaFecha ? { dispatch_date: nuevaFecha } : {}),
-        notes: editForm.observations || null,
-        remito: editForm.remito || null,
-        extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
-        client_id: editForm.client_id || null,
-        construction_site_id: editForm.construction_site_id || null,
-        formula_id: editForm.formula_id || null,
-        mixer_id: editForm.mixer_id || null,
-      }).eq("id", editingDispatch.id).select()
-      
+      // Despacho real (tabla "dispatches", usa "notes"). La base lo edita en una transacción:
+      // si cambian los m³ o la fórmula recalcula materiales, corrige el stock por la diferencia
+      // y el pedido; si cambian solo datos no toca el stock. Registra antes/después en Actividad.
+      // La fecha solo se manda si se cambió el día (así no se pierde la hora real de carga).
+      const fechaOriginal = editingDispatch.scheduled_arrival_time
+        ? format(parseISO(editingDispatch.scheduled_arrival_time), "yyyy-MM-dd")
+        : ""
+      const { error } = await supabase.rpc("editar_despacho", {
+        p_id: editingDispatch.id,
+        p: {
+          quantity_m3: updateData.quantity_m3,
+          ...(nuevaFecha && editForm.dispatch_date !== fechaOriginal ? { dispatch_date: nuevaFecha } : {}),
+          notes: editForm.observations || null,
+          remito: editForm.remito || null,
+          extra_water_liters: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : null,
+          client_id: editForm.client_id || null,
+          construction_site_id: editForm.construction_site_id || null,
+          ...(editForm.formula_id ? { formula_id: editForm.formula_id } : {}),
+          mixer_id: editForm.mixer_id || null,
+          usuario: currentUserName(),
+        },
+      })
+
       if (error) {
         console.log("[v0] Error updating manual dispatch:", error.message, error.details, error.hint, error.code)
         toast({ title: "Error", description: error.message || "No se pudo actualizar", variant: "destructive" })
-      } else if (!data || data.length === 0) {
-        console.log("[v0] No rows updated for dispatch id:", editingDispatch.id)
-        toast({ title: "Error", description: "No se encontro el despacho para actualizar", variant: "destructive" })
       } else {
         toast({ title: "Despacho actualizado" })
         loadData()

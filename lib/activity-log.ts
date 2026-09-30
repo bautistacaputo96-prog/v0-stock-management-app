@@ -56,15 +56,25 @@ export async function logDeletion(opts: {
   plantId?: string | null
   details?: Record<string, unknown> | null
 }) {
-  const user = currentUserName()
   await logActivity({ ...opts, action: "borrar" })
+  await notifyDeletion(opts)
+}
 
+/**
+ * Solo el mail de aviso de borrado a los supervisores (sin asentar en Actividad).
+ * Se usa cuando el registro en Actividad ya lo hizo la base (p. ej. anular_despacho).
+ */
+export async function notifyDeletion(opts: {
+  entity: ActivityEntity
+  reference?: string | null
+  details?: Record<string, unknown> | null
+}) {
   try {
     await fetch("/api/notificar-borrado", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        usuario: user,
+        usuario: currentUserName(),
         entidad: ENTITY_LABEL[opts.entity],
         referencia: opts.reference || "-",
         detalle: opts.details || {},

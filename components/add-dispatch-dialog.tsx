@@ -21,7 +21,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
 import { currentUserName } from "@/lib/current-user"
-import { logActivity } from "@/lib/activity-log"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, X, Check, ChevronsUpDown, Truck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -266,49 +265,23 @@ export function AddDispatchDialog({
           return
         }
 
-        // Create manual withdrawal
-        const { data: withdrawal, error: withdrawalError } = await supabase
-          .from("manual_material_withdrawals")
-          .insert({
-            withdrawal_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
+        // Salida manual de materiales (sin despacho), en una sola transacción de la base.
+        // Cada material se descuenta del stock de la planta elegida.
+        const { error: manualError } = await supabase.rpc("registrar_despacho", {
+          p: {
             plant_id: dispatchPlantId,
-            observations: formData.notes,
-          })
-          .select()
-          .single()
-
-        if (withdrawalError) throw withdrawalError
-
-        // Insert withdrawal items and update stock
-        for (const item of manualMaterials) {
-          // Insert withdrawal item
-          const { error: itemError } = await supabase.from("manual_withdrawal_items").insert({
-            withdrawal_id: withdrawal.id,
-            material_id: item.material_id,
-            quantity_kg: item.quantity_kg,
-          })
-
-          if (itemError) throw itemError
-
-          // Update material stock
-          const { error: stockError } = await supabase.rpc("update_material_stock", {
-            p_material_id: item.material_id,
-            p_quantity_change: -item.quantity_kg,
-          })
-
-          if (stockError) throw stockError
-
-          // Track in stock_movements so manual discharges appear in the evolution chart
-          await supabase.from("stock_movements").insert({
-            material_id: item.material_id,
-            movement_type: "consumo",
-            quantity_kg: item.quantity_kg,
-            reference_type: "manual_withdrawal",
-            reference_id: withdrawal.id,
-            movement_date: formData.dispatch_date,
-            notes: `Descarga manual${formData.notes ? `: ${formData.notes}` : ""}`,
-          })
-        }
+            is_test_dispatch: true,
+            dispatch_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
+            notes: formData.notes,
+            created_by: formData.created_by || currentUserName(),
+            usuario: currentUserName(),
+            materiales_manuales: manualMaterials.map((item) => ({
+              material_id: item.material_id,
+              quantity_kg: item.quantity_kg,
+            })),
+          },
+        })
+        if (manualError) throw manualError
 
         toast.success("Ingreso manual registrado exitosamente")
         setOpen(false)
@@ -356,197 +329,39 @@ export function AddDispatchDialog({
         return
       }
 
-      // Anti-duplicado: no permitir cargar un remito que ya existe en el sistema
-      if (formData.remito.trim()) {
-        const { data: dupRemito } = await supabase
-          .from("dispatches")
-          .select("id")
-          .eq("remito", formData.remito.trim())
-          .limit(1)
-        if (dupRemito && dupRemito.length > 0) {
-          toast.error(`Ya existe un despacho con el remito ${formData.remito.trim()} en el sistema. No se puede cargar dos veces.`)
-          setLoading(false)
-          return
-        }
-      }
-
-      console.log("[v0] Stock check passed, creating dispatch")
-
-      const dispatchData = {
-        formula_id: formData.formula_id,
-        quantity_m3: quantityM3,
-        remito: formData.remito,
-        client_id: !isTestDispatch && formData.client_id ? formData.client_id : null,
-        construction_site_id: !isTestDispatch && formData.construction_site_id ? formData.construction_site_id : null,
-        mixer_id: formData.mixer_id || null,
-        extra_water_liters: formData.extra_water_liters ? Number.parseFloat(formData.extra_water_liters) : null,
-        sand_stockpile_humidity: formData.sand_stockpile_humidity
-          ? Number.parseFloat(formData.sand_stockpile_humidity)
-          : null,
-        sample_taken: formData.sample_taken,
-        sample_number: formData.sample_taken ? formData.sample_number : null,
-        actual_slump_cm:
-          formData.sample_taken && formData.actual_slump_cm ? Number.parseFloat(formData.actual_slump_cm) : null,
-        dispatch_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
-        notes: formData.notes || null,
-        is_test_dispatch: isTestDispatch,
-        created_by: formData.created_by || currentUserName(),
-        plant_id: dispatchPlantId,
-      }
-
-      console.log("[v0] Inserting dispatch data")
-
-      const { data: dispatch, error: dispatchError } = await supabase
-        .from("dispatches")
-        .insert(dispatchData)
-        .select()
-        .single()
-
-      console.log("[v0] Dispatch insert result:", { success: !!dispatch, error: dispatchError })
-
-      if (dispatchError) throw dispatchError
-
-      await logActivity({
-        action: "crear",
-        entity: "despacho",
-        entityId: dispatch?.id,
-        reference: formData.remito || null,
-        plantId: dispatchPlantId,
-        details: {
-          Remito: formData.remito || "-",
-          "m3": quantityM3,
-          Formula: selectedFormula?.code || "-",
+      // Todo el despacho en una sola transacción de la base (fase 0b): remito no repetido,
+      // materiales de la fórmula en el stock de la planta elegida (con la humedad de la
+      // Arena Fina), fibra, probetas (las crea el trigger de la base) y actividad.
+      // Si algo falla no queda nada grabado.
+      const fiberPerM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
+      const { data: result, error: dispatchError } = await supabase.rpc("registrar_despacho", {
+        p: {
+          plant_id: dispatchPlantId,
+          formula_id: formData.formula_id,
+          quantity_m3: quantityM3,
+          remito: formData.remito,
+          client_id: !isTestDispatch && formData.client_id ? formData.client_id : null,
+          construction_site_id: !isTestDispatch && formData.construction_site_id ? formData.construction_site_id : null,
+          mixer_id: formData.mixer_id || null,
+          extra_water_liters: formData.extra_water_liters ? Number.parseFloat(formData.extra_water_liters) : null,
+          sand_stockpile_humidity: formData.sand_stockpile_humidity
+            ? Number.parseFloat(formData.sand_stockpile_humidity)
+            : null,
+          fiber_kg_per_m3: fiberPerM3 > 0 ? fiberPerM3 : 0,
+          sample_taken: formData.sample_taken,
+          sample_number: formData.sample_taken ? formData.sample_number : null,
+          actual_slump_cm:
+            formData.sample_taken && formData.actual_slump_cm ? Number.parseFloat(formData.actual_slump_cm) : null,
+          dispatch_date: `${formData.dispatch_date}T12:00:00-03:00`, // Argentina timezone
+          notes: formData.notes || null,
+          is_test_dispatch: isTestDispatch,
+          created_by: formData.created_by || currentUserName(),
+          usuario: currentUserName(),
         },
       })
 
-      console.log("[v0] Creating dispatch_materials and updating stock")
-
-      // Create dispatch_materials records and update stock
-      for (let i = 0; i < selectedFormula.formula_materials.length; i++) {
-        const fm = selectedFormula.formula_materials[i]
-        console.log(
-          `[v0] Checking stock for material ${i + 1}/${selectedFormula.formula_materials.length}:`,
-          fm.materials.name,
-        )
-
-        const { data: material, error: stockError } = await supabase
-          .from("materials")
-          .select("current_stock, name, stockpile_humidity")
-          .eq("id", fm.materials.id)
-          .single()
-
-        console.log(`[v0] Material ${fm.materials.name} stock:`, material?.current_stock, "needed:", fm.quantity)
-
-        if (stockError) {
-          console.error("[v0] Error checking stock:", stockError)
-          throw stockError
-        }
-
-        let requiredQty = fm.quantity * quantityM3
-
-        // Corrección por humedad solo en la Arena Fina (la única a la que se le mide; la 0/6 no)
-        const materialName = material?.name?.toLowerCase() || fm.materials.name?.toLowerCase() || ""
-        const humidity = material?.stockpile_humidity || 0
-        if (materialName.includes("arena fina") && humidity > 0) {
-          // Add extra quantity to compensate: wet_qty = dry_qty * (1 + humidity/100)
-          requiredQty = requiredQty * (1 + humidity / 100)
-        }
-
-        // Insumos que NO se descuentan del stock por despacho:
-        // - Agua: stock infinito. - Sikament 33S: aditivo que se agrega en obra, no en planta.
-        const isNonDeductible =
-          materialName.includes("agua") || materialName.includes("water") || materialName.includes("sikament 33")
-
-        // NO se bloquea el despacho por stock insuficiente: el operario siempre debe poder despachar,
-        // aunque el stock quede negativo (se corrige luego con recuento físico).
-
-        // Discount stock (excepto agua y Sikament 33S)
-        if (!isNonDeductible) {
-          const { error: updateError } = await supabase.rpc("update_material_stock", {
-            p_material_id: fm.materials.id,
-            p_quantity_change: -requiredQty,
-          })
-
-          if (updateError) {
-            console.error("[v0] Error updating stock:", updateError)
-            throw updateError
-          }
-        }
-
-        // Create dispatch_material record
-        await supabase.from("dispatch_materials").insert({
-          dispatch_id: dispatch.id,
-          material_id: fm.materials.id,
-          quantity: requiredQty,
-        })
-
-        // Register stock movement for tracking
-        await supabase.from("stock_movements").insert({
-          material_id: fm.materials.id,
-          movement_type: "consumo",
-          quantity_kg: requiredQty,
-          reference_type: "dispatch",
-          reference_id: dispatch.id,
-          movement_date: formData.dispatch_date,
-          notes: `Despacho remito ${formData.remito || "N/A"}`,
-        })
-      }
-
-      // Auto-create test cylinders if sample was taken.
-      // No crear probetas si el N° de muestra no es real (vacío, "NO", "PRUEBA") -> evita probetas fantasma.
-      const sampleNumTrim = (formData.sample_number || "").trim().toUpperCase()
-      const isRealSample = sampleNumTrim !== "" && sampleNumTrim !== "NO" && sampleNumTrim !== "PRUEBA"
-      if (formData.sample_taken && isRealSample) {
-        const [year, month, day] = formData.dispatch_date.split("-").map(Number)
-        const addDays = (n: number) => {
-          const d = new Date(year, month - 1, day)
-          d.setDate(d.getDate() + n)
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-        }
-        await supabase.from("test_cylinders").insert([
-          { dispatch_id: dispatch.id, cylinder_number: 1, test_age_days: 7,  scheduled_test_date: addDays(7)  },
-          { dispatch_id: dispatch.id, cylinder_number: 2, test_age_days: 28, scheduled_test_date: addDays(28) },
-          { dispatch_id: dispatch.id, cylinder_number: 3, test_age_days: 28, scheduled_test_date: addDays(28) },
-        ])
-        console.log("[v0] Test cylinders created for sample", formData.sample_number)
-      }
-
-      // Fibra agregada al camión (kg/m³ × m³ del despacho)
-      const fiberPerM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
-      if (fiberPerM3 > 0) {
-        const fiberTotal = fiberPerM3 * quantityM3
-        const { data: fiberMaterial } = await supabase
-          .from("materials")
-          .select("id")
-          .eq("plant_id", dispatchPlantId)
-          .ilike("name", "%fibra%")
-          .maybeSingle()
-
-        if (fiberMaterial) {
-          await supabase.rpc("update_material_stock", {
-            p_material_id: fiberMaterial.id,
-            p_quantity_change: -fiberTotal,
-          })
-          await supabase.from("dispatch_materials").insert({
-            dispatch_id: dispatch.id,
-            material_id: fiberMaterial.id,
-            quantity: fiberTotal,
-          })
-          await supabase.from("stock_movements").insert({
-            material_id: fiberMaterial.id,
-            movement_type: "consumo",
-            quantity_kg: fiberTotal,
-            reference_type: "dispatch",
-            reference_id: dispatch.id,
-            movement_date: formData.dispatch_date,
-            notes: `Fibra ${fiberPerM3} kg/m³ × ${quantityM3} m³ — remito ${formData.remito}`,
-          })
-        } else {
-          toast.error("No se encontró el material 'Fibra' en esta planta; el despacho se guardó sin descontarla")
-        }
-      }
-
-      console.log("[v0] Dispatch saved successfully with stock updated")
+      if (dispatchError) throw dispatchError
+      const dispatch = result as { id: string }
       toast.success(
         formData.sample_taken
           ? "Despacho registrado con 3 probetas (7d, 28d, 28d)"
