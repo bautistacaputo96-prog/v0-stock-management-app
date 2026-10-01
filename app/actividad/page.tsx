@@ -2,14 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { getCurrentUser } from "@/lib/current-user"
+import { getCurrentUser, setVeFuncionesNuevas } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
+import { Switch } from "@/components/ui/switch"
+import { NuevoBadge } from "@/components/nuevo-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, ShieldAlert, Download, RefreshCw } from "lucide-react"
+import { Loader2, ShieldAlert, Download, RefreshCw, FlaskConical } from "lucide-react"
 
 type LogRow = {
   id: string
@@ -25,6 +28,74 @@ const ACTION_STYLE: Record<string, string> = {
   crear: "bg-emerald-100 text-emerald-800 border-emerald-300",
   editar: "bg-amber-100 text-amber-800 border-amber-300",
   borrar: "bg-red-100 text-red-800 border-red-300",
+}
+
+type UsuarioPrueba = { id: string; name: string; role: string; ve_funciones_nuevas?: boolean | null }
+
+/**
+ * Fase 2 · "Funciones nuevas en prueba": el supervisor elige quién ve las funciones en prueba
+ * (app_users.ve_funciones_nuevas). Cada cambio queda en Actividad.
+ */
+function FuncionesNuevasEnPrueba({ onCambio }: { onCambio: () => void }) {
+  const [usuarios, setUsuarios] = useState<UsuarioPrueba[]>([])
+  const [hayColumna, setHayColumna] = useState(true)
+  const [cargando, setCargando] = useState(true)
+  const [guardando, setGuardando] = useState<string | null>(null)
+
+  async function cargar() {
+    setCargando(true)
+    const { data } = await createClient().from("app_users").select("*").eq("active", true).order("name")
+    const lista = (data as UsuarioPrueba[] | null) || []
+    setHayColumna(lista.length === 0 || "ve_funciones_nuevas" in lista[0])
+    setUsuarios(lista)
+    setCargando(false)
+  }
+  useEffect(() => { cargar() }, [])
+
+  async function cambiar(u: UsuarioPrueba, valor: boolean) {
+    setGuardando(u.id)
+    const { error } = await createClient().from("app_users").update({ ve_funciones_nuevas: valor } as any).eq("id", u.id)
+    setGuardando(null)
+    if (error) return
+    setUsuarios((us) => us.map((x) => (x.id === u.id ? { ...x, ve_funciones_nuevas: valor } : x)))
+    await logActivity({ action: "editar", entity: "usuario", entityId: u.id, reference: u.name, details: { "Funciones nuevas en prueba": valor ? "apagadas → prendidas" : "prendidas → apagadas" } })
+    if (getCurrentUser()?.name === u.name) setVeFuncionesNuevas(valor)
+    onCambio()
+  }
+
+  const prendidos = usuarios.filter((u) => u.ve_funciones_nuevas).length
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
+          <FlaskConical className="h-4 w-4" /> Funciones nuevas en prueba <NuevoBadge />
+          {hayColumna && !cargando && <span className="font-normal text-muted-foreground">· las ven {prendidos} de {usuarios.length} usuarios</span>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Viajes, gerenciador, sugerencia de horario, demanda de camiones y confirmación del día anterior (fase 2). Solo las ven los usuarios prendidos; para el resto el sistema queda igual. El usuario las ve al volver a abrir el sistema.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {cargando ? (
+          <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : !hayColumna ? (
+          <p className="text-sm text-muted-foreground">Falta aplicar la migración de la fase 2 en la base.</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {usuarios.map((u) => (
+              <label key={u.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 cursor-pointer">
+                <span className="text-sm">
+                  <span className="font-medium">{u.name}</span>
+                  <span className="text-xs text-muted-foreground ml-1.5">{u.role}</span>
+                </span>
+                <Switch checked={!!u.ve_funciones_nuevas} disabled={guardando === u.id} onCheckedChange={(v) => cambiar(u, v)} />
+              </label>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function ActividadPage() {
@@ -130,6 +201,8 @@ export default function ActividadPage() {
         </div>
       </div>
 
+      <FuncionesNuevasEnPrueba onCambio={load} />
+
       <div className="flex flex-wrap gap-2">
         <Select value={userFilter} onValueChange={setUserFilter}>
           <SelectTrigger className="w-[190px]"><SelectValue placeholder="Usuario" /></SelectTrigger>
@@ -157,6 +230,7 @@ export default function ActividadPage() {
             <SelectItem value="chofer">Choferes</SelectItem>
             <SelectItem value="bomba">Empresas de bombeo</SelectItem>
             <SelectItem value="planta">Tiempos de planta</SelectItem>
+            <SelectItem value="usuario">Usuarios</SelectItem>
           </SelectContent>
         </Select>
         <Input
