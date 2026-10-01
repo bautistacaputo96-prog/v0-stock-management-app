@@ -45,7 +45,8 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
       // Fase 2: refresca el interruptor de funciones nuevas del usuario en sesión (lo puede cambiar un supervisor)
       const actual = sessionOk ? getCurrentUser() : null
       const u = actual ? lista.find((x) => x.name === actual.name) : null
-      if (u) setVeFuncionesNuevas(u.ve_funciones_nuevas === true)
+      // (solo si la columna existe: sin la migración no se toca nada)
+      if (u && "ve_funciones_nuevas" in u) setVeFuncionesNuevas(u.ve_funciones_nuevas === true)
     })
   }, [])
 
