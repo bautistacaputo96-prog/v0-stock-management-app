@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
-import { getCurrentUser, setCurrentUser, type CurrentUser } from "@/lib/current-user"
+import { getCurrentUser, setCurrentUser, setVeFuncionesNuevas, type CurrentUser } from "@/lib/current-user"
 
 // Normaliza texto: minúsculas, sin tildes/acentos y sin espacios sobrantes.
 function normalize(value: string) {
@@ -24,7 +24,7 @@ function normalize(value: string) {
 const VALID_PASSWORD = normalize("Rebucret")
 const STORAGE_KEY = "rebucret-auth"
 
-type AppUser = { id: string; name: string; role: string }
+type AppUser = { id: string; name: string; role: string; ve_funciones_nuevas?: boolean | null }
 
 export function LoginGate({ children }: { children: React.ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false)
@@ -41,18 +41,26 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
     const sessionOk = typeof window !== "undefined" && window.localStorage.getItem(STORAGE_KEY) === "true"
     if (sessionOk && getCurrentUser()) setAuthenticated(true)
     setChecked(true)
-    loadUsers()
+    loadUsers().then((lista) => {
+      // Fase 2: refresca el interruptor de funciones nuevas del usuario en sesión (lo puede cambiar un supervisor)
+      const actual = sessionOk ? getCurrentUser() : null
+      const u = actual ? lista.find((x) => x.name === actual.name) : null
+      if (u) setVeFuncionesNuevas(u.ve_funciones_nuevas === true)
+    })
   }, [])
 
-  async function loadUsers() {
+  async function loadUsers(): Promise<AppUser[]> {
     const supabase = createClient()
-    if (!supabase) return
+    if (!supabase) return []
+    // "*" y no una lista de columnas: así anda igual con o sin la columna ve_funciones_nuevas (fase 2)
     const { data } = await supabase
       .from("app_users")
-      .select("id, name, role")
+      .select("*")
       .eq("active", true)
       .order("name")
-    setUsers(data || [])
+    const lista = ((data as AppUser[] | null) || [])
+    setUsers(lista)
+    return lista
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -69,6 +77,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
     const session: CurrentUser = {
       name: selectedUser,
       role: user?.role === "supervisor" ? "supervisor" : "operario",
+      veFuncionesNuevas: user?.ve_funciones_nuevas === true,
     }
     setCurrentUser(session)
     window.localStorage.setItem(STORAGE_KEY, "true")

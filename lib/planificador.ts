@@ -84,6 +84,10 @@ export type Pedido = {
   conBomba: boolean
   /** Minutos de descarga por camión de 8 m³ si la obra tiene un valor propio (reemplaza al benchmark) */
   descargaMin?: number | null
+  /** Fase 2: m³ por camión (por defecto 8; el último lleva el resto) */
+  m3PorViaje?: number | null
+  /** Fase 2: minutos entre llegadas si el cliente pide otro ritmo (por defecto, la descarga del camión anterior) */
+  espaciadoMin?: number | null
 }
 
 export type Camion = { id: string; patente: string; capacidad: number }
@@ -167,9 +171,12 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
     // Viajes del pedido: camiones llenos y el último con el resto
     const cant: number[] = []
     let resto = p.m3
-    while (resto > 0.01) { const q = Math.min(8, resto); cant.push(Math.round(q * 100) / 100); resto -= q }
-    const ritmo = descargaDe(p, 8, prm)
-    const ciclo = prm.cargaMin + p.viajeMin + ritmo + prm.lavadoMin + p.viajeMin
+    const tam = p.m3PorViaje && p.m3PorViaje > 0 ? p.m3PorViaje : 8
+    while (resto > 0.01) { const q = Math.min(tam, resto); cant.push(Math.round(q * 100) / 100); resto -= q }
+    const descarga8 = descargaDe(p, 8, prm)
+    const espaciado = p.espaciadoMin && p.espaciadoMin > 0 ? p.espaciadoMin : null
+    const ritmo = espaciado ?? descarga8
+    const ciclo = prm.cargaMin + p.viajeMin + descarga8 + prm.lavadoMin + p.viajeMin
     const ideal = Math.min(cant.length, Math.ceil(ciclo / ritmo))
 
     let proximaLlegada = p.llegada
@@ -190,7 +197,8 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       const salida = inicioCarga + prm.cargaMin
       const llegada = Math.max(salida + p.viajeMin, proximaLlegada)
       const inicioDescarga = finAnterior != null ? Math.max(llegada, finAnterior) : llegada
-      const espera = finAnterior != null ? Math.max(0, llegada - finAnterior) : 0
+      // Hueco en el vaciado: lo que el camión llega después de lo previsto (sin espaciado, lo previsto es el fin del anterior)
+      const espera = finAnterior != null ? Math.max(0, llegada - proximaLlegada) : 0
       huecos += espera
       const finDescarga = inicioDescarga + desc
       const salidaObra = finDescarga + prm.lavadoMin
@@ -200,7 +208,8 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       usados.add(elegido.c.id)
       viajes.push({ pedidoId: p.id, camionId: elegido.c.id, n: i + 1, m3, inicioCarga, salida, llegada: inicioDescarga, finDescarga, salidaObra, vuelta, esperaObra: espera })
       finAnterior = finDescarga
-      proximaLlegada = finDescarga // el siguiente debería llegar cuando termina este
+      // El siguiente debería llegar cuando termina este (o con el espaciado que pidió el cliente)
+      proximaLlegada = espaciado != null ? inicioDescarga + espaciado : finDescarga
     })
 
     const vs = viajes.filter((v) => v.pedidoId === p.id)
