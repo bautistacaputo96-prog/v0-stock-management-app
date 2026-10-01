@@ -294,7 +294,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     })
     return demandaPorMediaHora(vs, dia)
   }, [ve, activos, viajesPorPedido, prm, dia]) // eslint-disable-line react-hooks/exhaustive-deps
-  const maxDemanda = Math.max(1, disponibles.length, ...demanda.map((d) => d.camiones))
+  // +1 de aire arriba para que la línea de disponibles no quede pegada al borde
+  const maxDemanda = Math.max(1, disponibles.length, ...demanda.map((d) => d.camiones)) + 1
 
   const cambiados = Object.keys(horas).filter((id) => {
     const p = pedidos.find((x) => x.id === id)
