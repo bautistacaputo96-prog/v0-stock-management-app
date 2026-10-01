@@ -341,9 +341,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (supabase) {
       const mapa = await choferPorCamionDelDia(supabase)
       setChoferPorCamion(mapa)
-      if (pedido.mixer_id && mapa[pedido.mixer_id]) {
-        setDispatchForm((f) => (f.chofer_id ? f : { ...f, chofer_id: mapa[pedido.mixer_id as string] }))
-      }
+      // Con el camión elegido en ese momento (el operario pudo cambiarlo mientras cargaba la consulta)
+      setDispatchForm((f) => (f.chofer_id || !f.mixer_id || !mapa[f.mixer_id] ? f : { ...f, chofer_id: mapa[f.mixer_id] }))
     }
   }
 
@@ -352,7 +351,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setDispatchForm((f) => ({
       ...f,
       mixer_id: mixerId,
-      chofer_id: choferTocado ? f.chofer_id : (choferPorCamion[mixerId] || f.chofer_id),
+      // Si no se eligió a mano, no queda el chofer del camión anterior
+      chofer_id: choferTocado ? f.chofer_id : (choferPorCamion[mixerId] || ""),
     }))
   }
 

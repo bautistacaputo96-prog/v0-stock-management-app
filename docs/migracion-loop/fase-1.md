@@ -137,6 +137,9 @@ Que el sistema sepa **quién manejó cada camión** y **qué bomba va a cada obr
 8. Build limpio; `tsc` sin errores nuevos en los archivos tocados.
 9. Deploy: primero la migración, después el front, fuera del horario de despacho.
 
+## Revisión (01/10/2026)
+APROBADO CON CAMBIOS. Checklist "No se pierde nada" completo: OK. Arreglados por el arquitecto: B1 (al cambiar de camión ya no queda el chofer del camión anterior) y B2 (el chofer por defecto usa el camión elegido en ese momento). M1: documentado el orden de deploy (migración → preview → merge). Quedan como menores: B3 ("hoy" según la hora del navegador; las PCs están en Argentina) y B4 (los tiempos que estaban guardados en el navegador vuelven a los de referencia, y cambiar de planta en la vista Día descarta cambios sin guardar).
+
 ## Hecho
 _(lo completa la sesión obrero)_
 
@@ -156,7 +159,7 @@ Rama local `loop/fase-1-maestros` (worktree `~/Documents/rebucret-fase1`, sin pu
 - Pedido (Semana y edición): con Bomba aparece "¿Quién pone la bomba?" (Rebucret la contrata / La trae el cliente), Empresa (opcional, "A confirmar") y Hora de la bomba (precargada con la llegada; se mueve con ella si eran iguales). Directo borra todo lo de bomba. Finalidad opcional debajo de la fórmula. Badge de Despacho diario: "BOMBA · Empresa · 08:30" / "BOMBA (cliente)"; finalidad al lado de la fórmula. Semana: una línea con empresa y hora. Vista Día: bomba y finalidad por pedido y aviso "Pedido con bomba sin empresa asignada".
 - Historial: columnas Finalidad (del pedido) y Chofer (con filtro), búsqueda por ambos; el Excel conserva sus 15 columnas en el mismo orden y suma Chofer y Finalidad al final.
 - Vista Día › Tiempos y camiones: los 4 tiempos + jornada, tolerancia y bocas se leen y guardan en la planta elegida (botón "Guardar tiempos de X", aviso de cambios sin guardar, "Última modificación: fecha · usuario" desde Actividad). Ya no se usa `localStorage` para los tiempos; los camiones disponibles siguen ahí. `lib/planificador.ts`: `parametrosDePlanta()`/`columnasDePlanta()`, tolerancia por defecto 15, `bocasCarga` (con 1 boca el cálculo es exactamente el de antes).
-- Sin la migración todo anda como antes: las consultas usan `*` y las listas nuevas devuelven vacío si la tabla no existe.
+- ~~Sin la migración todo anda como antes~~ **Corregido por la revisión:** sin la migración las lecturas andan, pero crear o editar pedidos y "Guardar tiempos" fallan (mandan columnas nuevas). Orden obligatorio: (1) aplicar la migración, que es compatible con el front de `main`; (2) Bautista prueba el preview de Vercel de la rama, que usa la base de producción; (3) merge a `main`.
 
 **Pruebas: 94/94 OK** (`node` + `pg`, un único `BEGIN … ROLLBACK` contra producción; al final se verificó que no existen `choferes`, `empresas_bombeo`, `dispatches.chofer_id`, `plants.t_*` ni despachos de prueba).
 - **"No se pierde nada" (6):** cuatro despachos con los mismos datos que mandan las pantallas — A desde pedido (agua extra 50 L, fibra 0,5 kg/m³, muestra con asentamiento 12), B manual (humedad de acopio 4 %, agua 30 L, fibra 1 kg/m³, muestra, fecha 29/09, observaciones), C1 por árido con fórmula, C2 por árido con materias primas manuales — corridos con las funciones de producción (antes) y con la migración aplicada (después). Se compararon todas las columnas de `dispatches`, `dispatch_materials`, `stock_movements`, `test_cylinders` (3: 7 d el 07/10 y 28 d el 28/10 para A), `activity_log`, `manual_material_withdrawals`/items, el pedido, `dispatch_status_log`, el camión y el stock de los 11 materiales que se movieron: **idénticos**; sin chofer, `chofer_id` queda nulo; con chofer, lo único distinto es `chofer_id` y la clave "Chofer" en Actividad (C1/C2 sin chofer).

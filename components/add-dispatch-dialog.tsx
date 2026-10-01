@@ -675,7 +675,7 @@ export function AddDispatchDialog({
                         setFormData({
                           ...formData,
                           mixer_id: value,
-                          chofer_id: choferTocado ? formData.chofer_id : (choferPorCamion[value] || formData.chofer_id),
+                          chofer_id: choferTocado ? formData.chofer_id : (choferPorCamion[value] || ""),
                         })
                       }
                     >
