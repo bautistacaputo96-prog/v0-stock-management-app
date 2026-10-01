@@ -17,10 +17,16 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { AddDispatchDialog } from "@/components/add-dispatch-dialog"
+import { cn } from "@/lib/utils"
 import { currentUserName } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, cargarEmpresasBombeo, choferPorCamionDelDia, textoBomba, type Chofer, type EmpresaBombeo } from "@/lib/maestros"
+// Fase 2 (solo con el interruptor de funciones nuevas)
+import { useFuncionesNuevas } from "@/lib/current-user"
+import { NuevoBadge } from "@/components/nuevo-badge"
+import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
+import { cargarViajes, pendientes, proximoViaje, regenerarViajesPedido, totalViajes, type ViajeRow } from "@/lib/viajes"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -35,6 +41,10 @@ type ScheduledDispatch = {
   bomba_la_pone?: "rebucret" | "cliente" | null;
   bomba_empresa_id?: string | null;
   bomba_hora?: string | null;
+  // Fase 2 (nulos hasta aplicar la migración)
+  confirmado_at?: string | null;
+  confirmado_por?: string | null;
+  plant_id?: string;
   clients?: { id: string; name: string };
   construction_sites?: { id: string; name: string; address: string | null; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean };
   formulas?: { id: string; name: string; code: string; useful_life_minutes: number };
@@ -58,6 +68,10 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [choferTocado, setChoferTocado] = useState(false)
   const [now, setNow] = useState(new Date())
   const { toast } = useToast()
+  // Fase 2: próximo viaje de cada pedido, elección del viaje al despachar y gerenciador
+  const ve = useFuncionesNuevas()
+  const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
+  const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
 
   const goToPreviousDay = () => setSelectedDate(prev => subDays(prev, 1))
   const goToNextDay = () => setSelectedDate(prev => addDays(prev, 1))
@@ -84,6 +98,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     // Fibra agregada al camión, dosificada en kg por m³
     fiberEnabled: false,
     fiberKgPerM3: "",
+    viaje_id: "", // fase 2: el viaje que sale (solo con el interruptor)
   })
   const [submitting, setSubmitting] = useState(false)
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
@@ -111,7 +126,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (selectedPlant) loadData()
     const interval = setInterval(() => { if (selectedPlant) loadData() }, 30000)
     return () => clearInterval(interval)
-  }, [selectedPlant, selectedDate])
+  }, [selectedPlant, selectedDate, ve])
 
   useEffect(() => {
     if (selectedPlant && isToday(selectedDate) && !humidityChecked) {
@@ -257,6 +272,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     const [chs, emps] = await Promise.all([cargarChoferes(supabase), cargarEmpresasBombeo(supabase)])
     setChoferes(chs)
     setEmpresasBombeo(emps)
+    // Fase 2: viajes de los pedidos del día (solo con el interruptor)
+    if (ve) setViajesPorPedido(await cargarViajes(supabase, (dispatchesRes.data || []).map((d: any) => d.id)))
   }
 
   const nombreChofer = (id?: string | null) => (id ? choferes.find((c) => c.id === id)?.nombre || null : null)
@@ -314,16 +331,22 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (!supabase) return
     await supabase.from("scheduled_dispatches").update({ quantity_m3: qty }).eq("id", editDialog.id)
     toast({ title: "Total actualizado", description: `Nueva cantidad: ${qty} m3` })
+    // Fase 2: si el pedido ya tenía viajes, los pendientes se rearman con el total nuevo
+    const rv = await regenerarViajesPedido(supabase, editDialog.id, currentUserName(), { soloSiTiene: true })
+    if (rv.error) toast({ title: "Los viajes no se actualizaron", description: rv.error, variant: "destructive" })
     setEditDialog(null)
     loadData()
   }
 
   async function openDispatchDialog(pedido: ScheduledDispatch) {
     const remaining = pedido.quantity_m3 - (pedido.dispatched_m3 || 0)
-    const suggestedQty = Math.min(Math.max(0.5, remaining), 8)
+    // Fase 2 (con el interruptor): se propone el próximo viaje, con sus m³ y su camión sugerido
+    const prox = ve ? proximoViaje(viajesPorPedido[pedido.id] || []) : null
+    const suggestedQty = Math.min(Math.max(0.5, remaining), prox ? Number(prox.m3) : 8)
     setDispatchForm({
       quantity_m3: suggestedQty.toFixed(1),
-      mixer_id: pedido.mixer_id || "",
+      mixer_id: pedido.mixer_id || prox?.mixer_id || "",
+      viaje_id: prox?.id || "",
       chofer_id: "",
       remito: "",
       extraWater: "0",
@@ -407,6 +430,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           construction_site_id: dispatchDialog.construction_site_id,
           mixer_id: dispatchForm.mixer_id,
           ...(dispatchForm.chofer_id ? { chofer_id: dispatchForm.chofer_id } : {}),
+          // Fase 2: el viaje elegido (si no viene, la base marca el primer viaje pendiente del pedido, si tiene)
+          ...(ve && dispatchForm.viaje_id ? { viaje_id: dispatchForm.viaje_id } : {}),
           quantity_m3: quantityThisTruck,
           remito: dispatchForm.remito.trim(),
           extra_water_liters: parseFloat(dispatchForm.extraWater) || 0,
@@ -690,6 +715,26 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                               {pedido.finalidad && <Badge variant="outline" className="ml-2 text-[10px] py-0">{pedido.finalidad}</Badge>}
                               {pedido.observations && <span className="text-muted-foreground text-xs ml-2">{pedido.observations}</span>}
                             </div>
+                            {/* Fase 2: próximo viaje y confirmación (solo con el interruptor) */}
+                            {ve && (() => {
+                              const vs = viajesPorPedido[pedido.id] || []
+                              const prox = proximoViaje(vs)
+                              if (!prox && !pedido.confirmado_at) return null
+                              const atrasado = !!prox && isToday(selectedDate) && now.getTime() > new Date(prox.hora_carga).getTime()
+                              const patente = prox?.mixer_id ? mixers.find((m) => m.id === prox.mixer_id)?.license_plate : null
+                              return (
+                                <div className={cn("mb-2 flex items-center gap-2 flex-wrap rounded-md border px-2 py-1 text-xs", atrasado ? "border-red-400 bg-red-50 text-red-800" : "border-violet-200 bg-violet-50/50")}>
+                                  {prox && (
+                                    <span className="font-medium">
+                                      Próximo: viaje {prox.n}/{totalViajes(vs)} · cargar {format(new Date(prox.hora_carga), "HH:mm")}{patente ? ` · ${patente}` : ""}
+                                      {atrasado && " · ya pasó la hora de carga"}
+                                    </span>
+                                  )}
+                                  {pedido.confirmado_at && <span className="text-emerald-700">👍 Confirmado</span>}
+                                  <NuevoBadge />
+                                </div>
+                              )
+                            })()}
                             <div className="space-y-1">
                               <div className="flex justify-between text-xs">
                                 <span className="text-muted-foreground">Enviado: <strong className="text-foreground">{dispatched.toFixed(1)} m3</strong></span>
@@ -709,6 +754,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                                 <DropdownMenuItem onClick={() => { setEditQuantity(pedido.quantity_m3.toString()); setEditDialog(pedido) }}>
                                   <Pencil className="h-4 w-4 mr-2" />Editar total
                                 </DropdownMenuItem>
+                                {ve && (
+                                  <DropdownMenuItem onClick={() => setGerenciar({ ...(pedido as any), plant_id: pedido.plant_id || selectedPlant })}>
+                                    <Truck className="h-4 w-4 mr-2" />Viajes <NuevoBadge className="ml-2" />
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem onClick={() => cancelPedido(pedido)} className="text-destructive">
                                   <XCircle className="h-4 w-4 mr-2" />Cancelar pedido
                                 </DropdownMenuItem>
@@ -875,6 +925,23 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                 </div>
               </div>
 
+              {/* Fase 2: qué viaje sale (solo con el interruptor y si el pedido tiene viajes pendientes) */}
+              {ve && pendientes(viajesPorPedido[dispatchDialog.id] || []).length > 0 && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">Viaje <NuevoBadge /></Label>
+                  <Select value={dispatchForm.viaje_id} onValueChange={(v) => setDispatchForm((f) => ({ ...f, viaje_id: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Elegí el viaje" /></SelectTrigger>
+                    <SelectContent>
+                      {pendientes(viajesPorPedido[dispatchDialog.id] || []).map((v) => (
+                        <SelectItem key={v.id} value={v.id!}>
+                          Viaje {v.n}/{totalViajes(viajesPorPedido[dispatchDialog.id] || [])} · {v.m3} m³ · cargar {format(new Date(v.hora_carga), "HH:mm")}{v.mixer_id ? ` · ${mixers.find((m) => m.id === v.mixer_id)?.license_plate || ""}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               {/* Chofer, junto al camión (fase 1). Rotan: por defecto el del último viaje de ese camión hoy */}
               <ChoferSelect
                 choferes={choferes}
@@ -984,6 +1051,9 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Fase 2: gerenciador de viajes */}
+      <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => loadData()} />
 
       {/* Remito listo para imprimir: aparece apenas se confirma la carga */}
       <Dialog open={!!remitoListo} onOpenChange={(open) => !open && setRemitoListo(null)}>
