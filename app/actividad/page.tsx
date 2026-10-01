@@ -154,6 +154,9 @@ export default function ActividadPage() {
             <SelectItem value="despacho">Despachos</SelectItem>
             <SelectItem value="ingreso">Ingresos</SelectItem>
             <SelectItem value="pedido">Pedidos programados</SelectItem>
+            <SelectItem value="chofer">Choferes</SelectItem>
+            <SelectItem value="bomba">Empresas de bombeo</SelectItem>
+            <SelectItem value="planta">Tiempos de planta</SelectItem>
           </SelectContent>
         </Select>
         <Input

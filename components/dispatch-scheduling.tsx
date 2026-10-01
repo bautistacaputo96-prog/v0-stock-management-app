@@ -27,6 +27,7 @@ import { AddConstructionSiteDialog } from "@/components/add-construction-site-di
 import { UserSelector } from "@/components/user-selector"
 import { currentUserName } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
+import { FINALIDADES, cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
@@ -42,6 +43,9 @@ type ScheduledDispatch = {
   formula_id: string; mixer_id: string | null; quantity_m3: number;
   scheduled_arrival_time: string; scheduled_departure_time: string; status: string;
   observations: string | null; is_urgent: boolean; fiber_kg_per_m3?: number | null; metodo_descarga?: "bomba" | "directo" | null;
+  created_by?: string | null;
+  // Fase 1 (nulos hasta aplicar la migración)
+  finalidad?: string | null; bomba_la_pone?: "rebucret" | "cliente" | null; bomba_empresa_id?: string | null; bomba_hora?: string | null;
   clients?: Client; construction_sites?: ConstructionSite; formulas?: Formula; mixers?: Mixer;
 }
 
@@ -179,6 +183,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [clients, setClients] = useState<Client[]>([])
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [formulas, setFormulas] = useState<Formula[]>([])
+  const [empresasBombeo, setEmpresasBombeo] = useState<EmpresaBombeo[]>([])
   const [loading, setLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
@@ -211,6 +216,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     created_by: "",
     fiber_kg_per_m3: "",
     metodo_descarga: "" as "" | "bomba" | "directo",
+    // Fase 1
+    finalidad: "",
+    bomba_la_pone: "" as "" | "rebucret" | "cliente",
+    bomba_empresa_id: "",
+    bomba_hora: "", // HH:mm; por defecto, la hora de llegada del primer camión
   })
 
   // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
@@ -247,18 +257,20 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       dispatchesQuery = dispatchesQuery.eq("plant_id", selectedPlant)
     }
 
-    const [dispatchesRes, clientsRes, mixersRes, formulasRes] = await Promise.all([
+    const [dispatchesRes, clientsRes, mixersRes, formulasRes, empresasRes] = await Promise.all([
       dispatchesQuery,
       supabase.from("clients").select("*, construction_sites(*)").eq("active", true).order("name"),
       supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
       // Cargar todas las fórmulas con su planta (para filtrar el combo por planta del despacho)
       supabase.from("formulas").select("id, name, code, useful_life_minutes, plant_id").order("code"),
+      cargarEmpresasBombeo(supabase),
     ])
 
     setDispatches(dispatchesRes.data || [])
     setClients(clientsRes.data || [])
     setMixers(mixersRes.data || [])
     setFormulas(formulasRes.data || [])
+    setEmpresasBombeo(empresasRes)
     setLoading(false)
   }
 
@@ -290,6 +302,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       created_by: "",
       fiber_kg_per_m3: "",
       metodo_descarga: "",
+      finalidad: "",
+      bomba_la_pone: "",
+      bomba_empresa_id: "",
+      bomba_hora: "",
     })
     setEditingDispatch(null)
     setCuitPrompt("")
@@ -313,6 +329,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       created_by: dispatch.created_by || "",
       fiber_kg_per_m3: dispatch.fiber_kg_per_m3 != null ? String(dispatch.fiber_kg_per_m3) : "",
       metodo_descarga: dispatch.metodo_descarga || "",
+      finalidad: dispatch.finalidad || "",
+      bomba_la_pone: dispatch.bomba_la_pone || "",
+      bomba_empresa_id: dispatch.bomba_empresa_id || "",
+      bomba_hora: dispatch.bomba_hora ? format(parseISO(dispatch.bomba_hora), "HH:mm") : "",
     })
     setEditingDispatch(dispatch)
     setCuitPrompt("")
@@ -349,6 +369,14 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       // Convertir hora local del browser a UTC para guardar con timezone correcta
       const arrivalTime = new Date(`${form.arrival_date}T${form.arrival_time}:00`).toISOString()
       const departureTime = calculateDepartureTime(arrivalTime, selectedSite)
+      // Fase 1: finalidad y bomba (con descarga directa no se guarda nada de bomba)
+      const conBomba = form.metodo_descarga === "bomba"
+      const datosFase1 = {
+        finalidad: form.finalidad || null,
+        bomba_la_pone: conBomba ? form.bomba_la_pone || null : null,
+        bomba_empresa_id: conBomba && form.bomba_la_pone === "rebucret" ? form.bomba_empresa_id || null : null,
+        bomba_hora: conBomba ? new Date(`${form.arrival_date}T${form.bomba_hora || form.arrival_time}:00`).toISOString() : null,
+      }
 
       if (editingDispatch) {
         // Editar despacho existente
@@ -365,6 +393,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           is_urgent: form.is_urgent,
           fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
           metodo_descarga: form.metodo_descarga,
+          ...datosFase1,
         }).eq("id", editingDispatch.id)
         if (error) {
           toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
@@ -388,6 +417,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           created_by: form.created_by || currentUserName(),
           fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
           metodo_descarga: form.metodo_descarga,
+          ...datosFase1,
         })
         if (error) {
           toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
@@ -541,6 +571,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 {d.metodo_descarga && <span>· {d.metodo_descarga === "bomba" ? "bomba" : "directo"}</span>}
                                 {d.mixers && <span>| {d.mixers.license_plate}</span>}
                               </div>
+                              {/* Fase 1: quién pone la bomba, empresa y hora */}
+                              {d.metodo_descarga === "bomba" && d.bomba_la_pone && (
+                                <div className="text-[10px] truncate text-sky-800" title={textoBomba(d, empresasBombeo) || undefined}>
+                                  {(textoBomba(d, empresasBombeo, "") || "").replace(/^ · /, "").replace(/^ \(cliente\)$/, "la trae el cliente")}
+                                </div>
+                              )}
                             </div>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -600,7 +636,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               </div>
               <div className="space-y-2">
                 <Label>Hora de Llegada *</Label>
-                <Input type="time" value={form.arrival_time} onChange={(e) => setForm({ ...form, arrival_time: e.target.value })} />
+                <Input type="time" value={form.arrival_time} onChange={(e) => setForm({ ...form, arrival_time: e.target.value, bomba_hora: form.bomba_hora === form.arrival_time ? e.target.value : form.bomba_hora })} />
               </div>
             </div>
 
@@ -708,7 +744,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   <button
                     key={v}
                     type="button"
-                    onClick={() => setForm({ ...form, metodo_descarga: v })}
+                    onClick={() => setForm({ ...form, metodo_descarga: v, bomba_hora: v === "bomba" && !form.bomba_hora ? form.arrival_time : form.bomba_hora })}
                     className={cn(
                       "rounded-lg border-2 p-2 text-left transition-colors",
                       form.metodo_descarga === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
@@ -724,6 +760,54 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               )}
             </div>
 
+            {/* Bomba de terceros (fase 1): solo cuando el pedido va con bomba */}
+            {form.metodo_descarga === "bomba" && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 space-y-3">
+                <div className="space-y-2">
+                  <Label>¿Quién pone la bomba?</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([["rebucret", "Rebucret la contrata"], ["cliente", "La trae el cliente"]] as const).map(([v, l]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setForm({ ...form, bomba_la_pone: v, bomba_empresa_id: v === "cliente" ? "" : form.bomba_empresa_id })}
+                        className={cn(
+                          "rounded-lg border-2 p-2 text-left text-sm font-medium transition-colors bg-background",
+                          form.bomba_la_pone === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
+                        )}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {form.bomba_la_pone === "rebucret" && (
+                    <div className="space-y-2">
+                      <Label>Empresa de bomba</Label>
+                      <Select value={form.bomba_empresa_id || "none"} onValueChange={(v) => setForm({ ...form, bomba_empresa_id: v === "none" ? "" : v })}>
+                        <SelectTrigger className="bg-background"><SelectValue placeholder="A confirmar" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">A confirmar</SelectItem>
+                          {empresasBombeo
+                            .filter((e) => e.activo || e.id === form.bomba_empresa_id)
+                            .map((e) => <SelectItem key={e.id} value={e.id}>{e.nombre}{!e.activo ? " (de baja)" : ""}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      {empresasBombeo.filter((e) => e.activo).length === 0 && (
+                        <p className="text-xs text-muted-foreground">Cargá las empresas en Camiones › Bombas.</p>
+                      )}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Hora de la bomba en obra</Label>
+                    <Input type="time" className="bg-background" value={form.bomba_hora || form.arrival_time} onChange={(e) => setForm({ ...form, bomba_hora: e.target.value })} />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">La empresa se puede confirmar el día anterior: la vista Día avisa si falta.</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label>Formula *</Label>
               <FormulaCombobox
@@ -731,6 +815,19 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 value={form.formula_id}
                 onChange={(v) => setForm({ ...form, formula_id: v })}
               />
+            </div>
+
+            {/* Finalidad (fase 1), opcional, junto a la fórmula */}
+            <div className="space-y-2">
+              <Label>Finalidad</Label>
+              <Select value={form.finalidad || "none"} onValueChange={(v) => setForm({ ...form, finalidad: v === "none" ? "" : v })}>
+                <SelectTrigger><SelectValue placeholder="Sin especificar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin especificar</SelectItem>
+                  {FINALIDADES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                  {form.finalidad && !(FINALIDADES as readonly string[]).includes(form.finalidad) && <SelectItem value={form.finalidad}>{form.finalidad}</SelectItem>}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">

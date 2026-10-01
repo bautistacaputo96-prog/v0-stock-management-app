@@ -9,6 +9,9 @@
  * dónde faltan camiones y qué tan ocupada está la flota.
  *
  * La hora que se edita acá es la misma del pedido: la ve Despacho diario.
+ * Los tiempos (carga, descarga, lavado, jornada, tolerancia, bocas) son de cada planta y se
+ * guardan en la base (fase 1): los ve igual cualquiera, desde cualquier computadora.
+ * Los camiones disponibles del día siguen en este navegador hasta la fase 2.
  */
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -19,7 +22,8 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { logActivity } from "@/lib/activity-log"
-import { planificar, aMin, aHora, PARAMETROS_BASE, type Parametros, type Pedido as PedidoPlan } from "@/lib/planificador"
+import { planificar, aMin, aHora, PARAMETROS_BASE, parametrosDePlanta, columnasDePlanta, type Parametros, type Pedido as PedidoPlan } from "@/lib/planificador"
+import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settings2, Truck, MapPin } from "lucide-react"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
@@ -34,6 +38,11 @@ type PedidoDB = {
   scheduled_arrival_time: string
   status: string
   metodo_descarga: "bomba" | "directo" | null
+  // Fase 1 (no vienen si la migración no está aplicada)
+  finalidad?: string | null
+  bomba_la_pone?: "rebucret" | "cliente" | null
+  bomba_empresa_id?: string | null
+  bomba_hora?: string | null
   clients: { name: string } | null
   construction_sites: { id: string; name: string; travel_time_minutes: number | null; gps_lat: number | null; requires_pump: boolean | null } | null
   formulas: { code: string } | null
@@ -42,7 +51,23 @@ type Mixer = { id: string; license_plate: string; capacity_m3: number | null; ac
 
 const COLORES = ["#D85A30", "#1D9E75", "#534AB7", "#BA7517", "#993556", "#185FA5", "#3B6D11", "#5F5E5A"]
 const LS_CAMIONES = (planta: string) => `prog-dia-camiones-${planta}`
-const LS_PARAMS = "prog-dia-parametros"
+
+const CAMPOS_TIEMPO = [
+  ["cargaMin", "Carga en planta"],
+  ["descargaBombaMin", "Descarga con bomba (8 m³)"],
+  ["descargaDirectaMin", "Descarga directa (8 m³)"],
+  ["lavadoMin", "Lavado y salida de obra"],
+] as const
+const ETIQUETAS: Record<keyof Parametros, string> = {
+  cargaMin: "Carga (min)",
+  descargaBombaMin: "Descarga con bomba (min)",
+  descargaDirectaMin: "Descarga directa (min)",
+  lavadoMin: "Lavado (min)",
+  inicioJornada: "Inicio de jornada",
+  finJornada: "Fin de jornada",
+  toleranciaMin: "Tolerancia de puntualidad (min)",
+  bocasCarga: "Bocas de carga",
+}
 
 export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const { toast } = useToast()
@@ -52,6 +77,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [disponibles, setDisponibles] = useState<string[]>([])
   const [prm, setPrm] = useState<Parametros>(PARAMETROS_BASE)
+  // Lo guardado en la planta, para saber si hay cambios sin guardar
+  const [prmGuardado, setPrmGuardado] = useState<Parametros>(PARAMETROS_BASE)
+  const [ultimaMod, setUltimaMod] = useState<{ user_name: string; created_at: string } | null>(null)
+  const [guardandoTiempos, setGuardandoTiempos] = useState(false)
+  const [empresasBombeo, setEmpresasBombeo] = useState<EmpresaBombeo[]>([])
   const [verSupuestos, setVerSupuestos] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [horas, setHoras] = useState<Record<string, string>>({}) // hora editada (sin guardar)
@@ -60,11 +90,43 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const [simular, setSimular] = useState(false)
   const esPasado = startOfDay(dia) < startOfDay(new Date())
 
-  // Supuestos guardados en este navegador
-  useEffect(() => {
-    try { const p = localStorage.getItem(LS_PARAMS); if (p) setPrm({ ...PARAMETROS_BASE, ...JSON.parse(p) }) } catch {}
-  }, [])
-  useEffect(() => { try { localStorage.setItem(LS_PARAMS, JSON.stringify(prm)) } catch {} }, [prm])
+  // Tiempos de la planta elegida (en la base, no en el navegador)
+  const cargarTiempos = useCallback(async () => {
+    if (!planta) return
+    const sb = createClient()
+    const [{ data: pl }, { data: mod }] = await Promise.all([
+      sb.from("plants").select("*").eq("id", planta).maybeSingle(),
+      sb.from("activity_log").select("user_name, created_at").eq("entity", "planta").eq("entity_id", planta).order("created_at", { ascending: false }).limit(1),
+    ])
+    const p = parametrosDePlanta(pl as any)
+    setPrm(p)
+    setPrmGuardado(p)
+    setUltimaMod(((mod as any) || [])[0] || null)
+  }, [planta])
+  useEffect(() => { cargarTiempos() }, [cargarTiempos])
+  useEffect(() => { cargarEmpresasBombeo(createClient()).then(setEmpresasBombeo) }, [])
+
+  const tiemposCambiados = (Object.keys(ETIQUETAS) as (keyof Parametros)[]).filter((k) => prm[k] !== prmGuardado[k])
+
+  async function guardarTiempos() {
+    if (aMin(prm.finJornada) <= aMin(prm.inicioJornada)) {
+      toast({ title: "Revisá la jornada", description: "El fin tiene que ser después del inicio", variant: "destructive" })
+      return
+    }
+    setGuardandoTiempos(true)
+    const { error } = await createClient().from("plants").update(columnasDePlanta(prm)).eq("id", planta)
+    setGuardandoTiempos(false)
+    if (error) {
+      toast({ title: "No se pudieron guardar los tiempos", description: error.message, variant: "destructive" })
+      return
+    }
+    const nombre = plants.find((p) => p.id === planta)?.name || null
+    const detalle: Record<string, string> = {}
+    for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = `${prmGuardado[k]} → ${prm[k]}`
+    await logActivity({ action: "editar", entity: "planta", entityId: planta, reference: nombre, plantId: planta, details: detalle })
+    toast({ title: "Tiempos guardados", description: `${nombre}: los ve cualquiera que abra la programación` })
+    cargarTiempos()
+  }
 
   const cargar = useCallback(async () => {
     if (!planta) return
@@ -73,7 +135,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     const ini = startOfDay(dia), fin = addDays(ini, 1)
     const [{ data: ps }, { data: ms }] = await Promise.all([
       sb.from("scheduled_dispatches")
-        .select("id, plant_id, quantity_m3, dispatched_m3, scheduled_arrival_time, status, metodo_descarga, clients(name), construction_sites(id, name, travel_time_minutes, gps_lat, requires_pump), formulas(code)")
+        .select("*, clients(name), construction_sites(id, name, travel_time_minutes, gps_lat, requires_pump), formulas(code)")
         .eq("plant_id", planta)
         .gte("scheduled_arrival_time", ini.toISOString())
         .lt("scheduled_arrival_time", fin.toISOString())
@@ -131,8 +193,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     const [hh, mm] = h.split(":").map(Number)
     const llegada = new Date(dia); llegada.setHours(hh, mm, 0, 0)
     const salida = new Date(llegada.getTime() - (p.construction_sites?.travel_time_minutes || 30) * 60000)
+    // Si la bomba estaba a la misma hora que el primer camión, se mueve con él
+    const moverBomba = "bomba_hora" in p && p.bomba_hora && new Date(p.bomba_hora).getTime() === new Date(p.scheduled_arrival_time).getTime()
     const { error } = await createClient().from("scheduled_dispatches")
-      .update({ scheduled_arrival_time: llegada.toISOString(), scheduled_departure_time: salida.toISOString() })
+      .update({ scheduled_arrival_time: llegada.toISOString(), scheduled_departure_time: salida.toISOString(), ...(moverBomba ? { bomba_hora: llegada.toISOString() } : {}) })
       .eq("id", p.id)
     setGuardando(null)
     if (error) { toast({ title: "No se pudo guardar la hora", variant: "destructive" }); return }
@@ -142,8 +206,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   }
 
   async function guardarMetodo(p: PedidoDB, metodo: "bomba" | "directo") {
-    await createClient().from("scheduled_dispatches").update({ metodo_descarga: metodo }).eq("id", p.id)
-    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, metodo_descarga: metodo } : x)))
+    // Directo: no queda nada de bomba (solo si la base ya tiene esas columnas)
+    const limpiarBomba = metodo === "directo" && "bomba_la_pone" in p ? { bomba_la_pone: null, bomba_empresa_id: null, bomba_hora: null } : {}
+    await createClient().from("scheduled_dispatches").update({ metodo_descarga: metodo, ...limpiarBomba }).eq("id", p.id)
+    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, metodo_descarga: metodo, ...limpiarBomba } : x)))
   }
 
   const cambiados = Object.keys(horas).filter((id) => {
@@ -197,9 +263,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
               </div>
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Tiempos usados para calcular <span className="font-normal text-muted-foreground">(valores de referencia hasta medirlos con el GPS)</span></p>
+              <p className="text-sm font-medium mb-2">
+                Tiempos de {plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">(valores de referencia hasta medirlos con el GPS; se guardan en la planta)</span>
+              </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {([["cargaMin", "Carga en planta"], ["descargaBombaMin", "Descarga con bomba (8 m³)"], ["descargaDirectaMin", "Descarga directa (8 m³)"], ["lavadoMin", "Lavado y salida de obra"]] as const).map(([k, l]) => (
+                {CAMPOS_TIEMPO.map(([k, l]) => (
                   <label key={k} className="text-xs space-y-1">
                     <span className="text-muted-foreground">{l}</span>
                     <div className="flex items-center gap-1">
@@ -209,7 +277,42 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   </label>
                 ))}
               </div>
-              <Button variant="link" size="sm" className="px-0 h-auto mt-2 text-xs" onClick={() => setPrm(PARAMETROS_BASE)}>Volver a los valores de referencia</Button>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+                <label className="text-xs space-y-1">
+                  <span className="text-muted-foreground block">Inicio de jornada</span>
+                  <Input type="time" value={prm.inicioJornada} onChange={(e) => e.target.value && setPrm({ ...prm, inicioJornada: e.target.value })} className="h-8 w-36" />
+                </label>
+                <label className="text-xs space-y-1">
+                  <span className="text-muted-foreground block">Fin de jornada</span>
+                  <Input type="time" value={prm.finJornada} onChange={(e) => e.target.value && setPrm({ ...prm, finJornada: e.target.value })} className="h-8 w-36" />
+                </label>
+                <label className="text-xs space-y-1">
+                  <span className="text-muted-foreground block">Tolerancia de puntualidad</span>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={0} value={prm.toleranciaMin} onChange={(e) => setPrm({ ...prm, toleranciaMin: Math.max(0, Number(e.target.value) || 0) })} className="h-8 w-20" />
+                    <span className="text-muted-foreground">min</span>
+                  </div>
+                </label>
+                <label className="text-xs space-y-1">
+                  <span className="text-muted-foreground block">Bocas de carga</span>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={1} value={prm.bocasCarga} onChange={(e) => setPrm({ ...prm, bocasCarga: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} className="h-8 w-20" />
+                    <span className="text-muted-foreground">a la vez</span>
+                  </div>
+                </label>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap mt-3">
+                <Button size="sm" onClick={guardarTiempos} disabled={guardandoTiempos || tiemposCambiados.length === 0}>
+                  {guardandoTiempos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : `Guardar tiempos de ${plants.find((p) => p.id === planta)?.name}`}
+                </Button>
+                {tiemposCambiados.length > 0 && <span className="text-xs text-amber-700">Cambios sin guardar: el plan ya los usa.</span>}
+                <Button variant="link" size="sm" className="px-0 h-auto text-xs" onClick={() => setPrm(PARAMETROS_BASE)}>Volver a los valores de referencia</Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {ultimaMod
+                  ? `Última modificación: ${format(new Date(ultimaMod.created_at), "dd/MM/yyyy HH:mm")} · ${ultimaMod.user_name}`
+                  : "Todavía no se modificaron: son los valores de referencia."}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -270,7 +373,12 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                             ))}
                           </span>
                           {!p.metodo_descarga && <span className="text-amber-700">sin método (se asume {p.construction_sites?.requires_pump ? "bomba" : "directo"})</span>}
+                          {p.metodo_descarga === "bomba" && "bomba_la_pone" in p && <span className="text-sky-700">· {textoBomba(p, empresasBombeo, "Bomba")}</span>}
+                          {p.finalidad && <span>· {p.finalidad}</span>}
                         </p>
+                        {"bomba_la_pone" in p && bombaSinEmpresa(p) && !completo && (
+                          <p className="text-xs text-amber-700 flex items-center gap-1 mt-0.5"><AlertTriangle className="h-3 w-3" />Pedido con bomba sin empresa asignada: confirmala el día anterior (vista Semana › editar pedido)</p>
+                        )}
                       </div>
                       <div className="text-xs md:text-right">
                         {completo && !simular ? (
@@ -342,7 +450,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground mt-3">
-                  Pasá el mouse sobre un bloque para ver los horarios. La planta carga un camión por vez ({plan.plantaOcupacion}% de la jornada ocupada cargando). El uso es el tiempo ocupado de cada camión sobre la jornada {prm.inicioJornada}–{prm.finJornada}.
+                  Pasá el mouse sobre un bloque para ver los horarios. {prm.bocasCarga > 1 ? `La planta carga hasta ${prm.bocasCarga} camiones a la vez` : "La planta carga un camión por vez"} ({plan.plantaOcupacion}% de la jornada ocupada cargando). El uso es el tiempo ocupado de cada camión sobre la jornada {prm.inicioJornada}–{prm.finJornada}.
                 </p>
               </CardContent>
             </Card>

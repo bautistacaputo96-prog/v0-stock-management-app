@@ -22,6 +22,8 @@ export type Parametros = {
   finJornada: string // "18:00"
   /** Tolerancia para considerar que un camión llegó "a tiempo" */
   toleranciaMin: number
+  /** Camiones que la planta puede cargar a la vez */
+  bocasCarga: number
 }
 
 export const PARAMETROS_BASE: Parametros = {
@@ -31,7 +33,43 @@ export const PARAMETROS_BASE: Parametros = {
   descargaDirectaMin: 25,
   inicioJornada: "07:00",
   finJornada: "18:00",
-  toleranciaMin: 10,
+  toleranciaMin: 15, // estándar Loop
+  bocasCarga: 1,
+}
+
+/**
+ * Parámetros de una planta, guardados en la tabla plants (fase 1). Si falta una columna
+ * (migración sin aplicar) se usa el valor de referencia.
+ */
+export function parametrosDePlanta(planta: Record<string, any> | null | undefined): Parametros {
+  const num = (v: any, def: number) => (v == null || Number.isNaN(Number(v)) ? def : Number(v))
+  const hora = (v: any, def: string) => (typeof v === "string" && /^\d{2}:\d{2}/.test(v) ? v.slice(0, 5) : def)
+  const b = PARAMETROS_BASE
+  if (!planta) return b
+  return {
+    cargaMin: num(planta.t_carga_min, b.cargaMin),
+    lavadoMin: num(planta.t_lavado_min, b.lavadoMin),
+    descargaBombaMin: num(planta.t_descarga_bomba_min, b.descargaBombaMin),
+    descargaDirectaMin: num(planta.t_descarga_directa_min, b.descargaDirectaMin),
+    inicioJornada: hora(planta.jornada_inicio, b.inicioJornada),
+    finJornada: hora(planta.jornada_fin, b.finJornada),
+    toleranciaMin: num(planta.tolerancia_puntualidad_min, b.toleranciaMin),
+    bocasCarga: Math.max(1, num(planta.bocas_carga, b.bocasCarga)),
+  }
+}
+
+/** Columnas de plants para guardar los parámetros. */
+export function columnasDePlanta(prm: Parametros) {
+  return {
+    t_carga_min: prm.cargaMin,
+    t_lavado_min: prm.lavadoMin,
+    t_descarga_bomba_min: prm.descargaBombaMin,
+    t_descarga_directa_min: prm.descargaDirectaMin,
+    jornada_inicio: prm.inicioJornada,
+    jornada_fin: prm.finJornada,
+    tolerancia_puntualidad_min: prm.toleranciaMin,
+    bocas_carga: prm.bocasCarga,
+  }
 }
 
 export type Pedido = {
@@ -105,10 +143,21 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
   // Cuándo queda libre cada camión en planta, y la boca de carga
   const libre = new Map(camiones.map((c) => [c.id, -Infinity]))
   const cargas: { desde: number; hasta: number }[] = []
+  const bocas = Math.max(1, Math.floor(prm.bocasCarga || 1))
   const bocaLibreDesde = (t: number) => {
-    let x = t
-    for (const c of [...cargas].sort((a, b) => a.desde - b.desde)) if (x < c.hasta && x + prm.cargaMin > c.desde) x = c.hasta
-    return x
+    if (bocas === 1) {
+      // Una sola boca: igual que siempre
+      let x = t
+      for (const c of [...cargas].sort((a, b) => a.desde - b.desde)) if (x < c.hasta && x + prm.cargaMin > c.desde) x = c.hasta
+      return x
+    }
+    // Varias bocas: el primer momento (t o el fin de alguna carga) con menos cargas superpuestas que bocas
+    const candidatos = [t, ...cargas.map((c) => c.hasta).filter((h) => h > t)].sort((a, b) => a - b)
+    for (const x of candidatos) {
+      const ocupadas = cargas.filter((c) => x < c.hasta && x + prm.cargaMin > c.desde).length
+      if (ocupadas < bocas) return x
+    }
+    return candidatos[candidatos.length - 1]
   }
   const viajes: Viaje[] = []
   const resumen: ResumenPedido[] = []
@@ -186,7 +235,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
         ultimaVuelta: vs.length ? Math.max(...vs.map((v) => v.vuelta)) : null,
       }
     }),
-    plantaOcupacion: Math.round((cargas.reduce((s, c) => s + (c.hasta - c.desde), 0) / jornada) * 100),
+    plantaOcupacion: Math.round((cargas.reduce((s, c) => s + (c.hasta - c.desde), 0) / (jornada * bocas)) * 100),
     jornadaMin: jornada,
     primeraCarga: cargas.length ? Math.min(...cargas.map((c) => c.desde)) : null,
   }

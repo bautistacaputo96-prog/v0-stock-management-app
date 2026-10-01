@@ -23,6 +23,8 @@ import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMont
 import { logDeletion, notifyDeletion } from "@/lib/activity-log"
 import { currentUserName } from "@/lib/current-user"
 import { es } from "date-fns/locale"
+import { ChoferSelect } from "@/components/chofer-select"
+import { cargarChoferes, type Chofer } from "@/lib/maestros"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
 type Plant = { id: string; name: string }
@@ -39,6 +41,9 @@ type ScheduledDispatch = {
   superplasticizer_liters?: number | null;
   /** Kg totales de fibra cargados en el camión (dosificada por m³) */
   fiber_kg?: number | null;
+  /** Fase 1: chofer del despacho y finalidad del pedido de origen */
+  chofer_id?: string | null;
+  finalidad?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -71,6 +76,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     obra: string[]
     formula: string[]
     camion: string[]
+    chofer: string[]
     responsable: string[]
   }>({
     remito: [],
@@ -78,6 +84,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     obra: [],
     formula: [],
     camion: [],
+    chofer: [],
     responsable: [],
   })
   const [editingDispatch, setEditingDispatch] = useState<ScheduledDispatch | null>(null)
@@ -88,6 +95,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     construction_site_id: "",
     formula_id: "",
     mixer_id: "",
+    chofer_id: "",
     observations: "",
     extra_water_liters: "",
     dispatch_date: "",
@@ -108,7 +116,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [sampleSlump, setSampleSlump] = useState("")
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [choferes, setChoferes] = useState<Chofer[]>([])
   const { toast } = useToast()
+  const nombreChofer = (id?: string | null) => (id ? choferes.find((c) => c.id === id)?.nombre || "-" : "-")
 
   useEffect(() => {
     if (selectedPlant) loadData()
@@ -125,6 +135,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         case "obra": value = d.construction_sites?.name || "-"; break
         case "formula": value = d.formulas?.code || "-"; break
         case "camion": value = d.mixers?.license_plate || "-"; break
+        case "chofer": value = nombreChofer(d.chofer_id); break
         case "responsable": value = d.created_by || "-"; break
       }
       if (value) values.add(value)
@@ -219,13 +230,16 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     // los de todas las plantas y el filtro parecía no funcionar)
     let manualQuery = supabase
       .from("dispatches")
-      .select("id, quantity_m3, dispatch_date, notes, remito, extra_water_liters, client_id, construction_site_id, formula_id, mixer_id, created_by, plant_id, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit))")
+      // "*" (y el pedido con "*") para que las columnas de la fase 1 (chofer_id, finalidad) vengan
+      // cuando la migración está aplicada, sin romper la consulta si todavía no lo está.
+      .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
       .gte("dispatch_date", `${dateFrom}T00:00:00`)
       .lte("dispatch_date", `${dateTo}T23:59:59`)
       .order("dispatch_date", { ascending: false })
       .limit(10000)
     if (selectedPlant !== ALL_PLANTS) manualQuery = manualQuery.eq("plant_id", selectedPlant)
-    const { data: manualData, error: manualError } = await manualQuery
+    const [{ data: manualData, error: manualError }, chs] = await Promise.all([manualQuery, cargarChoferes(supabase)])
+    setChoferes(chs)
 
     if (scheduledError || manualError) {
       toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" })
@@ -262,6 +276,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         construction_site_id: d.construction_site_id,
         formula_id: d.formula_id,
         mixer_id: d.mixer_id,
+        chofer_id: d.chofer_id ?? null,
+        finalidad: d.pedido?.finalidad ?? null,
       }))
 
       const combined = [...transformedManual].sort((a, b) =>
@@ -284,6 +300,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         d.formulas?.code,
         d.formulas?.name,
         d.mixers?.license_plate,
+        d.chofer_id ? nombreChofer(d.chofer_id) : null,
+        d.finalidad,
         d.created_by,
         d.observations,
         STATUS_LABELS[d.status],
@@ -301,8 +319,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const matchesFormula = columnFilters.formula.length === 0 || columnFilters.formula.includes(d.formulas?.code || "-")
     const matchesCamion = columnFilters.camion.length === 0 || columnFilters.camion.includes(d.mixers?.license_plate || "-")
     const matchesResponsable = columnFilters.responsable.length === 0 || columnFilters.responsable.includes(d.created_by || "-")
+    const matchesChofer = columnFilters.chofer.length === 0 || columnFilters.chofer.includes(nombreChofer(d.chofer_id))
     
-    return matchesSearch && matchesStatus && matchesRemito && matchesCliente && matchesObra && matchesFormula && matchesCamion && matchesResponsable
+    return matchesSearch && matchesStatus && matchesRemito && matchesCliente && matchesObra && matchesFormula && matchesCamion && matchesChofer && matchesResponsable
   })
 
   // Calculate metrics
@@ -446,13 +465,16 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       "Fibra (kg)": d.fiber_kg ?? "",
       Origen: d.source === "manual" ? "Despacho" : "Programado",
       Observaciones: d.observations || "",
+      // Fase 1: se suman al final (no se mueven las columnas de siempre)
+      Chofer: d.chofer_id ? nombreChofer(d.chofer_id) : "",
+      Finalidad: d.finalidad || "",
     }))
 
     const ws = XLSX.utils.json_to_sheet(rows)
     ws["!cols"] = [
       { wch: 17 }, { wch: 12 }, { wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 20 },
       { wch: 8 }, { wch: 12 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 20 },
-      { wch: 12 }, { wch: 40 },
+      { wch: 12 }, { wch: 40 }, { wch: 20 }, { wch: 20 },
     ]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, "Despachos")
@@ -532,6 +554,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       construction_site_id: dispatch.construction_site_id || "",
       formula_id: dispatch.formula_id || "",
       mixer_id: dispatch.mixer_id || "",
+      chofer_id: dispatch.chofer_id || "",
       observations: dispatch.observations || "",
       extra_water_liters: dispatch.extra_water_liters?.toString() || "",
       dispatch_date: dispatch.scheduled_arrival_time
@@ -590,6 +613,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           construction_site_id: editForm.construction_site_id || null,
           ...(editForm.formula_id ? { formula_id: editForm.formula_id } : {}),
           mixer_id: editForm.mixer_id || null,
+          chofer_id: editForm.chofer_id || null,
           usuario: currentUserName(),
         },
       })
@@ -979,11 +1003,18 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                       <ColumnFilter column="formula" label="Formula" />
                     </div>
                   </TableHead>
+                  <TableHead>Finalidad</TableHead>
                   <TableHead className="text-right">m3</TableHead>
                   <TableHead>
                     <div className="flex items-center gap-1">
                       Camion
                       <ColumnFilter column="camion" label="Camion" />
+                    </div>
+                  </TableHead>
+                  <TableHead>
+                    <div className="flex items-center gap-1">
+                      Chofer
+                      <ColumnFilter column="chofer" label="Chofer" />
                     </div>
                   </TableHead>
                   <TableHead>Estado</TableHead>
@@ -999,7 +1030,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               <TableBody>
                 {filteredDispatches.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={selectedPlant === ALL_PLANTS ? 11 : 10} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={selectedPlant === ALL_PLANTS ? 13 : 12} className="text-center text-muted-foreground py-8">
                       No hay despachos en el periodo seleccionado
                     </TableCell>
                   </TableRow>
@@ -1035,8 +1066,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                         <TableCell className="font-medium">{dispatch.clients?.name || "-"}</TableCell>
                         <TableCell>{dispatch.construction_sites?.name}</TableCell>
                         <TableCell>{dispatch.formulas?.code}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{dispatch.finalidad || "-"}</TableCell>
                         <TableCell className="text-right">{dispatch.quantity_m3}</TableCell>
                         <TableCell>{dispatch.mixers?.license_plate || "-"}</TableCell>
+                        <TableCell className="text-sm">{nombreChofer(dispatch.chofer_id)}</TableCell>
                         <TableCell>
                           <Badge variant={dispatch.status === "delivered" ? "default" : dispatch.status === "cancelled" ? "destructive" : "secondary"}>
                             {STATUS_LABELS[dispatch.status]}
@@ -1210,6 +1243,15 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Chofer, junto al camión (fase 1) */}
+              <div className="grid grid-cols-2 gap-4">
+                <ChoferSelect
+                  choferes={choferes}
+                  value={editForm.chofer_id}
+                  onChange={(v) => setEditForm({ ...editForm, chofer_id: v })}
+                />
               </div>
               
               <div className="grid grid-cols-2 gap-4">

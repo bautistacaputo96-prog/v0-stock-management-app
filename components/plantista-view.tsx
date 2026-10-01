@@ -19,6 +19,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { AddDispatchDialog } from "@/components/add-dispatch-dialog"
 import { currentUserName } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
+import { ChoferSelect } from "@/components/chofer-select"
+import { cargarChoferes, cargarEmpresasBombeo, choferPorCamionDelDia, textoBomba, type Chofer, type EmpresaBombeo } from "@/lib/maestros"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -28,6 +30,11 @@ type ScheduledDispatch = {
   status: string; observations: string | null; is_urgent: boolean;
   fiber_kg_per_m3?: number | null;
   metodo_descarga?: "bomba" | "directo" | null;
+  // Fase 1 (nulos hasta aplicar la migración)
+  finalidad?: string | null;
+  bomba_la_pone?: "rebucret" | "cliente" | null;
+  bomba_empresa_id?: string | null;
+  bomba_hora?: string | null;
   clients?: { id: string; name: string };
   construction_sites?: { id: string; name: string; address: string | null; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean };
   formulas?: { id: string; name: string; code: string; useful_life_minutes: number };
@@ -44,6 +51,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [dailyDispatches, setDailyDispatches] = useState<any[]>([])
+  // Fase 1: choferes (rotan, se elige en cada despacho) y empresas de bombeo
+  const [choferes, setChoferes] = useState<Chofer[]>([])
+  const [empresasBombeo, setEmpresasBombeo] = useState<EmpresaBombeo[]>([])
+  const [choferPorCamion, setChoferPorCamion] = useState<Record<string, string>>({})
+  const [choferTocado, setChoferTocado] = useState(false)
   const [now, setNow] = useState(new Date())
   const { toast } = useToast()
 
@@ -63,6 +75,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [dispatchForm, setDispatchForm] = useState({
     quantity_m3: "",
     mixer_id: "",
+    chofer_id: "",
     remito: "",
     extraWater: "0",
     sampleTaken: false,
@@ -80,7 +93,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [editQuantity, setEditQuantity] = useState("")
   const [finalizarDialog, setFinalizarDialog] = useState<ScheduledDispatch | null>(null)
   // Al confirmar una carga se abre esto para que el operario imprima el remito en el momento
-  const [remitoListo, setRemitoListo] = useState<{ id: string; remito: string; m3: number; cliente: string; obra: string; patente: string } | null>(null)
+  const [remitoListo, setRemitoListo] = useState<{ id: string; remito: string; m3: number; cliente: string; obra: string; patente: string; chofer?: string } | null>(null)
 
   // Daily humidity state
   const [humidityMaterials, setHumidityMaterials] = useState<any[]>([])
@@ -240,7 +253,14 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setClients(clientsRes.data || [])
     setDailyDispatches(dailyDispatchesRes.data || [])
     setLoading(false)
+    // Fase 1: si la migración no está aplicada, quedan vacíos y todo sigue como antes
+    const [chs, emps] = await Promise.all([cargarChoferes(supabase), cargarEmpresasBombeo(supabase)])
+    setChoferes(chs)
+    setEmpresasBombeo(emps)
   }
+
+  const nombreChofer = (id?: string | null) => (id ? choferes.find((c) => c.id === id)?.nombre || null : null)
+  const hayChoferesActivos = choferes.some((c) => c.activo)
 
   /**
    * Cierra un pedido aunque falten m³ por despachar (ej: se pidieron 40 y la
@@ -298,12 +318,13 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     loadData()
   }
 
-  function openDispatchDialog(pedido: ScheduledDispatch) {
+  async function openDispatchDialog(pedido: ScheduledDispatch) {
     const remaining = pedido.quantity_m3 - (pedido.dispatched_m3 || 0)
     const suggestedQty = Math.min(Math.max(0.5, remaining), 8)
     setDispatchForm({
       quantity_m3: suggestedQty.toFixed(1),
       mixer_id: pedido.mixer_id || "",
+      chofer_id: "",
       remito: "",
       extraWater: "0",
       sampleTaken: false,
@@ -313,7 +334,26 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       fiberKgPerM3: pedido.fiber_kg_per_m3 != null ? String(pedido.fiber_kg_per_m3) : "",
     })
     setDispatchDialog(pedido)
+    setChoferTocado(false)
     loadLastSampleNumber()
+    // Chofer por defecto: el del último viaje de ese camión hoy (se puede cambiar: rotan)
+    const supabase = createClient()
+    if (supabase) {
+      const mapa = await choferPorCamionDelDia(supabase)
+      setChoferPorCamion(mapa)
+      if (pedido.mixer_id && mapa[pedido.mixer_id]) {
+        setDispatchForm((f) => (f.chofer_id ? f : { ...f, chofer_id: mapa[pedido.mixer_id as string] }))
+      }
+    }
+  }
+
+  /** Al cambiar de camión se propone su último chofer del día, salvo que ya se haya elegido uno a mano. */
+  function elegirCamion(mixerId: string) {
+    setDispatchForm((f) => ({
+      ...f,
+      mixer_id: mixerId,
+      chofer_id: choferTocado ? f.chofer_id : (choferPorCamion[mixerId] || f.chofer_id),
+    }))
   }
 
   async function handleDispatch() {
@@ -330,6 +370,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     }
     if (!dispatchForm.mixer_id) {
       toast({ title: "Error", description: "Seleccione un camion", variant: "destructive" })
+      return
+    }
+    // Chofer obligatorio solo cuando hay choferes cargados (si la lista está vacía se despacha igual)
+    if (hayChoferesActivos && !dispatchForm.chofer_id) {
+      toast({ title: "Error", description: "Elegí el chofer", variant: "destructive" })
       return
     }
     if (dispatchForm.sampleTaken && (!dispatchForm.sampleNumber.trim() || !dispatchForm.actualSlump.trim())) {
@@ -361,6 +406,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           client_id: dispatchDialog.client_id,
           construction_site_id: dispatchDialog.construction_site_id,
           mixer_id: dispatchForm.mixer_id,
+          ...(dispatchForm.chofer_id ? { chofer_id: dispatchForm.chofer_id } : {}),
           quantity_m3: quantityThisTruck,
           remito: dispatchForm.remito.trim(),
           extra_water_liters: parseFloat(dispatchForm.extraWater) || 0,
@@ -395,6 +441,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           cliente: dispatchDialog.clients?.name || "",
           obra: dispatchDialog.construction_sites?.name || "",
           patente: mixers.find(m => m.id === dispatchForm.mixer_id)?.license_plate || "",
+          chofer: nombreChofer(dispatchForm.chofer_id) || "",
         })
       }
       loadData()
@@ -579,6 +626,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                       <span className="font-medium">{d.quantity_m3} m3</span>
                       {d.remito && <span className="text-xs text-muted-foreground">R: {d.remito}</span>}
                       {d.mixers?.license_plate && <span className="text-xs text-muted-foreground">{d.mixers.license_plate}</span>}
+                      {nombreChofer(d.chofer_id) && <span className="text-xs text-muted-foreground">· {nombreChofer(d.chofer_id)}</span>}
                       {!d.is_test_dispatch && (
                         <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>
                           <Printer className="h-4 w-4" />
@@ -624,7 +672,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                               {pedido.is_urgent && <Badge variant="destructive" className="shrink-0">URGENTE</Badge>}
                               {pedido.metodo_descarga && (
                                 <Badge variant="outline" className={pedido.metodo_descarga === "bomba" ? "shrink-0 border-sky-400 text-sky-700 bg-sky-50" : "shrink-0"}>
-                                  {pedido.metodo_descarga === "bomba" ? "BOMBA" : "DIRECTO"}
+                                  {pedido.metodo_descarga === "bomba" ? textoBomba(pedido, empresasBombeo) : "DIRECTO"}
                                 </Badge>
                               )}
                               {!!pedido.fiber_kg_per_m3 && (
@@ -639,6 +687,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             </div>
                             <div className="text-sm mb-3">
                               <span className="font-medium">{pedido.formulas?.code}</span>
+                              {pedido.finalidad && <Badge variant="outline" className="ml-2 text-[10px] py-0">{pedido.finalidad}</Badge>}
                               {pedido.observations && <span className="text-muted-foreground text-xs ml-2">{pedido.observations}</span>}
                             </div>
                             <div className="space-y-1">
@@ -757,6 +806,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                           <div className="text-sm text-muted-foreground">
                             {dispatch.clients?.name} - {dispatch.quantity_m3} m3
                             {dispatch.remito && <span> - R: {dispatch.remito}</span>}
+                            {nombreChofer(dispatch.chofer_id) && <span> · Chofer: {nombreChofer(dispatch.chofer_id)}</span>}
                           </div>
                           <div className="text-sm mt-1">
                             {minutesRemaining > 0 ? (
@@ -812,7 +862,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                 </div>
                 <div className="space-y-2">
                   <Label>Camion *</Label>
-                  <Select value={dispatchForm.mixer_id} onValueChange={v => setDispatchForm({ ...dispatchForm, mixer_id: v })}>
+                  <Select value={dispatchForm.mixer_id} onValueChange={elegirCamion}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
                     <SelectContent>
                       {mixers.map(m => (
@@ -824,6 +874,14 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                   </Select>
                 </div>
               </div>
+
+              {/* Chofer, junto al camión (fase 1). Rotan: por defecto el del último viaje de ese camión hoy */}
+              <ChoferSelect
+                choferes={choferes}
+                value={dispatchForm.chofer_id}
+                onChange={(v) => { setChoferTocado(true); setDispatchForm((f) => ({ ...f, chofer_id: v })) }}
+                obligatorio
+              />
 
               <div className="space-y-2">
                 <Label>Numero de Remito *</Label>
@@ -939,7 +997,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           {remitoListo && (
             <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
               <p><span className="text-muted-foreground">Remito:</span> <strong className="text-base">{remitoListo.remito || "sin número"}</strong></p>
-              <p><span className="text-muted-foreground">Camión:</span> <strong>{remitoListo.patente || "-"}</strong> · <strong>{remitoListo.m3} m³</strong></p>
+              <p><span className="text-muted-foreground">Camión:</span> <strong>{remitoListo.patente || "-"}</strong> · <strong>{remitoListo.m3} m³</strong>{remitoListo.chofer ? <> · {remitoListo.chofer}</> : null}</p>
               <p><span className="text-muted-foreground">Cliente:</span> {remitoListo.cliente}</p>
               {remitoListo.obra && <p><span className="text-muted-foreground">Obra:</span> {remitoListo.obra}</p>}
             </div>

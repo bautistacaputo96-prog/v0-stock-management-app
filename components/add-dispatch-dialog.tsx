@@ -31,6 +31,8 @@ import { AddConstructionSiteDialog } from "./add-construction-site-dialog"
 import { AddMixerDialog } from "./add-mixer-dialog"
 import { UserSelector } from "./user-selector"
 import { SearchableSelect } from "@/components/dispatch-scheduling"
+import { ChoferSelect } from "@/components/chofer-select"
+import { cargarChoferes, choferPorCamionDelDia, type Chofer } from "@/lib/maestros"
 
 type Formula = {
   id: string
@@ -83,7 +85,7 @@ interface AddDispatchDialogProps {
   plantId: string
   plants?: { id: string; name: string }[]
   /** Se llama al guardar. Para un despacho con remito recibe sus datos, para poder imprimirlo. */
-  onSuccess?: (despacho?: { id: string; remito: string; m3: number; cliente: string; obra: string; patente: string }) => void
+  onSuccess?: (despacho?: { id: string; remito: string; m3: number; cliente: string; obra: string; patente: string; chofer?: string }) => void
   triggerLabel?: string
 }
 
@@ -146,6 +148,10 @@ export function AddDispatchDialog({
   const [isManualEntry, setIsManualEntry] = useState(false)
   const [materials, setMaterials] = useState<Material[]>([])
   const [manualMaterials, setManualMaterials] = useState<ManualMaterialEntry[]>([])
+  // Fase 1: chofer del despacho (rotan). Por defecto, el del último viaje de ese camión en el día.
+  const [choferes, setChoferes] = useState<Chofer[]>([])
+  const [choferPorCamion, setChoferPorCamion] = useState<Record<string, string>>({})
+  const [choferTocado, setChoferTocado] = useState(false)
 
   const [formData, setFormData] = useState({
     formula_id: "",
@@ -154,6 +160,7 @@ export function AddDispatchDialog({
     client_id: "",
     construction_site_id: "",
     mixer_id: "",
+    chofer_id: "",
     extra_water_liters: "",
     sand_stockpile_humidity: "",
     sample_taken: false,
@@ -204,8 +211,18 @@ export function AddDispatchDialog({
   useEffect(() => {
     if (open) {
       loadLastSandHumidity()
+      cargarChoferes(createClient()).then(setChoferes)
     }
   }, [open])
+
+  // Chofer por defecto según el camión, para el día elegido en el formulario
+  useEffect(() => {
+    if (!open || !formData.dispatch_date) return
+    const [y, m, d] = formData.dispatch_date.split("-").map(Number)
+    choferPorCamionDelDia(createClient(), new Date(y, m - 1, d)).then(setChoferPorCamion)
+  }, [open, formData.dispatch_date])
+
+  const hayChoferesActivos = choferes.some((c) => c.activo)
 
   useEffect(() => {
     if (open && isTestDispatch && isManualEntry) {
@@ -329,6 +346,13 @@ export function AddDispatchDialog({
         return
       }
 
+      // Chofer obligatorio si salió un camión y hay choferes cargados
+      if (!isTestDispatch && formData.mixer_id && hayChoferesActivos && !formData.chofer_id) {
+        toast.error("Elegí el chofer")
+        setLoading(false)
+        return
+      }
+
       // Todo el despacho en una sola transacción de la base (fase 0b): remito no repetido,
       // materiales de la fórmula en el stock de la planta elegida (con la humedad de la
       // Arena Fina), fibra, probetas (las crea el trigger de la base) y actividad.
@@ -343,6 +367,7 @@ export function AddDispatchDialog({
           client_id: !isTestDispatch && formData.client_id ? formData.client_id : null,
           construction_site_id: !isTestDispatch && formData.construction_site_id ? formData.construction_site_id : null,
           mixer_id: formData.mixer_id || null,
+          ...(!isTestDispatch && formData.chofer_id ? { chofer_id: formData.chofer_id } : {}),
           extra_water_liters: formData.extra_water_liters ? Number.parseFloat(formData.extra_water_liters) : null,
           sand_stockpile_humidity: formData.sand_stockpile_humidity
             ? Number.parseFloat(formData.sand_stockpile_humidity)
@@ -374,6 +399,7 @@ export function AddDispatchDialog({
         cliente: clients.find((c) => c.id === formData.client_id)?.name || "",
         obra: "",
         patente: mixers.find((m) => m.id === formData.mixer_id)?.license_plate || "",
+        chofer: choferes.find((c) => c.id === formData.chofer_id)?.nombre || "",
       }
       // Close dialog immediately - setLoading(false) AFTER setOpen(false) to avoid race condition
       setOpen(false)
@@ -392,6 +418,7 @@ export function AddDispatchDialog({
     setIsTestDispatch(false)
     setIsManualEntry(false)
     setManualMaterials([])
+    setChoferTocado(false)
     setFormData({
       formula_id: "",
       quantity_m3: "",
@@ -399,6 +426,7 @@ export function AddDispatchDialog({
       client_id: "",
       construction_site_id: "",
       mixer_id: "",
+      chofer_id: "",
       extra_water_liters: "",
       sand_stockpile_humidity: "",
       sample_taken: false,
@@ -643,7 +671,13 @@ export function AddDispatchDialog({
                   <div className="flex gap-2">
                     <Select
                       value={formData.mixer_id}
-                      onValueChange={(value) => setFormData({ ...formData, mixer_id: value })}
+                      onValueChange={(value) =>
+                        setFormData({
+                          ...formData,
+                          mixer_id: value,
+                          chofer_id: choferTocado ? formData.chofer_id : (choferPorCamion[value] || formData.chofer_id),
+                        })
+                      }
                     >
                       <SelectTrigger className="flex-1">
                         <SelectValue placeholder="Seleccionar mixer" />
@@ -673,6 +707,14 @@ export function AddDispatchDialog({
                     />
                   </div>
                 </div>
+
+                {/* Chofer, junto al mixer (fase 1) */}
+                <ChoferSelect
+                  choferes={choferes}
+                  value={formData.chofer_id}
+                  onChange={(v) => { setChoferTocado(true); setFormData((prev) => ({ ...prev, chofer_id: v })) }}
+                  obligatorio={!!formData.mixer_id}
+                />
 
                 <div className="grid gap-2">
                   <Label htmlFor="client">Cliente *</Label>
