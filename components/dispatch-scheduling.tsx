@@ -698,7 +698,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                   <Pencil className="h-4 w-4 mr-2" />
                                   Editar
                                 </DropdownMenuItem>
-                                {ve && (
+                                {ve && !["cancelled", "completed"].includes(d.status) && (
                                   <DropdownMenuItem onClick={() => setGerenciar(d as unknown as PedidoGerenciador)}>
                                     <Truck className="h-4 w-4 mr-2" />
                                     Viajes <NuevoBadge className="ml-2" />

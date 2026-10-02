@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS public.viajes (
   updated_at        timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT viajes_pedido_n_key UNIQUE (pedido_id, n)
 );
+-- Por si la tabla ya existía de una versión anterior de esta migración
+ALTER TABLE public.viajes ADD COLUMN IF NOT EXISTS m3_planificado numeric;
+ALTER TABLE public.viajes ADD COLUMN IF NOT EXISTS origen text NOT NULL DEFAULT 'automatico';
+
 -- Un despacho marca a lo sumo un viaje
 CREATE UNIQUE INDEX IF NOT EXISTS viajes_dispatch_id_key ON public.viajes (dispatch_id) WHERE dispatch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS viajes_plant_carga_idx ON public.viajes (plant_id, hora_carga);
