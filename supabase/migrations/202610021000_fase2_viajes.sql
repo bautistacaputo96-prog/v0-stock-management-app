@@ -10,14 +10,19 @@
 --                                   camión sugerido, estado planificado / despachado / cancelado. NO toca stock.
 --   scheduled_dispatches            confirmado_at / confirmado_por (👍 del día anterior), espaciado_min,
 --                                   m3_por_viaje (por defecto 8).
---   guardar_viajes_pedido           reemplaza en una sola transacción los viajes PLANIFICADOS de un pedido
---                                   (los despachados no se tocan). Lo usa el front al guardar un pedido,
---                                   el plan del día y el gerenciador.
+--   guardar_viajes_pedido           guarda en una sola transacción los viajes PLANIFICADOS de un pedido:
+--                                   actualiza por número los que ya estaban (mismo id), agrega los nuevos y
+--                                   borra los que sobran. Los despachados no se tocan. Rechaza pedidos
+--                                   cancelados o completos. Lo usa el front al guardar un pedido, el plan
+--                                   del día y el gerenciador (origen: automatico / plan_dia / gerenciador).
 --   registrar_despacho              además marca como despachado el viaje elegido (viaje_id) o el primer
---                                   viaje pendiente del pedido, con dispatch_id.
---   anular_despacho                 además vuelve ese viaje a planificado.
---   Las dos parten de la definición de producción del 01/10/2026 (pg_get_functiondef, = fase 1); lo único
---   que cambia es lo de los viajes. editar_despacho no cambia.
+--                                   viaje pendiente del pedido, con dispatch_id y los m³ REALES del camión
+--                                   (los planificados quedan en m3_planificado).
+--   anular_despacho                 además vuelve ese viaje a planificado con sus m³ planificados.
+--   editar_despacho                 además, si cambian los m³ del despacho, los copia a su viaje.
+--   Las tres parten de la definición de producción del 01/10/2026 (pg_get_functiondef, = fase 1); lo único
+--   que cambia es lo de los viajes.
+--   trigger en scheduled_dispatches al pasar a cancelado o completo: sus viajes pendientes quedan 'cancelado'.
 --
 -- Permisos como el resto de las tablas (sin RLS; la seguridad la pone la fase 0c).
 
@@ -44,7 +49,10 @@ CREATE TABLE IF NOT EXISTS public.viajes (
   pedido_id         uuid NOT NULL REFERENCES public.scheduled_dispatches(id) ON DELETE CASCADE,
   plant_id          uuid REFERENCES public.plants(id),
   n                 integer NOT NULL CHECK (n > 0),
+  -- m³ del viaje: los planificados mientras está pendiente; los reales del camión una vez despachado
   m3                numeric NOT NULL CHECK (m3 > 0),
+  -- m³ que tenía planificados al despacharse (para devolverlos si se anula el despacho)
+  m3_planificado    numeric,
   hora_carga        timestamptz NOT NULL,
   hora_salida       timestamptz NOT NULL,
   hora_llegada      timestamptz NOT NULL,
@@ -55,23 +63,60 @@ CREATE TABLE IF NOT EXISTS public.viajes (
   -- Se completa al despachar. SET NULL solo por seguridad: anular_despacho ya lo libera antes de borrar.
   dispatch_id       uuid REFERENCES public.dispatches(id) ON DELETE SET NULL,
   actualizado_por   text,
+  -- Quién armó el viaje: automatico (al guardar el pedido) / plan_dia / gerenciador
+  origen            text NOT NULL DEFAULT 'automatico' CHECK (origen IN ('automatico', 'plan_dia', 'gerenciador')),
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT viajes_pedido_n_key UNIQUE (pedido_id, n)
 );
-CREATE INDEX IF NOT EXISTS viajes_dispatch_id_idx ON public.viajes (dispatch_id);
+-- Un despacho marca a lo sumo un viaje
+CREATE UNIQUE INDEX IF NOT EXISTS viajes_dispatch_id_key ON public.viajes (dispatch_id) WHERE dispatch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS viajes_plant_carga_idx ON public.viajes (plant_id, hora_carga);
 CREATE INDEX IF NOT EXISTS viajes_mixer_id_idx ON public.viajes (mixer_id);
 
 GRANT ALL ON TABLE public.viajes TO anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
+-- Pedido cancelado o completo: sus viajes pendientes quedan 'cancelado' (vale para todas las pantallas:
+-- Cancelar en Semana / Despacho diario, Finalizar, y el despacho que completa el pedido).
+-- Si un pedido completo se reabre (anular un despacho lo vuelve a 'scheduled'), los viajes que se habían
+-- cancelado por completarse vuelven a pendientes.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._viajes_pedido_cerrado()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  IF NEW.status IN ('cancelled', 'completed') THEN
+    UPDATE viajes
+       SET estado = 'cancelado', updated_at = now(),
+           actualizado_por = 'Pedido ' || CASE WHEN NEW.status = 'cancelled' THEN 'cancelado' ELSE 'completo' END
+     WHERE pedido_id = NEW.id AND estado = 'planificado';
+  ELSIF OLD.status = 'completed' THEN
+    UPDATE viajes
+       SET estado = 'planificado', updated_at = now(), actualizado_por = 'Pedido reabierto'
+     WHERE pedido_id = NEW.id AND estado = 'cancelado' AND actualizado_por = 'Pedido completo';
+  END IF;
+  RETURN NULL;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS trg_viajes_pedido_cerrado ON public.scheduled_dispatches;
+CREATE TRIGGER trg_viajes_pedido_cerrado
+  AFTER UPDATE OF status ON public.scheduled_dispatches
+  FOR EACH ROW
+  WHEN (OLD.status IS DISTINCT FROM NEW.status)
+  EXECUTE FUNCTION public._viajes_pedido_cerrado();
+
+-- ---------------------------------------------------------------------------
 -- Guardar los viajes planificados de un pedido (todo o nada)
 -- p_viajes: [{ n, m3, hora_carga, hora_salida, hora_llegada, hora_fin_descarga, hora_vuelta, mixer_id }]
--- Borra los viajes 'planificado' del pedido y graba los que vienen. Los 'despachado'/'cancelado' quedan
--- como están; si un n de la lista choca con uno de ellos, error y no se graba nada.
+-- Por número: si ya hay un viaje planificado con ese n se actualiza (conserva el id, así el plantista que lo
+-- tenía elegido sigue apuntando al mismo viaje); si no hay, se agrega; los planificados que no vienen se borran.
+-- Los 'despachado'/'cancelado' no se tocan: si un n de la lista choca con uno de ellos, error y no se graba nada.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.guardar_viajes_pedido(p_pedido_id uuid, p_viajes jsonb, p_usuario text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.guardar_viajes_pedido(p_pedido_id uuid, p_viajes jsonb, p_usuario text DEFAULT NULL, p_origen text DEFAULT 'automatico')
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -80,9 +125,12 @@ CREATE OR REPLACE FUNCTION public.guardar_viajes_pedido(p_pedido_id uuid, p_viaj
 AS $function$
 DECLARE
   v_usuario  text := coalesce(nullif(btrim(coalesce(p_usuario, '')), ''), 'Sistema');
+  v_origen   text := coalesce(nullif(btrim(coalesce(p_origen, '')), ''), 'automatico');
   v_pedido   public.scheduled_dispatches;
   v_borrados int;
-  v_n        int := 0;
+  v_nuevos   int := 0;
+  v_actual   int := 0;
+  v_vistos   int[] := '{}';
   v_num      int;
   v_m3       numeric;
   v_carga    timestamptz;
@@ -90,6 +138,7 @@ DECLARE
   v_llegada  timestamptz;
   v_fin      timestamptz;
   v_vuelta   timestamptz;
+  v_estado   text;
   e          jsonb;
 BEGIN
   -- Mismo orden de bloqueo que el despacho: primero el pedido
@@ -97,12 +146,18 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'El pedido no existe (puede haber sido borrado). Actualizá la pantalla.';
   END IF;
+  IF v_pedido.status = 'cancelled' THEN
+    RAISE EXCEPTION 'El pedido está cancelado: no se pueden planificar viajes.';
+  END IF;
+  IF v_pedido.status = 'completed' THEN
+    RAISE EXCEPTION 'El pedido ya está completo o finalizado: no se pueden planificar viajes.';
+  END IF;
   IF p_viajes IS NULL OR jsonb_typeof(p_viajes) <> 'array' THEN
     RAISE EXCEPTION 'Los viajes tienen que venir como una lista';
   END IF;
-
-  DELETE FROM viajes WHERE pedido_id = p_pedido_id AND estado = 'planificado';
-  GET DIAGNOSTICS v_borrados = ROW_COUNT;
+  IF v_origen NOT IN ('automatico', 'plan_dia', 'gerenciador') THEN
+    RAISE EXCEPTION 'Origen de los viajes desconocido: %', v_origen;
+  END IF;
 
   FOR e IN SELECT * FROM jsonb_array_elements(p_viajes) LOOP
     v_num     := nullif(e->>'n', '')::int;
@@ -115,6 +170,10 @@ BEGIN
     IF v_num IS NULL OR v_num <= 0 THEN
       RAISE EXCEPTION 'Cada viaje necesita su número (1, 2, 3...)';
     END IF;
+    IF v_num = ANY (v_vistos) THEN
+      RAISE EXCEPTION 'El viaje % está repetido en la lista', v_num;
+    END IF;
+    v_vistos := v_vistos || v_num;
     IF v_m3 IS NULL OR v_m3 <= 0 THEN
       RAISE EXCEPTION 'Los m³ del viaje % tienen que ser mayores a 0', v_num;
     END IF;
@@ -124,21 +183,36 @@ BEGIN
     IF NOT (v_carga <= v_salida AND v_salida <= v_llegada AND v_llegada <= v_fin AND v_fin <= v_vuelta) THEN
       RAISE EXCEPTION 'Los horarios del viaje % no están en orden (carga, salida, llegada, fin de descarga, vuelta)', v_num;
     END IF;
-    IF EXISTS (SELECT 1 FROM viajes WHERE pedido_id = p_pedido_id AND n = v_num) THEN
-      RAISE EXCEPTION 'El viaje % ya está despachado o repetido: no se puede volver a planificar. Actualizá la pantalla.', v_num;
+    SELECT estado INTO v_estado FROM viajes WHERE pedido_id = p_pedido_id AND n = v_num FOR UPDATE;
+    IF FOUND AND v_estado <> 'planificado' THEN
+      RAISE EXCEPTION 'El viaje % ya está despachado o cancelado: no se puede volver a planificar. Actualizá la pantalla.', v_num;
     END IF;
-    INSERT INTO viajes (pedido_id, plant_id, n, m3, hora_carga, hora_salida, hora_llegada, hora_fin_descarga,
-                        hora_vuelta, mixer_id, estado, actualizado_por)
-    VALUES (p_pedido_id, v_pedido.plant_id, v_num, v_m3, v_carga, v_salida, v_llegada, v_fin,
-            v_vuelta, nullif(e->>'mixer_id', '')::uuid, 'planificado', v_usuario);
-    v_n := v_n + 1;
+    IF FOUND THEN
+      UPDATE viajes
+         SET m3 = v_m3, hora_carga = v_carga, hora_salida = v_salida, hora_llegada = v_llegada,
+             hora_fin_descarga = v_fin, hora_vuelta = v_vuelta, mixer_id = nullif(e->>'mixer_id', '')::uuid,
+             plant_id = v_pedido.plant_id, origen = v_origen, actualizado_por = v_usuario, updated_at = now()
+       WHERE pedido_id = p_pedido_id AND n = v_num;
+      v_actual := v_actual + 1;
+    ELSE
+      INSERT INTO viajes (pedido_id, plant_id, n, m3, hora_carga, hora_salida, hora_llegada, hora_fin_descarga,
+                          hora_vuelta, mixer_id, estado, origen, actualizado_por)
+      VALUES (p_pedido_id, v_pedido.plant_id, v_num, v_m3, v_carga, v_salida, v_llegada, v_fin,
+              v_vuelta, nullif(e->>'mixer_id', '')::uuid, 'planificado', v_origen, v_usuario);
+      v_nuevos := v_nuevos + 1;
+    END IF;
   END LOOP;
 
-  RETURN jsonb_build_object('pedido_id', p_pedido_id, 'borrados', v_borrados, 'guardados', v_n);
+  -- Los planificados que ya no vienen (quitar sobrantes)
+  DELETE FROM viajes WHERE pedido_id = p_pedido_id AND estado = 'planificado' AND NOT (n = ANY (v_vistos));
+  GET DIAGNOSTICS v_borrados = ROW_COUNT;
+
+  RETURN jsonb_build_object('pedido_id', p_pedido_id, 'actualizados', v_actual, 'nuevos', v_nuevos,
+                            'borrados', v_borrados, 'guardados', v_actual + v_nuevos);
 END;
 $function$;
 
-GRANT EXECUTE ON FUNCTION public.guardar_viajes_pedido(uuid, jsonb, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.guardar_viajes_pedido(uuid, jsonb, text, text) TO anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Motor de despacho: registrar_despacho marca el viaje (definición de producción + viajes)
@@ -189,6 +263,7 @@ DECLARE
   v_viaje_id   uuid;
   v_viaje_n    int;
   v_viaje_tot  int;
+  v_viaje_plan numeric;
 BEGIN
   v_dia := (v_fecha AT TIME ZONE 'America/Argentina/Buenos_Aires')::date;
 
@@ -370,6 +445,24 @@ BEGIN
   -- Stock: todos los materiales juntos, en orden de id
   PERFORM public._mover_stock(v_mover);
 
+  -- Fase 2 (antes de tocar el pedido: si este camión lo completa, el trigger cancela los viajes que sobran)
+  IF v_pedido_id IS NOT NULL THEN
+    -- Fase 2: el viaje elegido o, si no se eligió, el primer viaje pendiente del pedido queda despachado.
+    -- Si el pedido no tiene viajes no pasa nada (igual que antes).
+    UPDATE viajes
+       SET estado = 'despachado', dispatch_id = v_id, m3_planificado = m3, m3 = v_m3,  -- m³ reales del camión
+           actualizado_por = v_usuario, updated_at = now()
+     WHERE id = coalesce(v_viaje_pedido,
+                         (SELECT id FROM viajes
+                           WHERE pedido_id = v_pedido_id AND estado = 'planificado'
+                           ORDER BY n LIMIT 1))
+       AND estado = 'planificado'
+     RETURNING id, n, m3_planificado INTO v_viaje_id, v_viaje_n, v_viaje_plan;
+    IF v_viaje_id IS NOT NULL THEN
+      SELECT count(*) INTO v_viaje_tot FROM viajes WHERE pedido_id = v_pedido_id AND estado <> 'cancelado';
+    END IF;
+  END IF;
+
   -- 4. Pedido: acumulado atómico y completo si se llegó al total
   IF v_pedido_id IS NOT NULL THEN
     UPDATE scheduled_dispatches
@@ -381,19 +474,6 @@ BEGIN
     INSERT INTO dispatch_status_log (scheduled_dispatch_id, previous_status, new_status, changed_by, notes)
     VALUES (v_pedido_id, v_pedido.status, v_estado, v_usuario, 'Despacho remito ' || coalesce(v_remito, 'N/A') || ' · ' || v_m3 || ' m3');
 
-    -- Fase 2: el viaje elegido o, si no se eligió, el primer viaje pendiente del pedido queda despachado.
-    -- Si el pedido no tiene viajes no pasa nada (igual que antes).
-    UPDATE viajes
-       SET estado = 'despachado', dispatch_id = v_id, actualizado_por = v_usuario, updated_at = now()
-     WHERE id = coalesce(v_viaje_pedido,
-                         (SELECT id FROM viajes
-                           WHERE pedido_id = v_pedido_id AND estado = 'planificado'
-                           ORDER BY n LIMIT 1))
-       AND estado = 'planificado'
-     RETURNING id, n INTO v_viaje_id, v_viaje_n;
-    IF v_viaje_id IS NOT NULL THEN
-      SELECT count(*) INTO v_viaje_tot FROM viajes WHERE pedido_id = v_pedido_id AND estado <> 'cancelado';
-    END IF;
   END IF;
 
   -- 5. Camión en ruta (por defecto solo cuando sale de un pedido, como hoy)
@@ -423,12 +503,12 @@ BEGIN
     'completo', coalesce(v_estado = 'completed', false),
     'probetas', v_probetas,
     'materiales', v_n)
-    || CASE WHEN v_viaje_id IS NOT NULL THEN jsonb_build_object('viaje_id', v_viaje_id, 'viaje_n', v_viaje_n) ELSE '{}'::jsonb END;
+    || CASE WHEN v_viaje_id IS NOT NULL THEN jsonb_build_object('viaje_id', v_viaje_id, 'viaje_n', v_viaje_n, 'viaje_m3_planificado', v_viaje_plan) ELSE '{}'::jsonb END;
 END;
 $function$;
 
 -- ---------------------------------------------------------------------------
--- anular_despacho libera el viaje (definición de producción + viajes)
+-- anular_despacho libera el viaje y le devuelve sus m³ planificados (definición de producción + viajes)
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.anular_despacho(p_id uuid, p_usuario text DEFAULT NULL::text, p_motivo text DEFAULT NULL::text)
  RETURNS jsonb
@@ -499,7 +579,8 @@ BEGIN
 
   -- Fase 2: el viaje que había salido con este despacho vuelve a quedar pendiente
   UPDATE viajes
-     SET estado = 'planificado', dispatch_id = NULL, actualizado_por = v_usuario, updated_at = now()
+     SET estado = 'planificado', dispatch_id = NULL, m3 = coalesce(m3_planificado, m3), m3_planificado = NULL,
+         actualizado_por = v_usuario, updated_at = now()
    WHERE dispatch_id = p_id
   RETURNING n INTO v_viaje_n;
 
@@ -540,6 +621,227 @@ BEGIN
 END;
 $function$;
 
+-- ---------------------------------------------------------------------------
+-- editar_despacho copia los m³ nuevos al viaje (definición de producción + viajes)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.editar_despacho(p_id uuid, p jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+ SET "TimeZone" TO 'America/Argentina/Buenos_Aires'
+AS $function$
+DECLARE
+  v_usuario  text := coalesce(nullif(btrim(coalesce(p->>'usuario', '')), ''), 'Sistema');
+  v_d        public.dispatches;
+  v_m3       numeric;
+  v_formula  uuid;
+  v_plant    uuid;
+  v_calc_plant uuid;
+  v_remito   text;
+  v_old_rem  text;
+  v_client   uuid;
+  v_site     uuid;
+  v_mixer    uuid;
+  v_chofer   uuid;  -- fase 1
+  v_agua     numeric;
+  v_notes    text;
+  v_fecha    timestamptz;
+  v_recalc   boolean;
+  v_ratio    numeric;
+  v_q        numeric;
+  v_fibra_m3 numeric;
+  v_neto     jsonb := '{}'::jsonb;
+  v_res      jsonb;
+  v_cambios  jsonb := '{}'::jsonb;
+  v_nota     text;
+  v_m        public.materials;
+  r          record;
+BEGIN
+  -- Orden de bloqueos: despacho -> pedido -> materiales
+  SELECT * INTO v_d FROM dispatches WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'El despacho no existe (puede que se haya borrado). Actualizá la pantalla.';
+  END IF;
+  IF v_d.scheduled_dispatch_id IS NOT NULL THEN
+    PERFORM 1 FROM scheduled_dispatches WHERE id = v_d.scheduled_dispatch_id FOR UPDATE;
+  END IF;
+
+  v_m3      := CASE WHEN p ? 'quantity_m3' THEN nullif(p->>'quantity_m3', '')::numeric ELSE v_d.quantity_m3 END;
+  v_formula := coalesce(CASE WHEN p ? 'formula_id' THEN nullif(p->>'formula_id', '')::uuid END, v_d.formula_id);
+  v_plant   := coalesce(CASE WHEN p ? 'plant_id' THEN nullif(p->>'plant_id', '')::uuid END, v_d.plant_id);
+  v_remito  := CASE WHEN p ? 'remito' THEN nullif(btrim(coalesce(p->>'remito', '')), '') ELSE v_d.remito END;
+  v_client  := CASE WHEN p ? 'client_id' THEN nullif(p->>'client_id', '')::uuid ELSE v_d.client_id END;
+  v_site    := CASE WHEN p ? 'construction_site_id' THEN nullif(p->>'construction_site_id', '')::uuid ELSE v_d.construction_site_id END;
+  v_mixer   := CASE WHEN p ? 'mixer_id' THEN nullif(p->>'mixer_id', '')::uuid ELSE v_d.mixer_id END;
+  v_chofer  := CASE WHEN p ? 'chofer_id' THEN nullif(p->>'chofer_id', '')::uuid ELSE v_d.chofer_id END;
+  v_agua    := CASE WHEN p ? 'extra_water_liters' THEN nullif(p->>'extra_water_liters', '')::numeric ELSE v_d.extra_water_liters END;
+  v_notes   := CASE WHEN p ? 'notes' THEN nullif(btrim(coalesce(p->>'notes', '')), '') ELSE v_d.notes END;
+  v_fecha   := coalesce(CASE WHEN p ? 'dispatch_date' THEN nullif(p->>'dispatch_date', '')::timestamptz END, v_d.dispatch_date);
+
+  IF v_m3 IS NULL OR v_m3 <= 0 THEN
+    RAISE EXCEPTION 'La cantidad debe ser mayor a 0';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM formulas WHERE id = v_formula) THEN
+    RAISE EXCEPTION 'La fórmula elegida no existe (actualizá la pantalla)';
+  END IF;
+  IF v_chofer IS DISTINCT FROM v_d.chofer_id AND v_chofer IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM choferes WHERE id = v_chofer) THEN
+    RAISE EXCEPTION 'El chofer elegido no existe (actualizá la pantalla)';
+  END IF;
+
+  -- Remito: si cambia, no puede repetir otro
+  v_old_rem := nullif(btrim(coalesce(v_d.remito, '')), '');
+  IF v_remito IS DISTINCT FROM v_old_rem AND v_remito IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('remito:' || v_remito));
+    IF EXISTS (SELECT 1 FROM dispatches WHERE btrim(remito) = v_remito AND id <> p_id) THEN
+      RAISE EXCEPTION 'Ya existe un despacho con el remito % en el sistema. No se puede cargar dos veces.', v_remito;
+    END IF;
+  END IF;
+
+  v_recalc := v_m3 <> v_d.quantity_m3 OR v_formula <> v_d.formula_id OR v_plant IS DISTINCT FROM v_d.plant_id;
+  v_nota := 'Edición remito ' || coalesce(v_remito, 's/n') || ' (' || v_usuario || ')';
+
+  IF v_recalc THEN
+    IF v_formula = v_d.formula_id AND v_plant IS NOT DISTINCT FROM v_d.plant_id AND v_d.quantity_m3 > 0 THEN
+      -- Solo cambian los m³: se escalan fórmula y fibra; lo que ya no está en la fórmula se quita
+      v_ratio := v_m3 / v_d.quantity_m3;
+      v_nota := v_nota || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3';
+      FOR r IN
+        SELECT dm.id, dm.material_id, dm.quantity, dm.dry_quantity,
+               (m.tipo = 'fibra' OR EXISTS (
+                  SELECT 1 FROM formula_materials fm JOIN materials fmm ON fmm.id = fm.material_id
+                   WHERE fm.formula_id = v_d.formula_id
+                     AND lower(btrim(fmm.name)) = lower(btrim(m.name)) AND fmm.tipo = m.tipo)) AS por_m3
+          FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
+         WHERE dm.dispatch_id = p_id
+           AND NOT (m.tipo = 'aditivo_obra' AND m.name ILIKE '%superfluidificante%')
+         ORDER BY dm.material_id, dm.id
+      LOOP
+        IF r.por_m3 THEN
+          v_q := round(r.quantity * v_ratio, 3);
+          UPDATE dispatch_materials
+             SET quantity = v_q,
+                 wet_quantity = v_q,
+                 dry_quantity = CASE WHEN r.dry_quantity IS NULL THEN NULL ELSE round(r.dry_quantity * v_ratio, 3) END
+           WHERE id = r.id;
+          v_neto := public._sumar_kg(v_neto, r.material_id, v_q - r.quantity);
+        ELSE
+          DELETE FROM dispatch_materials WHERE id = r.id;
+          v_neto := public._sumar_kg(v_neto, r.material_id, -r.quantity);
+        END IF;
+      END LOOP;
+    ELSE
+      -- Cambia la fórmula o la planta: se sacan todas las filas (menos superfluidificante) y se recalculan
+      v_calc_plant := coalesce(v_plant, (SELECT plant_id FROM formulas WHERE id = v_formula));
+      v_nota := v_nota || ': recálculo por cambio de fórmula/planta';
+      SELECT coalesce(sum(dm.quantity), 0) / nullif(v_d.quantity_m3, 0) INTO v_fibra_m3
+        FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
+       WHERE dm.dispatch_id = p_id AND m.tipo = 'fibra';
+      FOR r IN
+        SELECT dm.id, dm.material_id, dm.quantity
+          FROM dispatch_materials dm JOIN materials m ON m.id = dm.material_id
+         WHERE dm.dispatch_id = p_id
+           AND NOT (m.tipo = 'aditivo_obra' AND m.name ILIKE '%superfluidificante%')
+         ORDER BY dm.material_id, dm.id
+      LOOP
+        DELETE FROM dispatch_materials WHERE id = r.id;
+        v_neto := public._sumar_kg(v_neto, r.material_id, -r.quantity);
+      END LOOP;
+      FOR r IN SELECT * FROM public._consumo_formula(v_formula, v_calc_plant, v_m3) LOOP
+        INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
+        VALUES (p_id, r.mat_id, r.kg_humedo, r.kg_seco, r.kg_humedo, r.humedad_pct);
+        v_neto := public._sumar_kg(v_neto, r.mat_id, r.kg_humedo);
+      END LOOP;
+      IF coalesce(v_fibra_m3, 0) > 0 THEN
+        SELECT * INTO v_m FROM materials WHERE plant_id = v_calc_plant AND tipo = 'fibra' ORDER BY name LIMIT 1;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'No se encontró el material Fibra en la planta del despacho';
+        END IF;
+        v_q := round(v_fibra_m3 * v_m3, 3);
+        INSERT INTO dispatch_materials (dispatch_id, material_id, quantity, dry_quantity, wet_quantity, humidity_at_dispatch)
+        VALUES (p_id, v_m.id, v_q, v_q, v_q, 0);
+        v_neto := public._sumar_kg(v_neto, v_m.id, v_q);
+      END IF;
+    END IF;
+
+    -- Stock por diferencia neta (orden de id; ancla de stock respetada)
+    v_res := public._aplicar_neto(p_id, v_d.created_at, v_neto, v_nota);
+
+    -- Pedido
+    PERFORM public._ajustar_pedido(v_d.scheduled_dispatch_id, v_m3 - v_d.quantity_m3, v_usuario,
+                                   'Edición remito ' || coalesce(v_remito, 's/n') || ': ' || v_d.quantity_m3 || ' → ' || v_m3 || ' m3');
+  END IF;
+
+  -- Registro de lo anterior y lo nuevo (solo lo que cambió)
+  IF v_m3 <> v_d.quantity_m3 THEN
+    v_cambios := v_cambios || jsonb_build_object('m3', v_d.quantity_m3 || ' → ' || v_m3);
+  END IF;
+  IF v_formula <> v_d.formula_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Formula',
+      (SELECT code FROM formulas WHERE id = v_d.formula_id) || ' → ' || (SELECT code FROM formulas WHERE id = v_formula));
+  END IF;
+  IF v_plant IS DISTINCT FROM v_d.plant_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Planta',
+      coalesce((SELECT name FROM plants WHERE id = v_d.plant_id), '-') || ' → ' || coalesce((SELECT name FROM plants WHERE id = v_plant), '-'));
+  END IF;
+  IF v_remito IS DISTINCT FROM v_d.remito THEN
+    v_cambios := v_cambios || jsonb_build_object('Remito', coalesce(v_d.remito, '-') || ' → ' || coalesce(v_remito, '-'));
+  END IF;
+  IF v_client IS DISTINCT FROM v_d.client_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Cliente',
+      coalesce((SELECT name FROM clients WHERE id = v_d.client_id), '-') || ' → ' || coalesce((SELECT name FROM clients WHERE id = v_client), '-'));
+  END IF;
+  IF v_site IS DISTINCT FROM v_d.construction_site_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Obra',
+      coalesce((SELECT name FROM construction_sites WHERE id = v_d.construction_site_id), '-') || ' → ' || coalesce((SELECT name FROM construction_sites WHERE id = v_site), '-'));
+  END IF;
+  IF v_mixer IS DISTINCT FROM v_d.mixer_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Camion',
+      coalesce((SELECT license_plate FROM mixers WHERE id = v_d.mixer_id), '-') || ' → ' || coalesce((SELECT license_plate FROM mixers WHERE id = v_mixer), '-'));
+  END IF;
+  IF v_chofer IS DISTINCT FROM v_d.chofer_id THEN
+    v_cambios := v_cambios || jsonb_build_object('Chofer',
+      coalesce((SELECT nombre FROM choferes WHERE id = v_d.chofer_id), '-') || ' → ' || coalesce((SELECT nombre FROM choferes WHERE id = v_chofer), '-'));
+  END IF;
+  IF v_agua IS DISTINCT FROM v_d.extra_water_liters THEN
+    v_cambios := v_cambios || jsonb_build_object('Agua extra (L)', coalesce(v_d.extra_water_liters::text, '-') || ' → ' || coalesce(v_agua::text, '-'));
+  END IF;
+  IF v_notes IS DISTINCT FROM v_d.notes THEN
+    v_cambios := v_cambios || jsonb_build_object('Observaciones', coalesce(v_d.notes, '-') || ' → ' || coalesce(v_notes, '-'));
+  END IF;
+  IF v_fecha IS DISTINCT FROM v_d.dispatch_date THEN
+    v_cambios := v_cambios || jsonb_build_object('Fecha', to_char(v_d.dispatch_date, 'DD/MM/YYYY HH24:MI') || ' → ' || to_char(v_fecha, 'DD/MM/YYYY HH24:MI'));
+  END IF;
+
+  UPDATE dispatches
+     SET quantity_m3 = v_m3, formula_id = v_formula, plant_id = v_plant, remito = v_remito,
+         client_id = v_client, construction_site_id = v_site, mixer_id = v_mixer, chofer_id = v_chofer,
+         extra_water_liters = v_agua, notes = v_notes, dispatch_date = v_fecha
+   WHERE id = p_id;
+
+  -- Fase 2: los m³ del viaje despachado son los reales del camión
+  IF v_m3 <> v_d.quantity_m3 THEN
+    UPDATE viajes SET m3 = v_m3, actualizado_por = v_usuario, updated_at = now() WHERE dispatch_id = p_id;
+  END IF;
+
+  IF v_cambios <> '{}'::jsonb THEN
+    INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
+    VALUES (v_usuario, 'editar', 'despacho', p_id::text, v_remito, v_plant,
+            v_cambios || jsonb_build_object('Stock',
+              CASE WHEN NOT v_recalc THEN 'sin cambios'
+                   WHEN (v_res->>'sin_mover_por_recuento')::int > 0
+                     THEN 'recalculado (' || (v_res->>'sin_mover_por_recuento') || ' materiales sin mover por recuento posterior)'
+                   ELSE 'recalculado' END));
+  END IF;
+
+  RETURN jsonb_build_object('id', p_id, 'recalculado', v_recalc, 'cambios', v_cambios,
+                            'sin_mover_por_recuento', coalesce((v_res->>'sin_mover_por_recuento')::int, 0));
+END;
+$function$;
+
 -- Permisos: los mismos que en la 0b (CREATE OR REPLACE ya los conserva; se repiten por claridad)
 GRANT EXECUTE ON FUNCTION public.registrar_despacho(jsonb) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anular_despacho(uuid, text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.editar_despacho(uuid, jsonb) TO anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public._viajes_pedido_cerrado() FROM PUBLIC, anon, authenticated;
