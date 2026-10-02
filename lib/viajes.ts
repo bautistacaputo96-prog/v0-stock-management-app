@@ -30,14 +30,21 @@ export type ViajeRow = {
   mixer_id: string | null
   estado: EstadoViaje
   dispatch_id?: string | null
+  /** m³ que tenía planificados antes de despacharse (los de `m3` son los reales del camión) */
+  m3_planificado?: number | null
+  origen?: OrigenViajes
   actualizado_por?: string | null
   updated_at?: string | null
 }
+
+/** Quién armó los viajes: al guardar el pedido (automatico), "Guardar plan del día" o el gerenciador. */
+export type OrigenViajes = "automatico" | "plan_dia" | "gerenciador"
 
 /** Lo mínimo del pedido que hace falta para armar sus viajes. */
 export type PedidoParaViajes = {
   id: string
   plant_id: string
+  construction_site_id?: string | null
   quantity_m3: number
   dispatched_m3?: number | null
   scheduled_arrival_time: string
@@ -81,15 +88,23 @@ export const proximoViaje = (vs: ViajeRow[]) => pendientes(vs)[0] || null
 export const totalViajes = (vs: ViajeRow[]) => vs.filter((v) => v.estado !== "cancelado").length
 
 /**
+ * m³ ya entregados: los reales de los viajes despachados (registrar_despacho graba los m³ del camión) o, si es
+ * más, lo despachado del pedido (despachos que salieron antes de que el pedido tuviera viajes).
+ */
+export function m3Entregados(p: PedidoParaViajes, vs: ViajeRow[]) {
+  const enviados = vs.filter((v) => v.estado === "despachado").reduce((s, v) => s + Number(v.m3), 0)
+  return Math.round(Math.max(Number(p.dispatched_m3 || 0), enviados) * 100) / 100
+}
+
+/**
  * Lo que falta planificar de un pedido y desde qué hora:
- * m³ = total − lo ya enviado; el primer pendiente llega a la hora pedida más el espaciado de los ya despachados
+ * m³ = total − lo ya entregado; el primer pendiente llega a la hora pedida más el espaciado de los ya despachados
  * (si se corre la hora del pedido, se corren todos los pendientes).
  */
 function entradaPedido(p: PedidoParaViajes, existentes: ViajeRow[], prm: Parametros) {
   const base = inicioDelDia(p.scheduled_arrival_time)
   const despachados = ordenarPorN(existentes.filter((v) => v.estado === "despachado"))
-  const enviados = despachados.reduce((s, v) => s + Number(v.m3), 0)
-  const pendiente = Math.max(0, Number(p.quantity_m3) - Math.max(Number(p.dispatched_m3 || 0), enviados))
+  const pendiente = Math.max(0, Number(p.quantity_m3) - m3Entregados(p, existentes))
   const llegada = minDelDia(base, p.scheduled_arrival_time) + despachados.reduce((s, v) => s + espaciadoDe(p, Number(v.m3), prm), 0)
   return { base, pendiente: Math.round(pendiente * 100) / 100, llegada }
 }
@@ -207,9 +222,25 @@ export function cambiarM3(vs: ViajeRow[], n: number, m3: number, p: PedidoParaVi
 
 /** m³ que faltan cubrir con viajes (total − despachados − pendientes). Negativo = sobran. */
 export function m3Faltantes(vs: ViajeRow[], p: PedidoParaViajes) {
-  const enviados = vs.filter((v) => v.estado === "despachado").reduce((s, v) => s + Number(v.m3), 0)
   const planificados = vs.filter((v) => v.estado === "planificado").reduce((s, v) => s + Number(v.m3), 0)
-  return Math.round((Number(p.quantity_m3) - Math.max(Number(p.dispatched_m3 || 0), enviados) - planificados) * 100) / 100
+  return Math.round((Number(p.quantity_m3) - m3Entregados(p, vs) - planificados) * 100) / 100
+}
+
+/**
+ * Qué cambió del pedido que obliga a rearmar los viajes pendientes (nombres para Actividad).
+ * Las observaciones, la fibra, la finalidad, la bomba, etc. no tocan los viajes.
+ */
+export function cambiosQueRearman(antes: Partial<PedidoParaViajes>, despues: Partial<PedidoParaViajes>): string[] {
+  const t = (x: any) => (x ? new Date(x).getTime() : null)
+  const num = (x: any, def: number | null = null) => (x == null || x === "" ? def : Number(x))
+  const out: string[] = []
+  if ("scheduled_arrival_time" in despues && t(antes.scheduled_arrival_time) !== t(despues.scheduled_arrival_time)) out.push("hora de llegada")
+  if ("quantity_m3" in despues && num(antes.quantity_m3) !== num(despues.quantity_m3)) out.push("cantidad")
+  if ("metodo_descarga" in despues && (antes.metodo_descarga || null) !== (despues.metodo_descarga || null)) out.push("método de descarga")
+  if ("construction_site_id" in despues && (antes.construction_site_id || null) !== (despues.construction_site_id || null)) out.push("obra")
+  if ("m3_por_viaje" in despues && num(antes.m3_por_viaje, 8) !== num(despues.m3_por_viaje, 8)) out.push("m³ por camión")
+  if ("espaciado_min" in despues && num(antes.espaciado_min) !== num(despues.espaciado_min)) out.push("minutos entre camiones")
+  return out
 }
 
 /** Agrega un viaje al final con lo que falta (o m3_por_viaje si no falta nada), separado por el espaciado. */
@@ -309,35 +340,56 @@ export async function cargarViajes(sb: any, pedidoIds: string[]): Promise<Record
   return out
 }
 
-/** Graba los viajes planificados del pedido (reemplaza los planificados anteriores; los despachados quedan). */
-export async function guardarViajes(sb: any, pedidoId: string, viajes: ViajeRow[], usuario: string): Promise<{ error: string | null }> {
+/**
+ * Graba los viajes planificados del pedido: actualiza por número (mismo id), agrega los nuevos y borra los que
+ * sobran; los despachados quedan. Todo o nada (guardar_viajes_pedido).
+ */
+export async function guardarViajes(sb: any, pedidoId: string, viajes: ViajeRow[], usuario: string, origen: OrigenViajes = "automatico"): Promise<{ error: string | null }> {
   const lista = pendientes(viajes).map((v) => ({
     n: v.n, m3: v.m3, hora_carga: v.hora_carga, hora_salida: v.hora_salida, hora_llegada: v.hora_llegada,
     hora_fin_descarga: v.hora_fin_descarga, hora_vuelta: v.hora_vuelta, mixer_id: v.mixer_id,
   }))
-  const { error } = await sb.rpc("guardar_viajes_pedido", { p_pedido_id: pedidoId, p_viajes: lista, p_usuario: usuario })
+  const { error } = await sb.rpc("guardar_viajes_pedido", { p_pedido_id: pedidoId, p_viajes: lista, p_usuario: usuario, p_origen: origen })
   return { error: error ? error.message || "No se pudieron guardar los viajes" : null }
 }
 
 /**
- * Regenera los viajes pendientes de un pedido con sus datos actuales y la planta.
- * soloSiTiene: para las ediciones de usuarios sin el interruptor (si el pedido no tiene viajes no hace nada).
+ * Rearma los viajes pendientes de un pedido con sus datos actuales y la planta, y lo deja en Actividad
+ * ("Viajes recalculados por cambio de …"). Se llama solo cuando cambió algo que afecta los viajes
+ * (ver cambiosQueRearman) o al crear el pedido. Si pisa un plan del día o ajustes del gerenciador, lo hace
+ * igual pero lo avisa en Actividad (y devuelve reemplazoManual para el aviso en pantalla).
+ * soloSiTiene: para usuarios sin el interruptor (si el pedido no tiene viajes no hace nada).
  * Nunca corta la operación del usuario: devuelve el error para avisarlo.
  */
-export async function regenerarViajesPedido(sb: any, pedidoId: string, usuario: string, opts: { soloSiTiene?: boolean } = {}): Promise<{ error: string | null; generados: number | null }> {
+export async function regenerarViajesPedido(
+  sb: any, pedidoId: string, usuario: string,
+  opts: { soloSiTiene?: boolean; motivo?: string } = {},
+): Promise<{ error: string | null; generados: number | null; reemplazoManual: boolean }> {
+  const nada = { error: null, generados: null, reemplazoManual: false }
   try {
     const { data: existentesData, error: e1 } = await sb.from("viajes").select("*").eq("pedido_id", pedidoId)
-    if (e1) return { error: null, generados: null } // tabla sin crear: como antes
+    if (e1) return nada // tabla sin crear: como antes
     const existentes = ((existentesData || []) as ViajeRow[]).map((v) => ({ ...v, m3: Number(v.m3) }))
-    if (opts.soloSiTiene && existentes.length === 0) return { error: null, generados: null }
+    if (opts.soloSiTiene && existentes.length === 0) return nada
     const { data: p, error: e2 } = await sb.from("scheduled_dispatches").select("*, construction_sites(name, travel_time_minutes, requires_pump)").eq("id", pedidoId).maybeSingle()
-    if (e2 || !p) return { error: e2?.message || "No se encontró el pedido", generados: null }
-    if (p.status === "cancelled") return { error: null, generados: null }
+    if (e2 || !p) return { ...nada, error: e2?.message || "No se encontró el pedido" }
+    if (p.status === "cancelled" || p.status === "completed") return nada
     const { data: planta } = await sb.from("plants").select("*").eq("id", p.plant_id).maybeSingle()
     const nuevos = generarViajes(p as PedidoParaViajes, parametrosDePlanta(planta), existentes)
-    const { error } = await guardarViajes(sb, pedidoId, [...existentes.filter((v) => v.estado !== "planificado"), ...nuevos], usuario)
-    return { error, generados: error ? null : nuevos.length }
+    const antes = pendientes(existentes)
+    const reemplazoManual = antes.some((v) => v.origen === "plan_dia" || v.origen === "gerenciador")
+    const { error } = await guardarViajes(sb, pedidoId, [...existentes.filter((v) => v.estado !== "planificado"), ...nuevos], usuario, "automatico")
+    if (error) return { error, generados: null, reemplazoManual: false }
+    const detalle: Record<string, string> = existentes.length
+      ? { Viajes: `recalculados por cambio de ${opts.motivo || "datos del pedido"}`, "Viajes pendientes": `${antes.length} → ${nuevos.length}` }
+      : { Viajes: `armados al guardar el pedido (${nuevos.length})` }
+    if (reemplazoManual) detalle.Aviso = "se reemplazaron horarios o camiones ajustados a mano (plan del día / gerenciador)"
+    await sb.from("activity_log").insert({
+      user_name: usuario, action: "editar", entity: "pedido", entity_id: pedidoId,
+      reference: (p as any).construction_sites?.name || null, plant_id: p.plant_id, details: detalle,
+    })
+    return { error: null, generados: nuevos.length, reemplazoManual }
   } catch (err: any) {
-    return { error: err?.message || "No se pudieron armar los viajes", generados: null }
+    return { ...nada, error: err?.message || "No se pudieron armar los viajes" }
   }
 }

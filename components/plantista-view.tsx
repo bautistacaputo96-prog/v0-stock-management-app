@@ -98,7 +98,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     // Fibra agregada al camión, dosificada en kg por m³
     fiberEnabled: false,
     fiberKgPerM3: "",
-    viaje_id: "", // fase 2: el viaje que sale (solo con el interruptor)
+    viaje_n: "", // fase 2: el número del viaje que sale (solo con el interruptor; se resuelve al despachar)
   })
   const [submitting, setSubmitting] = useState(false)
   const [lastSampleNumber, setLastSampleNumber] = useState<string | null>(null)
@@ -331,9 +331,12 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (!supabase) return
     await supabase.from("scheduled_dispatches").update({ quantity_m3: qty }).eq("id", editDialog.id)
     toast({ title: "Total actualizado", description: `Nueva cantidad: ${qty} m3` })
-    // Fase 2: si el pedido ya tenía viajes, los pendientes se rearman con el total nuevo
-    const rv = await regenerarViajesPedido(supabase, editDialog.id, currentUserName(), { soloSiTiene: true })
-    if (rv.error) toast({ title: "Los viajes no se actualizaron", description: rv.error, variant: "destructive" })
+    // Fase 2: si el pedido ya tenía viajes y cambió el total, los pendientes se rearman
+    if (qty !== Number(editDialog.quantity_m3)) {
+      const rv = await regenerarViajesPedido(supabase, editDialog.id, currentUserName(), { soloSiTiene: true, motivo: "cantidad" })
+      if (rv.error) toast({ title: "Los viajes no se actualizaron", description: rv.error, variant: "destructive" })
+      else if (ve && rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido" })
+    }
     setEditDialog(null)
     loadData()
   }
@@ -346,7 +349,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     setDispatchForm({
       quantity_m3: suggestedQty.toFixed(1),
       mixer_id: pedido.mixer_id || prox?.mixer_id || "",
-      viaje_id: prox?.id || "",
+      viaje_n: prox ? String(prox.n) : "",
       chofer_id: "",
       remito: "",
       extraWater: "0",
@@ -416,6 +419,17 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (!supabase) { setSubmitting(false); return }
 
     try {
+      // Fase 2: el viaje elegido se busca de nuevo por número (los viajes se pudieron rearmar mientras tanto).
+      // Si ya no está pendiente, sale el primer pendiente y se avisa.
+      let viajeElegidoId: string | null = null
+      if (ve && dispatchForm.viaje_n) {
+        const frescos = pendientes((await cargarViajes(supabase, [dispatchDialog.id]))[dispatchDialog.id] || [])
+        const elegido = frescos.find((v) => String(v.n) === dispatchForm.viaje_n) || frescos[0] || null
+        if (elegido && String(elegido.n) !== dispatchForm.viaje_n) {
+          toast({ title: `El viaje ${dispatchForm.viaje_n} ya no está pendiente`, description: `Se despacha como viaje ${elegido.n}.` })
+        }
+        viajeElegidoId = elegido?.id || null
+      }
       // Todo el despacho en una sola transacción de la base (fase 0b): remito no repetido,
       // m³ contra el restante, materiales de la fórmula en el stock de ESTA planta (con la
       // humedad de la Arena Fina), fibra, probetas (trigger), pedido, camión en ruta y actividad.
@@ -431,7 +445,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           mixer_id: dispatchForm.mixer_id,
           ...(dispatchForm.chofer_id ? { chofer_id: dispatchForm.chofer_id } : {}),
           // Fase 2: el viaje elegido (si no viene, la base marca el primer viaje pendiente del pedido, si tiene)
-          ...(ve && dispatchForm.viaje_id ? { viaje_id: dispatchForm.viaje_id } : {}),
+          ...(viajeElegidoId ? { viaje_id: viajeElegidoId } : {}),
           quantity_m3: quantityThisTruck,
           remito: dispatchForm.remito.trim(),
           extra_water_liters: parseFloat(dispatchForm.extraWater) || 0,
@@ -447,7 +461,13 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         toast({ title: "Error", description: rpcError.message || "No se pudo registrar el despacho", variant: "destructive" })
         return
       }
-      const newDispatch = result as { id: string; restante: number | null; completo: boolean } | null
+      const newDispatch = result as { id: string; restante: number | null; completo: boolean; viaje_n?: number; viaje_m3_planificado?: number | null } | null
+      // Fase 2: si el camión salió con otros m³ que los del viaje, se rearman los pendientes (para todos, si el pedido tiene viajes)
+      if (newDispatch?.viaje_n != null && newDispatch.viaje_m3_planificado != null && !newDispatch.completo
+          && Math.abs(Number(newDispatch.viaje_m3_planificado) - quantityThisTruck) > 0.01) {
+        const rv = await regenerarViajesPedido(supabase, dispatchDialog.id, currentUserName(), { soloSiTiene: true, motivo: `m³ del viaje ${newDispatch.viaje_n} (${newDispatch.viaje_m3_planificado} → ${quantityThisTruck})` })
+        if (ve && rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido", description: `El viaje ${newDispatch.viaje_n} salió con ${quantityThisTruck} m³.` })
+      }
 
       const remainingAfter = Math.max(0, newDispatch?.restante ?? remaining - quantityThisTruck)
       toast({
@@ -929,11 +949,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
               {ve && pendientes(viajesPorPedido[dispatchDialog.id] || []).length > 0 && (
                 <div className="space-y-2">
                   <Label className="flex items-center gap-2">Viaje <NuevoBadge /></Label>
-                  <Select value={dispatchForm.viaje_id} onValueChange={(v) => setDispatchForm((f) => ({ ...f, viaje_id: v }))}>
+                  <Select value={dispatchForm.viaje_n} onValueChange={(v) => setDispatchForm((f) => ({ ...f, viaje_n: v }))}>
                     <SelectTrigger><SelectValue placeholder="Elegí el viaje" /></SelectTrigger>
                     <SelectContent>
                       {pendientes(viajesPorPedido[dispatchDialog.id] || []).map((v) => (
-                        <SelectItem key={v.id} value={v.id!}>
+                        <SelectItem key={v.id} value={String(v.n)}>
                           Viaje {v.n}/{totalViajes(viajesPorPedido[dispatchDialog.id] || [])} · {v.m3} m³ · cargar {format(new Date(v.hora_carga), "HH:mm")}{v.mixer_id ? ` · ${mixers.find((m) => m.id === v.mixer_id)?.license_plate || ""}` : ""}
                         </SelectItem>
                       ))}

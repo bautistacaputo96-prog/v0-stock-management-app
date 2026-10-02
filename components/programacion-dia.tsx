@@ -222,21 +222,27 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     if (error) { toast({ title: "No se pudo guardar la hora", variant: "destructive" }); return }
     logActivity({ action: "editar", entity: "pedido", entityId: p.id, reference: p.construction_sites?.name || null, plantId: p.plant_id, details: { "Hora de llegada": `${format(new Date(p.scheduled_arrival_time), "HH:mm")} → ${h}` } })
     // Fase 2: los viajes pendientes se corren con la hora (sin el interruptor, solo si el pedido ya tenía)
-    const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: !ve })
+    const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: !ve, motivo: "hora de llegada" })
     if (rv.error) toast({ title: "La hora se guardó, pero los viajes no", description: rv.error, variant: "destructive" })
+    else if (ve && rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
     toast({ title: "Hora actualizada", description: `${p.construction_sites?.name}: llegada ${h}` })
     cargar()
   }
 
   async function guardarMetodo(p: PedidoDB, metodo: "bomba" | "directo") {
+    const cambio = p.metodo_descarga !== metodo
     // Directo: no queda nada de bomba (solo si la base ya tiene esas columnas)
     const limpiarBomba = metodo === "directo" && "bomba_la_pone" in p ? { bomba_la_pone: null, bomba_empresa_id: null, bomba_hora: null } : {}
     await createClient().from("scheduled_dispatches").update({ metodo_descarga: metodo, ...limpiarBomba }).eq("id", p.id)
     setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, metodo_descarga: metodo, ...limpiarBomba } : x)))
     // Fase 2: cambia la descarga, cambia el espaciado de los viajes pendientes (si el pedido ya tenía)
-    const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: true })
+    if (!cambio) return
+    const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: true, motivo: "método de descarga" })
     if (rv.error) toast({ title: "Los viajes no se actualizaron", description: rv.error, variant: "destructive" })
-    else if (rv.generados != null && ve) setViajesPorPedido(await cargarViajes(createClient(), pedidos.map((x) => x.id)))
+    else if (rv.generados != null && ve) {
+      toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
+      setViajesPorPedido(await cargarViajes(createClient(), pedidos.map((x) => x.id)))
+    }
   }
 
   // ---------------- Fase 2 ----------------
@@ -257,7 +263,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     let ok = 0
     for (const [pedidoId, nuevos] of Object.entries(propuesta)) {
       const fijos = (viajesPorPedido[pedidoId] || []).filter((v) => v.estado !== "planificado")
-      const { error } = await guardarViajes(sb, pedidoId, [...fijos, ...nuevos], currentUserName())
+      const { error } = await guardarViajes(sb, pedidoId, [...fijos, ...nuevos], currentUserName(), "plan_dia")
       const p = pedidos.find((x) => x.id === pedidoId)
       if (error) { errores.push(`${p?.construction_sites?.name || "pedido"}: ${error}`); continue }
       ok++

@@ -32,7 +32,7 @@ import { FINALIDADES, cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } fro
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
-import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, totalViajes, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
+import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
@@ -320,11 +320,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     const existentes = editingDispatch ? viajesPorPedido[editingDispatch.id] || [] : []
     const armar = (d: Date) => generarViajes({ ...base, scheduled_arrival_time: d.toISOString() }, prm, existentes)
     const otros: OtroPedido[] = dispatches
-      .filter((d) => d.plant_id === form.plant_id && d.id !== editingDispatch?.id && d.status !== "cancelled" && isSameDay(parseISO(d.scheduled_arrival_time), llegada))
+      .filter((d) => d.plant_id === form.plant_id && d.id !== editingDispatch?.id && d.status !== "cancelled" && d.status !== "completed" && isSameDay(parseISO(d.scheduled_arrival_time), llegada))
       .map((d) => ({
         id: d.id,
         obra: d.construction_sites?.name || d.clients?.name || "otro pedido",
-        viajes: viajesPorPedido[d.id]?.length ? viajesPorPedido[d.id] : generarViajes(d as unknown as PedidoParaViajes, paramsPorPlanta[d.plant_id] || prm, []),
+        viajes: viajesPorPedido[d.id]?.length ? viajesPorPedido[d.id].filter((v) => v.estado !== "cancelado") : generarViajes(d as unknown as PedidoParaViajes, paramsPorPlanta[d.plant_id] || prm, []),
       }))
     const vs = armar(llegada)
     if (!vs.length) return null
@@ -503,10 +503,26 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         toast({ title: "Despacho programado", description: `${form.quantity_m3} m3` })
       }
 
-      // Fase 2: viajes. Con el interruptor se arman siempre; sin él, solo se regeneran si el pedido ya tenía.
-      if (pedidoId && (ve || editingDispatch)) {
-        const r = await regenerarViajesPedido(supabase, pedidoId, currentUserName(), { soloSiTiene: !ve })
-        if (r.error) toast({ title: "El pedido se guardó, pero los viajes no", description: r.error, variant: "destructive" })
+      // Fase 2: viajes. Se rearman solo si cambió algo que los afecta (hora, cantidad, descarga, obra, m³ por
+      // camión, espaciado); con el interruptor, además se arman al crear el pedido o si todavía no tenía.
+      // Sin el interruptor, solo se tocan si el pedido ya tenía viajes.
+      if (pedidoId) {
+        const motivos = editingDispatch
+          ? cambiosQueRearman(editingDispatch as unknown as PedidoParaViajes, {
+              scheduled_arrival_time: arrivalTime, quantity_m3: parseFloat(form.quantity_m3), metodo_descarga: form.metodo_descarga || null,
+              construction_site_id: form.construction_site_id, ...(datosFase2 as Partial<PedidoParaViajes>),
+            })
+          : []
+        const debe = editingDispatch ? motivos.length > 0 || (ve && !viajesPorPedido[pedidoId]?.length) : ve
+        if (debe) {
+          const r = await regenerarViajesPedido(supabase, pedidoId, currentUserName(), { soloSiTiene: !ve, motivo: motivos.join(", ") })
+          if (r.error) toast({ title: "El pedido se guardó, pero los viajes no", description: r.error, variant: "destructive" })
+          else if (ve && r.generados != null)
+            toast({
+              title: editingDispatch && viajesPorPedido[pedidoId]?.length ? "Se recalcularon los viajes de este pedido" : `Se armaron ${r.generados} viajes`,
+              description: r.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano (plan del día / gerenciador). Quedó en Actividad." : undefined,
+            })
+        }
       }
 
       setIsDialogOpen(false)
@@ -654,9 +670,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 {d.mixers && <span>| {d.mixers.license_plate}</span>}
                               </div>
                               {/* Fase 2: viajes y confirmación (solo con el interruptor) */}
-                              {ve && (viajesPorPedido[d.id]?.length || d.confirmado_at) ? (
+                              {ve && ((viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status)) || d.confirmado_at) ? (
                                 <div className="flex items-center gap-1 text-[10px] text-violet-800">
-                                  {viajesPorPedido[d.id]?.length ? <span>{totalViajes(viajesPorPedido[d.id])} viajes</span> : null}
+                                  {viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status) ? <span>{totalViajes(viajesPorPedido[d.id])} viajes</span> : null}
                                   {d.confirmado_at && <span title={`Confirmado por ${d.confirmado_por || "-"}`}>· 👍</span>}
                                 </div>
                               ) : null}

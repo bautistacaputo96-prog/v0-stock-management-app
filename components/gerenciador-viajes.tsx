@@ -23,7 +23,7 @@ import { currentUserName } from "@/lib/current-user"
 import { parametrosDePlanta, PARAMETROS_BASE, type Parametros } from "@/lib/planificador"
 import { cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import {
-  generarViajes, correrPendientes, ajustarAHora, agregarViaje, quitarViaje, cambiarM3, m3Faltantes, ordenarPorN,
+  generarViajes, correrPendientes, ajustarAHora, agregarViaje, quitarViaje, cambiarM3, m3Faltantes, m3Entregados, ordenarPorN,
   guardarViajes, totalViajes, type PedidoParaViajes, type ViajeRow,
 } from "@/lib/viajes"
 import { CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
@@ -58,6 +58,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
   const [original, setOriginal] = useState<ViajeRow[]>([])
   const [viajes, setViajes] = useState<ViajeRow[]>([])
   const [sinGuardar, setSinGuardar] = useState(false) // propuesta nueva (el pedido todavía no tenía viajes)
+  // m³ tal como se tipean (se puede borrar y volver a escribir); vacío o 0 = error en línea y no se guarda
+  const [m3Texto, setM3Texto] = useState<Record<number, string>>({})
 
   useEffect(() => {
     if (!open || !pedido) return
@@ -78,6 +80,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
       setMixers((ms as any) || [])
       setEmpresas(emps)
       setOriginal(existentes)
+      setM3Texto({})
       if (existentes.length === 0) {
         setViajes(generarViajes(pedido, p, []))
         setSinGuardar(true)
@@ -92,8 +95,9 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
 
   const ordenados = useMemo(() => ordenarPorN(viajes.filter((v) => v.estado !== "cancelado")), [viajes])
   const total = totalViajes(viajes)
-  const entregado = viajes.filter((v) => v.estado === "despachado").reduce((s, v) => s + Number(v.m3), 0)
-  const enviadoPedido = Math.max(entregado, Number(pedido?.dispatched_m3 || 0))
+  // Entregado = m³ reales de los camiones despachados (o lo despachado del pedido, si es más)
+  const enviadoPedido = pedido ? m3Entregados(pedido, viajes) : 0
+  const m3Invalidos = Object.entries(m3Texto).filter(([n, t]) => viajes.some((v) => v.n === Number(n) && v.estado === "planificado") && !(Number(t.replace(",", ".")) > 0)).map(([n]) => Number(n))
   const faltan = pedido ? m3Faltantes(viajes, pedido) : 0
   const hayPendientes = viajes.some((v) => v.estado === "planificado")
   const cambiado = sinGuardar || JSON.stringify(ordenarPorN(original)) !== JSON.stringify(ordenarPorN(viajes))
@@ -111,7 +115,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
     if (!pedido) return
     setGuardando(true)
     const sb = createClient()
-    const { error } = await guardarViajes(sb, pedido.id, viajes, currentUserName())
+    const { error } = await guardarViajes(sb, pedido.id, viajes, currentUserName(), "gerenciador")
     setGuardando(false)
     if (error) {
       toast({ title: "No se guardaron los viajes", description: error, variant: "destructive" })
@@ -218,7 +222,20 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                         {fijo ? (
                           <span className="text-sm">{v.m3}</span>
                         ) : (
-                          <Input type="number" step="0.5" min="0.5" value={v.m3} onChange={(e) => setViajes((vs) => cambiarM3(vs, v.n, Number(e.target.value), pedido, prm))} className="h-8 w-20" />
+                          <div>
+                            <Input
+                              type="text" inputMode="decimal"
+                              value={m3Texto[v.n] ?? String(v.m3)}
+                              onChange={(e) => {
+                                const t = e.target.value
+                                setM3Texto((m) => ({ ...m, [v.n]: t }))
+                                const x = Number(t.replace(",", "."))
+                                if (x > 0) setViajes((vs) => cambiarM3(vs, v.n, x, pedido, prm))
+                              }}
+                              className={cn("h-8 w-20", m3Invalidos.includes(v.n) && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                            {m3Invalidos.includes(v.n) && <p className="text-[10px] text-red-600 leading-tight">Poné los m³</p>}
+                          </div>
                         )}
                         {fijo ? (
                           <span className="text-xs text-muted-foreground">{patente(v.mixer_id)} · {v.estado === "despachado" ? "despachado" : "cancelado"}</span>
@@ -232,7 +249,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                           </Select>
                         )}
                         {fijo ? <span /> : (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Quitar este viaje" onClick={() => setViajes((vs) => quitarViaje(vs, v.n))}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Quitar este viaje" onClick={() => { setViajes((vs) => quitarViaje(vs, v.n)); setM3Texto({}) }}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
@@ -255,7 +272,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
-          <Button onClick={guardar} disabled={guardando || cargando || !cambiado}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>
+          {m3Invalidos.length > 0 && <span className="text-xs text-red-600 self-center">Completá los m³ de cada viaje para guardar.</span>}
+          <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
