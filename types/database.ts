@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 01/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 02/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -2078,8 +2078,10 @@ export type Database = {
           hora_vuelta: string
           id: string
           m3: number
+          m3_planificado: number | null
           mixer_id: string | null
           n: number
+          origen: string
           pedido_id: string
           plant_id: string | null
           updated_at: string
@@ -2096,8 +2098,10 @@ export type Database = {
           hora_vuelta: string
           id?: string
           m3: number
+          m3_planificado?: number | null
           mixer_id?: string | null
           n: number
+          origen?: string
           pedido_id: string
           plant_id?: string | null
           updated_at?: string
@@ -2114,8 +2118,10 @@ export type Database = {
           hora_vuelta?: string
           id?: string
           m3?: number
+          m3_planificado?: number | null
           mixer_id?: string | null
           n?: number
+          origen?: string
           pedido_id?: string
           plant_id?: string | null
           updated_at?: string
@@ -2167,7 +2173,7 @@ export type Database = {
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
-      guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string }; Returns: Json }
+      guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string; p_origen?: string }; Returns: Json }
       registrar_despacho: { Args: { p: Json }; Returns: Json }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
     }
