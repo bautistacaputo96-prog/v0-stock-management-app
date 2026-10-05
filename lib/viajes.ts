@@ -12,7 +12,7 @@
  * Se guardan con una sola función de la base (guardar_viajes_pedido): todo o nada.
  * Los viajes no tocan stock.
  */
-import { planificar, aMin, parametrosDePlanta, type Parametros, type Camion, type Plan } from "@/lib/planificador"
+import { planificar, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado } from "@/lib/planificador"
 
 export type EstadoViaje = "planificado" | "despachado" | "cancelado"
 
@@ -53,20 +53,26 @@ export type PedidoParaViajes = {
   status?: string
   m3_por_viaje?: number | null
   espaciado_min?: number | null
+  /** Fase 2b: minutos de viaje de este pedido (dependen de la planta) y de descarga por camión de 8 m³ */
+  viaje_min?: number | null
+  descarga_min?: number | null
   construction_sites?: { name?: string | null; travel_time_minutes?: number | null; requires_pump?: boolean | null } | null
 }
 
 const MIN = 60_000
 
-export const viajeMinDe = (p: PedidoParaViajes) => p.construction_sites?.travel_time_minutes || 30
+/** Minutos de viaje: los del pedido (ruta real desde su planta o corregidos a mano), si no los de la obra, si no 30. */
+export const viajeMinDe = (p: PedidoParaViajes) => (Number(p.viaje_min) > 0 ? Number(p.viaje_min) : p.construction_sites?.travel_time_minutes || 30)
+/** Minutos de descarga por camión de 8 m³: los del pedido o, si no tiene, los de la planta según bomba o directo. */
+export const descarga8De = (p: PedidoParaViajes, prm: Parametros) =>
+  Number(p.descarga_min) > 0 ? Number(p.descarga_min) : conBombaDe(p) ? prm.descargaBombaMin : prm.descargaDirectaMin
 export const conBombaDe = (p: PedidoParaViajes) =>
   (p.metodo_descarga || (p.construction_sites?.requires_pump ? "bomba" : "directo")) === "bomba"
 export const m3PorViajeDe = (p: PedidoParaViajes) => (Number(p.m3_por_viaje) > 0 ? Number(p.m3_por_viaje) : 8)
 
 /** Minutos de descarga de un viaje (la misma regla del planificador: proporcional a los m³, mínimo 5). */
 export function descargaDe(p: PedidoParaViajes, m3: number, prm: Parametros) {
-  const base8 = conBombaDe(p) ? prm.descargaBombaMin : prm.descargaDirectaMin
-  return Math.max(5, Math.round((base8 * m3) / 8))
+  return Math.max(5, Math.round((descarga8De(p, prm) * m3) / 8))
 }
 /** Minutos entre la llegada de un camión y la del siguiente. */
 export function espaciadoDe(p: PedidoParaViajes, m3: number, prm: Parametros) {
@@ -147,12 +153,18 @@ export function generarViajes(p: PedidoParaViajes, prm: Parametros, existentes: 
   const tam = m3PorViajeDe(p)
   const virtuales: Camion[] = Array.from({ length: Math.ceil(pendiente / tam) + 1 }, (_, i) => ({ id: `v${i}`, patente: "", capacidad: 1000 }))
   const plan = planificar(
-    [{ id: p.id, cliente: "", obra: "", m3: pendiente, llegada, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p), m3PorViaje: tam, espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null }],
+    [{ id: p.id, cliente: "", obra: "", m3: pendiente, llegada, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p), descargaMin: Number(p.descarga_min) > 0 ? Number(p.descarga_min) : null, m3PorViaje: tam, espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null }],
     virtuales,
     prm,
   )
   const anteriores = pendientes(existentes)
-  return aFilas(p, base, plan.viajes, existentes, (_, i) => anteriores[i]?.mixer_id ?? p.mixer_id ?? null)
+  const filas = aFilas(p, base, plan.viajes, existentes, (_, i) => anteriores[i]?.mixer_id ?? p.mixer_id ?? null)
+  // El camión sugerido que se conserva no puede quedar en dos viajes que se pisan: si choca, queda sin camión
+  const fijos = existentes.filter((v) => v.estado === "despachado")
+  filas.forEach((v, i) => {
+    if (v.mixer_id && [...fijos, ...filas.slice(0, i)].some((o) => o.mixer_id === v.mixer_id && pisan(o, v))) v.mixer_id = null
+  })
+  return filas
 }
 
 /**
@@ -164,6 +176,8 @@ export function planDelDia(
   viajesPorPedido: Record<string, ViajeRow[]>,
   camiones: Camion[],
   prm: Parametros,
+  /** Viajes del día que no entran en este plan (otra planta, otros pedidos): sus camiones están ocupados */
+  otrosViajes: ViajeRow[] = [],
 ): { plan: Plan | null; filas: Record<string, ViajeRow[]> } {
   const entradas = pedidos
     .filter((p) => p.status !== "completed" && p.status !== "cancelled")
@@ -176,10 +190,12 @@ export function planDelDia(
     entradas.map(({ p, e }) => ({
       id: p.id, cliente: "", obra: p.construction_sites?.name || "", m3: e.pendiente,
       llegada: e.llegada + (e.base - base) / MIN, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p),
+      descargaMin: Number(p.descarga_min) > 0 ? Number(p.descarga_min) : null,
       m3PorViaje: m3PorViajeDe(p), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null,
     })),
     camiones,
     prm,
+    ocupadosDe([...Object.values(viajesPorPedido).flat().filter((v) => v.estado === "despachado"), ...otrosViajes], base, new Set(entradas.map((x) => x.p.id))),
   )
   const filas: Record<string, ViajeRow[]> = {}
   for (const { p } of entradas) {
@@ -187,6 +203,86 @@ export function planDelDia(
     filas[p.id] = aFilas(p, base, vs, viajesPorPedido[p.id] || [], (v) => v.camionId)
   }
   return { plan, filas }
+}
+
+/** Ventanas ocupadas de los camiones (de la carga a la vuelta) para el planificador, en minutos del día. */
+function ocupadosDe(viajes: ViajeRow[], base: number, pedidosDelPlan: Set<string>): Ocupado[] {
+  return viajes
+    .filter((v) => v.mixer_id && v.estado !== "cancelado" && !(v.estado === "planificado" && pedidosDelPlan.has(v.pedido_id)))
+    .map((v) => ({ camionId: v.mixer_id!, desde: minDelDia(base, v.hora_carga), hasta: minDelDia(base, v.hora_vuelta) }))
+}
+
+// ---------------------------------------------------------------------------
+// Camión ocupado (fase 2b, D): un camión no puede estar en dos viajes que se pisan, en el mismo pedido o en otro
+// ---------------------------------------------------------------------------
+export type ChoqueCamion = { viaje: ViajeRow; otro: ViajeRow }
+const clave = (v: ViajeRow) => `${v.pedido_id}:${v.n}`
+const pisan = (a: ViajeRow, b: ViajeRow) =>
+  new Date(a.hora_carga).getTime() < new Date(b.hora_vuelta).getTime() && new Date(b.hora_carga).getTime() < new Date(a.hora_vuelta).getTime()
+
+/**
+ * Para cada viaje con camión, el otro viaje del mismo camión que todavía no volvió a planta cuando este carga
+ * (el que cargó antes). Clave: "pedido:n".
+ */
+export function choquesDeCamion(viajes: ViajeRow[]): Map<string, ChoqueCamion> {
+  const out = new Map<string, ChoqueCamion>()
+  const vs = viajes.filter((v) => v.mixer_id && v.estado !== "cancelado")
+  for (const v of vs) {
+    const otro = vs
+      .filter((o) => o !== v && clave(o) !== clave(v) && o.mixer_id === v.mixer_id && pisan(o, v) && new Date(o.hora_carga).getTime() <= new Date(v.hora_carga).getTime())
+      .sort((a, b) => new Date(b.hora_vuelta).getTime() - new Date(a.hora_vuelta).getTime())[0]
+    if (otro) out.set(clave(v), { viaje: v, otro })
+  }
+  return out
+}
+export const claveViaje = clave
+
+/** Camiones libres durante todo el viaje (de la carga a la vuelta), sin contar el propio viaje. */
+export function camionesLibresPara<M extends { id: string }>(v: ViajeRow, viajes: ViajeRow[], camiones: M[]): M[] {
+  const ocupados = new Set(viajes.filter((o) => o.mixer_id && o.estado !== "cancelado" && clave(o) !== clave(v) && pisan(o, v)).map((o) => o.mixer_id))
+  return camiones.filter((c) => !ocupados.has(c.id))
+}
+
+// ---------------------------------------------------------------------------
+// Flota (fase 2b, E): cuántos camiones hacen falta para no cortar el hormigonado
+// ---------------------------------------------------------------------------
+export type ExplicacionFlota = {
+  carga: number; ida: number; descarga: number; lavado: number; vuelta: number; ciclo: number
+  /** minutos entre camiones (espaciado o descarga) */
+  ritmo: number
+  viajes: number
+  /** camiones para no cortar: ciclo / ritmo, como máximo uno por viaje */
+  necesarios: number
+  texto: string
+}
+
+export function explicarFlota(p: PedidoParaViajes, prm: Parametros, viajes: number): ExplicacionFlota {
+  const ida = viajeMinDe(p), descarga = descarga8De(p, prm)
+  const ritmo = Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : descarga
+  const ciclo = prm.cargaMin + ida + descarga + prm.lavadoMin + ida
+  const necesarios = Math.max(1, Math.min(viajes || 1, Math.ceil(ciclo / ritmo)))
+  const texto = `Ciclo: carga ${prm.cargaMin} + ida ${ida} + descarga ${descarga} + lavado ${prm.lavadoMin} + vuelta ${ida} = ${ciclo} min · un camión cada ${ritmo} min → para no cortar el hormigonado hacen falta ${necesarios} camion${necesarios === 1 ? "" : "es"}`
+  return { carga: prm.cargaMin, ida, descarga, lavado: prm.lavadoMin, vuelta: ida, ciclo, ritmo, viajes, necesarios, texto }
+}
+
+/**
+ * "Con 4 camiones el vaciado termina 09:50 en vez de 09:15, con 3 huecos de 12 min": compara el plan real del
+ * pedido (con los camiones que hay) con el ideal (sin límite de camiones). Nulo si no hay cortes.
+ */
+export function textoConMenosCamiones(viajesPlan: ViajeRow[], ideal: ViajeRow[], camionesUsados: number): string | null {
+  if (!viajesPlan.length || !ideal.length) return null
+  const fin = (vs: ViajeRow[]) => Math.max(...vs.map((v) => new Date(v.hora_fin_descarga).getTime()))
+  const finReal = fin(viajesPlan), finIdeal = fin(ideal)
+  if (finReal - finIdeal < MIN) return null
+  const orden = [...viajesPlan].sort((a, b) => new Date(a.hora_llegada).getTime() - new Date(b.hora_llegada).getTime())
+  const huecos: number[] = []
+  for (let i = 1; i < orden.length; i++) {
+    const h = Math.round((new Date(orden[i].hora_llegada).getTime() - new Date(orden[i - 1].hora_fin_descarga).getTime()) / MIN)
+    if (h > 0) huecos.push(h)
+  }
+  const hh = (t: number) => { const d = new Date(t); return aHora(d.getHours() * 60 + d.getMinutes()) }
+  const prom = huecos.length ? Math.round(huecos.reduce((s, x) => s + x, 0) / huecos.length) : 0
+  return `Con ${camionesUsados} camion${camionesUsados === 1 ? "" : "es"} el vaciado termina ${hh(finReal)} en vez de ${hh(finIdeal)}${huecos.length ? `, con ${huecos.length} hueco${huecos.length === 1 ? "" : "s"} de ${prom} min` : ""}`
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +336,8 @@ export function cambiosQueRearman(antes: Partial<PedidoParaViajes>, despues: Par
   if ("construction_site_id" in despues && (antes.construction_site_id || null) !== (despues.construction_site_id || null)) out.push("obra")
   if ("m3_por_viaje" in despues && num(antes.m3_por_viaje, 8) !== num(despues.m3_por_viaje, 8)) out.push("m³ por camión")
   if ("espaciado_min" in despues && num(antes.espaciado_min) !== num(despues.espaciado_min)) out.push("minutos entre camiones")
+  if ("viaje_min" in despues && num(antes.viaje_min) !== num(despues.viaje_min)) out.push("minutos de viaje")
+  if ("descarga_min" in despues && num(antes.descarga_min) !== num(despues.descarga_min)) out.push("minutos de descarga")
   return out
 }
 

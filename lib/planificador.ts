@@ -141,7 +141,16 @@ function descargaDe(p: Pedido, m3: number, prm: Parametros) {
   return Math.max(5, Math.round((base8 * m3) / 8))
 }
 
-export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE): Plan {
+/** Un camión ocupado en otro viaje que no entra en este plan (otra planta, ya despachado), en minutos del día. */
+export type Ocupado = { camionId: string; desde: number; hasta: number }
+
+/**
+ * Asignación de camiones (fase 2b, "pocos camiones bien usados"): para cada viaje se elige primero un camión ya
+ * usado en el día que llegue a tiempo (el que se liberó más tarde, para no dejar huecos); solo si ninguno llega
+ * se suma uno nuevo; si no quedan nuevos, el que pueda cargar antes. Un camión nunca queda en dos viajes que se
+ * pisan: ni en este plan ni con sus viajes de `ocupados`.
+ */
+export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE, ocupados: Ocupado[] = []): Plan {
   const inicio = aMin(prm.inicioJornada)
   const fin = aMin(prm.finJornada)
   // Cuándo queda libre cada camión en planta, y la boca de carga
@@ -163,6 +172,21 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
     }
     return candidatos[candidatos.length - 1]
   }
+  // Ventanas en que cada camión está en otro viaje (fuera de este plan)
+  const ocup = new Map<string, { desde: number; hasta: number }[]>()
+  for (const o of ocupados) (ocup.get(o.camionId) || ocup.set(o.camionId, []).get(o.camionId)!).push({ desde: o.desde, hasta: o.hasta })
+  /** Primer momento ≥ t en que el camión puede cargar sin pisar sus otros viajes (fin(x) = cuándo volvería) */
+  const primerHueco = (id: string, t: number, fin: (x: number) => number) => {
+    let x = t
+    for (let k = 0; k < 50; k++) {
+      const w = (ocup.get(id) || []).find((o) => x < o.hasta && fin(x) > o.desde)
+      if (!w) return x
+      x = w.hasta
+    }
+    return x
+  }
+  /** Último uso del camión antes de t (en este plan o en otros viajes); -Infinity si todavía no se usó */
+  const ultimoUso = (id: string, t: number) => Math.max(libre.get(id)!, ...(ocup.get(id) || []).filter((o) => o.hasta <= t).map((o) => o.hasta))
   const viajes: Viaje[] = []
   const resumen: ResumenPedido[] = []
   const capMax = Math.max(...camiones.map((c) => c.capacidad), 8)
@@ -186,14 +210,27 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
     cant.forEach((m3, i) => {
       const desc = descargaDe(p, m3, prm)
       const cargaObjetivo = proximaLlegada - p.viajeMin - prm.cargaMin
-      // Camión que queda libre antes (o el primero que se libere)
+      // Cuándo volvería a planta si carga en x (con la espera en obra si el anterior todavía descarga)
+      const vueltaSi = (x: number) => {
+        const lleg = Math.max(x + prm.cargaMin + p.viajeMin, proximaLlegada)
+        const ini = finAnterior != null ? Math.max(lleg, finAnterior) : lleg
+        return ini + desc + prm.lavadoMin + p.viajeMin
+      }
+      // Cada camión: cuándo podría cargar. Primero los que llegan a tiempo; entre ellos, el ya usado que se liberó
+      // más tarde (ahorra camiones); un camión nuevo solo si ninguno usado llega.
       const candidatos = camiones
         .filter((c) => c.capacidad >= m3 - 0.01 || c.capacidad === capMax)
-        .map((c) => ({ c, t: Math.max(libre.get(c.id)!, cargaObjetivo) }))
-        .sort((a, b) => a.t - b.t || (libre.get(b.c.id)! - libre.get(a.c.id)!))
+        .map((c) => { const t = primerHueco(c.id, Math.max(libre.get(c.id)!, cargaObjetivo), vueltaSi); return { c, t, uso: ultimoUso(c.id, t) } })
+        .sort((a, b) => a.t - b.t || b.uso - a.uso)
       const elegido = candidatos[0]
-      // Puede cargar antes del inicio de la jornada si la obra lo pide (se avisa aparte)
+      // Puede cargar antes del inicio de la jornada si la obra lo pide (se avisa aparte). La boca puede correr la
+      // carga: se vuelve a controlar que el camión siga libre.
       let inicioCarga = bocaLibreDesde(elegido.t)
+      for (let k = 0; k < 20; k++) {
+        const x = primerHueco(elegido.c.id, inicioCarga, vueltaSi)
+        if (x === inicioCarga) break
+        inicioCarga = bocaLibreDesde(x)
+      }
       const salida = inicioCarga + prm.cargaMin
       const llegada = Math.max(salida + p.viajeMin, proximaLlegada)
       const inicioDescarga = finAnterior != null ? Math.max(llegada, finAnterior) : llegada
