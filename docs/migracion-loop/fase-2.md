@@ -119,6 +119,37 @@ Barras por media hora de 06:00 a 19:00: **camiones necesarios** contra una líne
 4. Despachar marca el viaje y anular lo libera. Un pedido sin viajes se despacha igual que hoy. "No se pierde nada" se verifica como en la Fase 1.
 5. Con el interruptor apagado, ninguna pantalla cambia (capturas antes y después de Semana, Día, Despacho diario e Historial). Con el interruptor prendido aparece todo lo nuevo con el distintivo "Nuevo · en prueba".
 
+## 2b — Ajustes pedidos por Bautista al probar el preview (05/10/2026)
+
+Todo con el interruptor, salvo el punto B, que es un error que afecta a todos.
+
+**A. Obra ubicada y tiempo de viaje real**
+- Al elegir la obra en el pedido (y en el alta rápida), si **no está ubicada**, aparece en el formulario "Esta obra no está ubicada: buscala en el mapa", con el componente `obra-ubicacion.tsx`: dirección, link de Google Maps o pin. Se guarda en `construction_sites`.
+- Si **está ubicada**, se calcula y se muestra "Viaje estimado desde [planta del pedido]: X km · Y min", con `/api/geo/ruta` (OSRM ×1,3).
+- El tiempo depende de la planta. Por eso se guarda en el pedido: columna nueva `scheduled_dispatches.viaje_min`, editable a mano. El motor usa `viaje_min` del pedido, si no el de la obra, si no el de referencia.
+- Hoy hay 0 de 130 obras ubicadas y 107 con el valor por defecto de 30 min.
+
+**B. Camión del pedido (error, para todos)**
+- La lista "Camión (opcional)" muestra solo los mixers `available`. Los que quedaron `in_transit` desaprecen; hoy son 2 de 5, porque nadie toca "Entregado".
+- Mostrar **todos los activos**. Los que figuran en ruta van con la marca "(en ruta)" pero se pueden elegir: es para un pedido futuro.
+
+**C. Semana: los viajes en la grilla**
+- Con el interruptor, la grilla de Semana muestra **cada viaje** en su franja horaria (hora de llegada a obra): obra abreviada, n/N, m³ y camión. Ya no un solo bloque por pedido.
+- Así se ven juntos los viajes de distintas obras en la misma franja. Tocar un viaje abre el pedido o su gerenciador.
+
+**D. No asignar un camión ocupado**
+- En la vista Día y en el gerenciador, un camión no se puede asignar a un viaje si en ese momento está haciendo otro viaje. Choca si su viaje anterior vuelve a planta después de la carga de este, en este pedido o en otro.
+- Se marca en rojo ("AF431GU todavía vuelve de Obra X a las 09:40") y se sugieren camiones libres.
+
+**E. Dimensionar la flota con pocos camiones bien usados**
+- Por pedido, mostrar el cálculo: **"Ciclo: carga 10 + ida 25 + descarga 15 + lavado 10 + vuelta 25 = 85 min · un camión cada 15 min → para no cortar el hormigonado hacen falta 6 camiones"**.
+- Si hay menos camiones: "Con 4 camiones el vaciado termina 09:50 en vez de 09:15, con N huecos de X min".
+- **Asignación que ahorra camiones:** para cada viaje se elige primero un camión **ya usado en el día** que llegue a tiempo. Solo si ninguno llega se suma uno nuevo. Así sube la utilización y pueden sobrar camiones libres, que se muestran como "libre" y se pueden dejar fuera.
+- Mostrar "Camiones usados: 3 de 5 · uso promedio 72 %".
+- **El tiempo de descarga es el dato clave.** Por pedido se puede corregir (columna nueva `descarga_min`, por camión de 8 m³). Por defecto sale del método (bomba / canaleta) de la planta, y más adelante del GPS por obra o cliente.
+
+Criterios extra: un pedido de 40 m³ (8 por viaje) a una obra ubicada se reparte en 5 viajes con el viaje real. La asignación nunca pone un camión en dos viajes que se pisan. Con 5 camiones disponibles, usa los mínimos necesarios. La grilla Semana muestra los 5 viajes en sus horarios.
+
 ## Hecho
 _(lo completa la sesión obrero)_
 
