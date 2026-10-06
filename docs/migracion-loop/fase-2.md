@@ -203,3 +203,49 @@ APROBADO CON CAMBIOS (interruptor apagado y "No se pierde nada": OK). Arreglos d
 **Pruebas de la revisión:** motor `/private/tmp/claude-501/-Users-bautistacaputo-Documents-v0-plant-production-control/aec4cd85-59dc-45a8-9077-b068ee49c837/scratchpad/fase2/motor/test.mts` **36/36 OK** (+9: 24 m³ con primer camión de 6 → 8+8+2 y 6/24; qué cambios rearman). Base `/private/tmp/claude-501/-Users-bautistacaputo-Documents-v0-plant-production-control/aec4cd85-59dc-45a8-9077-b068ee49c837/scratchpad/fase2/test.js` **158/158 OK** en un único `BEGIN … ROLLBACK` (las 137 + 21: m³ reales al despachar, rearmado a 8+8+2, ids iguales al rearmar, editar copia los m³, anular devuelve los planificados, guardar por número con sobrante y origen, repetidos y origen inválido → error, el camión que completa marca su viaje y cancela el sobrante, anular reabre y recupera, Finalizar y Cancelar cancelan, guardar en pedido cerrado → error, índice único de `dispatch_id`, pedido sin viajes igual que siempre; `editar_despacho` = producción + el bloque de los m³). Después del ROLLBACK no queda nada en producción. Build limpio, `tsc` 54 líneas (igual que `main`).
 
 **Queda menor:** al anular un despacho cuyo viaje ya se había rearmado, el viaje vuelve con sus m³ planificados y puede sobrar algo hasta el próximo rearmado (el gerenciador lo muestra como "Sobran X m³").
+
+### 2b (05/10/2026, obrero)
+Misma rama `loop/fase-2-viajes` (rebasada sobre main). Commits: `ed5cf88` migración, `0b7bd4c` motor, `7510015` Semana + gerenciador, `8638314` vista Día, `28a9004` tipos y este registro. Sin push ni merge.
+
+**Migración nueva (NO aplicada):** `supabase/migrations/202610052100_fase2b_viaje_descarga.sql`. Agrega `scheduled_dispatches.viaje_min` y `descarga_min` (enteros, nulos, CHECK > 0). Se puede correr dos veces y es compatible con `main` y con la fase 2. La `202610021000` (ya aplicada) no se tocó.
+
+**Lo que se hizo:**
+- **A · Obra ubicada y viaje real** (con el interruptor). En el formulario del pedido:
+  - Si la obra no está ubicada aparece "Esta obra no está ubicada: buscala en el mapa" con `obra-ubicacion.tsx` (dirección, link de Google Maps o pin). La ubicación se guarda en `construction_sites` al guardar el pedido, con las mismas columnas que Clientes (`gps_lat/lng`, `gps_source`, `travel_distance_km`, `gps_updated_at`), y queda en Actividad. El alta rápida de obra ya tenía el mapa.
+  - Si está ubicada: "Viaje estimado desde [planta del pedido]: X km · Y min", con `/api/geo/ruta`. Se propone en "Minutos de viaje de este pedido" (`viaje_min`); se puede corregir y entonces la ruta ya no lo pisa.
+  - Al lado va "Descarga por camión de 8 m³" (`descarga_min`), que por defecto muestra la de la planta.
+  - El motor usa el viaje del pedido; si no tiene, el de la obra; si no, 30. Para la descarga usa la del pedido; si no tiene, la de la planta según el método. Cambiarlos rearma los viajes (entra en `cambiosQueRearman`).
+- **B · Camión del pedido (para todos).** Se listan todos los mixers activos; los que están `in_transit` llevan la marca "(en ruta)" y se pueden elegir.
+- **C · Viajes en la grilla de Semana** (con el interruptor). Los pedidos con viajes se ven viaje por viaje en la franja de su hora de llegada, con obra, hora, n/N, m³ y camión. Despachado va en verde y pendiente en violeta. Tocar un viaje abre el gerenciador, que suma el botón "Editar pedido"; el menú ⋯ del pedido queda en cada viaje. Sin el interruptor la grilla queda igual.
+- **D · Camión ocupado.**
+  - `choquesDeCamion()` detecta cuando el viaje anterior del mismo camión vuelve a planta después de la carga de este, en el mismo pedido o en otro, de cualquier planta.
+  - En el gerenciador, los camiones ocupados figuran "(ocupado)" y no se pueden elegir. Si queda alguno, sale en rojo "AF431GU todavía vuelve de Obra X a las 09:40", con botones de camiones libres, y no deja guardar.
+  - En la vista Día sale el mismo aviso por pedido, con los libres.
+  - El planificador recibe los viajes de la otra planta y los despachados como ventanas ocupadas y nunca pone un camión en dos viajes que se pisan.
+  - Al rearmar, el camión que se conservaba se quita si quedaría pisado.
+- **E · Flota.**
+  - Por pedido, en la vista Día y en el gerenciador: "Ciclo: carga 10 + ida 25 + descarga 15 + lavado 10 + vuelta 25 = 85 min · un camión cada 15 min → para no cortar el hormigonado hacen falta N camiones", con N = ciclo / ritmo y como máximo uno por viaje.
+  - Si con los camiones que hay se corta: "Con 2 camiones el vaciado termina 11:05 en vez de 09:15, con 2 huecos de 55 min".
+  - Resumen del día: "Camiones usados: 3 de 5 · uso X %".
+  - Asignación que ahorra camiones: primero un camión ya usado en el día que llegue a tiempo (el que se liberó más tarde); uno nuevo solo si ninguno llega. Sin camiones ocupados, el planificador da exactamente lo mismo que antes (1.000 días al azar contra `main`). Era la regla de desempate; ahora está escrita y probada.
+
+**Pruebas:**
+- **Motor:** 56/56. Suma 20 de la 2b:
+  - 40 m³ / 8 → 5 viajes, con el viaje y la descarga del pedido.
+  - Texto de flota: 85 min, cada 15 → 5; con 80 m³ → 6; con espaciado 30 → 3.
+  - Dos pedidos chicos con 5 camiones usan 1; 24 m³ directo usa los 3 necesarios y no 5.
+  - 300 días al azar sin ningún camión en dos viajes que se pisan, y con un solo pedido nunca más camiones que los necesarios.
+  - El camión ocupado en la otra planta se esquiva o se espera.
+  - Choques y libres, el texto "con menos camiones", rearmado por viaje o descarga, y el camión del pedido que no se repite.
+- **Base:** 169/169 en un único `BEGIN … ROLLBACK`, aplicando solo la 2b, porque producción ya tiene la fase 2.
+  - Se ajustaron 4 pruebas viejas al estado real de producción: Canning tiene tiempos editados, el interruptor de Bautista está prendido, `editar_despacho` ya es el de la fase 2, y una fecha de prueba quedó en el pasado.
+  - Nuevas (11): columnas y CHECKs; insert como `main`; 40 m³ con viaje 25 min → carga 07:25; descarga 20 → uno cada 20; "Guardar plan del día" con un viaje de Hudson ocupando un camión hasta las 09:30, donde ningún camión queda en dos viajes que se pisan ni se usa ese camión antes; un pedido de 8 m³ con 5 camiones usa 1; texto de flota.
+  - Al final no queda nada en producción.
+- **Build y tipos:** `next build --webpack` limpio; `tsc` 54 líneas, igual que `main`. Los tipos se regeneraron con la 2b y además traen `alertas_stock`, que ya estaba en producción.
+
+**Deploy:**
+1. Aplicar `202610052100_fase2b_viaje_descarga.sql` en producción. Es compatible con lo publicado.
+2. Bautista prueba el preview: pedido a una obra sin ubicar, ubicarla y ver el viaje desde la planta; viajes en Semana; gerenciador con un camión ocupado; vista Día con el cálculo de flota.
+3. Merge.
+
+**Pendiente:** no hay capturas de la 2b (verlo en el preview). En la vista Día, "Ordenar el día" sigue usando las horas guardadas.
