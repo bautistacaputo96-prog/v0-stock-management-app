@@ -36,6 +36,27 @@ export const CENTRO_ZONA: Centro = { lat: -34.9, lng: -58.35 }
 /** Places API (New) acepta un radio de sesgo de hasta 50 km */
 export const RADIO_SESGO_M = 50000
 
+/**
+ * Motivo corto y seguro de por qué no se usó Google (para mostrar y para el log del servidor). Nunca incluye la
+ * clave: si el mensaje de Google la repitiera, se tapa.
+ */
+export async function motivoErrorGoogle(r: { status: number; json: () => Promise<any> } | null, clave: string | null, excepcion?: unknown): Promise<string> {
+  if (!clave) return "falta la clave GOOGLE_MAPS_API_KEY en el servidor"
+  if (!r) return `sin respuesta (${excepcion instanceof Error && excepcion.name === "AbortError" ? "tiempo agotado" : "error de red"})`
+  let estado = "", mensaje = ""
+  try {
+    const d = await r.json()
+    estado = String(d?.error?.status || "")
+    mensaje = String(d?.error?.message || "")
+  } catch {}
+  mensaje = mensaje.split(clave).join("***").replace(/\s+/g, " ").trim()
+  if (mensaje.length > 140) mensaje = mensaje.slice(0, 137) + "..."
+  const pista = r.status === 403 || estado === "PERMISSION_DENIED" ? " (API no habilitada o clave restringida)"
+    : r.status === 400 && /api key/i.test(mensaje) ? " (clave inválida)"
+    : r.status === 429 ? " (se pasó la cuota)" : ""
+  return `Google respondió ${r.status}${estado ? `: ${estado}` : ""}${pista}${mensaje ? ` — ${mensaje}` : ""}`
+}
+
 type FetchFn = (url: string, init?: any) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>
 
 // ---------------------------------------------------------------------------- normalizadores
@@ -105,9 +126,10 @@ export function lugarDeIdOsm(id: string): Lugar | null {
 export async function autocompletar(
   q: string,
   opts: { centro?: Centro | null; sesion?: string | null; clave?: string | null; fetchFn: FetchFn; buscarOsm: (q: string) => Promise<ResultadoOsm[]> },
-): Promise<{ fuente: FuenteLugar; sugerencias: Sugerencia[] }> {
+): Promise<{ fuente: FuenteLugar; sugerencias: Sugerencia[]; aviso?: string }> {
   const texto = (q || "").trim()
   if (texto.length < 3) return { fuente: opts.clave ? "google" : "osm", sugerencias: [] }
+  let aviso = await motivoErrorGoogle(null, opts.clave ?? null)
   if (opts.clave) {
     try {
       const centro = opts.centro || CENTRO_ZONA
@@ -133,11 +155,12 @@ export async function autocompletar(
         }
         return { fuente: "google", sugerencias: sug.slice(0, 8) }
       }
-    } catch {
-      // sigue con OpenStreetMap
+      aviso = await motivoErrorGoogle(r, opts.clave)
+    } catch (e) {
+      aviso = await motivoErrorGoogle(null, opts.clave, e)
     }
   }
-  return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8) }
+  return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8), aviso }
 }
 
 /**
@@ -147,9 +170,10 @@ export async function autocompletar(
 export async function buscarTexto(
   q: string,
   opts: { centro?: Centro | null; clave?: string | null; fetchFn: FetchFn; buscarOsm: (q: string) => Promise<ResultadoOsm[]> },
-): Promise<{ fuente: FuenteLugar; sugerencias: Sugerencia[] }> {
+): Promise<{ fuente: FuenteLugar; sugerencias: Sugerencia[]; aviso?: string }> {
   const texto = (q || "").trim()
   if (texto.length < 3) return { fuente: opts.clave ? "google" : "osm", sugerencias: [] }
+  let aviso = await motivoErrorGoogle(null, opts.clave ?? null)
   if (opts.clave) {
     try {
       const centro = opts.centro || CENTRO_ZONA
@@ -169,27 +193,29 @@ export async function buscarTexto(
         }),
       })
       if (r.ok) return { fuente: "google", sugerencias: normalizarTextSearchGoogle(await r.json()).slice(0, 8) }
-    } catch {
-      // sigue con OpenStreetMap
+      aviso = await motivoErrorGoogle(r, opts.clave)
+    } catch (e) {
+      aviso = await motivoErrorGoogle(null, opts.clave, e)
     }
   }
-  return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8).map((x) => ({ ...x, busqueda: true })) }
+  return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8).map((x) => ({ ...x, busqueda: true })), aviso }
 }
 
-/** Coordenadas del lugar elegido. Los "osm:" no consultan nada. Null si no se pudo. */
+/** Coordenadas del lugar elegido. Los "osm:" no consultan nada. lugar null si no se pudo (con el motivo en aviso). */
 export async function obtenerLugar(
   id: string,
   opts: { sesion?: string | null; clave?: string | null; fetchFn: FetchFn },
-): Promise<Lugar | null> {
+): Promise<{ lugar: Lugar | null; aviso?: string }> {
   const osm = lugarDeIdOsm(id)
-  if (osm) return osm
-  if (!opts.clave || !/^[A-Za-z0-9_-]+$/.test(id)) return null
+  if (osm) return { lugar: osm }
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) return { lugar: null }
+  if (!opts.clave) return { lugar: null, aviso: await motivoErrorGoogle(null, null) }
   try {
     const u = `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}?languageCode=es${opts.sesion ? `&sessionToken=${encodeURIComponent(opts.sesion)}` : ""}`
     const r = await opts.fetchFn(u, { headers: { "X-Goog-Api-Key": opts.clave, "X-Goog-FieldMask": "location,formattedAddress,displayName" } })
-    if (!r.ok) return null
-    return normalizarLugarGoogle(await r.json(), id)
-  } catch {
-    return null
+    if (!r.ok) return { lugar: null, aviso: await motivoErrorGoogle(r, opts.clave) }
+    return { lugar: normalizarLugarGoogle(await r.json(), id) }
+  } catch (e) {
+    return { lugar: null, aviso: await motivoErrorGoogle(null, opts.clave, e) }
   }
 }

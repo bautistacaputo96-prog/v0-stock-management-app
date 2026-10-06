@@ -54,6 +54,8 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   const [buscandoSug, setBuscandoSug] = useState(false)
   // La lista muestra el resultado de la búsqueda completa (como apretar Enter en Google Maps)
   const [modoBusqueda, setModoBusqueda] = useState(false)
+  // Por qué no se usó Google (sin clave, error o sin respuesta): se muestra en gris debajo de la lista
+  const [aviso, setAviso] = useState<string | null>(null)
   const sesion = useRef<string | null>(null)
   const escrito = useRef(false) // solo se busca si la persona escribió (no al elegir una sugerencia)
 
@@ -81,6 +83,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
         if (!(d.sugerencias || []).length) { await buscarCompleto(q); return }
         setSugerencias(d.sugerencias || [])
         setFuente(d.fuente || null)
+        setAviso(d.aviso || null)
         setModoBusqueda(false)
         setActivo(-1)
         setAbierto(true)
@@ -102,6 +105,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
       const d = await r.json()
       setSugerencias(d.sugerencias || [])
       setFuente(d.fuente || null)
+      setAviso(d.aviso || null)
     } catch {
       setSugerencias([])
     }
@@ -120,7 +124,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
       const r = await fetch(`/api/geo/lugar?id=${encodeURIComponent(sg.id)}&sesion=${encodeURIComponent(sesion.current || "")}`)
       const d = await r.json()
       if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion")
-      else setError(d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa")
+      else setError(`${d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa"}${d.aviso ? ` (Google no respondió: ${d.aviso})` : ""}`)
     } catch { setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
     sesion.current = null
   }
@@ -250,6 +254,9 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
                 <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">Buscar «{texto.trim()}»{fuente === "google" ? " en Google Maps" : ""}</span>
               </button>
+            )}
+            {fuente === "osm" && aviso && (
+              <p className="px-3 py-1 text-[10px] text-muted-foreground border-t">Usando buscador alternativo (Google no respondió: {aviso})</p>
             )}
             {fuente === "google" && sugerencias.length > 0 && (
               <p className="px-3 py-1 text-[10px] text-right text-muted-foreground border-t">Powered by Google</p>

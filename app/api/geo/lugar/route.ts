@@ -11,11 +11,13 @@ export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams
   const id = (sp.get("id") || "").slice(0, 300)
   const sesion = (sp.get("sesion") || "").slice(0, 64) || null
-  const lugar = await obtenerLugar(id, {
+  const { lugar, aviso } = await obtenerLugar(id, {
     sesion,
     clave: process.env.GOOGLE_MAPS_API_KEY || null,
     fetchFn: (u, init) => fetch(u, { ...init, cache: "no-store" }),
   })
-  if (!lugar) return NextResponse.json({ error: "No se pudo ubicar ese lugar: probá con otro o marcá el punto en el mapa" }, { status: 404 })
+  // Si Google no se pudo usar, queda en el log del servidor (el motivo nunca incluye la clave)
+  if (aviso) console.error(`[geo/lugar] Google no respondió: ${aviso}`)
+  if (!lugar) return NextResponse.json({ error: "No se pudo ubicar ese lugar: probá con otro o marcá el punto en el mapa", ...(aviso ? { aviso } : {}) }, { status: 404 })
   return NextResponse.json({ lugar })
 }

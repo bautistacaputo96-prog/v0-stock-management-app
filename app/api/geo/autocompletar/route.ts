@@ -30,5 +30,7 @@ export async function GET(req: Request) {
     fetchFn: (u, init) => fetch(u, { ...init, cache: "no-store" }),
     buscarOsm,
   })
+  // Si Google no se pudo usar, queda en el log del servidor (el motivo nunca incluye la clave)
+  if (r.aviso) console.error(`[geo/autocompletar] buscador alternativo (Google no respondió: ${r.aviso})`)
   return NextResponse.json(r)
 }
