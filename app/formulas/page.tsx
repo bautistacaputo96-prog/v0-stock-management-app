@@ -8,11 +8,20 @@ import { AddFormulaDialog } from "@/components/add-formula-dialog"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Search } from "lucide-react"
+import { SeccionProtegida } from "@/components/seccion-protegida"
 
 const RESISTENCIAS = ["H4", "H8", "H13", "H17", "H21", "H25", "H30", "H35", "H40", "H45", "H50"]
 const METODOS = ["Todos", "Canaleta", "Bombeable"]
 
 export default function FormulasPage() {
+  return (
+    <SeccionProtegida seccion="formulas">
+      <FormulasContenido />
+    </SeccionProtegida>
+  )
+}
+
+function FormulasContenido() {
   const [formulas, setFormulas] = useState<any[]>([])
   const [materials, setMaterials] = useState<any[]>([])
   const [plants, setPlants] = useState<any[]>([])

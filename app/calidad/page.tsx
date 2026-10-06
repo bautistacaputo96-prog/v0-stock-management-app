@@ -12,6 +12,7 @@ import { BreakingResultsTable } from "@/components/breaking-results-table"
 import { QualityAnalysisDashboard } from "@/components/quality-analysis-dashboard"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { SeccionProtegida } from "@/components/seccion-protegida"
 
 interface Plant {
   id: string
@@ -160,7 +161,9 @@ export default function CalidadPage() {
         </div>
       }
     >
-      <CalidadContent />
+      <SeccionProtegida seccion="laboratorio">
+        <CalidadContent />
+      </SeccionProtegida>
     </Suspense>
   )
 }

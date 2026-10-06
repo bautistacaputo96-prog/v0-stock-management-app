@@ -18,11 +18,14 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import * as XLSX from "xlsx"
+import { SeccionProtegida } from "@/components/seccion-protegida"
 
 export default function MateriasPrimasPage() {
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>}>
-      <MateriasPrimasContent />
+      <SeccionProtegida seccion="materia_prima">
+        <MateriasPrimasContent />
+      </SeccionProtegida>
     </Suspense>
   )
 }

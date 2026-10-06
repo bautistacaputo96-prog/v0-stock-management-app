@@ -2,17 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { getCurrentUser, setVeFuncionesNuevas } from "@/lib/current-user"
-import { logActivity } from "@/lib/activity-log"
-import { Switch } from "@/components/ui/switch"
-import { NuevoBadge } from "@/components/nuevo-badge"
+import Link from "next/link"
+import { esGerencial } from "@/lib/current-user"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, ShieldAlert, Download, RefreshCw, FlaskConical } from "lucide-react"
+import { Loader2, ShieldAlert, Download, RefreshCw } from "lucide-react"
 
 type LogRow = {
   id: string
@@ -28,74 +26,31 @@ const ACTION_STYLE: Record<string, string> = {
   crear: "bg-emerald-100 text-emerald-800 border-emerald-300",
   editar: "bg-amber-100 text-amber-800 border-amber-300",
   borrar: "bg-red-100 text-red-800 border-red-300",
+  transferir: "bg-sky-100 text-sky-800 border-sky-300",
 }
 
-type UsuarioPrueba = { id: string; name: string; role: string; ve_funciones_nuevas?: boolean | null }
-
-/**
- * Fase 2 · "Funciones nuevas en prueba": el supervisor elige quién ve las funciones en prueba
- * (app_users.ve_funciones_nuevas). Cada cambio queda en Actividad.
- */
-function FuncionesNuevasEnPrueba({ onCambio }: { onCambio: () => void }) {
-  const [usuarios, setUsuarios] = useState<UsuarioPrueba[]>([])
-  const [hayColumna, setHayColumna] = useState(true)
-  const [cargando, setCargando] = useState(true)
-  const [guardando, setGuardando] = useState<string | null>(null)
-
-  async function cargar() {
-    setCargando(true)
-    const { data } = await createClient().from("app_users").select("*").eq("active", true).order("name")
-    const lista = (data as UsuarioPrueba[] | null) || []
-    setHayColumna(lista.length === 0 || "ve_funciones_nuevas" in lista[0])
-    setUsuarios(lista)
-    setCargando(false)
-  }
-  useEffect(() => { cargar() }, [])
-
-  async function cambiar(u: UsuarioPrueba, valor: boolean) {
-    setGuardando(u.id)
-    const { error } = await createClient().from("app_users").update({ ve_funciones_nuevas: valor } as any).eq("id", u.id)
-    setGuardando(null)
-    if (error) return
-    setUsuarios((us) => us.map((x) => (x.id === u.id ? { ...x, ve_funciones_nuevas: valor } : x)))
-    await logActivity({ action: "editar", entity: "usuario", entityId: u.id, reference: u.name, details: { "Funciones nuevas en prueba": valor ? "apagadas → prendidas" : "prendidas → apagadas" } })
-    if (getCurrentUser()?.name === u.name) setVeFuncionesNuevas(valor)
-    onCambio()
-  }
-
-  const prendidos = usuarios.filter((u) => u.ve_funciones_nuevas).length
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <FlaskConical className="h-4 w-4" /> Funciones nuevas en prueba <NuevoBadge />
-          {hayColumna && !cargando && <span className="font-normal text-muted-foreground">· las ven {prendidos} de {usuarios.length} usuarios</span>}
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Viajes, gerenciador, sugerencia de horario, demanda de camiones y confirmación del día anterior (fase 2). Solo las ven los usuarios prendidos; para el resto el sistema queda igual. El usuario las ve al volver a abrir el sistema.
-        </p>
-      </CardHeader>
-      <CardContent>
-        {cargando ? (
-          <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : !hayColumna ? (
-          <p className="text-sm text-muted-foreground">Falta aplicar la migración de la fase 2 en la base.</p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {usuarios.map((u) => (
-              <label key={u.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 cursor-pointer">
-                <span className="text-sm">
-                  <span className="font-medium">{u.name}</span>
-                  <span className="text-xs text-muted-foreground ml-1.5">{u.role}</span>
-                </span>
-                <Switch checked={!!u.ve_funciones_nuevas} disabled={guardando === u.id} onCheckedChange={(v) => cambiar(u, v)} />
-              </label>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
+// Nombres del filtro "Tipo" (fase 0c-1). Los que aparezcan en los datos y no estén acá se muestran con su clave.
+const ENTIDADES: Record<string, string> = {
+  despacho: "Despachos",
+  pedido: "Pedidos programados",
+  ingreso: "Ingresos",
+  stock: "Recuentos y ajustes de stock",
+  humedad: "Humedad del acopio",
+  material: "Materiales",
+  proveedor: "Proveedores",
+  transportista: "Transportistas",
+  probeta: "Probetas",
+  granulometria: "Granulometrías",
+  calibracion: "Calibración de la prensa",
+  cliente: "Clientes",
+  obra: "Obras",
+  formula: "Fórmulas",
+  camion: "Camiones",
+  chofer: "Choferes",
+  bomba: "Empresas de bombeo",
+  planta: "Tiempos de planta",
+  orden_trabajo: "Órdenes de trabajo",
+  usuario: "Usuarios",
 }
 
 export default function ActividadPage() {
@@ -108,7 +63,7 @@ export default function ActividadPage() {
   const [search, setSearch] = useState("")
 
   useEffect(() => {
-    setAllowed(getCurrentUser()?.role === "supervisor")
+    setAllowed(esGerencial())
   }, [])
 
   useEffect(() => {
@@ -132,6 +87,12 @@ export default function ActividadPage() {
     [rows],
   )
 
+  // Todos los del mapa más los raros que haya en los datos (formula, test_cylinders, maint_tasks...)
+  const entidades = useMemo(
+    () => [...Object.keys(ENTIDADES), ...Array.from(new Set(rows.map((r) => r.entity))).filter((e) => !(e in ENTIDADES)).sort()],
+    [rows],
+  )
+
   const filtered = rows.filter((r) => {
     if (userFilter !== "all" && r.user_name !== userFilter) return false
     if (actionFilter !== "all" && r.action !== actionFilter) return false
@@ -149,7 +110,7 @@ export default function ActividadPage() {
       Fecha: new Date(r.created_at).toLocaleString("es-AR"),
       Usuario: r.user_name,
       Accion: r.action,
-      Registro: r.entity,
+      Registro: ENTIDADES[r.entity] || r.entity,
       Referencia: r.reference || "-",
       Detalle: r.details
         ? Object.entries(r.details).map(([k, v]) => `${k}: ${v}`).join(" · ")
@@ -172,7 +133,7 @@ export default function ActividadPage() {
             <ShieldAlert className="h-10 w-10 mx-auto text-muted-foreground" />
             <p className="font-medium">Sección restringida</p>
             <p className="text-sm text-muted-foreground">
-              El registro de actividad solo está disponible para supervisores.
+              El registro de actividad es solo para gerenciales.
             </p>
           </CardContent>
         </Card>
@@ -201,7 +162,9 @@ export default function ActividadPage() {
         </div>
       </div>
 
-      <FuncionesNuevasEnPrueba onCambio={load} />
+      <p className="text-xs text-muted-foreground">
+        El interruptor de funciones nuevas se maneja desde <Link href="/usuarios" className="underline">Usuarios</Link>.
+      </p>
 
       <div className="flex flex-wrap gap-2">
         <Select value={userFilter} onValueChange={setUserFilter}>
@@ -218,19 +181,14 @@ export default function ActividadPage() {
             <SelectItem value="crear">Creados</SelectItem>
             <SelectItem value="editar">Editados</SelectItem>
             <SelectItem value="borrar">Eliminados</SelectItem>
+            <SelectItem value="transferir">Transferencias</SelectItem>
           </SelectContent>
         </Select>
         <Select value={entityFilter} onValueChange={setEntityFilter}>
           <SelectTrigger className="w-[190px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todo tipo</SelectItem>
-            <SelectItem value="despacho">Despachos</SelectItem>
-            <SelectItem value="ingreso">Ingresos</SelectItem>
-            <SelectItem value="pedido">Pedidos programados</SelectItem>
-            <SelectItem value="chofer">Choferes</SelectItem>
-            <SelectItem value="bomba">Empresas de bombeo</SelectItem>
-            <SelectItem value="planta">Tiempos de planta</SelectItem>
-            <SelectItem value="usuario">Usuarios</SelectItem>
+            {entidades.map((e) => <SelectItem key={e} value={e}>{ENTIDADES[e] || e}</SelectItem>)}
           </SelectContent>
         </Select>
         <Input
@@ -283,7 +241,7 @@ export default function ActividadPage() {
                           {r.action}
                         </Badge>
                       </TableCell>
-                      <TableCell className="capitalize">{r.entity}</TableCell>
+                      <TableCell>{ENTIDADES[r.entity] || r.entity}</TableCell>
                       <TableCell className="font-mono text-sm">{r.reference || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[380px]">
                         {r.details
