@@ -5,8 +5,12 @@
  * punto se puede mover o marcar con un clic (útil en barrios cerrados y lotes,
  * donde la dirección no alcanza). También acepta pegar un link de Google Maps.
  * Con la ubicación calcula la distancia y el tiempo de viaje desde la planta.
+ *
+ * Buscador libre "como Google Maps": sugerencias mientras se escribe (Google Places desde el servidor, o
+ * OpenStreetMap si no hay clave o Google falla), con flechas y Enter. Mapa / Satélite en el mapa.
  */
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import type { Sugerencia, FuenteLugar } from "@/lib/geo-lugares"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,12 +45,69 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   const [error, setError] = useState<string | null>(null)
   const [pegar, setPegar] = useState("")
   const [calculando, setCalculando] = useState(false)
+  // Buscador libre con sugerencias
+  const [texto, setTexto] = useState("")
+  const [sugerencias, setSugerencias] = useState<Sugerencia[]>([])
+  const [fuente, setFuente] = useState<FuenteLugar | null>(null)
+  const [abierto, setAbierto] = useState(false)
+  const [activo, setActivo] = useState(-1)
+  const [buscandoSug, setBuscandoSug] = useState(false)
+  const sesion = useRef<string | null>(null)
+  const escrito = useRef(false) // solo se busca si la persona escribió (no al elegir una sugerencia)
 
   useEffect(() => {
     createClient().from("plants").select("id, name, gps_lat, gps_lng").then(({ data }) => setPlantas((data as any) || []))
   }, [])
 
   const planta = plantas.find((p) => p.id === plantaId) || plantas.find((p) => p.gps_lat != null)
+
+  // Sugerencias: 300 ms después de dejar de escribir, desde 3 letras. Un token de sesión por búsqueda
+  // (se renueva después de elegir) para que Google cobre la sesión entera y no cada tecla.
+  useEffect(() => {
+    if (!escrito.current) return
+    const q = texto.trim()
+    if (q.length < 3) { setSugerencias([]); setAbierto(false); return }
+    if (!sesion.current) sesion.current = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let vivo = true
+    const t = setTimeout(async () => {
+      setBuscandoSug(true)
+      try {
+        const r = await fetch(`/api/geo/autocompletar?q=${encodeURIComponent(q)}&planta=${encodeURIComponent(plantaId || planta?.id || "")}&sesion=${encodeURIComponent(sesion.current || "")}`)
+        const d = await r.json()
+        if (!vivo) return
+        setSugerencias(d.sugerencias || [])
+        setFuente(d.fuente || null)
+        setActivo(-1)
+        setAbierto(true)
+      } catch {
+        if (vivo) setSugerencias([])
+      }
+      if (vivo) setBuscandoSug(false)
+    }, 300)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [texto]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function elegirSugerencia(sg: Sugerencia) {
+    escrito.current = false
+    setTexto([sg.principal, sg.secundario].filter(Boolean).join(", "))
+    setAbierto(false); setSugerencias([]); setError(null)
+    if (sg.lat != null && sg.lng != null) { sesion.current = null; elegir(sg.lat, sg.lng, "direccion"); return }
+    try {
+      const r = await fetch(`/api/geo/lugar?id=${encodeURIComponent(sg.id)}&sesion=${encodeURIComponent(sesion.current || "")}`)
+      const d = await r.json()
+      if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion")
+      else setError(d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa")
+    } catch { setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
+    sesion.current = null
+  }
+
+  function teclas(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!abierto || !sugerencias.length) return
+    if (e.key === "ArrowDown") { e.preventDefault(); setActivo((i) => (i + 1) % sugerencias.length) }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActivo((i) => (i <= 0 ? sugerencias.length - 1 : i - 1)) }
+    else if (e.key === "Enter") { e.preventDefault(); elegirSugerencia(sugerencias[Math.max(0, activo)]) }
+    else if (e.key === "Escape") { e.preventDefault(); setAbierto(false) }
+  }
 
   async function buscar() {
     const q = [direccion, localidad].filter(Boolean).join(", ")
@@ -98,6 +159,55 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
 
   return (
     <div className="space-y-2">
+      {/* Buscador libre con sugerencias (como Google Maps) */}
+      <div className="relative">
+        <div className="relative">
+          <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={texto}
+            onChange={(e) => { escrito.current = true; setTexto(e.target.value) }}
+            onKeyDown={teclas}
+            onFocus={() => sugerencias.length && setAbierto(true)}
+            onBlur={() => setTimeout(() => setAbierto(false), 150)}
+            placeholder="Buscá la obra: barrio, calle y número, lugar…"
+            className="pl-8 h-9"
+            role="combobox"
+            aria-expanded={abierto}
+            aria-autocomplete="list"
+            autoComplete="off"
+          />
+          {buscandoSug && <Loader2 className="h-4 w-4 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />}
+        </div>
+        {abierto && (
+          <div className="absolute left-0 right-0 top-full mt-1 rounded-md border bg-popover shadow-md text-sm overflow-hidden" style={{ zIndex: 1100 }} role="listbox">
+            {sugerencias.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">Sin resultados: probá con otras palabras, o marcá el punto en el mapa.</p>
+            ) : (
+              sugerencias.map((sg, i) => (
+                <button
+                  key={sg.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === activo}
+                  onMouseDown={(e) => { e.preventDefault(); elegirSugerencia(sg) }}
+                  onMouseEnter={() => setActivo(i)}
+                  className={`w-full text-left px-3 py-1.5 flex items-start gap-2 ${i === activo ? "bg-muted" : "hover:bg-muted/60"}`}
+                >
+                  <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{sg.principal}</span>
+                    {sg.secundario && <span className="block truncate text-xs text-muted-foreground">{sg.secundario}</span>}
+                  </span>
+                </button>
+              ))
+            )}
+            {fuente === "google" && sugerencias.length > 0 && (
+              <p className="px-3 py-1 text-[10px] text-right text-muted-foreground border-t">Powered by Google</p>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" onClick={buscar} disabled={buscando} className="gap-1.5">
           {buscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
