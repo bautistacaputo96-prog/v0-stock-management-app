@@ -1,14 +1,16 @@
 -- Fase 4a · Tiempos reales con el GPS: viajes reconstruidos desde el historial de Wialon (B-Track)
 --
--- Solo agrega una tabla. No toca ninguna existente. Se puede correr más de una vez.
+-- Solo agrega dos tablas. No toca ninguna existente. Se puede correr más de una vez.
 --
---   viajes_gps   un viaje de un mixer: salida de planta → obra → salida de obra → vuelta a planta,
---                con los minutos de cada tramo, km, tiempo y ralentí en planta, paradas fuera de obra
---                y el cruce con su remito (dispatch_id, puede ser nulo = viaje sin remito).
+--   viajes_gps             un viaje de un mixer: salida de planta → obra → salida de obra → vuelta a planta,
+--                          con los minutos de cada tramo, km, tiempo y ralentí en planta, paradas fuera de obra
+--                          y el cruce con su remito (dispatch_id, puede ser nulo = viaje sin remito).
+--   gps_reconstrucciones   registro de cada llamada a /api/gps/reconstruir (rango, simulación, origen, resultado).
+--                          Sirve de freno: una llamada manual que repite un rango antes de 5 min se rechaza.
 --
--- La llena /api/gps/reconstruir (cron diario y carga histórica), que reemplaza los viajes de cada
--- camión y día que procesa (borra y vuelve a insertar). El índice único (mixer_id, salida_planta)
--- impide duplicados aunque dos procesos corran juntos.
+-- La llena /api/gps/reconstruir (cron diario y carga histórica): por camión, primero hace upsert de los viajes
+-- nuevos (índice único mixer_id + salida_planta) y después borra los del rango que quedaron sin tocar, así un
+-- error nunca deja un camión sin viajes.
 --
 -- Las ubicaciones aprendidas de las obras se guardan en construction_sites.gps_lat/gps_lng con
 -- gps_source = 'gps_aprendido' (columnas que ya existen); nunca pisan una ubicación cargada a mano.
@@ -60,3 +62,22 @@ COMMENT ON COLUMN public.viajes_gps.confianza IS 'Cruce con el remito: alta (obr
 COMMENT ON COLUMN public.viajes_gps.estado IS 'incompleto: sin señal en movimiento o no volvió a planta (por ejemplo, quedó guardado afuera).';
 
 GRANT ALL ON TABLE public.viajes_gps TO anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- Registro de llamadas (solo el servidor: sin permisos para anon/authenticated)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.gps_reconstrucciones (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  desde      date NOT NULL,
+  hasta      date NOT NULL,
+  simular    boolean NOT NULL DEFAULT false,
+  origen     text NOT NULL CHECK (origen IN ('cron', 'manual')),
+  inicio     timestamptz NOT NULL DEFAULT now(),
+  fin        timestamptz,
+  resultado  jsonb
+);
+CREATE INDEX IF NOT EXISTS gps_reconstrucciones_inicio_idx ON public.gps_reconstrucciones (inicio);
+COMMENT ON TABLE public.gps_reconstrucciones IS 'Fase 4a: registro y freno de /api/gps/reconstruir (hasta que la 0c ponga autenticación).';
+
+REVOKE ALL ON TABLE public.gps_reconstrucciones FROM anon, authenticated;
+GRANT ALL ON TABLE public.gps_reconstrucciones TO service_role;

@@ -17,7 +17,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AlertTriangle, Info, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { REFERENCIAS_LOOP, fechaAR, promedio, resumirViajes, sumarDias, type ViajeGpsFila } from "@/lib/gps-viajes"
+import {
+  REFERENCIAS_LOOP,
+  fechaAR,
+  llegadaPrimerCamion,
+  promedio,
+  resumirViajes,
+  sumarDias,
+  todasLasFilas,
+  type ViajeGpsFila,
+} from "@/lib/gps-viajes"
 
 type Viaje = ViajeGpsFila & { id?: string }
 type Despacho = {
@@ -107,27 +116,34 @@ export function LogisticaTiempos() {
           if (!r.ok) throw new Error(r.error || "No se pudo simular")
           vs = r.filas || []
         } else {
-          const { data, error: e } = await sb
-            .from("viajes_gps")
-            .select("*")
-            .gte("fecha", desdeQ)
-            .lte("fecha", hastaQ)
-            .order("salida_planta")
-            .limit(5000)
-          if (e) {
-            if (/viajes_gps/.test(e.message || "") || e.code === "42P01" || e.code === "PGRST205") throw new Error("SIN_TABLA")
+          // PostgREST devuelve como mucho 1000 filas por consulta: se pagina hasta traer todo
+          try {
+            vs = await todasLasFilas<Viaje>((a, b) =>
+              sb.from("viajes_gps").select("*").gte("fecha", desdeQ).lte("fecha", hastaQ).order("salida_planta").order("mixer_id").range(a, b),
+            )
+          } catch (e: any) {
+            if (/viajes_gps/.test(e?.message || "") || e?.code === "42P01" || e?.code === "PGRST205") throw new Error("SIN_TABLA")
             throw e
           }
-          vs = (data as any) || []
         }
-        // Remitos del período (con camión)
+        // Remitos del período (con camión, sin los despachos por árido)
         const sel = "id, remito, quantity_m3, dispatch_date, mixer_id, plant_id, client_id, construction_site_id, scheduled_dispatch_id, clients(name), construction_sites(name)"
-        let r1: any = await sb.from("dispatches").select(`${sel}, choferes(nombre)`).not("mixer_id", "is", null).gt("quantity_m3", 0)
-          .gte("dispatch_date", inicioAR(desdeQ)).lt("dispatch_date", inicioAR(sumarDias(hastaQ, 1))).limit(5000)
-        if (r1.error) r1 = await sb.from("dispatches").select(sel).not("mixer_id", "is", null).gt("quantity_m3", 0)
-          .gte("dispatch_date", inicioAR(desdeQ)).lt("dispatch_date", inicioAR(sumarDias(hastaQ, 1))).limit(5000)
-        if (r1.error) throw r1.error
-        const ds: Despacho[] = r1.data || []
+        const remitos = (conChofer: boolean) =>
+          todasLasFilas<Despacho>((a, b) =>
+            sb
+              .from("dispatches")
+              .select(conChofer ? `${sel}, choferes(nombre)` : sel)
+              .not("mixer_id", "is", null)
+              .not("is_test_dispatch", "is", true)
+              .gt("quantity_m3", 0)
+              .gte("dispatch_date", inicioAR(desdeQ))
+              .lt("dispatch_date", inicioAR(sumarDias(hastaQ, 1)))
+              .order("dispatch_date")
+              .order("id")
+              .range(a, b) as any,
+          )
+        // Sin la tabla de choferes (fase 1) se trae lo mismo sin el chofer
+        const ds: Despacho[] = await remitos(true).catch(() => remitos(false))
         // Pedidos (puntualidad) y obras de los viajes sin remito
         const idsPed = [...new Set(ds.map((d) => d.scheduled_dispatch_id).filter(Boolean))] as string[]
         const idsObra = [...new Set(vs.filter((v) => !v.dispatch_id && v.construction_site_id).map((v) => v.construction_site_id!))]
@@ -212,34 +228,43 @@ export function LogisticaTiempos() {
   const rankingObras = ranking((v) => v.construction_site_id, (v) => `${v.obra || "Obra sin nombre"}${v.cliente ? ` · ${v.cliente}` : ""}`)
   const rankingClientes = ranking((v) => v.client_id, (v) => v.cliente || "Cliente sin nombre")
 
-  // ---------- Puntualidad: primer camión del pedido contra la hora pedida ----------
+  // ---------- Puntualidad: primer camión del pedido (por orden de remito) contra la hora pedida ----------
   const puntualidad = useMemo(() => {
-    const primeros = new Map<string, string>()
-    for (const v of delPeriodo) {
-      if (!v.desp?.scheduled_dispatch_id || !v.llegada_obra || v.confianza === "baja") continue
-      const k = v.desp.scheduled_dispatch_id
-      if (!primeros.has(k) || v.llegada_obra < primeros.get(k)!) primeros.set(k, v.llegada_obra)
-    }
+    const viajePorRemito = new Map(viajes.filter((v) => v.dispatch_id).map((v) => [v.dispatch_id!, v]))
     const filas = pedidos
-      .filter((p) => primeros.has(p.id) && p.scheduled_arrival_time)
+      .filter((p) => p.scheduled_arrival_time && (planta === "todas" || p.plant_id === planta))
       .map((p) => {
+        const ds = despachos.filter((d) => d.scheduled_dispatch_id === p.id)
+        const primero = llegadaPrimerCamion(ds, viajePorRemito)
+        const dPrimero = primero ? despPorId.get(primero.dispatch_id) : undefined
+        const fecha = dPrimero ? fechaAR(dPrimero.dispatch_date) : fechaAR(p.scheduled_arrival_time!)
         const tol = plantas.find((x) => x.id === p.plant_id)?.tolerancia_puntualidad_min ?? 15
-        const llegada = primeros.get(p.id)!
-        const dif = Math.round((new Date(llegada).getTime() - new Date(p.scheduled_arrival_time!).getTime()) / 60000)
-        return { p, llegada, dif, tol, puntual: dif <= tol }
+        const llegada = primero?.llegada ?? null
+        const dif = llegada ? Math.round((new Date(llegada).getTime() - new Date(p.scheduled_arrival_time!).getTime()) / 60000) : null
+        return { p, fecha, remito: dPrimero?.remito ?? null, llegada, dif, tol, puntual: dif == null ? null : dif <= tol }
       })
-      .sort((a, b) => b.dif - a.dif)
-    const porCliente = new Map<string, { nombre: string; pedidos: number; puntuales: number; difs: number[] }>()
+      .filter((f) => f.fecha >= desde && f.fecha <= hasta)
+      // Primero los más atrasados; los "sin dato" al final
+      .sort((a, b) => (a.dif == null ? 1 : 0) - (b.dif == null ? 1 : 0) || (b.dif ?? 0) - (a.dif ?? 0))
+    const conDato = filas.filter((f) => f.dif != null)
+    const porCliente = new Map<string, { nombre: string; pedidos: number; puntuales: number; difs: number[]; sinDato: number }>()
     for (const f of filas) {
       const k = f.p.client_id || "?"
-      const x = porCliente.get(k) || { nombre: f.p.clients?.name || "Sin cliente", pedidos: 0, puntuales: 0, difs: [] }
-      x.pedidos++
-      if (f.puntual) x.puntuales++
-      x.difs.push(f.dif)
+      const x = porCliente.get(k) || { nombre: f.p.clients?.name || "Sin cliente", pedidos: 0, puntuales: 0, difs: [], sinDato: 0 }
+      if (f.dif == null) x.sinDato++
+      else {
+        x.pedidos++
+        if (f.puntual) x.puntuales++
+        x.difs.push(f.dif)
+      }
       porCliente.set(k, x)
     }
-    return { filas, porCliente: [...porCliente.values()].sort((a, b) => a.puntuales / a.pedidos - b.puntuales / b.pedidos) }
-  }, [delPeriodo, pedidos, plantas])
+    return {
+      filas,
+      conDato,
+      porCliente: [...porCliente.values()].sort((a, b) => (a.pedidos ? a.puntuales / a.pedidos : 2) - (b.pedidos ? b.puntuales / b.pedidos : 2)),
+    }
+  }, [viajes, despachos, despPorId, pedidos, plantas, planta, desde, hasta])
 
   if (error === "SIN_TABLA") {
     return (
@@ -253,7 +278,8 @@ export function LogisticaTiempos() {
   }
 
   const hayChoferes = resumen.porChofer.length > 0
-  const pctPuntual = puntualidad.filas.length ? Math.round((puntualidad.filas.filter((f) => f.puntual).length / puntualidad.filas.length) * 100) : null
+  const pctPuntual = puntualidad.conDato.length ? Math.round((puntualidad.conDato.filter((f) => f.puntual).length / puntualidad.conDato.length) * 100) : null
+  const tolerancias = plantas.map((p) => `${p.name} ${p.tolerancia_puntualidad_min ?? 15} min`).join(", ")
 
   return (
     <div className="space-y-4">
@@ -370,7 +396,7 @@ export function LogisticaTiempos() {
             </div>
           </Card>
           <p className="text-[11px] text-muted-foreground">
-            Minutos. "Ciclo" = salida → vuelta a planta. "En planta" = desde que llegó (o arrancó el motor a la mañana) hasta que salió; "Ralentí" = de eso, motor encendido y parado.
+            Minutos. "Ciclo" = salida → vuelta a planta (sin la carga; el de Loop incluye la carga). "En planta" = desde que llegó (o arrancó el motor a la mañana) hasta que salió; "Ralentí" = de eso, motor encendido y parado.
             Confirmado = paró en la obra ubicada; Por orden = n.º de viaje del día con n.º de remito; Dudoso = no cierran las cantidades, la planta o el lugar.
           </p>
 
@@ -412,7 +438,8 @@ export function LogisticaTiempos() {
             {fechaCorta(desde)} al {fechaCorta(hasta)} · {resumen.viajes} viajes ({resumen.completos} completos, {resumen.sinRemito} sin remito) · {n1(resumen.m3)} m³
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
-            <Kpi titulo="Ciclo promedio" valor={n0(resumen.ciclo)} unidad="min" loop={`~${REFERENCIAS_LOOP.ciclo} (con la carga)`} nota="salida → vuelta a planta" />
+            <Kpi titulo="Ciclo con planta" valor={n0(resumen.cicloConPlanta)} unidad="min" loop={`~${REFERENCIAS_LOOP.ciclo}`} nota="tiempo en planta + salida → vuelta (como Loop: con la carga)" />
+            <Kpi titulo="Ciclo en la calle" valor={n0(resumen.ciclo)} unidad="min" nota="salida → vuelta a planta, sin la carga" />
             <Kpi titulo="Tiempo en obra" valor={n0(resumen.obra)} unidad="min" loop={`~${REFERENCIAS_LOOP.obra}`} />
             <Kpi titulo="Ida / vuelta" valor={resumen.ida == null ? "–" : `${n0(resumen.ida)} / ${n0(resumen.vuelta)}`} unidad="min" loop={`ruta ~${REFERENCIAS_LOOP.ruta} (ida + vuelta)`} />
             <Kpi titulo="Tiempo en planta" valor={n0(resumen.enPlanta)} unidad="min" loop={`carga ${REFERENCIAS_LOOP.carga}`} nota="incluye la espera y la carga" />
@@ -525,8 +552,9 @@ export function LogisticaTiempos() {
         {/* ---------------- Puntualidad ---------------- */}
         <TabsContent value="puntualidad" className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Llegada del primer camión de cada pedido contra la hora pedida, con la tolerancia de la planta (15 min).{" "}
-            {pctPuntual != null && <strong className="text-foreground">{pctPuntual}% puntuales ({puntualidad.filas.length} pedidos).</strong>}
+            Llegada a obra del primer camión de cada pedido (el primer remito) contra la hora pedida, con la tolerancia de cada planta{tolerancias ? ` (${tolerancias})` : ""}.{" "}
+            {pctPuntual != null && <strong className="text-foreground">{pctPuntual}% puntuales ({puntualidad.conDato.length} pedidos con dato).</strong>}
+            {puntualidad.filas.length > puntualidad.conDato.length && <> {puntualidad.filas.length - puntualidad.conDato.length} sin dato.</>}
           </p>
           <div className="grid lg:grid-cols-[1fr_1.4fr] gap-3">
             <Card>
@@ -535,18 +563,19 @@ export function LogisticaTiempos() {
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow><TableHead>Cliente</TableHead><TableHead className="text-right">Pedidos</TableHead><TableHead className="text-right">Puntuales</TableHead><TableHead className="text-right">Atraso prom.</TableHead></TableRow>
+                      <TableRow><TableHead>Cliente</TableHead><TableHead className="text-right">Pedidos</TableHead><TableHead className="text-right">Puntuales</TableHead><TableHead className="text-right">Atraso prom.</TableHead><TableHead className="text-right">Sin dato</TableHead></TableRow>
                     </TableHeader>
                     <TableBody>
                       {puntualidad.porCliente.map((c) => (
                         <TableRow key={c.nombre}>
                           <TableCell>{c.nombre}</TableCell>
                           <TableCell className="text-right tabular-nums">{c.pedidos}</TableCell>
-                          <TableCell className="text-right tabular-nums">{Math.round((c.puntuales / c.pedidos) * 100)}%</TableCell>
-                          <TableCell className="text-right tabular-nums">{n0(promedio(c.difs))} min</TableCell>
+                          <TableCell className="text-right tabular-nums">{c.pedidos ? `${Math.round((c.puntuales / c.pedidos) * 100)}%` : "–"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{c.pedidos ? `${n0(promedio(c.difs))} min` : "–"}</TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">{c.sinDato || ""}</TableCell>
                         </TableRow>
                       ))}
-                      {puntualidad.porCliente.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-4">Sin pedidos medidos en el período.</TableCell></TableRow>}
+                      {puntualidad.porCliente.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-4">Sin pedidos medidos en el período.</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </div>
@@ -558,18 +587,23 @@ export function LogisticaTiempos() {
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow><TableHead>Día</TableHead><TableHead>Cliente / obra</TableHead><TableHead className="text-center">Pedida</TableHead><TableHead className="text-center">Llegó</TableHead><TableHead className="text-right">Diferencia</TableHead></TableRow>
+                      <TableRow><TableHead>Día</TableHead><TableHead>Cliente / obra</TableHead><TableHead>1.er remito</TableHead><TableHead className="text-center">Pedida</TableHead><TableHead className="text-center">Llegó</TableHead><TableHead className="text-right">Diferencia</TableHead></TableRow>
                     </TableHeader>
                     <TableBody>
                       {puntualidad.filas.slice(0, 60).map((f) => (
                         <TableRow key={f.p.id}>
-                          <TableCell className="whitespace-nowrap">{fechaCorta(fechaAR(f.llegada))}</TableCell>
+                          <TableCell className="whitespace-nowrap">{fechaCorta(f.fecha)}</TableCell>
                           <TableCell>{f.p.clients?.name || "–"}<span className="block text-xs text-muted-foreground">{f.p.construction_sites?.name}</span></TableCell>
+                          <TableCell className="whitespace-nowrap">{f.remito || "–"}</TableCell>
                           <TableCell className="text-center tabular-nums">{hora(f.p.scheduled_arrival_time)}</TableCell>
                           <TableCell className="text-center tabular-nums">{hora(f.llegada)}</TableCell>
-                          <TableCell className={cn("text-right tabular-nums font-medium", f.puntual ? "text-emerald-700" : "text-red-700")}>
-                            {f.dif > 0 ? `+${f.dif}` : f.dif} min
-                          </TableCell>
+                          {f.dif == null ? (
+                            <TableCell className="text-right text-xs text-muted-foreground" title="El viaje del primer remito no se midió o el cruce es dudoso">Sin dato</TableCell>
+                          ) : (
+                            <TableCell className={cn("text-right tabular-nums font-medium", f.puntual ? "text-emerald-700" : "text-red-700")}>
+                              {f.dif > 0 ? `+${f.dif}` : f.dif} min
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -578,7 +612,7 @@ export function LogisticaTiempos() {
               </CardContent>
             </Card>
           </div>
-          <p className="text-[11px] text-muted-foreground">Llegar antes también cuenta como puntual. Sin remito o con cruce dudoso no se cuenta. Cancelados y suspendidos se suman cuando exista el motivo (Fase 3).</p>
+          <p className="text-[11px] text-muted-foreground">Llegar antes también cuenta como puntual. Si el viaje del primer remito no se midió o el cruce es dudoso, el pedido queda "sin dato" (no se usa el segundo camión). Cancelados y suspendidos se suman cuando exista el motivo (Fase 3).</p>
         </TabsContent>
       </Tabs>
     </div>

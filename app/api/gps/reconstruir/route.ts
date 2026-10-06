@@ -6,12 +6,17 @@
  *   GET /api/gps/reconstruir                                       (cron: ayer y los 2 días previos)
  *   …&simular=1   calcula todo y devuelve los viajes sin escribir nada (para controlar antes de cargar)
  *
- * Idempotente: reemplaza los viajes de cada camión en esos días. Solo escribe viajes_gps y las ubicaciones
- * aprendidas de obras sin ubicación cargada a mano. Por ahora sin secreto (lo protege la fase 0c).
+ * Idempotente: por camión hace upsert de los viajes y borra los del rango que quedaron sin tocar. Solo escribe
+ * viajes_gps, el registro gps_reconstrucciones y las ubicaciones aprendidas de obras sin ubicación a mano.
+ *
+ * TODO(fase 0c): autenticación real. Mientras tanto, freno barato para no castigar a Wialon: una llamada manual
+ * que repite (o se superpone con) un rango pedido hace menos de 5 min, o más de 30 llamadas en 5 min, recibe 429.
+ * Las del cron de Vercel (header x-vercel-cron o user-agent vercel-cron) no se frenan. Los dos se pueden falsificar.
  */
 import { NextResponse } from "next/server"
 import { reconstruirRango } from "@/lib/gps-reconstruir"
-import { fechaAR, sumarDias } from "@/lib/gps-viajes"
+import { sbAdmin } from "@/lib/wialon"
+import { FRENO, fechaAR, motivoFreno, sumarDias } from "@/lib/gps-viajes"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -24,6 +29,8 @@ export async function GET(req: Request) {
   const hoy = fechaAR(new Date())
   let desde = q.get("fecha") || q.get("desde")
   let hasta = q.get("fecha") || q.get("hasta")
+  const simular = q.get("simular") === "1"
+  const cron = req.headers.has("x-vercel-cron") || /vercel-cron/i.test(req.headers.get("user-agent") || "")
   if (!desde && !hasta) {
     // Cron (06:00 en Argentina): el día anterior y repaso de los 2 previos, por si llegaron mensajes atrasados
     desde = sumarDias(hoy, -3)
@@ -32,15 +39,39 @@ export async function GET(req: Request) {
   if (!desde || !hasta || !FECHA.test(desde) || !FECHA.test(hasta) || isNaN(Date.parse(desde)) || isNaN(Date.parse(hasta))) {
     return NextResponse.json({ error: "Fechas inválidas: usar fecha=AAAA-MM-DD o desde y hasta" }, { status: 400 })
   }
-  if (desde > hasta) return NextResponse.json({ error: "desde es posterior a hasta" }, { status: 400 })
   if (hasta > hoy) hasta = hoy
+  if (desde > hasta) return NextResponse.json({ error: "desde es posterior a hasta (o es una fecha futura)" }, { status: 400 })
   const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000) + 1
   if (dias > MAX_DIAS) return NextResponse.json({ error: `Máximo ${MAX_DIAS} días por llamada` }, { status: 400 })
 
+  // Freno + registro de la llamada
+  const sb = sbAdmin()
+  const ahora = new Date()
+  const { data: recientes, error: eLog } = await sb
+    .from("gps_reconstrucciones")
+    .select("desde, hasta, simular, origen, inicio")
+    .gte("inicio", new Date(ahora.getTime() - FRENO.ventanaMin * 60000).toISOString())
+    .limit(200)
+  if (eLog) return NextResponse.json({ ok: false, error: "Falta aplicar la migración de la fase 4a (gps_reconstrucciones)" }, { status: 500 })
+  const motivo = motivoFreno(recientes || [], { desde, hasta, simular, cron }, ahora)
+  if (motivo) return NextResponse.json({ ok: false, error: motivo }, { status: 429 })
+  const { data: reg } = await sb
+    .from("gps_reconstrucciones")
+    .insert({ desde, hasta, simular, origen: cron ? "cron" : "manual", inicio: ahora.toISOString() })
+    .select("id")
+    .single()
+  const cerrar = async (resultado: any) => {
+    if (reg?.id) await sb.from("gps_reconstrucciones").update({ fin: new Date().toISOString(), resultado }).eq("id", reg.id)
+  }
+
   try {
-    const informe = await reconstruirRango(desde, hasta, { simular: q.get("simular") === "1" })
+    const informe = await reconstruirRango(desde, hasta, { simular })
+    const { filas: _f, ...resumen } = informe
+    await cerrar(resumen)
     return NextResponse.json({ ok: true, ...informe })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Error reconstruyendo los viajes" }, { status: 500 })
+    const error = e?.message || "Error reconstruyendo los viajes"
+    await cerrar({ error })
+    return NextResponse.json({ ok: false, error }, { status: 500 })
   }
 }

@@ -582,18 +582,29 @@ export function alinear(viajes: ViajeGps[], despachos: DespachoCruce[], P: Param
     ordenes = nuevos
     if (ordenes.length > 500) break
   }
+  // Candidatos en orden de preferencia; uno posterior gana solo si cuesta claramente menos (0,25).
+  // Con la misma cantidad, primero va "1.º con 1.º"; también se prueba la alineación ordenada, que gana
+  // cuando hay un viaje sin remito y un remito sin viaje (por ejemplo, un traslado y un remito de otra planta).
   let mejor: { res: (number | null)[]; costo: number } | null = null
   for (const orden of ordenes) {
     const ds = orden.map((k) => despachos[k])
-    const local = iguales ? viajes.map((_, i) => i) : alinearOrdenado(viajes, ds, P)
-    const res = local.map((j) => (j == null ? null : orden[j]))
-    // Con la misma cantidad el orden manda: la hora no cuenta, solo planta y obra
-    const f = iguales ? costoLugar : costoPar
-    const usados = res.filter((j) => j != null).length
-    const costo = res.reduce<number>((s, j, i) => s + (j == null ? 0 : f(viajes[i], despachos[j], P)), 0) + SALTO * (n - usados + m - usados)
-    if (!mejor || costo < mejor.costo - 0.25) mejor = { res, costo }
+    const locales = iguales ? [viajes.map((_, i) => i), alinearOrdenado(viajes, ds, P)] : [alinearOrdenado(viajes, ds, P)]
+    for (const local of locales) {
+      const res = local.map((j) => (j == null ? null : orden[j]))
+      const costo = costoAlineacion(viajes, despachos, res, P)
+      if (!mejor || costo < mejor.costo - 0.25) mejor = { res, costo }
+    }
   }
   return mejor ? mejor.res : []
+}
+
+/** Costo total de una alineación: cada par (hora, planta, obra) más un salto por cada viaje o remito suelto. */
+export function costoAlineacion(viajes: ViajeGps[], despachos: DespachoCruce[], res: (number | null)[], P: Parametros = PARAMETROS): number {
+  const usados = res.filter((j) => j != null).length
+  return (
+    res.reduce<number>((s, j, i) => s + (j == null ? 0 : costoPar(viajes[i], despachos[j], P)), 0) +
+    SALTO * (viajes.length - usados + despachos.length - usados)
+  )
 }
 
 const numeroRemito = (r: string | null | undefined): number | null => {
@@ -680,17 +691,42 @@ export function aFila(v: ViajeCruzado, mixerId: string): ViajeGpsFila {
 // ---------------------------------------------------------------------------
 // 4. Ubicación aprendida de la obra
 // ---------------------------------------------------------------------------
+export type ParadaObra = LatLng & { fecha: string }
+
 /**
- * Mediana de las paradas principales de los viajes a una obra. Hace falta al menos 2 paradas que coincidan
- * (a menos de 0,5 km de la mediana) y que sean la mayoría; si no, no se sugiere nada.
+ * Mediana de las paradas principales de los viajes a una obra. Para no fijar un valor equivocado hace falta
+ * que coincidan (a menos de 0,5 km de la mediana) al menos `minParadas` paradas de al menos `minDias` días
+ * distintos, y que sean la mayoría (60 %); si no, no se sugiere nada.
  */
-export function ubicacionAprendida(paradas: LatLng[], minimo = 2): (LatLng & { viajes: number }) | null {
-  const ps = paradas.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
-  if (ps.length < minimo) return null
+export function ubicacionAprendida(
+  paradas: ParadaObra[],
+  { minParadas = 3, minDias = 2 }: { minParadas?: number; minDias?: number } = {},
+): (LatLng & { viajes: number; dias: number }) | null {
+  const ps = paradas.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.fecha)
+  if (ps.length < minParadas) return null
   const med = { lat: mediana(ps.map((p) => p.lat))!, lng: mediana(ps.map((p) => p.lng))! }
   const cerca = ps.filter((p) => distanciaKm(p, med) <= 0.5)
-  if (cerca.length < minimo || cerca.length * 10 < ps.length * 6) return null
-  return { lat: mediana(cerca.map((p) => p.lat))!, lng: mediana(cerca.map((p) => p.lng))!, viajes: cerca.length }
+  const dias = new Set(cerca.map((p) => p.fecha)).size
+  if (cerca.length < minParadas || dias < minDias || cerca.length * 10 < ps.length * 6) return null
+  return { lat: mediana(cerca.map((p) => p.lat))!, lng: mediana(cerca.map((p) => p.lng))!, viajes: cerca.length, dias }
+}
+
+/**
+ * Paradas que se usan para aprender la ubicación de una obra.
+ * - Obra sin ubicación: las paradas principales de los viajes con remito cruzados por orden (confianza media).
+ * - Obra con ubicación aprendida: se recalcula cada vez con TODOS los viajes con remito a esa obra (cualquier
+ *   confianza), para que un valor equivocado no se confirme a sí mismo.
+ * - Obra con ubicación cargada a mano: nunca (devuelve vacío).
+ */
+export function paradasParaAprender(
+  obra: { gps_lat: unknown; gps_source: string | null },
+  viajes: Pick<ViajeGpsFila, "dispatch_id" | "confianza" | "parada_lat" | "parada_lng" | "fecha">[],
+): ParadaObra[] {
+  if (!sePuedeAprender(obra)) return []
+  const aprendida = obra.gps_lat != null && obra.gps_source === "gps_aprendido"
+  return viajes
+    .filter((v) => v.dispatch_id && v.parada_lat != null && v.parada_lng != null && (aprendida || v.confianza === "media"))
+    .map((v) => ({ lat: Number(v.parada_lat), lng: Number(v.parada_lng), fecha: v.fecha }))
 }
 
 /** Nunca se pisa una ubicación cargada a mano: solo se escribe si la obra no tiene o si la que tiene es aprendida. */
@@ -785,7 +821,12 @@ export function resumirViajes(viajes: ViajeResumen[], P: Parametros = PARAMETROS
     completos: completos.length,
     conRemito: viajes.filter((v) => v.dispatch_id).length,
     sinRemito: viajes.filter((v) => !v.dispatch_id).length,
+    /** Salida → vuelta a planta (sin la carga). */
     ciclo: r1(promedio(completos.map((v) => v.ciclo_min))),
+    /** Ciclo + tiempo en planta antes de salir (espera y carga): comparable con el ciclo de Loop (~150, con la carga). */
+    cicloConPlanta: r1(
+      promedio(completos.map((v) => (v.ciclo_min != null && v.min_en_planta != null && v.min_en_planta <= 180 ? Number(v.ciclo_min) + Number(v.min_en_planta) : null))),
+    ),
     obra: r1(promedio(completos.map((v) => v.min_obra))),
     ida: r1(promedio(completos.map((v) => v.min_ida))),
     vuelta: r1(promedio(completos.map((v) => v.min_vuelta))),
@@ -818,4 +859,92 @@ export function resumirViajes(viajes: ViajeResumen[], P: Parametros = PARAMETROS
       motorParadoPlanta: r1(promedio(c.motor)),
     })),
   }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Puntualidad: el primer camión del pedido
+// ---------------------------------------------------------------------------
+/**
+ * El primer camión de un pedido es el primer remito en el orden del día (número de remito dentro de la planta,
+ * ver ordenarDespachos), no el que llegó primero. Si ese viaje no se midió o el cruce es dudoso, el pedido
+ * queda "sin dato" (no se usa el segundo camión, que daría una puntualidad falsa).
+ */
+export function llegadaPrimerCamion(
+  despachosPedido: { id: string; dispatch_date: string; remito: string | null; plant_id: string | null; construction_site_id?: string | null }[],
+  viajePorRemito: Map<string, Pick<ViajeGpsFila, "llegada_obra" | "confianza">>,
+): { dispatch_id: string; llegada: string | null } | null {
+  if (despachosPedido.length === 0) return null
+  const orden = ordenarDespachos(
+    despachosPedido.map((d) => ({ id: d.id, hora: new Date(d.dispatch_date).toISOString(), remito: d.remito, plant_id: d.plant_id, construction_site_id: d.construction_site_id ?? null, obra: null })),
+  )
+  const primero = orden[0]
+  const v = viajePorRemito.get(primero.id)
+  return { dispatch_id: primero.id, llegada: v && v.llegada_obra && v.confianza !== "baja" ? v.llegada_obra : null }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Base de datos (reciben un cliente de Supabase; sin imports para poder probarlas)
+// ---------------------------------------------------------------------------
+/** Trae todas las filas de una consulta paginando de a 1000 (PostgREST corta ahí aunque se pida más). */
+export async function todasLasFilas<T = any>(armar: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: any }>, pagina = 1000): Promise<T[]> {
+  const out: T[] = []
+  for (let a = 0; ; a += pagina) {
+    const { data, error } = await armar(a, a + pagina - 1)
+    if (error) throw error
+    out.push(...(data || []))
+    if (!data || data.length < pagina) break
+  }
+  return out
+}
+
+/**
+ * Guarda los viajes de un camión para un rango de días sin dejarlo nunca vacío:
+ * 1) upsert de los viajes nuevos con procesado_at = ahora (clave mixer_id + salida_planta);
+ * 2) recién después, borra los del camión en el rango que no se tocaron (procesado_at anterior): viajes que
+ *    ya no existen, por ejemplo porque cambió la hora de salida o un viaje que cruzaba la medianoche.
+ * Si el upsert falla no se borra nada (quedan los viajes anteriores).
+ */
+export async function guardarViajesCamion(sb: any, mixerId: string, filas: ViajeGpsFila[], desde: string, hasta: string, ahora: string): Promise<void> {
+  if (filas.length) {
+    const { error } = await sb
+      .from("viajes_gps")
+      .upsert(filas.map((f) => ({ ...f, procesado_at: ahora })), { onConflict: "mixer_id,salida_planta" })
+    if (error) throw error
+  }
+  const { error } = await sb
+    .from("viajes_gps")
+    .delete()
+    .eq("mixer_id", mixerId)
+    .gte("fecha", desde)
+    .lte("fecha", hasta)
+    .lt("procesado_at", ahora)
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------------------
+// 9. Freno del endpoint (hasta que la fase 0c ponga autenticación)
+// ---------------------------------------------------------------------------
+export const FRENO = { ventanaMin: 5, maxLlamadasVentana: 30 }
+
+/**
+ * Decide si una llamada manual se rechaza (429) para no castigar a Wialon: el mismo rango (o uno que se
+ * superpone, con el mismo modo simular) ya se pidió hace menos de 5 min, o hubo demasiadas llamadas manuales
+ * en esos 5 min. Las del cron de Vercel no se frenan. Devuelve el motivo, o null si se puede seguir.
+ */
+export function motivoFreno(
+  recientes: { desde: string; hasta: string; simular: boolean; origen: string; inicio: string }[],
+  pedido: { desde: string; hasta: string; simular: boolean; cron: boolean },
+  ahora: Date,
+  F = FRENO,
+): string | null {
+  if (pedido.cron) return null
+  const limite = ahora.getTime() - F.ventanaMin * 60000
+  const ventana = recientes.filter((r) => new Date(r.inicio).getTime() >= limite)
+  if (ventana.some((r) => r.simular === pedido.simular && r.desde <= pedido.hasta && pedido.desde <= r.hasta)) {
+    return `Ese rango ya se ${pedido.simular ? "simuló" : "procesó"} hace menos de ${F.ventanaMin} min. Esperá un rato.`
+  }
+  if (ventana.filter((r) => r.origen !== "cron").length >= F.maxLlamadasVentana) {
+    return `Demasiadas llamadas en los últimos ${F.ventanaMin} min. Esperá un rato.`
+  }
+  return null
 }

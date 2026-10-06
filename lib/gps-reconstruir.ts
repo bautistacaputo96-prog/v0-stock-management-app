@@ -11,11 +11,14 @@ import {
   cruzarConDespachos,
   distanciaKm,
   fechaAR,
+  guardarViajesCamion,
   inicioDiaAR,
   mensajesDesdeWialon,
+  paradasParaAprender,
   reconstruirViajes,
   sePuedeAprender,
   sumarDias,
+  todasLasFilas,
   ubicacionAprendida,
   type DespachoCruce,
   type LatLng,
@@ -99,19 +102,23 @@ export async function reconstruirRango(
     await cerrarSesion(sid)
   }
 
-  // 2. Despachos del rango (con camión) y obras
-  const { data: desp, error: e3 } = await sb
-    .from("dispatches")
-    .select("id, dispatch_date, created_at, remito, plant_id, mixer_id, construction_site_id, quantity_m3")
-    .not("mixer_id", "is", null)
-    .gt("quantity_m3", 0)
-    .gte("dispatch_date", new Date(inicioDiaAR(desde) * 1000).toISOString())
-    .lt("dispatch_date", new Date(inicioDiaAR(sumarDias(hasta, 1)) * 1000).toISOString())
-  if (e3) throw e3
-  const { data: obrasDb, error: e4 } = await sb.from("construction_sites").select("id, gps_lat, gps_lng, gps_source")
-  if (e4) throw e4
+  // 2. Despachos del rango (con camión, sin los despachos por árido) y obras
+  const desp: any[] = await todasLasFilas((a, b) =>
+    sb
+      .from("dispatches")
+      .select("id, dispatch_date, created_at, remito, plant_id, mixer_id, construction_site_id, quantity_m3")
+      .not("mixer_id", "is", null)
+      .not("is_test_dispatch", "is", true)
+      .gt("quantity_m3", 0)
+      .gte("dispatch_date", new Date(inicioDiaAR(desde) * 1000).toISOString())
+      .lt("dispatch_date", new Date(inicioDiaAR(sumarDias(hasta, 1)) * 1000).toISOString())
+      .order("dispatch_date")
+      .order("id")
+      .range(a, b),
+  )
+  const obrasDb: any[] = await todasLasFilas((a, b) => sb.from("construction_sites").select("id, gps_lat, gps_lng, gps_source").order("id").range(a, b))
   const obras = new Map<string, { gps_lat: number | null; gps_lng: number | null; gps_source: string | null }>(
-    (obrasDb || []).map((o: any) => [o.id, { gps_lat: o.gps_lat == null ? null : Number(o.gps_lat), gps_lng: o.gps_lng == null ? null : Number(o.gps_lng), gps_source: o.gps_source }]),
+    obrasDb.map((o: any) => [o.id, { gps_lat: o.gps_lat == null ? null : Number(o.gps_lat), gps_lng: o.gps_lng == null ? null : Number(o.gps_lng), gps_source: o.gps_source }]),
   )
   const posObra = (id: string | null): LatLng | null => {
     const o = id ? obras.get(id) : null
@@ -124,9 +131,9 @@ export async function reconstruirRango(
     for (const [mixerId, vs] of viajesPorMixer) {
       const filas: ViajeGpsFila[] = []
       let sinViaje = 0
-      const dias = new Set([...vs.map((v) => v.fecha), ...(desp || []).filter((d: any) => d.mixer_id === mixerId).map((d: any) => fechaAR(d.dispatch_date))])
+      const dias = new Set([...vs.map((v) => v.fecha), ...desp.filter((d: any) => d.mixer_id === mixerId).map((d: any) => fechaAR(d.dispatch_date))])
       for (const dia of dias) {
-        const ds: DespachoCruce[] = (desp || [])
+        const ds: DespachoCruce[] = desp
           .filter((d: any) => d.mixer_id === mixerId && fechaAR(d.dispatch_date) === dia)
           .map((d: any) => ({
             id: d.id,
@@ -149,42 +156,42 @@ export async function reconstruirRango(
   // 3. Primer cruce
   let cruce = cruzarTodo()
 
-  // 4. Ubicaciones aprendidas: obras sin ubicación a mano con viajes de confianza media (o alta sobre una aprendida)
-  const nuevasPorObra = new Map<string, LatLng[]>()
+  // 4. Ubicaciones aprendidas (ver paradasParaAprender y ubicacionAprendida): obras con viajes en este rango
+  //    que no tengan una ubicación cargada a mano. Se junta el historial de esas obras fuera del rango.
+  const filasPorObra = new Map<string, ViajeGpsFila[]>()
   for (const { filas } of cruce.values()) {
     for (const f of filas) {
-      if (!f.construction_site_id || f.parada_lat == null || f.parada_lng == null || !f.dispatch_id) continue
+      if (!f.construction_site_id || !f.dispatch_id) continue
       const o = obras.get(f.construction_site_id)
       if (!o || !sePuedeAprender(o)) continue
-      if (f.confianza !== "media" && !(f.confianza === "alta" && o.gps_source === "gps_aprendido")) continue
-      const arr = nuevasPorObra.get(f.construction_site_id) || []
-      arr.push({ lat: f.parada_lat, lng: f.parada_lng })
-      nuevasPorObra.set(f.construction_site_id, arr)
+      const arr = filasPorObra.get(f.construction_site_id) || []
+      arr.push(f)
+      filasPorObra.set(f.construction_site_id, arr)
     }
   }
-  if (nuevasPorObra.size > 0) {
-    const ids = [...nuevasPorObra.keys()]
-    // Historial de esas obras fuera del rango que se está reprocesando
-    const { data: hist, error: e5 } = await sb
-      .from("viajes_gps")
-      .select("construction_site_id, parada_lat, parada_lng, confianza, fecha")
-      .in("construction_site_id", ids)
-      .in("confianza", ["media", "alta"])
-      .not("parada_lat", "is", null)
-      .or(`fecha.lt.${desde},fecha.gt.${hasta}`)
-      .order("salida_planta", { ascending: false })
-      .limit(2000)
-    if (e5 && !simular) throw e5
+  if (filasPorObra.size > 0) {
+    const ids = [...filasPorObra.keys()]
+    let hist: any[] = []
+    try {
+      hist = await todasLasFilas((a, b) =>
+        sb
+          .from("viajes_gps")
+          .select("id, construction_site_id, dispatch_id, parada_lat, parada_lng, confianza, fecha")
+          .in("construction_site_id", ids)
+          .not("dispatch_id", "is", null)
+          .not("parada_lat", "is", null)
+          .or(`fecha.lt.${desde},fecha.gt.${hasta}`)
+          .order("id")
+          .range(a, b),
+      )
+    } catch (e) {
+      if (!simular) throw e // en simulación la tabla puede no existir todavía
+    }
     for (const id of ids) {
       const o = obras.get(id)!
-      const puntos = [
-        ...nuevasPorObra.get(id)!,
-        ...(hist || [])
-          .filter((h: any) => h.construction_site_id === id && (h.confianza === "media" || o.gps_source === "gps_aprendido"))
-          .map((h: any) => ({ lat: Number(h.parada_lat), lng: Number(h.parada_lng) })),
-      ]
+      const puntos = paradasParaAprender(o, [...filasPorObra.get(id)!, ...hist.filter((h: any) => h.construction_site_id === id)])
       const u = ubicacionAprendida(puntos)
-      if (!u) continue
+      if (!u) continue // sin consenso (≥3 paradas, ≥2 días, mayoría): no se toca nada
       const actual = posObra(id)
       if (actual && distanciaKm(actual, u) < MOVIMIENTO_MIN_KM) continue
       const lat = Math.round(u.lat * 1e7) / 1e7, lng = Math.round(u.lng * 1e7) / 1e7
@@ -209,23 +216,22 @@ export async function reconstruirRango(
     if (informe.aprendidas.length) cruce = cruzarTodo()
   }
 
-  // 6. Guardar: reemplaza los viajes de cada camión procesado en los días del rango
+  // 6. Guardar por camión: upsert y después borrar lo que quedó sin tocar (ver guardarViajesCamion).
+  //    Si un camión falla, se informa y se sigue con los demás; sus viajes anteriores quedan como estaban.
+  const ahora = new Date().toISOString()
   for (const [mixerId, { filas, sinViaje }] of cruce) {
-    if (simular) informe.filas!.push(...filas)
-    else {
-      const { error: eDel } = await sb.from("viajes_gps").delete().eq("mixer_id", mixerId).gte("fecha", desde).lte("fecha", hasta)
-      if (eDel) throw eDel
-      if (filas.length) {
-        const ahora = new Date().toISOString()
-        const { error: eIns } = await sb
-          .from("viajes_gps")
-          .upsert(filas.map((f) => ({ ...f, procesado_at: ahora })), { onConflict: "mixer_id,salida_planta" })
-        if (eIns) throw eIns
-      }
-      informe.guardados += filas.length
-    }
     const m = (mixers || []).find((x: any) => x.id === mixerId)
     const fila = informe.camiones.find((c) => c.patente === m?.license_plate)
+    if (simular) informe.filas!.push(...filas)
+    else {
+      try {
+        await guardarViajesCamion(sb, mixerId, filas, desde, hasta, ahora)
+        informe.guardados += filas.length
+      } catch (e: any) {
+        if (fila) fila.error = `No se pudo guardar: ${e?.message || "error"}`
+        continue
+      }
+    }
     if (fila) {
       fila.viajes = filas.length
       fila.conRemito = filas.filter((f) => f.dispatch_id).length
