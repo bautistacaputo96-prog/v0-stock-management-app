@@ -207,7 +207,7 @@ APROBADO CON CAMBIOS (interruptor apagado y "No se pierde nada": OK). Arreglos d
 ### 2b (05/10/2026, obrero)
 Misma rama `loop/fase-2-viajes` (rebasada sobre main). Commits: `ed5cf88` migración, `0b7bd4c` motor, `7510015` Semana + gerenciador, `8638314` vista Día, `28a9004` tipos y este registro. Sin push ni merge.
 
-**Migración nueva (NO aplicada):** `supabase/migrations/202610052100_fase2b_viaje_descarga.sql`. Agrega `scheduled_dispatches.viaje_min` y `descarga_min` (enteros, nulos, CHECK > 0). Se puede correr dos veces y es compatible con `main` y con la fase 2. La `202610021000` (ya aplicada) no se tocó.
+**Migración nueva (aplicada a producción por el arquitecto el 05/10, con aviso a Bautista):** `supabase/migrations/202610052100_fase2b_viaje_descarga.sql`. Agrega `scheduled_dispatches.viaje_min` y `descarga_min` (enteros, nulos, CHECK > 0). Se puede correr dos veces y es compatible con `main` y con la fase 2. La `202610021000` (ya aplicada) no se tocó.
 
 **Lo que se hizo:**
 - **A · Obra ubicada y viaje real** (con el interruptor). En el formulario del pedido:
@@ -244,8 +244,28 @@ Misma rama `loop/fase-2-viajes` (rebasada sobre main). Commits: `ed5cf88` migrac
 - **Build y tipos:** `next build --webpack` limpio; `tsc` 54 líneas, igual que `main`. Los tipos se regeneraron con la 2b y además traen `alertas_stock`, que ya estaba en producción.
 
 **Deploy:**
-1. Aplicar `202610052100_fase2b_viaje_descarga.sql` en producción. Es compatible con lo publicado.
+1. ~~Aplicar `202610052100_fase2b_viaje_descarga.sql`~~: ya aplicada el 05/10.
 2. Bautista prueba el preview: pedido a una obra sin ubicar, ubicarla y ver el viaje desde la planta; viajes en Semana; gerenciador con un camión ocupado; vista Día con el cálculo de flota.
 3. Merge.
 
 **Pendiente:** no hay capturas de la 2b (verlo en el preview). En la vista Día, "Ordenar el día" sigue usando las horas guardadas.
+
+#### Revisión de la 2b (05/10/2026)
+APROBADO CON CAMBIOS. Arreglado en `1a3e64c`:
+- **M1 · un camión nunca en dos viajes a la vez.**
+  - `choquesDeCamion` ahora marca **los dos** viajes que se pisan, en los dos sentidos: el otro carga antes ("AF431GU todavía vuelve de X a las 09:40") o después ("AF431GU tiene que cargar para X a las 09:00, antes de volver de este viaje"). Vale para cualquier pedido y cualquier planta, también para los despachados.
+  - El gerenciador no deja guardar después de ±5 min, "Ajustar a la hora actual", cambio de m³ o "Agregar viaje".
+  - "Agregar viaje" solo propone el camión del último viaje si llega a volver.
+  - Al rearmar un pedido (cambio de hora, etc.) se miran los viajes de los otros pedidos del día. Si el camión que se conservaba quedaría pisado, se quita y queda en Actividad ("Camión quitado: …").
+  - La vista Día marca el choque en las dos plantas.
+- **L1.** Semana: los viajes antes de las 06 o después de las 19 se muestran en la primera o la última franja, con su hora real y "fuera de horario". Un pedido cuyos viajes no caen todos en su mismo día vuelve a la tarjeta de siempre: nunca se ocultan.
+- **L2.** Tocar un viaje de un pedido completo o cancelado abre el pedido, igual que el menú ⋯, que no ofrece Viajes. Si el gerenciador se abre igual para un pedido cerrado, es solo de lectura: sin acciones ni Guardar.
+
+**Pruebas:**
+- **Motor:** 66/66. Suma 10, uno por camino:
+  - +10 min, ajustar a las 08:00 y m³ 8 → 16, todos contra un viaje de otro pedido que carga después.
+  - "Agregar viaje" con y sin tiempo para volver.
+  - Rearmar con y sin los otros pedidos; un despachado cuenta y un cancelado no.
+- **Base:** 171/171 en `BEGIN … ROLLBACK`. Como la 2b ya está en producción, se vuelve a aplicar dos veces para probar que es idempotente. Nueva prueba: un pedido a las 08:00 con el camión que a las 09:00 carga para Hudson se pasa a las 09:30 y se rearma; el camión se quita y no queda ningún choque.
+- **Build y tipos:** build limpio; `tsc` 54 líneas, igual que `main`.
+
