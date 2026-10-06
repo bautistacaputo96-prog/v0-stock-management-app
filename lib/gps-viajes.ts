@@ -694,20 +694,23 @@ export function aFila(v: ViajeCruzado, mixerId: string): ViajeGpsFila {
 export type ParadaObra = LatLng & { fecha: string }
 
 /**
- * Mediana de las paradas principales de los viajes a una obra. Para no fijar un valor equivocado hace falta
- * que coincidan (a menos de 0,5 km de la mediana) al menos `minParadas` paradas de al menos `minDias` días
- * distintos, y que sean la mayoría (60 %); si no, no se sugiere nada.
+ * Mediana de las paradas principales de los viajes a una obra. Hace falta consenso: las paradas que coinciden
+ * (a menos de `radioKm` de la mediana) tienen que ser la mayoría (60 %) y ser al menos 3 (sin importar los días:
+ * la mayoría de las obras son de un solo día de hormigonado) o, si son solo 2, de 2 días distintos.
+ * Si no, no se sugiere nada.
  */
 export function ubicacionAprendida(
   paradas: ParadaObra[],
-  { minParadas = 3, minDias = 2 }: { minParadas?: number; minDias?: number } = {},
+  { radioKm = 0.2, minParadas = 3 }: { radioKm?: number; minParadas?: number } = {},
 ): (LatLng & { viajes: number; dias: number }) | null {
   const ps = paradas.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.fecha)
-  if (ps.length < minParadas) return null
+  if (ps.length < 2) return null
   const med = { lat: mediana(ps.map((p) => p.lat))!, lng: mediana(ps.map((p) => p.lng))! }
-  const cerca = ps.filter((p) => distanciaKm(p, med) <= 0.5)
+  const cerca = ps.filter((p) => distanciaKm(p, med) <= radioKm)
   const dias = new Set(cerca.map((p) => p.fecha)).size
-  if (cerca.length < minParadas || dias < minDias || cerca.length * 10 < ps.length * 6) return null
+  if (cerca.length * 10 < ps.length * 6) return null
+  const alcanza = cerca.length >= minParadas || (cerca.length === 2 && dias >= 2)
+  if (!alcanza) return null
   return { lat: mediana(cerca.map((p) => p.lat))!, lng: mediana(cerca.map((p) => p.lng))!, viajes: cerca.length, dias }
 }
 
