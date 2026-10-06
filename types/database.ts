@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 02/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 05/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -46,6 +46,44 @@ export type Database = {
             columns: ["plant_id"]
             isOneToOne: false
             referencedRelation: "plants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      alertas_stock: {
+        Row: {
+          creado_at: string
+          enviado_at: string | null
+          id: string
+          material_id: string
+          plant_id: string | null
+          resuelto_at: string | null
+          stock_al_alertar: number | null
+        }
+        Insert: {
+          creado_at?: string
+          enviado_at?: string | null
+          id?: string
+          material_id: string
+          plant_id?: string | null
+          resuelto_at?: string | null
+          stock_al_alertar?: number | null
+        }
+        Update: {
+          creado_at?: string
+          enviado_at?: string | null
+          id?: string
+          material_id?: string
+          plant_id?: string | null
+          resuelto_at?: string | null
+          stock_al_alertar?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alertas_stock_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
             referencedColumns: ["id"]
           },
         ]
@@ -1626,6 +1664,7 @@ export type Database = {
           construction_site_id: string
           created_at: string | null
           created_by: string | null
+          descarga_min: number | null
           dispatch_id: string | null
           dispatched_m3: number | null
           espaciado_min: number | null
@@ -1646,6 +1685,7 @@ export type Database = {
           scheduled_departure_time: string
           status: string | null
           updated_at: string | null
+          viaje_min: number | null
         }
         Insert: {
           actual_arrival_time?: string | null
@@ -1661,6 +1701,7 @@ export type Database = {
           construction_site_id: string
           created_at?: string | null
           created_by?: string | null
+          descarga_min?: number | null
           dispatch_id?: string | null
           dispatched_m3?: number | null
           espaciado_min?: number | null
@@ -1681,6 +1722,7 @@ export type Database = {
           scheduled_departure_time: string
           status?: string | null
           updated_at?: string | null
+          viaje_min?: number | null
         }
         Update: {
           actual_arrival_time?: string | null
@@ -1696,6 +1738,7 @@ export type Database = {
           construction_site_id?: string
           created_at?: string | null
           created_by?: string | null
+          descarga_min?: number | null
           dispatch_id?: string | null
           dispatched_m3?: number | null
           espaciado_min?: number | null
@@ -1716,6 +1759,7 @@ export type Database = {
           scheduled_departure_time?: string
           status?: string | null
           updated_at?: string | null
+          viaje_min?: number | null
         }
         Relationships: [
           {
@@ -2166,6 +2210,7 @@ export type Database = {
       _ancla_stock: { Args: { p_material_id: string; p_desde: string }; Returns: string }
       _aplicar_neto: { Args: { p_dispatch_id: string; p_desde: string; p_neto: Json; p_nota: string }; Returns: Json }
       _consumo_formula: { Args: { p_formula_id: string; p_plant_id: string; p_m3: number }; Returns: ({ mat_id: string; mat_nombre: string; mat_tipo: string; descuenta: boolean; kg_m3: number; kg_seco: number; humedad_pct: number; kg_humedo: number })[] }
+      _material_controla_stock: { Args: { p_material_id: string }; Returns: boolean }
       _material_en_planta: { Args: { p_material_id: string; p_plant_id: string; p_contexto?: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
       _mover_stock: { Args: { p_mapa: Json }; Returns: undefined }
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
