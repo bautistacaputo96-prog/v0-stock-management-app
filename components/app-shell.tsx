@@ -38,6 +38,12 @@ const mainNavItems = [
   { href: "/logistica", label: "Logística", icon: MapPinned },
 ]
 
+// Logística: "En vivo" (mapa) y "Tiempos reales" (Fase 4a). Con la barra angosta queda el ícono que va a En vivo.
+const logisticaSubItems = [
+  { href: "/logistica", label: "En vivo" },
+  { href: "/logistica/tiempos", label: "Tiempos reales" },
+]
+
 const dispatchSubItems = [
   { href: "/programacion", label: "Programacion" },
   { href: "/plantista", label: "Despacho Diario" },
@@ -58,6 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/plantista") || 
     pathname.startsWith("/historial-despachos")
   )
+  const [logisticaOpen, setLogisticaOpen] = useState(pathname.startsWith("/logistica"))
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   // El registro de actividad solo se ofrece a supervisores
@@ -88,7 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Shared navigation content
   const NavContent = ({ isMobile = false }: { isMobile?: boolean }) => (
     <div className="flex flex-col gap-1">
-      {mainNavItems.map((item) => {
+      {mainNavItems.filter((item) => item.href !== "/logistica").map((item) => {
         const Icon = item.icon
         const active = isActive(item.href)
         return (
@@ -108,6 +115,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         )
       })}
+
+      {/* Logística section */}
+      <button
+        onClick={() => setLogisticaOpen(!logisticaOpen)}
+        className={cn(
+          "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors w-full text-left",
+          pathname.startsWith("/logistica")
+            ? "bg-[#1e293b] text-white"
+            : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
+        )}
+      >
+        <MapPinned className="h-[18px] w-[18px] flex-shrink-0" />
+        <span className="flex-1">Logística</span>
+        <ChevronDown className={cn("h-4 w-4 transition-transform", logisticaOpen && "rotate-180")} />
+      </button>
+      {logisticaOpen && (
+        <div className="ml-4 flex flex-col gap-0.5 border-l border-[#1e293b] pl-4">
+          {logisticaSubItems.map((sub) => (
+            <Link
+              key={sub.href}
+              href={sub.href}
+              onClick={() => isMobile && setMobileOpen(false)}
+              className={cn(
+                "rounded-md px-3 py-2 text-sm transition-colors",
+                pathname === sub.href ? "text-white font-medium" : "text-[#64748b] hover:text-white"
+              )}
+            >
+              {sub.label}
+            </Link>
+          ))}
+        </div>
+      )}
 
       {/* Dispatch section */}
       <button

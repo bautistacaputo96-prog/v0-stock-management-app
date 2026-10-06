@@ -392,7 +392,7 @@ export function reconstruirViajes(
 
     // Mensajes del viaje: desde el último en planta hasta el primero de vuelta en planta
     const ia = previo.b
-    let vuelta = tramos[k + 1] || null // siempre es una planta si existe
+    let vuelta: Tramo | null = tramos[k + 1] || null // siempre es una planta si existe
     const salidaT = ms[afuera.a].t
     const ib = vuelta ? vuelta.a : afuera.b
     let sub = ms.slice(ia, ib + 1)
@@ -795,7 +795,12 @@ export function resumirViajes(viajes: ViajeResumen[], P: Parametros = PARAMETROS
     m3: Math.round(m3 * 10) / 10,
     /** Horas en viaje sobre las horas de jornada de los días en que cada camión trabajó. */
     usoFlota: diasCamion ? Math.round((horasViaje / (diasCamion * P.jornadaHoras)) * 100) : null,
-    minPorM3: m3 > 0 ? Math.round((completos.reduce((s, v) => s + (v.ciclo_min || 0), 0) / completos.reduce((s, v) => s + (Number(v.m3) || 0), 0)) * 10) / 10 || null : null,
+    /** Minutos de ciclo por m³, solo de los viajes completos con remito. */
+    minPorM3: (() => {
+      const cm = completos.filter((v) => (Number(v.m3) || 0) > 0)
+      const m = cm.reduce((s, v) => s + Number(v.m3), 0)
+      return m > 0 ? Math.round((cm.reduce((s, v) => s + (v.ciclo_min || 0), 0) / m) * 10) / 10 : null
+    })(),
     kmPorViaje: (() => { const x = promedio(kms); return x == null ? null : km1(x) })(),
     porCamion: [...porCamion.entries()].map(([mixer_id, c]) => ({
       mixer_id,
