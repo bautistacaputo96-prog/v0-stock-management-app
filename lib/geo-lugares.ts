@@ -20,6 +20,8 @@ export type Sugerencia = {
   lat: number | null
   lng: number | null
   fuente: FuenteLugar
+  /** Viene de la búsqueda completa ("Enter" de Google Maps) y no del autocompletado */
+  busqueda?: boolean
 }
 
 export type Lugar = { id: string; nombre: string; direccion: string; lat: number; lng: number; fuente: FuenteLugar }
@@ -46,6 +48,23 @@ export function normalizarAutocompleteGoogle(d: any): Sugerencia[] {
       const secundario = p.structuredFormat?.secondaryText?.text || (p.text?.text && p.text.text !== principal ? p.text.text : "")
       return { id: String(p.placeId), principal, secundario, lat: null, lng: null, fuente: "google" as const }
     })
+}
+
+/** Búsqueda por texto (places:searchText): ya trae las coordenadas, no hace falta pedir el detalle */
+export function normalizarTextSearchGoogle(d: any): Sugerencia[] {
+  return ((d?.places || []) as any[])
+    .filter((x) => x?.id && Number.isFinite(Number(x?.location?.latitude)) && Number.isFinite(Number(x?.location?.longitude)))
+    .map((x) => {
+      const principal = x.displayName?.text || String(x.formattedAddress || "").split(",")[0] || ""
+      const secundario = x.formattedAddress && x.formattedAddress !== principal ? String(x.formattedAddress) : ""
+      return { id: String(x.id), principal, secundario, lat: Number(x.location.latitude), lng: Number(x.location.longitude), fuente: "google" as const, busqueda: true }
+    })
+}
+
+/** "barrio la tercera, camino real, ezeiza" → "barrio la tercera camino real" (null si no tiene comas) */
+export function primerasDosPartes(q: string): string | null {
+  const partes = q.split(",").map((x) => x.trim()).filter(Boolean)
+  return partes.length >= 2 ? `${partes[0]} ${partes[1]}` : null
 }
 
 export function normalizarLugarGoogle(d: any, id: string): Lugar | null {
@@ -92,23 +111,69 @@ export async function autocompletar(
   if (opts.clave) {
     try {
       const centro = opts.centro || CENTRO_ZONA
-      const r = await opts.fetchFn("https://places.googleapis.com/v1/places:autocomplete", {
+      const pedir = (input: string) => opts.fetchFn("https://places.googleapis.com/v1/places:autocomplete", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Goog-Api-Key": opts.clave },
         body: JSON.stringify({
-          input: texto,
+          input,
           languageCode: "es",
           includedRegionCodes: ["ar"],
           locationBias: { circle: { center: { latitude: centro.lat, longitude: centro.lng }, radius: RADIO_SESGO_M } },
           ...(opts.sesion ? { sessionToken: opts.sesion } : {}),
         }),
       })
-      if (r.ok) return { fuente: "google", sugerencias: normalizarAutocompleteGoogle(await r.json()).slice(0, 8) }
+      const r = await pedir(texto)
+      if (r.ok) {
+        let sug = normalizarAutocompleteGoogle(await r.json())
+        // El autocompletado es estricto con varias partes separadas por comas: se reintenta una vez con las dos primeras
+        const corto = sug.length === 0 ? primerasDosPartes(texto) : null
+        if (corto) {
+          const r2 = await pedir(corto)
+          if (r2.ok) sug = normalizarAutocompleteGoogle(await r2.json())
+        }
+        return { fuente: "google", sugerencias: sug.slice(0, 8) }
+      }
     } catch {
       // sigue con OpenStreetMap
     }
   }
   return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8) }
+}
+
+/**
+ * Búsqueda completa, como apretar Enter en Google Maps (places:searchText): encuentra barrios, caminos y lugares
+ * que el autocompletado no sugiere. Trae las coordenadas. Mismo respaldo con OpenStreetMap.
+ */
+export async function buscarTexto(
+  q: string,
+  opts: { centro?: Centro | null; clave?: string | null; fetchFn: FetchFn; buscarOsm: (q: string) => Promise<ResultadoOsm[]> },
+): Promise<{ fuente: FuenteLugar; sugerencias: Sugerencia[] }> {
+  const texto = (q || "").trim()
+  if (texto.length < 3) return { fuente: opts.clave ? "google" : "osm", sugerencias: [] }
+  if (opts.clave) {
+    try {
+      const centro = opts.centro || CENTRO_ZONA
+      const r = await opts.fetchFn("https://places.googleapis.com/v1/places:searchText", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": opts.clave,
+          "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location",
+        },
+        body: JSON.stringify({
+          textQuery: texto,
+          languageCode: "es",
+          regionCode: "ar",
+          locationBias: { circle: { center: { latitude: centro.lat, longitude: centro.lng }, radius: RADIO_SESGO_M } },
+          pageSize: 8,
+        }),
+      })
+      if (r.ok) return { fuente: "google", sugerencias: normalizarTextSearchGoogle(await r.json()).slice(0, 8) }
+    } catch {
+      // sigue con OpenStreetMap
+    }
+  }
+  return { fuente: "osm", sugerencias: normalizarOsm(await opts.buscarOsm(texto).catch(() => [])).slice(0, 8).map((x) => ({ ...x, busqueda: true })) }
 }
 
 /** Coordenadas del lugar elegido. Los "osm:" no consultan nada. Null si no se pudo. */

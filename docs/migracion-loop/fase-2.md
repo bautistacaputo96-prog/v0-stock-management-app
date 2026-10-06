@@ -286,3 +286,9 @@ Pedido de Bautista: ubicar la obra "como en Google Maps". Commit `09d7351`, mism
   - Crear la clave en Google Cloud, con Places API (New) habilitada, facturación activa y la clave restringida a Places API.
   - Cargarla en Vercel como `GOOGLE_MAPS_API_KEY` (Production y Preview).
   - Hasta entonces el buscador anda con OpenStreetMap.
+- **"Enter" de Google Maps** (05/10, pedido de Bautista: "barrio la tercera, camino real, ezeiza" no aparecía):
+  - Ruta nueva `/api/geo/buscar-texto?q=&planta=` con `places:searchText`, con los mismos parámetros que el autocompletado (es, ar, sesgo de 50 km, 8 resultados). Pide la máscara `places.id,places.displayName,places.formattedAddress,places.location`, así que trae las coordenadas y no hace falta pedir el detalle. Si no hay clave o Google falla, usa OpenStreetMap.
+  - La lista de sugerencias termina siempre con "Buscar «texto» en Google Maps". La búsqueda completa también corre con Enter sin nada marcado, y sola cuando el autocompletado no sugiere nada.
+  - Los resultados reemplazan la lista con la marca "resultado de búsqueda"; elegir uno pone el pin directo y calcula el viaje.
+  - Si el autocompletado no trae nada y el texto tiene comas, se reintenta una vez con las dos primeras partes ("barrio la tercera camino real").
+  - Pruebas: 31/31 (+11: normalizador de searchText, pedido y máscara, respaldo sin clave, con error y sin respuesta, y el reintento por comas). Build limpio y `tsc` sin errores nuevos.
