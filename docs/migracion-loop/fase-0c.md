@@ -1,6 +1,6 @@
 # Fase 0c — Usuarios, permisos y reglas de edición
 
-Estado: **definiciones de Bautista tomadas (05/10/2026); falta la maqueta y el OK.** No programar todavía.
+Estado: **definiciones completas (06/10/2026).** Se programa después de publicar la Fase 2, porque toca las mismas pantallas.
 
 ## Definiciones de Bautista (05/10/2026)
 
@@ -54,6 +54,35 @@ Toda edición o borrado **pide un motivo** y queda en Actividad con el antes y e
 - **Ajustes del día en Programación por los operarios.** Titan y Felipe programan el día anterior y lo ajustan durante el día: cambiar la hora de un pedido, mover viajes, suspender por lluvia. Propuesta: esos ajustes **sí** los pueden hacer, porque son parte de programar. Lo que no pueden es editar o borrar despachos, ingresos o resultados.
 - **Titan y mantenimiento.** Hoy Titan hace los chequeos diarios de la planta. ¿Sigue cargándolos? Si sí, se le suma el área Mantenimiento.
 - **Recuentos de stock.** ¿Los hace un operario (es carga) o solo gerencial (es una corrección)?
+
+## Definiciones finales (06/10/2026) — reemplazan los "puntos a confirmar"
+
+- **Permisos por usuario, partiendo de una plantilla.** El tipo (Gerencial / Operario / Consulta) pone los permisos por defecto. Desde la pantalla Usuarios, un gerencial **agrega o saca permisos puntuales a cada persona**. Ejemplos de Bautista:
+  - habilitar a Titan para **editar y borrar despachos** o **ingresos de materia prima**;
+  - habilitar a Felipe para dar de alta clientes y obras.
+- **Matriz de permisos:** sección × acción (**ver · cargar · editar · borrar**).
+  - **Secciones:** Programación del día, Despacho, Historial de despachos, Materia prima (ingresos), Recuentos y ajustes de stock, Laboratorio, Mantenimiento, Clientes y obras, Fórmulas, Camiones/choferes/bombas, Usuarios.
+  - Se guarda en `app_users.permisos` (jsonb) más el `tipo`. La plantilla se aplica al crear el usuario o al cambiarle el tipo.
+- **Programación del día:** la arma **Titan** según lo programado en el sistema. Los gerenciales también pueden armarla y editarla. Felipe, según su plantilla de operario.
+- **Titan:** suma el área **Mantenimiento** (chequeos diarios de la planta).
+- **Recuentos y ajustes de stock:** **solo gerencial**, salvo que se le habilite a alguien. **Se elimina la contraseña fija** de "Ajustar stock": alcanza con el permiso del usuario.
+- **Clientes y obras (altas y edición):** gerenciales **y Felipe**.
+
+Plantillas por defecto:
+
+| Sección | Gerencial | Operario | Consulta |
+|---|---|---|---|
+| Todas: ver | ✓ | ✓ | ✓ |
+| Cargar | Todo | Solo sus áreas | — |
+| Editar y borrar | Todo | — (se habilita por persona) | — |
+| Usuarios | ✓ | — | — |
+
+Permisos iniciales por persona: los de la tabla de arriba, más Titan con Mantenimiento y Programación del día, y Felipe con Clientes y obras.
+
+## Dosificadora (anotado para más adelante)
+- El programa local de la planta solo guarda las últimas 10 cargas: no hay historial para leer.
+- Bautista quiere que el plantista **accione la carga desde nuestro sistema** para no cargar dos veces. Queda para después.
+- Recomendación de seguridad registrada: el sistema **prepara** la carga, y la persona en la planta **confirma el arranque** en la planta. Nada de arrancar la planta a distancia sin nadie presente, ni escribir directo al PLC sin el proveedor.
 
 ## Etapas
 
