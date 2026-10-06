@@ -118,3 +118,54 @@ export async function posiciones(): Promise<Unidad[] | null> {
   cache = { datos, hasta: Date.now() + 25 * 1000 }
   return datos
 }
+
+// ---------------------------------------------------------------------------
+// Historial (Fase 4a). Solo lectura: token/login, core/search_items, messages/load_interval,
+// messages/unload y core/logout. Cada proceso abre su propia sesión y la cierra al terminar,
+// para no mezclar la capa de mensajes con la sesión compartida de la pantalla En vivo.
+// ---------------------------------------------------------------------------
+
+/** Abre una sesión propia con el token guardado. Nulo si el GPS no está conectado. */
+export async function abrirSesion(): Promise<string | null> {
+  const token = await leerToken()
+  if (!token) return null
+  const { sid } = await validarToken(token)
+  return sid
+}
+
+export async function cerrarSesion(sid: string): Promise<void> {
+  await llamar("core/logout", {}, sid).catch(() => {})
+}
+
+/** Unidades (camiones) visibles para el usuario de Wialon. */
+export async function unidades(sid: string): Promise<{ id: number; nombre: string }[]> {
+  const d = await llamar(
+    "core/search_items",
+    {
+      spec: { itemsType: "avl_unit", propName: "sys_name", propValueMask: "*", sortType: "sys_name" },
+      force: 1,
+      flags: 0x1,
+      from: 0,
+      to: 0,
+    },
+    sid,
+  )
+  return (d.items || []).map((u: any) => ({ id: u.id, nombre: String(u.nm || "").trim() }))
+}
+
+/**
+ * Mensajes de datos (posición, velocidad, ignición, odómetro) de una unidad entre dos instantes
+ * (segundos epoch). Descarga la capa de mensajes al terminar.
+ */
+export async function mensajesIntervalo(sid: string, unidadId: number, desde: number, hasta: number): Promise<any[]> {
+  try {
+    const d = await llamar(
+      "messages/load_interval",
+      { itemId: unidadId, timeFrom: desde, timeTo: hasta, flags: 0x0000, flagsMask: 0xff00, loadCount: 0xffffffff },
+      sid,
+    )
+    return d?.messages || []
+  } finally {
+    await llamar("messages/unload", {}, sid).catch(() => {})
+  }
+}

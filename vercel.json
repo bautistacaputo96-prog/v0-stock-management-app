@@ -7,6 +7,10 @@
     {
       "path": "/api/alertas/stock-cero",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/gps/reconstruir",
+      "schedule": "0 9 * * *"
     }
   ]
 }
