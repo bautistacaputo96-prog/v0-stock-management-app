@@ -32,12 +32,14 @@ import { FINALIDADES, cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } fro
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
-import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
+import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, descarga8De, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
+import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
 type ConstructionSite = {
   id: string; name: string; address: string | null; client_id: string;
+  localidad?: string | null; gps_lat?: number | null; gps_lng?: number | null;
   travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean;
   reception_hours_start: string | null; reception_hours_end: string | null;
 }
@@ -53,6 +55,7 @@ type ScheduledDispatch = {
   finalidad?: string | null; bomba_la_pone?: "rebucret" | "cliente" | null; bomba_empresa_id?: string | null; bomba_hora?: string | null;
   // Fase 2 (nulos hasta aplicar la migración)
   m3_por_viaje?: number | null; espaciado_min?: number | null; confirmado_at?: string | null; confirmado_por?: string | null;
+  viaje_min?: number | null; descarga_min?: number | null; // fase 2b
   dispatched_m3?: number | null;
   clients?: Client; construction_sites?: ConstructionSite; formulas?: Formula; mixers?: Mixer;
 }
@@ -213,6 +216,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const ve = useFuncionesNuevas()
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
   const [paramsPorPlanta, setParamsPorPlanta] = useState<Record<string, Parametros>>({})
+  // Fase 2b: ubicación de la obra y viaje real desde la planta del pedido
+  const [plantasGps, setPlantasGps] = useState<Record<string, { name: string; lat: number | null; lng: number | null }>>({})
+  const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
+  const [ubicObra, setUbicObra] = useState<UbicacionObra>(UBIC_VACIA)
+  const [ruta, setRuta] = useState<{ km: number | null; minutos: number | null; planta: string } | null>(null)
+  const [viajeTocado, setViajeTocado] = useState(false)
   const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
 
   const [form, setForm] = useState({
@@ -237,6 +246,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // Fase 2
     m3_por_viaje: "8",
     espaciado_min: "",
+    // Fase 2b
+    viaje_min: "",
+    descarga_min: "",
   })
 
   // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
@@ -296,6 +308,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       ])
       setViajesPorPedido(vs)
       setParamsPorPlanta(Object.fromEntries(((pls as any[]) || []).map((pl) => [pl.id, parametrosDePlanta(pl)])))
+      setPlantasGps(Object.fromEntries(((pls as any[]) || []).map((pl) => [pl.id, { name: pl.name, lat: pl.gps_lat != null ? Number(pl.gps_lat) : null, lng: pl.gps_lng != null ? Number(pl.gps_lng) : null }])))
     }
   }
 
@@ -315,6 +328,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       dispatched_m3: editingDispatch?.dispatched_m3 ?? 0, scheduled_arrival_time: llegada.toISOString(),
       metodo_descarga: form.metodo_descarga, m3_por_viaje: parseFloat(form.m3_por_viaje) || 8,
       espaciado_min: parseInt(form.espaciado_min) || null,
+      viaje_min: parseInt(form.viaje_min) || null, descarga_min: parseInt(form.descarga_min) || null,
       construction_sites: selectedSite ? { travel_time_minutes: selectedSite.travel_time_minutes, requires_pump: selectedSite.requires_pump } : null,
     }
     const existentes = editingDispatch ? viajesPorPedido[editingDispatch.id] || [] : []
@@ -331,6 +345,27 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     const choque = chocaEnBoca(vs, otros, prm)
     return { carga: vs[0].hora_carga, viajes: vs.length, choque, sug: choque ? horariosSinChoque(llegada, armar, otros, prm) : null }
   }, [ve, isDialogOpen, form, paramsPorPlanta, editingDispatch, viajesPorPedido, dispatches, selectedSite])
+
+  // Fase 2b: obra ubicada (en la base o recién marcada en el formulario) → viaje real desde la planta del pedido
+  const obraLat = ubicObra.lat ?? (selectedSite?.gps_lat != null ? Number(selectedSite.gps_lat) : null)
+  const obraLng = ubicObra.lng ?? (selectedSite?.gps_lng != null ? Number(selectedSite.gps_lng) : null)
+  useEffect(() => { setUbicObra(UBIC_VACIA) }, [form.construction_site_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!ve || !isDialogOpen || obraLat == null || obraLng == null) { setRuta(null); return }
+    const pl = plantasGps[form.plant_id]
+    if (!pl || pl.lat == null) { setRuta(null); return }
+    let vivo = true
+    fetch(`/api/geo/ruta?desde=${pl.lat},${pl.lng}&hasta=${obraLat},${obraLng}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!vivo) return
+        setRuta({ km: d.km ?? null, minutos: d.minutos ?? null, planta: pl.name })
+        // Se propone en el pedido, salvo que ya se haya escrito a mano
+        if (d.minutos && !viajeTocado) setForm((f) => ({ ...f, viaje_min: String(d.minutos) }))
+      })
+      .catch(() => vivo && setRuta(null))
+    return () => { vivo = false }
+  }, [ve, isDialogOpen, form.plant_id, obraLat, obraLng, plantasGps]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function usarLlegada(d: Date) {
     const h = format(d, "HH:mm")
@@ -368,7 +403,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       bomba_hora: "",
       m3_por_viaje: "8",
       espaciado_min: "",
+      viaje_min: "",
+      descarga_min: "",
     })
+    setViajeTocado(false)
     setEditingDispatch(null)
     setCuitPrompt("")
     setIsDialogOpen(true)
@@ -397,7 +435,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       bomba_hora: dispatch.bomba_hora ? format(parseISO(dispatch.bomba_hora), "HH:mm") : "",
       m3_por_viaje: dispatch.m3_por_viaje != null ? String(dispatch.m3_por_viaje) : "8",
       espaciado_min: dispatch.espaciado_min != null ? String(dispatch.espaciado_min) : "",
+      viaje_min: dispatch.viaje_min != null ? String(dispatch.viaje_min) : "",
+      descarga_min: dispatch.descarga_min != null ? String(dispatch.descarga_min) : "",
     })
+    // Si el pedido ya tenía un viaje cargado, la ruta no lo pisa
+    setViajeTocado(dispatch.viaje_min != null)
     setEditingDispatch(dispatch)
     setCuitPrompt("")
     setIsDialogOpen(true)
@@ -432,7 +474,18 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       const plantToUse = form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)
       // Convertir hora local del browser a UTC para guardar con timezone correcta
       const arrivalTime = new Date(`${form.arrival_date}T${form.arrival_time}:00`).toISOString()
-      const departureTime = calculateDepartureTime(arrivalTime, selectedSite)
+      const viajeMin = ve ? parseInt(form.viaje_min) || null : null
+      const departureTime = viajeMin ? addMinutes(parseISO(arrivalTime), -viajeMin).toISOString() : calculateDepartureTime(arrivalTime, selectedSite)
+      // Fase 2b: si se ubicó la obra en el formulario, se guarda en la obra (igual que en Clientes)
+      if (ve && selectedSite && ubicObra.lat != null && ubicObra.lng != null) {
+        const ubic = { gps_lat: ubicObra.lat, gps_lng: ubicObra.lng, gps_source: ubicObra.fuente, travel_distance_km: ubicObra.km, gps_updated_at: new Date().toISOString() }
+        const { error: eUb } = await supabase.from("construction_sites").update(ubic as any).eq("id", selectedSite.id)
+        if (eUb) toast({ title: "No se pudo guardar la ubicación de la obra", description: eUb.message, variant: "destructive" })
+        else {
+          setClients(clients.map((c) => ({ ...c, construction_sites: c.construction_sites?.map((s) => (s.id === selectedSite.id ? { ...s, ...ubic } : s)) })))
+          logActivity({ action: "editar", entity: "pedido", entityId: editingDispatch?.id || null, reference: selectedSite.name, plantId: form.plant_id, details: { Obra: `${selectedSite.name}: ubicada en el mapa${ubicObra.km != null ? ` (${ubicObra.km} km)` : ""}` } })
+        }
+      }
       // Fase 1: finalidad y bomba (con descarga directa no se guarda nada de bomba)
       const conBomba = form.metodo_descarga === "bomba"
       const datosFase1 = {
@@ -443,7 +496,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       }
       // Fase 2: m³ por camión y espaciado (solo los manda quien tiene el interruptor; si no, quedan como estaban)
       const datosFase2 = ve
-        ? { m3_por_viaje: parseFloat(form.m3_por_viaje) > 0 ? parseFloat(form.m3_por_viaje) : 8, espaciado_min: parseInt(form.espaciado_min) > 0 ? parseInt(form.espaciado_min) : null }
+        ? {
+            m3_por_viaje: parseFloat(form.m3_por_viaje) > 0 ? parseFloat(form.m3_por_viaje) : 8,
+            espaciado_min: parseInt(form.espaciado_min) > 0 ? parseInt(form.espaciado_min) : null,
+            viaje_min: viajeMin && viajeMin > 0 ? viajeMin : null,
+            descarga_min: parseInt(form.descarga_min) > 0 ? parseInt(form.descarga_min) : null,
+          }
         : {}
       let pedidoId: string | null = editingDispatch?.id || null
 
@@ -561,8 +619,55 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     }
   }
 
+  /** Menú ⋯ del pedido (remito, editar, viajes, eliminar): en la tarjeta del pedido y en cada viaje de la grilla */
+  function menuPedido(d: ScheduledDispatch) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100">
+            <MoreHorizontal className="h-3 w-3" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => window.open(`/api/remito/${d.id}`, '_blank')}>
+            <Printer className="h-4 w-4 mr-2" />
+            Visualizar Remito
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openEditDispatch(d)}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Editar
+          </DropdownMenuItem>
+          {ve && !["cancelled", "completed"].includes(d.status) && (
+            <DropdownMenuItem onClick={() => setGerenciar(d as unknown as PedidoGerenciador)}>
+              <Truck className="h-4 w-4 mr-2" />
+              Viajes <NuevoBadge className="ml-2" />
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
+            <Trash2 className="h-4 w-4 mr-2" />
+            Eliminar
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  // Fase 2b (C): con el interruptor, los pedidos con viajes se ven viaje por viaje en su franja (hora de llegada)
+  const pedidosConViajes = new Set(
+    ve ? dispatches.filter((d) => d.status !== "cancelled" && (viajesPorPedido[d.id] || []).some((v) => v.estado !== "cancelado")).map((d) => d.id) : [],
+  )
+  function getViajesForSlot(date: Date, hour: number) {
+    if (!ve) return []
+    return dispatches
+      .filter((d) => pedidosConViajes.has(d.id))
+      .flatMap((d) => (viajesPorPedido[d.id] || []).filter((v) => v.estado !== "cancelado").map((v) => ({ d, v })))
+      .filter(({ v }) => { const t = parseISO(v.hora_llegada); return isSameDay(t, date) && t.getHours() === hour })
+      .sort((a, b) => a.v.hora_llegada.localeCompare(b.v.hora_llegada))
+  }
+
   function getDispatchesForSlot(date: Date, hour: number) {
     return dispatches.filter((d) => {
+      if (pedidosConViajes.has(d.id)) return false // se muestran sus viajes
       const arrival = parseISO(d.scheduled_arrival_time)
       return isSameDay(arrival, date) && arrival.getHours() === hour
     })
@@ -637,6 +742,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 </div>
                 {weekDays.map((day) => {
                   const slotDispatches = getDispatchesForSlot(day, hour)
+                  const slotViajes = getViajesForSlot(day, hour)
                   return (
                     <div
                       key={`${day.toISOString()}-${hour}`}
@@ -645,6 +751,31 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                       }`}
                       onClick={() => openNewDispatch(day, hour)}
                     >
+                      {/* Fase 2b: un renglón por viaje (obra, n/N, m³, camión). Tocar abre el gerenciador */}
+                      {slotViajes.map(({ d, v }) => {
+                        const total = totalViajes(viajesPorPedido[d.id] || [])
+                        const pat = v.mixer_id ? mixers.find((m) => m.id === v.mixer_id)?.license_plate : null
+                        return (
+                          <div
+                            key={`${d.id}-${v.n}`}
+                            className={cn(
+                              "text-[10px] leading-tight px-1 py-0.5 rounded mb-0.5 border group relative flex items-start justify-between gap-1",
+                              v.estado === "despachado" ? "bg-emerald-100 border-emerald-300 text-emerald-900" : "bg-violet-50 border-violet-300 text-violet-900",
+                              d.is_urgent && "ring-1 ring-red-500",
+                            )}
+                            title={`${d.clients?.name} · ${d.construction_sites?.name} · viaje ${v.n}/${total} · ${v.m3} m³ · llega ${format(parseISO(v.hora_llegada), "HH:mm")}${pat ? ` · ${pat}` : ""}${v.estado === "despachado" ? " · despachado" : ""}`}
+                            onClick={(e) => { e.stopPropagation(); setGerenciar(d as unknown as PedidoGerenciador) }}
+                          >
+                            <div className="min-w-0 cursor-pointer">
+                              <div className="font-medium truncate">
+                                {selectedPlant === "all" && plantNameById[d.plant_id] ? `${plantNameById[d.plant_id].slice(0, 3)} · ` : ""}{(d.construction_sites?.name || d.clients?.name || "").slice(0, 16)}
+                              </div>
+                              <div>{format(parseISO(v.hora_llegada), "HH:mm")} · {v.n}/{total} · {v.m3} m³{pat ? ` · ${pat}` : ""}{d.confirmado_at && v.n === 1 ? " · 👍" : ""}</div>
+                            </div>
+                            <div onClick={(e) => e.stopPropagation()}>{menuPedido(d)}</div>
+                          </div>
+                        )
+                      })}
                       {slotDispatches.map((d) => (
                         <div
                           key={d.id}
@@ -683,33 +814,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 </div>
                               )}
                             </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100">
-                                  <MoreHorizontal className="h-3 w-3" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => window.open(`/api/remito/${d.id}`, '_blank')}>
-                                  <Printer className="h-4 w-4 mr-2" />
-                                  Visualizar Remito
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => openEditDispatch(d)}>
-                                  <Pencil className="h-4 w-4 mr-2" />
-                                  Editar
-                                </DropdownMenuItem>
-                                {ve && !["cancelled", "completed"].includes(d.status) && (
-                                  <DropdownMenuItem onClick={() => setGerenciar(d as unknown as PedidoGerenciador)}>
-                                    <Truck className="h-4 w-4 mr-2" />
-                                    Viajes <NuevoBadge className="ml-2" />
-                                  </DropdownMenuItem>
-                                )}
-                                <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Eliminar
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            {menuPedido(d)}
                           </div>
                         </div>
                       ))}
@@ -865,6 +970,49 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   )}
                 </CardContent>
               </Card>
+            )}
+
+            {/* Fase 2b: obra en el mapa y viaje real desde la planta del pedido (solo con el interruptor) */}
+            {ve && selectedSite && (
+              <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 space-y-2">
+                {selectedSite.gps_lat == null && (
+                  <>
+                    <p className="text-sm font-medium text-amber-800 flex items-center gap-2 flex-wrap">
+                      <MapPin className="h-4 w-4" />
+                      {ubicObra.lat == null ? "Esta obra no está ubicada: buscala en el mapa" : "Obra ubicada: se guarda en la obra al guardar el pedido"}
+                      <NuevoBadge />
+                    </p>
+                    <ObraUbicacion
+                      direccion={selectedSite.address || ""}
+                      localidad={selectedSite.localidad || ""}
+                      plantaId={form.plant_id}
+                      valor={ubicObra}
+                      onChange={setUbicObra}
+                    />
+                  </>
+                )}
+                {obraLat != null && (
+                  <p className="text-sm flex items-center gap-2 flex-wrap">
+                    <MapPin className="h-4 w-4 text-violet-700" />
+                    {ruta?.minutos != null
+                      ? <>Viaje estimado desde {ruta.planta}: <strong>{ruta.km} km · {ruta.minutos} min</strong></>
+                      : ruta === null && plantasGps[form.plant_id]?.lat == null ? "La planta no tiene ubicación cargada para calcular el viaje" : "Calculando el viaje..."}
+                    {selectedSite.gps_lat != null && <NuevoBadge />}
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Minutos de viaje de este pedido</Label>
+                    <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setForm({ ...form, viaje_min: e.target.value }) }} placeholder={`${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Descarga por camión de 8 m³ (min)</Label>
+                    <Input type="number" min="1" className="bg-background" value={form.descarga_min} onChange={(e) => setForm({ ...form, descarga_min: e.target.value })}
+                      placeholder={form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">El viaje depende de la planta que despacha. La descarga es el dato que marca el ritmo de los camiones: corregila si la obra es más lenta o más rápida.</p>
+              </div>
             )}
 
             <div className="space-y-2">
@@ -1027,8 +1175,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 <SelectTrigger><SelectValue placeholder="Asignar despues" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Sin asignar</SelectItem>
-                  {mixers.filter((m) => m.status === "available").map((m) => (
-                    <SelectItem key={m.id} value={m.id}>{m.license_plate} ({m.capacity_m3}m3)</SelectItem>
+                  {/* Todos los activos: el pedido puede ser para otro día, así que uno que ahora está en ruta también sirve */}
+                  {mixers.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.license_plate} ({m.capacity_m3}m3){m.status === "in_transit" ? " (en ruta)" : m.status !== "available" ? " (no disponible)" : ""}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1064,7 +1213,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       </Dialog>
 
       {/* Fase 2: gerenciador de viajes */}
-      <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => loadData()} />
+      <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => loadData()} onEditarPedido={gerenciar ? () => openEditDispatch(gerenciar as unknown as ScheduledDispatch) : undefined} />
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteDispatch} onOpenChange={(open) => !open && setDeleteDispatch(null)}>

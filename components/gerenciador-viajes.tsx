@@ -24,9 +24,9 @@ import { parametrosDePlanta, PARAMETROS_BASE, type Parametros } from "@/lib/plan
 import { cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import {
   generarViajes, correrPendientes, ajustarAHora, agregarViaje, quitarViaje, cambiarM3, m3Faltantes, m3Entregados, ordenarPorN,
-  guardarViajes, totalViajes, type PedidoParaViajes, type ViajeRow,
+  guardarViajes, totalViajes, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, type PedidoParaViajes, type ViajeRow,
 } from "@/lib/viajes"
-import { CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 
@@ -43,11 +43,13 @@ type Mixer = { id: string; license_plate: string }
 const hh = (iso: string) => format(new Date(iso), "HH:mm")
 const MIN = 60_000
 
-export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
+export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEditarPedido }: {
   pedido: PedidoGerenciador | null
   open: boolean
   onOpenChange: (v: boolean) => void
   onGuardado?: () => void
+  /** Fase 2b: desde la grilla de Semana se abre el gerenciador; desde acá se puede ir al pedido */
+  onEditarPedido?: () => void
 }) {
   const { toast } = useToast()
   const [cargando, setCargando] = useState(false)
@@ -60,6 +62,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
   const [sinGuardar, setSinGuardar] = useState(false) // propuesta nueva (el pedido todavía no tenía viajes)
   // m³ tal como se tipean (se puede borrar y volver a escribir); vacío o 0 = error en línea y no se guarda
   const [m3Texto, setM3Texto] = useState<Record<number, string>>({})
+  // Fase 2b (D): viajes de otros pedidos del mismo día (cualquier planta: los camiones son compartidos)
+  const [otros, setOtros] = useState<(ViajeRow & { obra?: string })[]>([])
 
   useEffect(() => {
     if (!open || !pedido) return
@@ -67,17 +71,22 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
     ;(async () => {
       setCargando(true)
       const sb = createClient()
-      const [{ data: pl }, { data: ms }, { data: vs, error }, emps] = await Promise.all([
+      const ini = new Date(pedido.scheduled_arrival_time); ini.setHours(0, 0, 0, 0)
+      const fin = new Date(ini.getTime() + 24 * 60 * MIN)
+      const [{ data: pl }, { data: ms }, { data: vs, error }, emps, { data: ot }] = await Promise.all([
         sb.from("plants").select("*").eq("id", pedido.plant_id).maybeSingle(),
         sb.from("mixers").select("id, license_plate").eq("active", true).order("license_plate"),
         sb.from("viajes").select("*").eq("pedido_id", pedido.id).order("n"),
         cargarEmpresasBombeo(sb),
+        sb.from("viajes").select("*, scheduled_dispatches(construction_sites(name))").neq("pedido_id", pedido.id).neq("estado", "cancelado")
+          .gte("hora_carga", new Date(ini.getTime() - 6 * 60 * MIN).toISOString()).lt("hora_carga", fin.toISOString()),
       ])
       if (!vivo) return
       const p = parametrosDePlanta(pl as any)
       const existentes = error ? [] : ((vs as ViajeRow[]) || []).map((v) => ({ ...v, m3: Number(v.m3) }))
       setPrm(p)
       setMixers((ms as any) || [])
+      setOtros(((ot as any[]) || []).map((v) => ({ ...v, m3: Number(v.m3), obra: v.scheduled_dispatches?.construction_sites?.name || "otra obra" })))
       setEmpresas(emps)
       setOriginal(existentes)
       setM3Texto({})
@@ -101,6 +110,12 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
   const faltan = pedido ? m3Faltantes(viajes, pedido) : 0
   const hayPendientes = viajes.some((v) => v.estado === "planificado")
   const cambiado = sinGuardar || JSON.stringify(ordenarPorN(original)) !== JSON.stringify(ordenarPorN(viajes))
+  // Fase 2b (D): un camión no puede estar en dos viajes que se pisan (en este pedido o en otro)
+  const todosDelDia = useMemo(() => [...viajes.filter((v) => v.estado !== "cancelado"), ...otros], [viajes, otros])
+  const choques = useMemo(() => choquesDeCamion(todosDelDia), [todosDelDia])
+  const obraDe = (v: ViajeRow) => (v.pedido_id === pedido?.id ? `${pedido?.construction_sites?.name || "esta obra"} (viaje ${v.n})` : (v as any).obra || "otra obra")
+  const choquesPendientes = viajes.filter((v) => v.estado === "planificado" && choques.has(claveViaje(v)))
+  const flota = pedido ? explicarFlota(pedido, prm, total) : null
 
   // Escala horaria del Gantt
   const t0 = ordenados.length ? Math.floor(Math.min(...ordenados.map((v) => new Date(v.hora_carga).getTime())) / (60 * MIN)) * 60 * MIN : 0
@@ -161,6 +176,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                   <span>· llegada pedida {hh(pedido.scheduled_arrival_time)}</span>
                   <span className="font-medium text-foreground">· entregado {enviadoPedido.toLocaleString("es-AR")} / {Number(pedido.quantity_m3).toLocaleString("es-AR")} m³</span>
                 </p>
+                {flota && total > 0 && <p className="text-xs">{flota.texto}{Number(pedido.descarga_min) > 0 ? " (descarga corregida en el pedido)" : ""}</p>}
               </div>
             </DialogDescription>
           )}
@@ -207,8 +223,11 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                   {ordenados.map((v) => {
                     const fijo = v.estado !== "planificado"
                     const tip = `Viaje ${v.n}/${total} · ${v.m3} m³ — carga ${hh(v.hora_carga)}, sale ${hh(v.hora_salida)}, llega ${hh(v.hora_llegada)}, termina ${hh(v.hora_fin_descarga)}, vuelve ${hh(v.hora_vuelta)}`
+                    const choque = !fijo ? choques.get(claveViaje(v)) : undefined
+                    const libres = choque ? camionesLibresPara(v, todosDelDia, mixers).slice(0, 4) : []
                     return (
-                      <div key={`${v.n}-${v.estado}`} className="grid grid-cols-[64px_minmax(0,1fr)_84px_140px_32px] gap-2 items-center h-9">
+                      <div key={`${v.n}-${v.estado}`}>
+                      <div className="grid grid-cols-[64px_minmax(0,1fr)_84px_140px_32px] gap-2 items-center h-9">
                         <span className="text-xs font-medium flex items-center gap-1">
                           {fijo && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}{v.n}/{total}
                         </span>
@@ -241,10 +260,15 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                           <span className="text-xs text-muted-foreground">{patente(v.mixer_id)} · {v.estado === "despachado" ? "despachado" : "cancelado"}</span>
                         ) : (
                           <Select value={v.mixer_id || "none"} onValueChange={(m) => setViajes((vs) => vs.map((x) => (x.n === v.n && x.estado === "planificado" ? { ...x, mixer_id: m === "none" ? null : m } : x)))}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className={cn("h-8 text-xs", choque && "border-red-500 text-red-700")}><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none">Sin asignar</SelectItem>
-                              {mixers.map((m) => <SelectItem key={m.id} value={m.id}>{m.license_plate}</SelectItem>)}
+                              {/* Un camión que en ese momento está en otro viaje no se puede elegir */}
+                              {(() => { const libresIds = new Set(camionesLibresPara(v, todosDelDia, mixers).map((m) => m.id)); return mixers.map((m) => (
+                                <SelectItem key={m.id} value={m.id} disabled={!libresIds.has(m.id) && m.id !== v.mixer_id}>
+                                  {m.license_plate}{!libresIds.has(m.id) ? " (ocupado)" : ""}
+                                </SelectItem>
+                              )) })()}
                             </SelectContent>
                           </Select>
                         )}
@@ -253,6 +277,21 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
+                      </div>
+                      {choque && (
+                        <div className="ml-[72px] mb-1 flex items-center gap-2 flex-wrap text-xs text-red-700">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          {patente(v.mixer_id)} todavía vuelve de {obraDe(choque.otro)} a las {hh(choque.otro.hora_vuelta)}
+                          {libres.length > 0 ? (
+                            <>
+                              <span className="text-muted-foreground">· libres:</span>
+                              {libres.map((m) => (
+                                <Button key={m.id} size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => setViajes((vs) => vs.map((x) => (x.n === v.n && x.estado === "planificado" ? { ...x, mixer_id: m.id } : x)))}>{m.license_plate}</Button>
+                              ))}
+                            </>
+                          ) : <span className="text-muted-foreground">· no hay camiones libres a esa hora: corré el viaje o dejalo sin camión</span>}
+                        </div>
+                      )}
                       </div>
                     )
                   })}
@@ -271,9 +310,11 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado }: {
         )}
 
         <DialogFooter>
+          {onEditarPedido && <Button variant="ghost" className="mr-auto" onClick={() => { onOpenChange(false); onEditarPedido() }}>Editar pedido</Button>}
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
+          {choquesPendientes.length > 0 && <span className="text-xs text-red-600 self-center">Hay camiones en dos viajes a la vez: cambialos para guardar.</span>}
           {m3Invalidos.length > 0 && <span className="text-xs text-red-600 self-center">Completá los m³ de cada viaje para guardar.</span>}
-          <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>
+          <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0 || choquesPendientes.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
