@@ -13,7 +13,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { usePermisos } from "@/lib/current-user"
+import { logDeletion } from "@/lib/activity-log"
+import { ConfirmarConMotivo } from "@/components/motivo"
 
 interface TestCylinder {
   id: string
@@ -56,6 +58,10 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
   const [editingCylinder, setEditingCylinder] = useState<TestCylinder | null>(null)
   const [deletingCylinder, setDeletingCylinder] = useState<TestCylinder | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // Fase 0c-1: corregir = laboratorio.editar; eliminar = laboratorio.borrar (con motivo)
+  const { puede } = usePermisos()
+  const puedeEditar = puede("laboratorio", "editar")
+  const puedeBorrar = puede("laboratorio", "borrar")
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
     from: "",
     to: "",
@@ -237,7 +243,8 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     loadCylinders()
   }, [selectedPlantId, dateRange])
 
-  const deleteCylinder = async (cylinder: TestCylinder) => {
+  const deleteCylinder = async (cylinder: TestCylinder, motivo: string) => {
+    if (!puedeBorrar) return
     setDeleting(true)
     const supabase = createClient()
     if (!supabase) {
@@ -253,6 +260,23 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     if (error) {
       console.error("Error deleting cylinder:", error)
     } else {
+      await logDeletion({
+        entity: "probeta",
+        entityId: cylinder.id,
+        reference: `${cylinder.dispatch?.sample_number || "-"}-${cylinder.cylinder_number}`,
+        details: {
+          Muestra: cylinder.dispatch?.sample_number || "-",
+          Probeta: cylinder.cylinder_number,
+          Edad: `${cylinder.test_age_days} días`,
+          Remito: cylinder.dispatch?.remito || "-",
+          Cliente: cylinder.dispatch?.client?.name || "-",
+          "Fecha programada": cylinder.scheduled_test_date || "-",
+          Rotura: cylinder.actual_test_date || "-",
+          Dial: cylinder.dial_reading ?? "-",
+          MPa: cylinder.strength_mpa ?? "-",
+        },
+        motivo,
+      })
       loadCylinders()
     }
     setDeleting(false)
@@ -584,26 +608,32 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
                   </TableCell>
                   <TableCell className="max-w-[150px] truncate py-2 px-3 text-xs">{cylinder.comments || "-"}</TableCell>
                     <TableCell className="py-2 px-3">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setEditingCylinder(cylinder)}>
-                            <Edit className="h-4 w-4 mr-2" />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => setDeletingCylinder(cylinder)}
-                            className="text-red-600 focus:text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Eliminar
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {(puedeEditar || puedeBorrar) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {puedeEditar && (
+                              <DropdownMenuItem onClick={() => setEditingCylinder(cylinder)}>
+                                <Edit className="h-4 w-4 mr-2" />
+                                Editar
+                              </DropdownMenuItem>
+                            )}
+                            {puedeBorrar && (
+                              <DropdownMenuItem
+                                onClick={() => setDeletingCylinder(cylinder)}
+                                className="text-red-600 focus:text-red-600"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </TableCell>
                 </TableRow>
               ))
@@ -620,34 +650,24 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deletingCylinder} onOpenChange={(open) => !open && setDeletingCylinder(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Probeta</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deletingCylinder && (
-                <>
-                  Esta por eliminar la probeta <strong>{deletingCylinder.dispatch?.sample_number || "N/A"}</strong> 
-                  {" "}(Cilindro #{deletingCylinder.cylinder_number}, {deletingCylinder.test_age_days} dias).
-                  <br /><br />
-                  Esta accion no se puede deshacer.
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deletingCylinder && deleteCylinder(deletingCylinder)}
-              disabled={deleting}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              {deleting ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Eliminar: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deletingCylinder}
+        onOpenChange={(open) => !open && setDeletingCylinder(null)}
+        titulo="Eliminar Probeta"
+        descripcion={
+          deletingCylinder && (
+            <span>
+              Se elimina la probeta <strong>{deletingCylinder.dispatch?.sample_number || "N/A"}</strong> (cilindro #{deletingCylinder.cylinder_number},{" "}
+              {deletingCylinder.test_age_days} días). No se puede deshacer: queda una copia en Actividad y se avisa por mail.
+            </span>
+          )
+        }
+        textoBoton={deleting ? "Eliminando..." : "Eliminar"}
+        onConfirmar={async (m) => {
+          if (deletingCylinder) await deleteCylinder(deletingCylinder, m)
+        }}
+      />
     </div>
   )
 }

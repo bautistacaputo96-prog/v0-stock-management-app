@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { logActivity } from "@/lib/activity-log"
 
 type Mixer = {
   id: string
@@ -82,6 +83,7 @@ export function AddMixerDialog({ plantId, trigger, onMixerAdded }: AddMixerDialo
       if (error) throw error
 
       toast.success("Mixer agregado exitosamente")
+      logActivity({ action: "crear", entity: "camion", entityId: data?.id, reference: patente, details: { "Patente": patente, Marca: formData.brand || "-", "Capacidad (m³)": parseFloat(formData.capacity_m3) || 8 } })
       setOpen(false)
       setFormData({ license_plate: "", brand: "", capacity_m3: "8" })
 

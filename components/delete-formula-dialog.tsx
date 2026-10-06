@@ -14,6 +14,8 @@ import {
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { AlertTriangle } from "lucide-react"
+import { logDeletion } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 
 type Formula = {
   id: string
@@ -31,10 +33,12 @@ export function DeleteFormulaDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [loading, setLoading] = useState(false)
+  const [motivo, setMotivo] = useState("") // fase 0c-1
   const router = useRouter()
   const { toast } = useToast()
 
   const handleDelete = async () => {
+    if (!motivoValido(motivo)) return
     setLoading(true)
 
     try {
@@ -58,11 +62,26 @@ export function DeleteFormulaDialog({
         return
       }
 
+      // Copia de la receta para Actividad y el mail (fase 0c-1)
+      const { data: receta } = await supabase.from("formula_materials").select("quantity, materials(name, unit)").eq("formula_id", formula.id)
+
       // Borrar primero los materiales de la fórmula (FK), luego la fórmula
       await supabase.from("formula_materials").delete().eq("formula_id", formula.id)
       const { error } = await supabase.from("formulas").delete().eq("id", formula.id)
 
       if (error) throw error
+
+      await logDeletion({
+        entity: "formula",
+        entityId: formula.id,
+        reference: formula.code,
+        details: {
+          "Código": formula.code,
+          Nombre: formula.name || "-",
+          Materiales: ((receta as any[]) || []).map((r) => `${r.materials?.name || "?"} ${r.quantity} ${r.materials?.unit || ""}`.trim()).join(" · ") || "-",
+        },
+        motivo: motivo.trim(),
+      })
 
       toast({
         title: "Fórmula eliminada",
@@ -94,11 +113,12 @@ export function DeleteFormulaDialog({
             ¿Estás seguro que deseas eliminar <strong>{formula.code}</strong>? Esta acción no se puede deshacer.
           </DialogDescription>
         </DialogHeader>
+        <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-formula-borrar" ejemplo="Ej: fórmula duplicada, se cargó dos veces" />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={loading}>
+          <Button variant="destructive" onClick={handleDelete} disabled={loading || !motivoValido(motivo)}>
             {loading ? "Eliminando..." : "Eliminar"}
           </Button>
         </DialogFooter>

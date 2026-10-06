@@ -11,6 +11,7 @@ import { toast } from "@/hooks/use-toast"
 import { AddGranulometriaDialog } from "@/components/add-granulometria-dialog"
 import { ViewGranulometriaDialog } from "@/components/view-granulometria-dialog"
 import { EditGranulometriaDialog } from "@/components/edit-granulometria-dialog"
+import { usePermisos } from "@/lib/current-user"
 
 interface GranulometriaTest {
   id: string
@@ -43,6 +44,9 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editTestId, setEditTestId] = useState<string | null>(null)
+  const [editPendiente, setEditPendiente] = useState(false)
+  // Fase 0c-1: nuevo ensayo y completar uno pendiente = laboratorio.cargar; corregir uno cargado = laboratorio.editar
+  const { puede } = usePermisos()
 
   useEffect(() => {
     loadTests()
@@ -103,7 +107,8 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
     setIsViewDialogOpen(true)
   }
 
-  const handleEditTest = (testId: string) => {
+  const handleEditTest = (testId: string, pendiente: boolean) => {
+    setEditPendiente(pendiente)
     setEditTestId(testId)
     setIsEditDialogOpen(true)
   }
@@ -132,10 +137,12 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
             ))}
           </SelectContent>
         </Select>
-        <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Nuevo Ensayo
-        </Button>
+        {puede("laboratorio", "cargar") && (
+          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Nuevo Ensayo
+          </Button>
+        )}
       </div>
 
       {tests.length === 0 ? (
@@ -202,9 +209,11 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
                             <Eye className="h-4 w-4" />
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => handleEditTest(test.id)} className="h-8 w-8 p-0">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        {(isPending ? puede("laboratorio", "cargar") : puede("laboratorio", "editar")) && (
+                          <Button size="sm" variant="ghost" onClick={() => handleEditTest(test.id, isPending)} className="h-8 w-8 p-0" title={isPending ? "Cargar el resultado" : "Corregir"}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -233,6 +242,7 @@ export function GranulometriaTable({ plants, selectedPlantId: initialPlantId }: 
           testId={editTestId}
           plants={plants}
           onTestUpdated={loadTests}
+          requiereMotivo={!editPendiente}
         />
       )}
     </div>

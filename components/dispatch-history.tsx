@@ -18,10 +18,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
-import { logDeletion, notifyDeletion } from "@/lib/activity-log"
-import { currentUserName } from "@/lib/current-user"
+import { logActivity, logCambio, logDeletion, notifyDeletion } from "@/lib/activity-log"
+import { currentUserName, usePermisos } from "@/lib/current-user"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
@@ -118,6 +118,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [saving, setSaving] = useState(false)
   const [choferes, setChoferes] = useState<Chofer[]>([])
   const { toast } = useToast()
+  // Fase 0c-1: permisos y motivo de las ediciones
+  const { puede } = usePermisos()
+  const [motivo, setMotivo] = useState("")
   const nombreChofer = (id?: string | null) => (id ? choferes.find((c) => c.id === id)?.nombre || "-" : "-")
 
   useEffect(() => {
@@ -355,6 +358,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }, []).reverse()
 
   function openSuperDialog(dispatch: ScheduledDispatch) {
+    setMotivo("")
     setSuperDispatch(dispatch)
     setSuperLiters(dispatch.superplasticizer_liters ? String(dispatch.superplasticizer_liters) : "")
   }
@@ -365,6 +369,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
    * con lo que ya estuviera registrado (permite corregir un valor cargado antes).
    */
   function openFiberDialog(dispatch: ScheduledDispatch) {
+    setMotivo("")
     setFiberDispatch(dispatch)
     const m3 = Number(dispatch.quantity_m3) || 0
     setFiberPerM3(dispatch.fiber_kg && m3 > 0 ? String(Math.round((dispatch.fiber_kg / m3) * 100) / 100) : "")
@@ -372,7 +377,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
   /** Guarda la fibra del despacho: kg/m³ × m³ del camión. Ajusta el stock por la diferencia. */
   async function handleSaveFiber() {
-    if (!fiberDispatch) return
+    if (!fiberDispatch || !puede("historial", "editar")) return
+    if (!motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige la fibra.", variant: "destructive" })
+      return
+    }
     const perM3 = Number.parseFloat(fiberPerM3)
     if (Number.isNaN(perM3) || perM3 < 0) {
       toast({ title: "Dosificación inválida", description: "Ingresá los kg de fibra por m³", variant: "destructive" })
@@ -389,7 +398,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         p_material: "fibra",
         p_cantidad: total,
         p_usuario: currentUserName(),
-        p_nota: `Fibra ${perM3} kg/m³ × ${m3} m³ cargada desde el historial — remito ${fiberDispatch.remito || "s/n"}`,
+        p_nota: `Fibra ${perM3} kg/m³ × ${m3} m³ cargada desde el historial — remito ${fiberDispatch.remito || "s/n"} · ${motivo.trim()}`,
+        p_motivo: motivo.trim(), // fase 0c-1 (la base lo deja en Actividad)
       })
       if (error) throw new Error(error.message)
 
@@ -407,7 +417,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }
 
   async function handleSaveSuperplasticizer() {
-    if (!superDispatch) return
+    if (!superDispatch || !puede("historial", "editar")) return
+    if (!motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se registra o corrige el superfluidificante.", variant: "destructive" })
+      return
+    }
     const liters = Number.parseFloat(superLiters)
     if (Number.isNaN(liters) || liters < 0) {
       toast({ title: "Cantidad inválida", description: "Ingresá los litros agregados en obra", variant: "destructive" })
@@ -423,7 +437,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         p_material: "superfluidificante",
         p_cantidad: liters,
         p_usuario: currentUserName(),
-        p_nota: `Superfluidificante agregado en obra — remito ${superDispatch.remito || "s/n"}`,
+        p_nota: `Superfluidificante agregado en obra — remito ${superDispatch.remito || "s/n"} · ${motivo.trim()}`,
+        p_motivo: motivo.trim(), // fase 0c-1 (la base lo deja en Actividad)
       })
       if (error) throw new Error(error.message)
 
@@ -484,8 +499,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     toast({ title: "Exportado", description: `${rows.length} despachos exportados a Excel` })
   }
 
-  async function handleDelete() {
-    if (!deleteDispatch) return
+  async function handleDelete(motivoBorrado: string) {
+    if (!deleteDispatch || !puede("historial", "borrar")) return
     setSaving(true)
     const supabase = createClient()
     if (!supabase) {
@@ -504,6 +519,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         ? format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy")
         : "-",
       "Cargado por": deleteDispatch.created_by || "-",
+      Motivo: motivoBorrado,
     }
 
     try {
@@ -515,12 +531,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         const { error } = await supabase.rpc("anular_despacho", {
           p_id: deleteDispatch.id,
           p_usuario: currentUserName(),
-          p_motivo: null,
+          p_motivo: motivoBorrado, // fase 0c-1
         })
         if (error) throw new Error(error.message)
         await notifyDeletion({ entity: "despacho", reference: deleteDispatch.remito || null, details: deletionDetails })
       } else {
-        // Queda asentado en Actividad y se avisa a los supervisores
+        // Queda asentado en Actividad (con el motivo, que ya va en el detalle) y se avisa a los gerenciales
         await logDeletion({
           entity: "despacho",
           entityId: deleteDispatch.id,
@@ -546,6 +562,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }
 
   async function openEditDialog(dispatch: ScheduledDispatch) {
+    setMotivo("")
     setEditingDispatch(dispatch)
     setEditForm({
       quantity_m3: dispatch.quantity_m3.toString(),
@@ -580,7 +597,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }
 
   async function handleUpdateDispatch() {
-    if (!editingDispatch) return
+    if (!editingDispatch || !puede("historial", "editar")) return
+    if (!motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el despacho.", variant: "destructive" })
+      return
+    }
     setSaving(true)
     const supabase = createClient()
     
@@ -615,6 +636,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           mixer_id: editForm.mixer_id || null,
           chofer_id: editForm.chofer_id || null,
           usuario: currentUserName(),
+          motivo: motivo.trim(), // fase 0c-1: la base lo deja en Actividad y en la nota del stock
         },
       })
 
@@ -661,6 +683,32 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           }
         }
         toast({ title: "Despacho actualizado" })
+        // Fase 0c-1: Actividad con el antes → después y el motivo
+        const nombre = <T extends { id: string }>(lista: T[], id: string | null | undefined, campo: keyof T) =>
+          (id ? String(lista.find((x) => x.id === id)?.[campo] ?? "-") : "-")
+        await logCambio({
+          entity: "pedido",
+          entityId: editingDispatch.id,
+          reference: editForm.remito || editingDispatch.remito || null,
+          plantId: editingDispatch.plant_id || null,
+          antes: {
+            fecha: editingDispatch.scheduled_arrival_time ? format(parseISO(editingDispatch.scheduled_arrival_time), "dd/MM/yyyy") : "",
+            remito: editingDispatch.remito || "", m3: Number(editingDispatch.quantity_m3),
+            cliente: editingDispatch.clients?.name || "-", obra: editingDispatch.construction_sites?.name || "-",
+            formula: editingDispatch.formulas?.code || "-", camion: editingDispatch.mixers?.license_plate || "-",
+            agua: editingDispatch.extra_water_liters ?? "", observaciones: editingDispatch.observations || "",
+          },
+          despues: {
+            fecha: editForm.dispatch_date ? format(parseISO(editForm.dispatch_date), "dd/MM/yyyy") : "",
+            remito: editForm.remito || "", m3: parseFloat(editForm.quantity_m3),
+            cliente: nombre(clients, editForm.client_id, "name"), obra: nombre(sites, editForm.construction_site_id, "name"),
+            formula: nombre(formulas, editForm.formula_id, "code"), camion: nombre(mixers, editForm.mixer_id, "license_plate"),
+            agua: editForm.extra_water_liters ? parseFloat(editForm.extra_water_liters) : "", observaciones: editForm.observations || "",
+          },
+          etiquetas: { fecha: "Fecha", remito: "Remito", m3: "m³", cliente: "Cliente", obra: "Obra", formula: "Fórmula", camion: "Camión", agua: "Agua extra (L)", observaciones: "Observaciones" },
+          motivo: motivo.trim(),
+          extra: { Origen: "Historial (fila de pedido)" },
+        })
         loadData()
         setEditingDispatch(null)
       }
@@ -688,6 +736,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   }
 
   async function handleSaveSample() {
+    if (!puede("historial", "cargar")) return
     if (!sampleDispatch || !sampleNumber.trim()) {
       toast({ title: "Error", description: "Ingrese el numero de muestra", variant: "destructive" })
       return
@@ -767,7 +816,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         .eq("dispatch_id", dispatchId)
         .limit(1)
 
-      if (!existingCylinders || existingCylinders.length === 0) {
+      const yaTenia = !!existingCylinders && existingCylinders.length > 0
+      if (!yaTenia) {
         // El moldeo es siempre la fecha del despacho: la rotura se programa desde
         // ahí, no desde el día en que se registra la muestra (que puede ser semanas después).
         const { data: dRow } = await supabase.from("dispatches").select("dispatch_date").eq("id", dispatchId).single()
@@ -800,6 +850,20 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }
 
       toast({ title: "Muestra registrada", description: `Muestra ${sampleNumber} con 3 probetas creadas` })
+      // Fase 0c-1: "agregar muestra después del despacho" queda en Actividad
+      logActivity({
+        action: "editar",
+        entity: "despacho",
+        entityId: dispatchId,
+        reference: sampleDispatch.remito || null,
+        plantId: sampleDispatch.plant_id || null,
+        details: {
+          Muestra: sampleNumber.trim(),
+          "Asentamiento (cm)": slumpValue,
+          Probetas: yaTenia ? "ya tenía (no se crearon)" : "3 creadas (7 y 28 días)",
+          Origen: "Agregar muestra (Historial)",
+        },
+      })
       setSampleDispatch(null)
       loadData()
     }
@@ -1088,30 +1152,36 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                 <Printer className="h-4 w-4 mr-2" />
                                 Visualizar Remito
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openSampleDialog(dispatch)}>
-                                <FlaskConical className="h-4 w-4 mr-2" />
-                                Agregar Muestra
-                              </DropdownMenuItem>
-                              {dispatch.source === "manual" && (
+                              {puede("historial", "cargar") && (
+                                <DropdownMenuItem onClick={() => openSampleDialog(dispatch)}>
+                                  <FlaskConical className="h-4 w-4 mr-2" />
+                                  Agregar Muestra
+                                </DropdownMenuItem>
+                              )}
+                              {dispatch.source === "manual" && puede("historial", "editar") && (
                                 <DropdownMenuItem onClick={() => openSuperDialog(dispatch)}>
                                   <Beaker className="h-4 w-4 mr-2" />
                                   Superfluidificante en obra
                                 </DropdownMenuItem>
                               )}
-                              {dispatch.source === "manual" && (
+                              {dispatch.source === "manual" && puede("historial", "editar") && (
                                 <DropdownMenuItem onClick={() => openFiberDialog(dispatch)}>
                                   <Sparkles className="h-4 w-4 mr-2" />
                                   {dispatch.fiber_kg ? "Editar fibra" : "Agregar fibra"}
                                 </DropdownMenuItem>
                               )}
-                              <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Editar
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => setDeleteDispatch(dispatch)} className="text-destructive">
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Eliminar
-                              </DropdownMenuItem>
+                              {puede("historial", "editar") && (
+                                <DropdownMenuItem onClick={() => openEditDialog(dispatch)}>
+                                  <Pencil className="h-4 w-4 mr-2" />
+                                  Editar
+                                </DropdownMenuItem>
+                              )}
+                              {puede("historial", "borrar") && (
+                                <DropdownMenuItem onClick={() => setDeleteDispatch(dispatch)} className="text-destructive">
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Eliminar
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -1274,11 +1344,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   />
                 </div>
               </div>
+              <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-editar" />
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingDispatch(null)}>Cancelar</Button>
-            <Button disabled={saving} onClick={handleUpdateDispatch}>
+            <Button disabled={saving || !motivoValido(motivo)} onClick={handleUpdateDispatch}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
           </DialogFooter>
@@ -1317,11 +1388,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   Se descuenta del stock de &quot;Superfluidificante (obra)&quot;. Dejalo en 0 para quitar el registro.
                 </p>
               </div>
+              <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-super" ejemplo="Ej: el chofer avisó que agregaron 5 litros en obra" />
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSuperDispatch(null)}>Cancelar</Button>
-            <Button disabled={saving} onClick={handleSaveSuperplasticizer}>
+            <Button disabled={saving || !motivoValido(motivo)} onClick={handleSaveSuperplasticizer}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
           </DialogFooter>
@@ -1358,12 +1430,13 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   </p>
                   <p className="text-xs text-muted-foreground">Se descuenta del stock de &quot;Fibra&quot; de la planta. Dejalo en 0 para quitarla.</p>
                 </div>
+                <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-fibra" ejemplo="Ej: el pedido llevaba fibra y no se cargó" />
               </div>
             )
           })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setFiberDispatch(null)}>Cancelar</Button>
-            <Button disabled={saving} onClick={handleSaveFiber}>{saving ? "Guardando..." : "Guardar"}</Button>
+            <Button disabled={saving || !motivoValido(motivo)} onClick={handleSaveFiber}>{saving ? "Guardando..." : "Guardar"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1433,32 +1506,26 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteDispatch} onOpenChange={(open) => !open && setDeleteDispatch(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Despacho</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                <span>¿Estas seguro que deseas eliminar este despacho? Esta accion no se puede deshacer.</span>
-                {deleteDispatch && (
-                  <div className="mt-2 p-2 bg-muted rounded text-sm">
-                    <div><strong>Cliente:</strong> {deleteDispatch.clients?.name}</div>
-                    <div><strong>Obra:</strong> {deleteDispatch.construction_sites?.name}</div>
-                    <div><strong>Cantidad:</strong> {deleteDispatch.quantity_m3}m3</div>
-                  </div>
-                )}
+      {/* Eliminar: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteDispatch}
+        onOpenChange={(open) => !open && setDeleteDispatch(null)}
+        titulo="Eliminar Despacho"
+        descripcion={
+          deleteDispatch && (
+            <div>
+              <span>Esta acción no se puede deshacer. Queda una copia en Actividad y se avisa por mail.</span>
+              <div className="mt-2 p-2 bg-muted rounded text-sm">
+                <div><strong>Cliente:</strong> {deleteDispatch.clients?.name}</div>
+                <div><strong>Obra:</strong> {deleteDispatch.construction_sites?.name}</div>
+                <div><strong>Cantidad:</strong> {deleteDispatch.quantity_m3}m3</div>
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={saving} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {saving ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </div>
+          )
+        }
+        textoBoton="Eliminar"
+        onConfirmar={handleDelete}
+      />
     </div>
   )
 }

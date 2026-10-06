@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { currentUserName } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 import { AlertTriangle, Camera, Loader2 } from "lucide-react"
 import { COMPONENTES, subirFotoOrden } from "@/lib/mantenimiento"
 import { cn } from "@/lib/utils"
@@ -61,6 +62,13 @@ export function ReportarFallaDialog({ open, equipmentId, onClose, onCreada }: Pr
       try { await subirFotoOrden(supabase, data.id, foto, usuario, "Foto de la falla") } catch {}
     }
     toast({ title: "Falla reportada", description: "Le llega a Braian Peralta" })
+    logActivity({
+      action: "crear",
+      entity: "orden_trabajo",
+      entityId: data.id,
+      reference: titulo.trim(),
+      details: { Falla: titulo.trim(), Componente: componente || "-", Prioridad: prioridad, ...(descripcion.trim() ? { "Descripción": descripcion.trim() } : {}) },
+    })
     setTitulo(""); setDescripcion(""); setComponente(""); setPrioridad("normal"); setFoto(null)
     setGuardando(false)
     onCreada()

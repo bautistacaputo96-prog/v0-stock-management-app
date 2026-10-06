@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Search } from "lucide-react"
 import { SeccionProtegida } from "@/components/seccion-protegida"
+import { usePermisos } from "@/lib/current-user"
 
 const RESISTENCIAS = ["H4", "H8", "H13", "H17", "H21", "H25", "H30", "H35", "H40", "H45", "H50"]
 const METODOS = ["Todos", "Canaleta", "Bombeable"]
@@ -30,6 +31,7 @@ function FormulasContenido() {
   const [filterMetodo, setFilterMetodo] = useState<string>("Todos")
   const [searchTerm, setSearchTerm] = useState("")
   const supabase = createClient()
+  const { puede } = usePermisos() // fase 0c-1
 
   useEffect(() => {
     loadPlants()
@@ -180,7 +182,7 @@ function FormulasContenido() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Formulas</h1>
           <p className="text-sm text-foreground/70 font-medium mt-1">Gestion de formulas de hormigon</p>
         </div>
-        <AddFormulaDialog materials={materials} plantId={selectedPlant} onSuccess={loadFormulas} />
+        {puede("formulas", "cargar") && <AddFormulaDialog materials={materials} plantId={selectedPlant} onSuccess={loadFormulas} />}
       </div>
 
       <PlantSelector plants={plants} selectedPlant={selectedPlant} onPlantChange={setSelectedPlant} />

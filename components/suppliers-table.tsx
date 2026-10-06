@@ -14,6 +14,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, MoreHorizontal, Pencil, Trash2, Package, Search, Loader2 } from "lucide-react"
 import { format, parseISO } from "date-fns"
+import { usePermisos } from "@/lib/current-user"
+import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 
 type Supplier = {
   id: string
@@ -47,6 +50,9 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
   })
   const { toast } = useToast()
   const supabase = createClient()
+  // Fase 0c-1: proveedores = materia prima (cargar / editar / borrar); editar y borrar piden motivo
+  const { puede } = usePermisos()
+  const [motivo, setMotivo] = useState("")
 
   useEffect(() => {
     if (plantId) {
@@ -106,6 +112,7 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
   }
 
   function openEditDialog(supplier: Supplier) {
+    setMotivo("")
     setEditingSupplier(supplier)
     // Get material IDs for this supplier
     const materialIds = materials
@@ -122,6 +129,12 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
   async function handleSave() {
     if (!formData.name.trim()) {
       toast({ title: "Error", description: "El nombre es requerido", variant: "destructive" })
+      return
+    }
+
+    if (editingSupplier ? !puede("materia_prima", "editar") : !puede("materia_prima", "cargar")) return
+    if (editingSupplier && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el proveedor.", variant: "destructive" })
       return
     }
 
@@ -156,6 +169,17 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
       }
 
       toast({ title: "Proveedor actualizado" })
+      const nombresMat = (ids: string[]) => materials.filter((m) => ids.includes(m.id)).map((m) => m.name).sort().join(", ")
+      await logCambio({
+        entity: "proveedor",
+        entityId: editingSupplier.id,
+        reference: formData.name.trim(),
+        plantId,
+        antes: { nombre: editingSupplier.name, contacto: editingSupplier.contact || "", telefono: editingSupplier.phone || "", materiales: [...editingSupplier.materials].sort().join(", ") },
+        despues: { nombre: formData.name.trim(), contacto: formData.contact.trim(), telefono: formData.phone.trim(), materiales: nombresMat(formData.selectedMaterials) },
+        etiquetas: { nombre: "Nombre", contacto: "Contacto", telefono: "Teléfono", materiales: "Materiales" },
+        motivo: motivo.trim(),
+      })
       setEditingSupplier(null)
     } else {
       // Create new supplier
@@ -186,6 +210,14 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
       }
 
       toast({ title: "Proveedor creado" })
+      logActivity({
+        action: "crear",
+        entity: "proveedor",
+        entityId: newSupplier?.id ?? null,
+        reference: formData.name.trim(),
+        plantId,
+        details: { Proveedor: formData.name.trim(), Contacto: formData.contact.trim() || "-", "Teléfono": formData.phone.trim() || "-" },
+      })
       setIsAddOpen(false)
     }
 
@@ -194,8 +226,8 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
     setSaving(false)
   }
 
-  async function handleDelete() {
-    if (!deleteSupplier) return
+  async function handleDelete(motivoBorrado: string) {
+    if (!deleteSupplier || !puede("materia_prima", "borrar")) return
 
     setSaving(true)
     
@@ -209,6 +241,14 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
       toast({ title: "Error", description: "No se pudo eliminar el proveedor", variant: "destructive" })
     } else {
       toast({ title: "Proveedor eliminado" })
+      await logDeletion({
+        entity: "proveedor",
+        entityId: deleteSupplier.id,
+        reference: deleteSupplier.name,
+        plantId,
+        details: { Proveedor: deleteSupplier.name, Contacto: deleteSupplier.contact || "-", "Teléfono": deleteSupplier.phone || "-", Materiales: deleteSupplier.materials.join(", ") || "-" },
+        motivo: motivoBorrado,
+      })
       loadSuppliers()
     }
 
@@ -298,7 +338,7 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
             className="pl-9"
           />
         </div>
-        <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
+        {puede("materia_prima", "cargar") && <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="h-4 w-4 mr-2" />
@@ -317,7 +357,7 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
               </Button>
             </DialogFooter>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </div>
 
       <Card>
@@ -363,26 +403,32 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
                       {format(parseISO(supplier.created_at), "dd/MM/yyyy")}
                     </TableCell>
                     <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openEditDialog(supplier)}>
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => setDeleteSupplier(supplier)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Eliminar
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {(puede("materia_prima", "editar") || puede("materia_prima", "borrar")) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {puede("materia_prima", "editar") && (
+                              <DropdownMenuItem onClick={() => openEditDialog(supplier)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Editar
+                              </DropdownMenuItem>
+                            )}
+                            {puede("materia_prima", "borrar") && (
+                              <DropdownMenuItem
+                                onClick={() => setDeleteSupplier(supplier)}
+                                className="text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -399,33 +445,25 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
             <DialogTitle>Editar Proveedor</DialogTitle>
           </DialogHeader>
           <SupplierForm />
+          <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-proveedor" />
           <DialogFooter>
             <Button variant="outline" onClick={() => { setEditingSupplier(null); resetForm(); }}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSave} disabled={saving || !motivoValido(motivo)}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteSupplier} onOpenChange={(open) => !open && setDeleteSupplier(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Eliminar Proveedor</DialogTitle>
-          </DialogHeader>
-          <p className="text-muted-foreground">
-            Esta seguro que desea eliminar el proveedor <strong>{deleteSupplier?.name}</strong>?
-            Esta accion no se puede deshacer.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteSupplier(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={saving}>
-              {saving ? "Eliminando..." : "Eliminar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Eliminar: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteSupplier}
+        onOpenChange={(open) => !open && setDeleteSupplier(null)}
+        titulo="Eliminar Proveedor"
+        descripcion={<span>Se elimina el proveedor <strong>{deleteSupplier?.name}</strong>. Esta acción no se puede deshacer.</span>}
+        textoBoton="Eliminar"
+        onConfirmar={handleDelete}
+      />
     </div>
   )
 }

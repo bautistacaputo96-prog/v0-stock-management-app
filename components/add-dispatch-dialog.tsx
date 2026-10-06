@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
-import { currentUserName } from "@/lib/current-user"
+import { currentUserName, usePermisos } from "@/lib/current-user"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, X, Check, ChevronsUpDown, Truck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -137,6 +137,8 @@ export function AddDispatchDialog({
 }: AddDispatchDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  // Fase 0c-1: altas rápidas según el permiso de cada maestro
+  const { puede } = usePermisos()
   const [dispatchPlantId, setDispatchPlantId] = useState(plantId)
   const [dialogFormulas, setDialogFormulas] = useState(formulas)
   const [clients, setClients] = useState(initialClients)
@@ -693,7 +695,7 @@ export function AddDispatchDialog({
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <AddMixerDialog
+                    {puede("flota", "cargar") && <AddMixerDialog
                       plantId={dispatchPlantId}
                       trigger={
                         <Button type="button" variant="outline" size="icon">
@@ -704,7 +706,7 @@ export function AddDispatchDialog({
                         setMixers([...mixers, mixer])
                         setFormData({ ...formData, mixer_id: mixer.id })
                       }}
-                    />
+                    />}
                   </div>
                 </div>
 
@@ -728,7 +730,7 @@ export function AddDispatchDialog({
                         emptyText="No se encontró el cliente"
                       />
                     </div>
-                    <AddClientDialog
+                    {puede("clientes", "cargar") && <AddClientDialog
                       plantId={dispatchPlantId}
                       trigger={
                         <Button type="button" variant="outline" size="icon">
@@ -739,7 +741,7 @@ export function AddDispatchDialog({
                         setClients([...clients, client])
                         setFormData({ ...formData, client_id: client.id })
                       }}
-                    />
+                    />}
                   </div>
                 </div>
 
@@ -756,7 +758,7 @@ export function AddDispatchDialog({
                         emptyText="No se encontró la obra"
                       />
                     </div>
-                    {formData.client_id && (
+                    {formData.client_id && puede("clientes", "cargar") && (
                       <AddConstructionSiteDialog
                         clientId={formData.client_id}
                         trigger={

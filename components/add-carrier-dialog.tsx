@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
+import { logActivity } from "@/lib/activity-log"
 import { useToast } from "@/hooks/use-toast"
 
 type AddCarrierDialogProps = {
@@ -64,6 +65,13 @@ export function AddCarrierDialog({
 
       if (error) throw error
 
+      logActivity({
+        action: "crear",
+        entity: "transportista",
+        entityId: (data as any)?.id ?? null,
+        reference: formData.name.trim(),
+        details: { Transportista: formData.name.trim(), Chofer: formData.driver_name.trim() || "-", "Teléfono": formData.phone.trim() || "-" },
+      })
       toast({
         title: "Flete agregado",
         description: `${formData.name} fue agregado correctamente`,

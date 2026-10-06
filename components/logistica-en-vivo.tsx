@@ -15,6 +15,7 @@ import { Truck, Radio, Link2, RefreshCw, AlertTriangle, CheckCircle2, MapPin } f
 import { formatDistanceToNowStrict, parseISO, format } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { usePermisos } from "@/lib/current-user"
 
 type Camion = {
   unidad_id: number
@@ -102,6 +103,8 @@ export function LogisticaEnVivo() {
   const [plantas, setPlantas] = useState<{ id: string; name: string; gps_lat: number | null; gps_lng: number | null }[]>([])
   const [obrasHoy, setObrasHoy] = useState<{ id: string; name: string; gps_lat: number; gps_lng: number; cliente: string; hora: string; m3: number }[]>([])
   const [sinUbicar, setSinUbicar] = useState(0)
+  // Fase 0c-1: conectar B-Track es solo de gerenciales (la ruta se protege en la 0c-2)
+  const { esGerencial } = usePermisos()
 
   useEffect(() => {
     const sb = createClient()
@@ -138,13 +141,19 @@ export function LogisticaEnVivo() {
             </div>
           </div>
           {params.get("error") && <p className="text-sm text-red-600">No se pudo conectar: {params.get("error")}</p>}
-          <ol className="text-sm list-decimal list-inside space-y-1 text-muted-foreground">
-            <li>Tocá el botón. Se abre la página de Wialon, que es el sistema detrás de B-Track.</li>
-            <li>Entrá con tu usuario y contraseña de B-Track y aceptá el acceso.</li>
-            <li>Vuelve solo a esta pantalla con los camiones en el mapa.</li>
-          </ol>
-          <Button asChild className="gap-2"><a href="/api/gps/conectar"><Link2 className="h-4 w-4" /> Conectar con B-Track</a></Button>
-          <PegarToken onListo={recargar} />
+          {esGerencial ? (
+            <>
+              <ol className="text-sm list-decimal list-inside space-y-1 text-muted-foreground">
+                <li>Tocá el botón. Se abre la página de Wialon, que es el sistema detrás de B-Track.</li>
+                <li>Entrá con tu usuario y contraseña de B-Track y aceptá el acceso.</li>
+                <li>Vuelve solo a esta pantalla con los camiones en el mapa.</li>
+              </ol>
+              <Button asChild className="gap-2"><a href="/api/gps/conectar"><Link2 className="h-4 w-4" /> Conectar con B-Track</a></Button>
+              <PegarToken onListo={recargar} />
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">El GPS no está conectado. Lo conecta un gerencial desde esta pantalla.</p>
+          )}
         </CardContent>
       </Card>
     )

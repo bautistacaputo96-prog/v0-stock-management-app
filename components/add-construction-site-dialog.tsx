@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 
@@ -74,6 +75,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
       if (error) throw error
 
       toast.success("Obra agregada exitosamente")
+      logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: formData.localidad || "-", "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
       setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20" })
       setUbic(UBIC_VACIA)
       setOpen(false)

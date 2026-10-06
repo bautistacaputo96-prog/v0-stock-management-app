@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/hooks/use-toast"
 import { Loader2, AlertCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { logActivity } from "@/lib/activity-log"
 
 interface AddGranulometriaDialogProps {
   open: boolean
@@ -399,6 +400,14 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
         console.log("[v0] Stock entry updated with granulometry_test_id")
       }
 
+      logActivity({
+        action: "crear",
+        entity: "granulometria",
+        entityId: testData.id,
+        reference: formData.remito || null,
+        plantId: formData.plant_id || null,
+        details: { Agregado: selectedMaterial?.name || "-", Proveedor: selectedSupplier?.name || "-", Remito: formData.remito || "-", "Módulo de finura": Math.round(finenessModulus * 100) / 100 },
+      })
       toast({
         title: "Ensayo guardado",
         description: `Módulo de finura: ${finenessModulus.toFixed(2)} MF`,

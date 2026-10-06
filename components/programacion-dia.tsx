@@ -26,7 +26,8 @@ import { planificar, aMin, aHora, PARAMETROS_BASE, parametrosDePlanta, columnasD
 import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settings2, Truck, MapPin, ListOrdered, ThumbsUp, BarChart3 } from "lucide-react"
 // Fase 2 (solo con el interruptor de funciones nuevas)
-import { currentUserName, useFuncionesNuevas } from "@/lib/current-user"
+import { currentUserName, useFuncionesNuevas, usePermisos } from "@/lib/current-user"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
@@ -44,6 +45,7 @@ type PedidoDB = {
   scheduled_arrival_time: string
   status: string
   metodo_descarga: "bomba" | "directo" | null
+  created_by?: string | null // fase 0c-1: de quién es el pedido (ajustes de quien solo carga)
   // Fase 1 (no vienen si la migración no está aplicada)
   finalidad?: string | null
   bomba_la_pone?: "rebucret" | "cliente" | null
@@ -85,6 +87,11 @@ const ETIQUETAS: Record<keyof Parametros, string> = {
 
 export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const { toast } = useToast()
+  // Fase 0c-1: ajustar un pedido (hora, método, viajes, 👍) = programacion.editar, o cargar y que sea propio.
+  // Ordenar el día, guardar el plan de todos y los tiempos de la planta = programacion.editar.
+  const { puede, ajustaPedido } = usePermisos()
+  const editaTodo = puede("programacion", "editar")
+  const [motivoTiempos, setMotivoTiempos] = useState("")
   const [planta, setPlanta] = useState<string>(plants[0]?.id || "")
   const [dia, setDia] = useState<Date>(() => addDays(startOfDay(new Date()), 1)) // por defecto, mañana
   const [pedidos, setPedidos] = useState<PedidoDB[]>([])
@@ -132,6 +139,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const tiemposCambiados = (Object.keys(ETIQUETAS) as (keyof Parametros)[]).filter((k) => prm[k] !== prmGuardado[k])
 
   async function guardarTiempos() {
+    if (!editaTodo) return
+    if (!motivoValido(motivoTiempos)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se cambian los tiempos de la planta.", variant: "destructive" })
+      return
+    }
     if (aMin(prm.finJornada) <= aMin(prm.inicioJornada)) {
       toast({ title: "Revisá la jornada", description: "El fin tiene que ser después del inicio", variant: "destructive" })
       return
@@ -146,6 +158,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     const nombre = plants.find((p) => p.id === planta)?.name || null
     const detalle: Record<string, string> = {}
     for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = `${prmGuardado[k]} → ${prm[k]}`
+    detalle.Motivo = motivoTiempos.trim()
+    setMotivoTiempos("")
     await logActivity({ action: "editar", entity: "planta", entityId: planta, reference: nombre, plantId: planta, details: detalle })
     toast({ title: "Tiempos guardados", description: `${nombre}: los ve cualquiera que abra la programación` })
     cargarTiempos()
@@ -229,7 +243,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
 
   async function guardarHora(p: PedidoDB) {
     const h = horas[p.id]
-    if (!h) return
+    if (!h || !ajustaPedido(p)) return
     setGuardando(p.id)
     const [hh, mm] = h.split(":").map(Number)
     const llegada = new Date(dia); llegada.setHours(hh, mm, 0, 0)
@@ -251,6 +265,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   }
 
   async function guardarMetodo(p: PedidoDB, metodo: "bomba" | "directo") {
+    if (!ajustaPedido(p)) return
     const cambio = p.metodo_descarga !== metodo
     // Directo: no queda nada de bomba (solo si la base ya tiene esas columnas)
     const limpiarBomba = metodo === "directo" && "bomba_la_pone" in p ? { bomba_la_pone: null, bomba_empresa_id: null, bomba_hora: null } : {}
@@ -277,7 +292,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   }
 
   async function guardarPlanDelDia() {
-    if (!propuesta) return
+    if (!propuesta || !editaTodo) return
     setGuardandoPlan(true)
     const sb = createClient()
     const errores: string[] = []
@@ -300,6 +315,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   }
 
   async function confirmarPedido(p: PedidoDB, confirmar: boolean) {
+    if (!ajustaPedido(p)) return
     setConfirmando(p.id)
     const cambios = confirmar ? { confirmado_at: new Date().toISOString(), confirmado_por: currentUserName() } : { confirmado_at: null, confirmado_por: null }
     const { error } = await createClient().from("scheduled_dispatches").update(cambios).eq("id", p.id)
@@ -372,10 +388,12 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       {ve && !cargando && pedidos.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2">
           <NuevoBadge />
-          <Button size="sm" variant="outline" className="gap-1.5 bg-background" onClick={ordenarDia} disabled={cambiados.length > 0 || camionesDisponibles.length === 0}>
-            <ListOrdered className="h-4 w-4" /> Ordenar el día
-          </Button>
-          {cambiados.length > 0 && <span className="text-xs text-amber-700">Guardá las horas cambiadas antes de ordenar.</span>}
+          {editaTodo && (
+            <Button size="sm" variant="outline" className="gap-1.5 bg-background" onClick={ordenarDia} disabled={cambiados.length > 0 || camionesDisponibles.length === 0}>
+              <ListOrdered className="h-4 w-4" /> Ordenar el día
+            </Button>
+          )}
+          {editaTodo && cambiados.length > 0 && <span className="text-xs text-amber-700">Guardá las horas cambiadas antes de ordenar.</span>}
           <span className="text-sm ml-auto flex items-center gap-1.5">
             <ThumbsUp className="h-4 w-4 text-emerald-700" /> <strong>{confirmados}</strong> de {activos.length} pedido{activos.length === 1 ? "" : "s"} confirmado{activos.length === 1 ? "" : "s"}
           </span>
@@ -434,11 +452,18 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   </div>
                 </label>
               </div>
+              {editaTodo && tiemposCambiados.length > 0 && (
+                <div className="mt-3 max-w-md">
+                  <CampoMotivo value={motivoTiempos} onChange={setMotivoTiempos} id="motivo-tiempos" ejemplo="Ej: medimos la carga con el GPS y tarda menos" />
+                </div>
+              )}
               <div className="flex items-center gap-3 flex-wrap mt-3">
-                <Button size="sm" onClick={guardarTiempos} disabled={guardandoTiempos || tiemposCambiados.length === 0}>
-                  {guardandoTiempos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : `Guardar tiempos de ${plants.find((p) => p.id === planta)?.name}`}
-                </Button>
-                {tiemposCambiados.length > 0 && <span className="text-xs text-amber-700">Cambios sin guardar: el plan ya los usa.</span>}
+                {editaTodo && (
+                  <Button size="sm" onClick={guardarTiempos} disabled={guardandoTiempos || tiemposCambiados.length === 0 || !motivoValido(motivoTiempos)}>
+                    {guardandoTiempos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : `Guardar tiempos de ${plants.find((p) => p.id === planta)?.name}`}
+                  </Button>
+                )}
+                {tiemposCambiados.length > 0 && <span className="text-xs text-amber-700">{editaTodo ? "Cambios sin guardar: el plan ya los usa." : "Solo para mirar el plan: no se guardan."}</span>}
                 <Button variant="link" size="sm" className="px-0 h-auto text-xs" onClick={() => setPrm(PARAMETROS_BASE)}>Volver a los valores de referencia</Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
@@ -519,12 +544,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   const r = plan?.pedidos.find((x) => x.pedidoId === p.id)
                   const cambiada = cambiados.includes(p.id)
                   const completo = p.status === "completed"
+                  const ajusta = ajustaPedido(p)
                   return (
                     <div key={p.id} className={cn("px-4 py-3 grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center", completo && !simular && "opacity-60")}>
                       <div className="flex items-center gap-2">
                         <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: colorDe(p.id) }} />
-                        <Input type="time" value={horaDe(p)} disabled={completo} onChange={(e) => setHoras({ ...horas, [p.id]: e.target.value })} className={cn("h-9 w-[140px] font-medium", cambiada && "border-amber-400 bg-amber-50")} />
-                        {cambiada && (
+                        <Input type="time" value={horaDe(p)} disabled={completo || !ajusta} title={!ajusta ? `Pedido de ${p.created_by || "otra persona"}: solo lo ajusta quien lo cargó o un gerencial` : undefined} onChange={(e) => setHoras({ ...horas, [p.id]: e.target.value })} className={cn("h-9 w-[140px] font-medium", cambiada && "border-amber-400 bg-amber-50")} />
+                        {cambiada && ajusta && (
                           <Button size="sm" className="h-8" onClick={() => guardarHora(p)} disabled={guardando === p.id}>{guardando === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar"}</Button>
                         )}
                       </div>
@@ -537,7 +563,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                           {p.construction_sites?.gps_lat == null && <span className="text-amber-700 flex items-center gap-0.5"><MapPin className="h-3 w-3" />obra sin ubicar</span>}
                           <span className="inline-flex rounded border overflow-hidden">
                             {(["bomba", "directo"] as const).map((m) => (
-                              <button key={m} disabled={completo} onClick={() => guardarMetodo(p, m)} className={cn("px-1.5 py-0.5 text-[11px]", p.metodo_descarga === m ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>{m === "bomba" ? "Bomba" : "Directo"}</button>
+                              <button key={m} disabled={completo || !ajusta} onClick={() => guardarMetodo(p, m)} className={cn("px-1.5 py-0.5 text-[11px]", p.metodo_descarga === m ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>{m === "bomba" ? "Bomba" : "Directo"}</button>
                             ))}
                           </span>
                           {!p.metodo_descarga && <span className="text-amber-700">sin método (se asume {p.construction_sites?.requires_pump ? "bomba" : "directo"})</span>}
@@ -554,11 +580,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                               <Truck className="h-3.5 w-3.5" />{viajesPorPedido[p.id]?.length ? `Viajes (${totalViajes(viajesPorPedido[p.id])})` : "Armar viajes"}
                             </Button>
                             {p.confirmado_at ? (
-                              <Button size="sm" variant="ghost" className="h-7 text-xs text-emerald-700" disabled={confirmando === p.id} title="Tocá para quitar la confirmación" onClick={() => confirmarPedido(p, false)}>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs text-emerald-700" disabled={confirmando === p.id || !ajusta} title={ajusta ? "Tocá para quitar la confirmación" : undefined} onClick={() => confirmarPedido(p, false)}>
                                 👍 Confirmado · {p.confirmado_por || "-"} · {format(new Date(p.confirmado_at), "dd/MM HH:mm")}
                               </Button>
-                            ) : (
+                            ) : ajusta ? (
                               <Button size="sm" variant="outline" className="h-7 text-xs" disabled={confirmando === p.id} onClick={() => confirmarPedido(p, true)}>👍 Confirmar</Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sin confirmar</span>
                             )}
                           </div>
                         )}
@@ -618,7 +646,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   <p className="text-sm font-medium flex items-center gap-1.5"><ListOrdered className="h-4 w-4" /> Plan del día propuesto <NuevoBadge /></p>
                   <div className="flex gap-2">
                     <Button size="sm" variant="ghost" onClick={() => setPropuesta(null)}>Descartar</Button>
-                    <Button size="sm" onClick={guardarPlanDelDia} disabled={guardandoPlan}>{guardandoPlan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar plan del día"}</Button>
+                    {editaTodo && <Button size="sm" onClick={guardarPlanDelDia} disabled={guardandoPlan}>{guardandoPlan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar plan del día"}</Button>}
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">Respeta la boca de carga y los camiones disponibles. Al guardar quedan los viajes y el camión sugerido de cada uno; los ya despachados no se tocan.</p>

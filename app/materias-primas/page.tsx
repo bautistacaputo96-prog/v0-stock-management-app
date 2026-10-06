@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import * as XLSX from "xlsx"
 import { SeccionProtegida } from "@/components/seccion-protegida"
+import { usePermisos } from "@/lib/current-user"
 
 export default function MateriasPrimasPage() {
   return (
@@ -43,6 +44,7 @@ function MateriasPrimasContent() {
   const [selectedMaterial, setSelectedMaterial] = useState<string>("all")
   const searchParams = useSearchParams()
   const activeTab = searchParams.get("tab") || "stock"
+  const { puede } = usePermisos()
   const supabase = createClient()
 
   useEffect(() => {
@@ -177,10 +179,10 @@ function MateriasPrimasContent() {
           <p className="text-xs md:text-sm text-foreground/70 font-medium mt-1">Gestion de stock e ingresos de materia prima</p>
         </div>
         <div className="flex items-center gap-2">
-          {activeTab === "stock" && (
+          {activeTab === "stock" && puede("formulas", "cargar") && (
             <AddMaterialDialog plantId={selectedPlant} plants={plants} onSuccess={loadMaterials} />
           )}
-          {activeTab === "ingresos" && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
+          {activeTab === "ingresos" && puede("materia_prima", "cargar") && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
         </div>
       </div>
 

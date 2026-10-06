@@ -13,9 +13,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { logActivity } from "@/lib/activity-log"
+import { usePermisos } from "@/lib/current-user"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { Plus, Pencil, Search, Ban, RotateCcw } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
@@ -53,6 +54,9 @@ export function MaestroLista({
   const [form, setForm] = useState<Record<string, string>>({})
   const [baja, setBaja] = useState<Fila | null>(null)
   const [guardando, setGuardando] = useState(false)
+  // Fase 0c-1: choferes y bombas = permiso "flota"; editar y dar de baja piden motivo
+  const { puede } = usePermisos()
+  const [motivo, setMotivo] = useState("")
 
   const Titulo = singular.charAt(0).toUpperCase() + singular.slice(1)
   const o = femenino ? "a" : "o"
@@ -67,6 +71,7 @@ export function MaestroLista({
   }
 
   function abrir(f: Fila | null) {
+    setMotivo("")
     setEditando(f)
     const v: Record<string, string> = { nombre: f?.nombre || "" }
     campos.forEach((c) => (v[c.key] = f?.[c.key] || ""))
@@ -77,6 +82,8 @@ export function MaestroLista({
   async function guardar() {
     const nombre = (form.nombre || "").trim()
     if (!nombre) return
+    if (editando ? !puede("flota", "editar") : !puede("flota", "cargar")) return
+    if (editando && !motivoValido(motivo)) return
     const repetido = filas.find((f) => f.nombre.trim().toLowerCase() === nombre.toLowerCase() && f.id !== editando?.id)
     if (repetido) {
       toast({ title: `${Titulo} repetid${o}`, description: `${repetido.nombre} ya está cargado${repetido.activo ? "" : " (dad${o} de baja: reactival${o})"}`, variant: "destructive" })
@@ -100,19 +107,20 @@ export function MaestroLista({
         if ((editando[k] || null) !== (datos[k] || null)) cambios[campos.find((c) => c.key === k)?.label || "Nombre"] = `${editando[k] || "-"} → ${datos[k] || "-"}`
       }
     }
-    logActivity({ action: editando ? "editar" : "crear", entity: entidad, entityId: (data as Fila)?.id, reference: nombre, details: editando ? cambios : datos })
+    logActivity({ action: editando ? "editar" : "crear", entity: entidad, entityId: (data as Fila)?.id, reference: nombre, details: editando ? { ...cambios, Motivo: motivo.trim() } : datos })
     toast({ title: editando ? `${Titulo} actualizad${o}` : `${Titulo} cargad${o}` })
     setAbierto(false)
     cargar()
   }
 
-  async function cambiarActivo(f: Fila, activo: boolean) {
+  async function cambiarActivo(f: Fila, activo: boolean, motivoBaja?: string) {
+    if (!puede("flota", "borrar")) return
     const { error } = await createClient().from(tabla).update({ activo }).eq("id", f.id)
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
       return
     }
-    logActivity({ action: "editar", entity: entidad, entityId: f.id, reference: f.nombre, details: { Estado: activo ? `reactivad${o}` : `dad${o} de baja` } })
+    logActivity({ action: "editar", entity: entidad, entityId: f.id, reference: f.nombre, details: { Estado: activo ? `reactivad${o}` : `dad${o} de baja`, ...(motivoBaja ? { Motivo: motivoBaja } : {}) } })
     toast({ title: activo ? `${f.nombre} reactivad${o}` : `${f.nombre} dad${o} de baja` })
     setBaja(null)
     cargar()
@@ -145,10 +153,10 @@ export function MaestroLista({
             </Button>
           )}
         </div>
-        <Button onClick={() => abrir(null)} className="gap-2" disabled={sinTabla}>
+        {puede("flota", "cargar") && <Button onClick={() => abrir(null)} className="gap-2" disabled={sinTabla}>
           <Plus className="h-4 w-4" />
           Nuev{o} {singular}
-        </Button>
+        </Button>}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -161,8 +169,8 @@ export function MaestroLista({
                   <CardTitle className="text-lg truncate">{f.nombre}</CardTitle>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button variant="ghost" size="sm" onClick={() => abrir(f)} title="Editar"><Pencil className="h-4 w-4" /></Button>
-                  {f.activo ? (
+                  {puede("flota", "editar") && <Button variant="ghost" size="sm" onClick={() => abrir(f)} title="Editar"><Pencil className="h-4 w-4" /></Button>}
+                  {!puede("flota", "borrar") ? null : f.activo ? (
                     <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setBaja(f)} title="Dar de baja"><Ban className="h-4 w-4" /></Button>
                   ) : (
                     <Button variant="ghost" size="sm" onClick={() => cambiarActivo(f, true)} title="Reactivar"><RotateCcw className="h-4 w-4" /></Button>
@@ -206,27 +214,24 @@ export function MaestroLista({
               </div>
             ))}
           </div>
+          {editando && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-maestro" ejemplo="Ej: el teléfono estaba mal" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setAbierto(false)}>Cancelar</Button>
-            <Button onClick={guardar} disabled={!(form.nombre || "").trim() || guardando}>{guardando ? "Guardando..." : editando ? "Guardar" : "Crear"}</Button>
+            <Button onClick={guardar} disabled={!(form.nombre || "").trim() || guardando || (!!editando && !motivoValido(motivo))}>{guardando ? "Guardando..." : editando ? "Guardar" : "Crear"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!baja} onOpenChange={(o) => !o && setBaja(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Dar de baja</AlertDialogTitle>
-            <AlertDialogDescription>
-              {baja?.nombre} deja de aparecer en las listas. No se borra: sigue figurando en los despachos y pedidos que ya tiene, y se puede reactivar.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => baja && cambiarActivo(baja, false)}>Dar de baja</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmarConMotivo
+        open={!!baja}
+        onOpenChange={(v) => !v && setBaja(null)}
+        titulo="Dar de baja"
+        descripcion={`${baja?.nombre || ""} deja de aparecer en las listas. No se borra: sigue figurando en los despachos y pedidos que ya tiene, y se puede reactivar.`}
+        textoBoton="Dar de baja"
+        onConfirmar={async (m) => {
+          if (baja) await cambiarActivo(baja, false, m)
+        }}
+      />
     </div>
   )
 }

@@ -7,13 +7,14 @@ import { Button } from "@/components/ui/button"
 import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { ViewGranulometriaDialog } from "./view-granulometria-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
-import { logDeletion } from "@/lib/activity-log"
+import { logCambio, logDeletion } from "@/lib/activity-log"
+import { usePermisos } from "@/lib/current-user"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 
 type Material = {
   id: string
@@ -57,9 +58,14 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   const [editDate, setEditDate] = useState("")
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
+  // Fase 0c-1: editar y borrar ingresos según el permiso, con motivo
+  const { puede } = usePermisos()
+  const puedeEditar = puede("materia_prima", "editar")
+  const puedeBorrar = puede("materia_prima", "borrar")
+  const [motivo, setMotivo] = useState("")
 
-  async function handleDelete() {
-    if (!deleteEntry) return
+  async function handleDelete(motivoBorrado: string) {
+    if (!deleteEntry || !puedeBorrar) return
     setSaving(true)
     const supabase = createClient()
 
@@ -76,6 +82,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
         Cantidad: `${deleteEntry.quantity} ${deleteEntry.materials?.unit || ""}`.trim(),
         Fecha: deleteEntry.entry_date ? new Date(deleteEntry.entry_date).toLocaleDateString("es-AR") : "-",
       },
+      motivo: motivoBorrado,
     })
 
     const { error } = await supabase.from("stock_entries").delete().eq("id", deleteEntry.id)
@@ -90,7 +97,11 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   }
 
   async function handleUpdate() {
-    if (!editingEntry) return
+    if (!editingEntry || !puedeEditar) return
+    if (!motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el ingreso.", variant: "destructive" })
+      return
+    }
     setSaving(true)
     const supabase = createClient()
     
@@ -150,6 +161,27 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       stockError = dryError
     }
 
+    // Fase 0c-1: Actividad con el antes → después, si se corrigió el stock y el motivo
+    const unidad = editingEntry.materials?.unit || ""
+    await logCambio({
+      entity: "ingreso",
+      entityId: editingEntry.id,
+      reference: editRemito || editingEntry.remito || null,
+      antes: {
+        cantidad: `${editingEntry.quantity} ${unidad}`.trim(),
+        remito: editingEntry.remito || "",
+        fecha: editingEntry.entry_date ? new Date(editingEntry.entry_date).toISOString().slice(0, 10) : "",
+        notas: editingEntry.notes || "",
+      },
+      despues: { cantidad: `${newQuantity} ${unidad}`.trim(), remito: editRemito || "", fecha: editDate || "", notas: editNotes || "" },
+      etiquetas: { cantidad: "Cantidad", remito: "Remito", fecha: "Fecha", notas: "Notas" },
+      extra: {
+        Material: editingEntry.materials?.name || "-",
+        Stock: Math.abs(quantityDiff) > 0.0001 ? (stockError ? "NO se pudo corregir" : `corregido (${quantityDiff > 0 ? "+" : ""}${Math.round(quantityDiff * 1000) / 1000})`) : "sin cambios",
+      },
+      motivo: motivo.trim(),
+    })
+
     if (stockError) {
       console.error("Error ajustando stock del ingreso:", stockError)
       toast({ title: "Error", description: "El ingreso se actualizó pero no se pudo corregir el stock. Avisá para revisarlo.", variant: "destructive" })
@@ -162,6 +194,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   }
 
   function openEdit(entry: StockEntry) {
+    setMotivo("")
     setEditingEntry(entry)
     setEditQuantity(entry.quantity.toString())
     setEditRemito(entry.remito || "")
@@ -281,23 +314,29 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                       {entry.notes || "-"}
                     </TableCell>
                     <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openEdit(entry)}>
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setDeleteEntry(entry)} className="text-destructive">
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Eliminar
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {(puedeEditar || puedeBorrar) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {puedeEditar && (
+                              <DropdownMenuItem onClick={() => openEdit(entry)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Editar
+                              </DropdownMenuItem>
+                            )}
+                            {puedeBorrar && (
+                              <DropdownMenuItem onClick={() => setDeleteEntry(entry)} className="text-destructive">
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </TableCell>
                   </TableRow>
                 )
@@ -361,44 +400,39 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                 <Label>Notas</Label>
                 <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
               </div>
+              <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-ingreso" />
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingEntry(null)}>Cancelar</Button>
-            <Button onClick={handleUpdate} disabled={saving}>
+            <Button onClick={handleUpdate} disabled={saving || !motivoValido(motivo)}>
               {saving ? "Guardando..." : "Guardar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteEntry} onOpenChange={(open) => !open && setDeleteEntry(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Ingreso</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                <span>¿Estas seguro que deseas eliminar este ingreso? El stock del material sera ajustado automaticamente.</span>
-                {deleteEntry && (
-                  <div className="mt-2 p-2 bg-muted rounded text-sm">
-                    <div><strong>Material:</strong> {deleteEntry.materials.name}</div>
-                    <div><strong>Cantidad:</strong> {deleteEntry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {deleteEntry.materials.unit}</div>
-                    <div><strong>Proveedor:</strong> {deleteEntry.suppliers?.name || "-"}</div>
-                    <div><strong>Remito:</strong> {deleteEntry.remito || "-"}</div>
-                  </div>
-                )}
+      {/* Eliminar: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteEntry}
+        onOpenChange={(open) => !open && setDeleteEntry(null)}
+        titulo="Eliminar Ingreso"
+        descripcion={
+          deleteEntry && (
+            <div>
+              <span>El stock del material se ajusta solo. Queda una copia en Actividad y se avisa por mail.</span>
+              <div className="mt-2 p-2 bg-muted rounded text-sm">
+                <div><strong>Material:</strong> {deleteEntry.materials.name}</div>
+                <div><strong>Cantidad:</strong> {deleteEntry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {deleteEntry.materials.unit}</div>
+                <div><strong>Proveedor:</strong> {deleteEntry.suppliers?.name || "-"}</div>
+                <div><strong>Remito:</strong> {deleteEntry.remito || "-"}</div>
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={saving} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {saving ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </div>
+          )
+        }
+        textoBoton="Eliminar"
+        onConfirmar={handleDelete}
+      />
     </>
   )
 }

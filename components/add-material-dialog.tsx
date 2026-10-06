@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Plus } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { logActivity } from "@/lib/activity-log"
 import { useToast } from "@/hooks/use-toast"
 
 export function AddMaterialDialog({
@@ -64,6 +65,13 @@ export function AddMaterialDialog({
       })
 
       if (error) throw error
+      logActivity({
+        action: "crear",
+        entity: "material",
+        reference: formData.name.trim(),
+        plantId: targetPlant,
+        details: { Material: formData.name.trim(), Unidad: formData.unit, "Stock mínimo": Number.parseFloat(formData.min_stock), Planta: plants.find((p) => p.id === targetPlant)?.name || "-" },
+      })
 
       toast({
         title: "Material agregado",

@@ -12,16 +12,9 @@ import { es } from "date-fns/locale"
 import { Search, CheckCircle2, Trash2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { toast } from "@/hooks/use-toast"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { usePermisos } from "@/lib/current-user"
+import { logDeletion } from "@/lib/activity-log"
+import { ConfirmarConMotivo } from "@/components/motivo"
 
 function safeFormatDate(dateStr: string | null | undefined, formatStr: string = "dd/MM/yyyy"): string {
   if (!dateStr) return "-"
@@ -79,6 +72,9 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
   const [filterStatus, setFilterStatus] = useState<string>("completed")
   const [deletingResult, setDeletingResult] = useState<BreakingResult | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // Fase 0c-1: eliminar un resultado = laboratorio.borrar (con motivo)
+  const { puede } = usePermisos()
+  const puedeBorrar = puede("laboratorio", "borrar")
 
   useEffect(() => {
     loadResults()
@@ -226,14 +222,31 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
       : 0,
   }
 
-  async function handleDelete() {
-    if (!deletingResult) return
+  async function handleDelete(motivo: string) {
+    if (!deletingResult || !puedeBorrar) return
     setDeleting(true)
     try {
       const supabase = createClient()
       const { error } = await supabase.from("test_cylinders").delete().eq("id", deletingResult.id)
       if (error) throw error
       toast({ title: "Resultado eliminado", description: "La probeta se elimino correctamente" })
+      await logDeletion({
+        entity: "probeta",
+        entityId: deletingResult.id,
+        reference: deletingResult.remito || null,
+        details: {
+          Remito: deletingResult.remito || "-",
+          "Fórmula": deletingResult.formula_code || "-",
+          Probeta: deletingResult.cylinder_number,
+          Edad: `${deletingResult.test_age_days} días`,
+          Moldeo: deletingResult.molding_date || "-",
+          Rotura: deletingResult.actual_test_date || "-",
+          Dial: deletingResult.dial_reading ?? "-",
+          MPa: deletingResult.strength_mpa ?? "-",
+          Cliente: deletingResult.client_name || "-",
+        },
+        motivo,
+      })
       setResults((prev) => prev.filter((r) => r.id !== deletingResult.id))
     } catch (err: any) {
       console.error("[v0] Error deleting result:", err)
@@ -441,15 +454,17 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
                       {result.comments || "-"}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => setDeletingResult(result)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="sr-only">Eliminar</span>
-                      </Button>
+                      {puedeBorrar && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => setDeletingResult(result)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          <span className="sr-only">Eliminar</span>
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 )
@@ -463,32 +478,21 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
         Mostrando {filteredResults.length} de {results.length} resultados
       </p>
 
-      <AlertDialog open={!!deletingResult} onOpenChange={(open) => !open && setDeletingResult(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Resultado</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deletingResult && (
-                <>
-                  Esta por eliminar el resultado del remito <strong>{deletingResult.remito || "N/A"}</strong> (Probeta #
-                  {deletingResult.cylinder_number}, {deletingResult.test_age_days} dias). Esta accion no se puede
-                  deshacer.
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleting ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmarConMotivo
+        open={!!deletingResult}
+        onOpenChange={(open) => !open && setDeletingResult(null)}
+        titulo="Eliminar Resultado"
+        descripcion={
+          deletingResult && (
+            <span>
+              Se elimina el resultado del remito <strong>{deletingResult.remito || "N/A"}</strong> (probeta #{deletingResult.cylinder_number},{" "}
+              {deletingResult.test_age_days} días). No se puede deshacer: queda una copia en Actividad y se avisa por mail.
+            </span>
+          )
+        }
+        textoBoton={deleting ? "Eliminando..." : "Eliminar"}
+        onConfirmar={handleDelete}
+      />
     </div>
   )
 }

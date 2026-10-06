@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 05/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 06/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -88,6 +88,59 @@ export type Database = {
           },
         ]
       }
+      app_user_credenciales: {
+        Row: {
+          actualizado_por: string | null
+          bloqueado_hasta: string | null
+          clave_cambiada_at: string | null
+          clave_hash: string | null
+          created_at: string
+          debe_cambiar: boolean
+          intentos_fallidos: number
+          permite_clave_comun: boolean
+          sesion_version: number
+          ultimo_ingreso_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          actualizado_por?: string | null
+          bloqueado_hasta?: string | null
+          clave_cambiada_at?: string | null
+          clave_hash?: string | null
+          created_at?: string
+          debe_cambiar?: boolean
+          intentos_fallidos?: number
+          permite_clave_comun?: boolean
+          sesion_version?: number
+          ultimo_ingreso_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          actualizado_por?: string | null
+          bloqueado_hasta?: string | null
+          clave_cambiada_at?: string | null
+          clave_hash?: string | null
+          created_at?: string
+          debe_cambiar?: boolean
+          intentos_fallidos?: number
+          permite_clave_comun?: boolean
+          sesion_version?: number
+          ultimo_ingreso_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_user_credenciales_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_users: {
         Row: {
           active: boolean | null
@@ -95,7 +148,11 @@ export type Database = {
           email: string | null
           id: string
           name: string
+          permisos: Json
+          permisos_actualizados_at: string | null
+          permisos_actualizados_por: string | null
           role: string
+          tipo: string
           ve_funciones_nuevas: boolean
         }
         Insert: {
@@ -104,7 +161,11 @@ export type Database = {
           email?: string | null
           id?: string
           name: string
+          permisos?: Json
+          permisos_actualizados_at?: string | null
+          permisos_actualizados_por?: string | null
           role?: string
+          tipo?: string
           ve_funciones_nuevas?: boolean
         }
         Update: {
@@ -113,7 +174,11 @@ export type Database = {
           email?: string | null
           id?: string
           name?: string
+          permisos?: Json
+          permisos_actualizados_at?: string | null
+          permisos_actualizados_por?: string | null
           role?: string
+          tipo?: string
           ve_funciones_nuevas?: boolean
         }
         Relationships: []
@@ -708,6 +773,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      gps_reconstrucciones: {
+        Row: {
+          desde: string
+          fin: string | null
+          hasta: string
+          id: string
+          inicio: string
+          origen: string
+          resultado: Json | null
+          simular: boolean
+        }
+        Insert: {
+          desde: string
+          fin?: string | null
+          hasta: string
+          id?: string
+          inicio?: string
+          origen: string
+          resultado?: Json | null
+          simular?: boolean
+        }
+        Update: {
+          desde?: string
+          fin?: string | null
+          hasta?: string
+          id?: string
+          inicio?: string
+          origen?: string
+          resultado?: Json | null
+          simular?: boolean
+        }
+        Relationships: []
       }
       granulometria_sieve_results: {
         Row: {
@@ -2201,6 +2299,132 @@ export type Database = {
           },
         ]
       }
+      viajes_gps: {
+        Row: {
+          ciclo_min: number | null
+          confianza: string | null
+          construction_site_id: string | null
+          dispatch_id: string | null
+          estado: string
+          fecha: string
+          id: string
+          km_ida: number | null
+          km_vuelta: number | null
+          llegada_obra: string | null
+          llegada_planta: string | null
+          llegada_planta_previa: string | null
+          min_en_planta: number | null
+          min_ida: number | null
+          min_motor_parado_planta: number | null
+          min_obra: number | null
+          min_vuelta: number | null
+          mixer_id: string
+          parada_lat: number | null
+          parada_lng: number | null
+          paradas_extra: Json
+          plant_id_salida: string
+          plant_id_vuelta: string | null
+          procesado_at: string
+          salida_obra: string | null
+          salida_planta: string
+          unidad_wialon: string | null
+        }
+        Insert: {
+          ciclo_min?: number | null
+          confianza?: string | null
+          construction_site_id?: string | null
+          dispatch_id?: string | null
+          estado?: string
+          fecha: string
+          id?: string
+          km_ida?: number | null
+          km_vuelta?: number | null
+          llegada_obra?: string | null
+          llegada_planta?: string | null
+          llegada_planta_previa?: string | null
+          min_en_planta?: number | null
+          min_ida?: number | null
+          min_motor_parado_planta?: number | null
+          min_obra?: number | null
+          min_vuelta?: number | null
+          mixer_id: string
+          parada_lat?: number | null
+          parada_lng?: number | null
+          paradas_extra?: Json
+          plant_id_salida: string
+          plant_id_vuelta?: string | null
+          procesado_at?: string
+          salida_obra?: string | null
+          salida_planta: string
+          unidad_wialon?: string | null
+        }
+        Update: {
+          ciclo_min?: number | null
+          confianza?: string | null
+          construction_site_id?: string | null
+          dispatch_id?: string | null
+          estado?: string
+          fecha?: string
+          id?: string
+          km_ida?: number | null
+          km_vuelta?: number | null
+          llegada_obra?: string | null
+          llegada_planta?: string | null
+          llegada_planta_previa?: string | null
+          min_en_planta?: number | null
+          min_ida?: number | null
+          min_motor_parado_planta?: number | null
+          min_obra?: number | null
+          min_vuelta?: number | null
+          mixer_id?: string
+          parada_lat?: number | null
+          parada_lng?: number | null
+          paradas_extra?: Json
+          plant_id_salida?: string
+          plant_id_vuelta?: string | null
+          procesado_at?: string
+          salida_obra?: string | null
+          salida_planta?: string
+          unidad_wialon?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "viajes_gps_construction_site_id_fkey"
+            columns: ["construction_site_id"]
+            isOneToOne: false
+            referencedRelation: "construction_sites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_gps_dispatch_id_fkey"
+            columns: ["dispatch_id"]
+            isOneToOne: false
+            referencedRelation: "dispatches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_gps_mixer_id_fkey"
+            columns: ["mixer_id"]
+            isOneToOne: false
+            referencedRelation: "mixers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_gps_plant_id_salida_fkey"
+            columns: ["plant_id_salida"]
+            isOneToOne: false
+            referencedRelation: "plants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_gps_plant_id_vuelta_fkey"
+            columns: ["plant_id_vuelta"]
+            isOneToOne: false
+            referencedRelation: "plants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -2214,10 +2438,11 @@ export type Database = {
       _material_en_planta: { Args: { p_material_id: string; p_plant_id: string; p_contexto?: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
       _mover_stock: { Args: { p_mapa: Json }; Returns: undefined }
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
-      ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string }; Returns: Json }
+      ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string; p_motivo?: string }; Returns: Json }
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
+      gps_reconstruir_registrar: { Args: { p_desde: string; p_hasta: string; p_simular: boolean; p_origen: string }; Returns: Json }
       guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string; p_origen?: string }; Returns: Json }
       registrar_despacho: { Args: { p: Json }; Returns: Json }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
