@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/client"
 import { currentUserName } from "@/lib/current-user"
 
 export type ActivityAction = "crear" | "editar" | "borrar"
-export type ActivityEntity = "despacho" | "ingreso" | "pedido" | "material" | "chofer" | "bomba" | "planta"
+export type ActivityEntity = "despacho" | "ingreso" | "pedido" | "material" | "chofer" | "bomba" | "planta" | "usuario"
 
 const ENTITY_LABEL: Record<ActivityEntity, string> = {
   despacho: "Despacho",
@@ -20,6 +20,7 @@ const ENTITY_LABEL: Record<ActivityEntity, string> = {
   chofer: "Chofer",
   bomba: "Empresa de bombeo",
   planta: "Tiempos de planta",
+  usuario: "Usuario",
 }
 
 export async function logActivity(opts: {

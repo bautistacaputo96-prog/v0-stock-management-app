@@ -3,8 +3,15 @@
 /**
  * Mapa liviano con Leaflet + OpenStreetMap (gratis). Leaflet se carga desde CDN
  * para no sumar dependencias. Recibe marcadores y avisa los clics.
+ * Botón "Mapa / Satélite": la vista satelital usa las imágenes de Esri (World Imagery), útil para ubicar
+ * el lote exacto en barrios y obras nuevas que todavía no figuran en el mapa.
  */
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
+
+const CAPAS = {
+  mapa: { url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
+  satelite: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", maxZoom: 19, attribution: "Tiles &copy; Esri" },
+} as const
 
 declare global {
   interface Window { L?: any }
@@ -57,6 +64,8 @@ export function MapaBase({ marcadores, centro = { lat: -34.9, lng: -58.3 }, zoom
   const mapa = useRef<any>(null)
   const capa = useRef<any>(null)
   const encuadrado = useRef(false)
+  const fondo = useRef<any>(null)
+  const [vista, setVista] = useState<"mapa" | "satelite">("mapa")
   const cbClick = useRef(onClick)
   const cbDrag = useRef(onArrastrar)
   cbClick.current = onClick
@@ -67,10 +76,7 @@ export function MapaBase({ marcadores, centro = { lat: -34.9, lng: -58.3 }, zoom
     cargarLeaflet().then((L) => {
       if (!vivo || !div.current || mapa.current) return
       mapa.current = L.map(div.current, { zoomControl: true, attributionControl: true }).setView([centro.lat, centro.lng], zoom)
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(mapa.current)
+      fondo.current = L.tileLayer(CAPAS.mapa.url, { maxZoom: CAPAS.mapa.maxZoom, attribution: CAPAS.mapa.attribution }).addTo(mapa.current)
       capa.current = L.layerGroup().addTo(mapa.current)
       mapa.current.on("click", (e: any) => cbClick.current?.({ lat: e.latlng.lat, lng: e.latlng.lng }))
       dibujar()
@@ -110,7 +116,33 @@ export function MapaBase({ marcadores, centro = { lat: -34.9, lng: -58.3 }, zoom
   // Permite volver a encuadrar desde afuera (ej. al elegir otra dirección)
   useEffect(() => { encuadrado.current = false; dibujar() }, [centro.lat, centro.lng]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={div} className={className} style={{ height: alto, width: "100%", borderRadius: 8, zIndex: 0 }} />
+  // Cambiar el fondo (mapa / satélite) sin tocar los marcadores
+  useEffect(() => {
+    const L = window.L
+    if (!L || !mapa.current) return
+    fondo.current?.remove()
+    const c = CAPAS[vista]
+    fondo.current = L.tileLayer(c.url, { maxZoom: c.maxZoom, attribution: c.attribution }).addTo(mapa.current)
+    fondo.current.bringToBack?.()
+  }, [vista])
+
+  return (
+    <div className={className} style={{ position: "relative", height: alto, width: "100%" }}>
+      <div ref={div} style={{ height: "100%", width: "100%", borderRadius: 8, zIndex: 0 }} />
+      <div style={{ position: "absolute", top: 8, right: 8, zIndex: 1000, display: "flex", borderRadius: 6, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,.3)" }}>
+        {(["mapa", "satelite"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setVista(v) }}
+            style={{ padding: "3px 8px", font: "600 11px system-ui", background: vista === v ? "#0f172a" : "#fff", color: vista === v ? "#fff" : "#0f172a", border: "none", cursor: "pointer" }}
+          >
+            {v === "mapa" ? "Mapa" : "Satélite"}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /** Íconos simples reutilizables */

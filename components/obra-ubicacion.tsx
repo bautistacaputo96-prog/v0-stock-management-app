@@ -5,8 +5,12 @@
  * punto se puede mover o marcar con un clic (útil en barrios cerrados y lotes,
  * donde la dirección no alcanza). También acepta pegar un link de Google Maps.
  * Con la ubicación calcula la distancia y el tiempo de viaje desde la planta.
+ *
+ * Buscador libre "como Google Maps": sugerencias mientras se escribe (Google Places desde el servidor, o
+ * OpenStreetMap si no hay clave o Google falla), con flechas y Enter. Mapa / Satélite en el mapa.
  */
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import type { Sugerencia, FuenteLugar } from "@/lib/geo-lugares"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,12 +45,106 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   const [error, setError] = useState<string | null>(null)
   const [pegar, setPegar] = useState("")
   const [calculando, setCalculando] = useState(false)
+  // Buscador libre con sugerencias
+  const [texto, setTexto] = useState("")
+  const [sugerencias, setSugerencias] = useState<Sugerencia[]>([])
+  const [fuente, setFuente] = useState<FuenteLugar | null>(null)
+  const [abierto, setAbierto] = useState(false)
+  const [activo, setActivo] = useState(-1)
+  const [buscandoSug, setBuscandoSug] = useState(false)
+  // La lista muestra el resultado de la búsqueda completa (como apretar Enter en Google Maps)
+  const [modoBusqueda, setModoBusqueda] = useState(false)
+  // Por qué no se usó Google (sin clave, error o sin respuesta): se muestra en gris debajo de la lista
+  const [aviso, setAviso] = useState<string | null>(null)
+  const sesion = useRef<string | null>(null)
+  const escrito = useRef(false) // solo se busca si la persona escribió (no al elegir una sugerencia)
 
   useEffect(() => {
     createClient().from("plants").select("id, name, gps_lat, gps_lng").then(({ data }) => setPlantas((data as any) || []))
   }, [])
 
   const planta = plantas.find((p) => p.id === plantaId) || plantas.find((p) => p.gps_lat != null)
+
+  // Sugerencias: 300 ms después de dejar de escribir, desde 3 letras. Un token de sesión por búsqueda
+  // (se renueva después de elegir) para que Google cobre la sesión entera y no cada tecla.
+  useEffect(() => {
+    if (!escrito.current) return
+    const q = texto.trim()
+    if (q.length < 3) { setSugerencias([]); setAbierto(false); return }
+    if (!sesion.current) sesion.current = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let vivo = true
+    const t = setTimeout(async () => {
+      setBuscandoSug(true)
+      try {
+        const r = await fetch(`/api/geo/autocompletar?q=${encodeURIComponent(q)}&planta=${encodeURIComponent(plantaId || planta?.id || "")}&sesion=${encodeURIComponent(sesion.current || "")}`)
+        const d = await r.json()
+        if (!vivo) return
+        // Si el autocompletado no sugiere nada, se hace solo la búsqueda completa
+        if (!(d.sugerencias || []).length) { await buscarCompleto(q); return }
+        setSugerencias(d.sugerencias || [])
+        setFuente(d.fuente || null)
+        setAviso(d.aviso || null)
+        setModoBusqueda(false)
+        setActivo(-1)
+        setAbierto(true)
+      } catch {
+        if (vivo) setSugerencias([])
+      }
+      if (vivo) setBuscandoSug(false)
+    }, 300)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [texto]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Búsqueda completa ("Enter" de Google Maps): encuentra barrios y caminos que el autocompletado no sugiere */
+  async function buscarCompleto(q: string = texto) {
+    const t = q.trim()
+    if (t.length < 3) return
+    setBuscandoSug(true)
+    try {
+      const r = await fetch(`/api/geo/buscar-texto?q=${encodeURIComponent(t)}&planta=${encodeURIComponent(plantaId || planta?.id || "")}`)
+      const d = await r.json()
+      setSugerencias(d.sugerencias || [])
+      setFuente(d.fuente || null)
+      setAviso(d.aviso || null)
+    } catch {
+      setSugerencias([])
+    }
+    setModoBusqueda(true)
+    setActivo(-1)
+    setAbierto(true)
+    setBuscandoSug(false)
+  }
+
+  async function elegirSugerencia(sg: Sugerencia) {
+    escrito.current = false
+    setTexto([sg.principal, sg.secundario].filter(Boolean).join(", "))
+    setAbierto(false); setSugerencias([]); setError(null)
+    if (sg.lat != null && sg.lng != null) { sesion.current = null; elegir(sg.lat, sg.lng, "direccion"); return }
+    try {
+      const r = await fetch(`/api/geo/lugar?id=${encodeURIComponent(sg.id)}&sesion=${encodeURIComponent(sesion.current || "")}`)
+      const d = await r.json()
+      if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion")
+      else setError(`${d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa"}${d.aviso ? ` (Google no respondió: ${d.aviso})` : ""}`)
+    } catch { setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
+    sesion.current = null
+  }
+
+  // Renglones navegables: las sugerencias y, al final (en el autocompletado), "Buscar «texto»"
+  const conBuscar = !modoBusqueda && texto.trim().length >= 3
+  const renglones = sugerencias.length + (conBuscar ? 1 : 0)
+  function teclas(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      // Enter sin nada marcado (o sobre "Buscar…") = búsqueda completa, como en Google Maps
+      if (abierto && activo >= 0 && activo < sugerencias.length) elegirSugerencia(sugerencias[activo])
+      else buscarCompleto()
+      return
+    }
+    if (!abierto || !renglones) return
+    if (e.key === "ArrowDown") { e.preventDefault(); setActivo((i) => (i + 1) % renglones) }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActivo((i) => (i <= 0 ? renglones - 1 : i - 1)) }
+    else if (e.key === "Escape") { e.preventDefault(); setAbierto(false) }
+  }
 
   async function buscar() {
     const q = [direccion, localidad].filter(Boolean).join(", ")
@@ -98,6 +196,75 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
 
   return (
     <div className="space-y-2">
+      {/* Buscador libre con sugerencias (como Google Maps) */}
+      <div className="relative">
+        <div className="relative">
+          <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={texto}
+            onChange={(e) => { escrito.current = true; setTexto(e.target.value) }}
+            onKeyDown={teclas}
+            onFocus={() => sugerencias.length && setAbierto(true)}
+            onBlur={() => setTimeout(() => setAbierto(false), 150)}
+            placeholder="Buscá la obra: barrio, calle y número, lugar…"
+            className="pl-8 h-9"
+            role="combobox"
+            aria-expanded={abierto}
+            aria-autocomplete="list"
+            autoComplete="off"
+          />
+          {buscandoSug && <Loader2 className="h-4 w-4 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />}
+        </div>
+        {abierto && (
+          <div className="absolute left-0 right-0 top-full mt-1 rounded-md border bg-popover shadow-md text-sm overflow-hidden" style={{ zIndex: 1100 }} role="listbox">
+            {modoBusqueda && sugerencias.length > 0 && (
+              <p className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground border-b bg-muted/40">Resultados de la búsqueda</p>
+            )}
+            {sugerencias.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">{modoBusqueda ? "Sin resultados: probá con otras palabras, o marcá el punto en el mapa." : "Sin sugerencias."}</p>
+            ) : (
+              sugerencias.map((sg, i) => (
+                <button
+                  key={sg.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === activo}
+                  onMouseDown={(e) => { e.preventDefault(); elegirSugerencia(sg) }}
+                  onMouseEnter={() => setActivo(i)}
+                  className={`w-full text-left px-3 py-1.5 flex items-start gap-2 ${i === activo ? "bg-muted" : "hover:bg-muted/60"}`}
+                >
+                  <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{sg.principal}</span>
+                    {sg.secundario && <span className="block truncate text-xs text-muted-foreground">{sg.secundario}</span>}
+                  </span>
+                  {sg.busqueda && <span className="shrink-0 self-center rounded border px-1 text-[9px] text-muted-foreground">resultado de búsqueda</span>}
+                </button>
+              ))
+            )}
+            {conBuscar && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={activo === sugerencias.length}
+                onMouseDown={(e) => { e.preventDefault(); buscarCompleto() }}
+                onMouseEnter={() => setActivo(sugerencias.length)}
+                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 border-t text-sm ${activo === sugerencias.length ? "bg-muted" : "hover:bg-muted/60"}`}
+              >
+                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">Buscar «{texto.trim()}»{fuente === "google" ? " en Google Maps" : ""}</span>
+              </button>
+            )}
+            {fuente === "osm" && aviso && (
+              <p className="px-3 py-1 text-[10px] text-muted-foreground border-t">Usando buscador alternativo (Google no respondió: {aviso})</p>
+            )}
+            {fuente === "google" && sugerencias.length > 0 && (
+              <p className="px-3 py-1 text-[10px] text-right text-muted-foreground border-t">Powered by Google</p>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" onClick={buscar} disabled={buscando} className="gap-1.5">
           {buscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}

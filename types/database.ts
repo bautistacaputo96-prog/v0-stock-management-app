@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 30/09/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 05/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -50,6 +50,44 @@ export type Database = {
           },
         ]
       }
+      alertas_stock: {
+        Row: {
+          creado_at: string
+          enviado_at: string | null
+          id: string
+          material_id: string
+          plant_id: string | null
+          resuelto_at: string | null
+          stock_al_alertar: number | null
+        }
+        Insert: {
+          creado_at?: string
+          enviado_at?: string | null
+          id?: string
+          material_id: string
+          plant_id?: string | null
+          resuelto_at?: string | null
+          stock_al_alertar?: number | null
+        }
+        Update: {
+          creado_at?: string
+          enviado_at?: string | null
+          id?: string
+          material_id?: string
+          plant_id?: string | null
+          resuelto_at?: string | null
+          stock_al_alertar?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alertas_stock_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_users: {
         Row: {
           active: boolean | null
@@ -58,6 +96,7 @@ export type Database = {
           id: string
           name: string
           role: string
+          ve_funciones_nuevas: boolean
         }
         Insert: {
           active?: boolean | null
@@ -66,6 +105,7 @@ export type Database = {
           id?: string
           name: string
           role?: string
+          ve_funciones_nuevas?: boolean
         }
         Update: {
           active?: boolean | null
@@ -74,6 +114,7 @@ export type Database = {
           id?: string
           name?: string
           role?: string
+          ve_funciones_nuevas?: boolean
         }
         Relationships: []
       }
@@ -114,6 +155,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      choferes: {
+        Row: {
+          activo: boolean
+          created_at: string
+          dni: string | null
+          id: string
+          nombre: string
+          telefono: string | null
+        }
+        Insert: {
+          activo?: boolean
+          created_at?: string
+          dni?: string | null
+          id?: string
+          nombre: string
+          telefono?: string | null
+        }
+        Update: {
+          activo?: boolean
+          created_at?: string
+          dni?: string | null
+          id?: string
+          nombre?: string
+          telefono?: string | null
+        }
+        Relationships: []
       }
       clients: {
         Row: {
@@ -403,6 +471,7 @@ export type Database = {
       dispatches: {
         Row: {
           actual_slump_cm: number | null
+          chofer_id: string | null
           client: string | null
           client_id: string | null
           construction_site_id: string | null
@@ -426,6 +495,7 @@ export type Database = {
         }
         Insert: {
           actual_slump_cm?: number | null
+          chofer_id?: string | null
           client?: string | null
           client_id?: string | null
           construction_site_id?: string | null
@@ -449,6 +519,7 @@ export type Database = {
         }
         Update: {
           actual_slump_cm?: number | null
+          chofer_id?: string | null
           client?: string | null
           client_id?: string | null
           construction_site_id?: string | null
@@ -471,6 +542,13 @@ export type Database = {
           scheduled_dispatch_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "dispatches_chofer_id_fkey"
+            columns: ["chofer_id"]
+            isOneToOne: false
+            referencedRelation: "choferes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "dispatches_client_id_fkey"
             columns: ["client_id"]
@@ -514,6 +592,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      empresas_bombeo: {
+        Row: {
+          activo: boolean
+          contacto: string | null
+          created_at: string
+          id: string
+          nombre: string
+          observaciones: string | null
+          telefono: string | null
+        }
+        Insert: {
+          activo?: boolean
+          contacto?: string | null
+          created_at?: string
+          id?: string
+          nombre: string
+          observaciones?: string | null
+          telefono?: string | null
+        }
+        Update: {
+          activo?: boolean
+          contacto?: string | null
+          created_at?: string
+          id?: string
+          nombre?: string
+          observaciones?: string | null
+          telefono?: string | null
+        }
+        Relationships: []
       }
       formula_materials: {
         Row: {
@@ -1427,30 +1535,54 @@ export type Database = {
       }
       plants: {
         Row: {
+          bocas_carga: number
           code: string
           created_at: string | null
           gps_lat: number | null
           gps_lng: number | null
           id: string
+          jornada_fin: string
+          jornada_inicio: string
           name: string
+          t_carga_min: number
+          t_descarga_bomba_min: number
+          t_descarga_directa_min: number
+          t_lavado_min: number
+          tolerancia_puntualidad_min: number
           updated_at: string | null
         }
         Insert: {
+          bocas_carga?: number
           code: string
           created_at?: string | null
           gps_lat?: number | null
           gps_lng?: number | null
           id?: string
+          jornada_fin?: string
+          jornada_inicio?: string
           name: string
+          t_carga_min?: number
+          t_descarga_bomba_min?: number
+          t_descarga_directa_min?: number
+          t_lavado_min?: number
+          tolerancia_puntualidad_min?: number
           updated_at?: string | null
         }
         Update: {
+          bocas_carga?: number
           code?: string
           created_at?: string | null
           gps_lat?: number | null
           gps_lng?: number | null
           id?: string
+          jornada_fin?: string
+          jornada_inicio?: string
           name?: string
+          t_carga_min?: number
+          t_descarga_bomba_min?: number
+          t_descarga_directa_min?: number
+          t_lavado_min?: number
+          tolerancia_puntualidad_min?: number
           updated_at?: string | null
         }
         Relationships: []
@@ -1522,18 +1654,27 @@ export type Database = {
           actual_arrival_time: string | null
           actual_departure_time: string | null
           actual_load_start_time: string | null
+          bomba_empresa_id: string | null
+          bomba_hora: string | null
+          bomba_la_pone: string | null
           cancelled_reason: string | null
           client_id: string
+          confirmado_at: string | null
+          confirmado_por: string | null
           construction_site_id: string
           created_at: string | null
           created_by: string | null
+          descarga_min: number | null
           dispatch_id: string | null
           dispatched_m3: number | null
+          espaciado_min: number | null
           extra_water_liters: number | null
           fiber_kg_per_m3: number | null
+          finalidad: string | null
           formula_id: string
           id: string
           is_urgent: boolean | null
+          m3_por_viaje: number
           metodo_descarga: string | null
           mixer_id: string | null
           observations: string | null
@@ -1544,23 +1685,33 @@ export type Database = {
           scheduled_departure_time: string
           status: string | null
           updated_at: string | null
+          viaje_min: number | null
         }
         Insert: {
           actual_arrival_time?: string | null
           actual_departure_time?: string | null
           actual_load_start_time?: string | null
+          bomba_empresa_id?: string | null
+          bomba_hora?: string | null
+          bomba_la_pone?: string | null
           cancelled_reason?: string | null
           client_id: string
+          confirmado_at?: string | null
+          confirmado_por?: string | null
           construction_site_id: string
           created_at?: string | null
           created_by?: string | null
+          descarga_min?: number | null
           dispatch_id?: string | null
           dispatched_m3?: number | null
+          espaciado_min?: number | null
           extra_water_liters?: number | null
           fiber_kg_per_m3?: number | null
+          finalidad?: string | null
           formula_id: string
           id?: string
           is_urgent?: boolean | null
+          m3_por_viaje?: number
           metodo_descarga?: string | null
           mixer_id?: string | null
           observations?: string | null
@@ -1571,23 +1722,33 @@ export type Database = {
           scheduled_departure_time: string
           status?: string | null
           updated_at?: string | null
+          viaje_min?: number | null
         }
         Update: {
           actual_arrival_time?: string | null
           actual_departure_time?: string | null
           actual_load_start_time?: string | null
+          bomba_empresa_id?: string | null
+          bomba_hora?: string | null
+          bomba_la_pone?: string | null
           cancelled_reason?: string | null
           client_id?: string
+          confirmado_at?: string | null
+          confirmado_por?: string | null
           construction_site_id?: string
           created_at?: string | null
           created_by?: string | null
+          descarga_min?: number | null
           dispatch_id?: string | null
           dispatched_m3?: number | null
+          espaciado_min?: number | null
           extra_water_liters?: number | null
           fiber_kg_per_m3?: number | null
+          finalidad?: string | null
           formula_id?: string
           id?: string
           is_urgent?: boolean | null
+          m3_por_viaje?: number
           metodo_descarga?: string | null
           mixer_id?: string | null
           observations?: string | null
@@ -1598,8 +1759,16 @@ export type Database = {
           scheduled_departure_time?: string
           status?: string | null
           updated_at?: string | null
+          viaje_min?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "scheduled_dispatches_bomba_empresa_id_fkey"
+            columns: ["bomba_empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas_bombeo"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "scheduled_dispatches_client_id_fkey"
             columns: ["client_id"]
@@ -1940,6 +2109,98 @@ export type Database = {
           },
         ]
       }
+      viajes: {
+        Row: {
+          actualizado_por: string | null
+          created_at: string
+          dispatch_id: string | null
+          estado: string
+          hora_carga: string
+          hora_fin_descarga: string
+          hora_llegada: string
+          hora_salida: string
+          hora_vuelta: string
+          id: string
+          m3: number
+          m3_planificado: number | null
+          mixer_id: string | null
+          n: number
+          origen: string
+          pedido_id: string
+          plant_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          actualizado_por?: string | null
+          created_at?: string
+          dispatch_id?: string | null
+          estado?: string
+          hora_carga: string
+          hora_fin_descarga: string
+          hora_llegada: string
+          hora_salida: string
+          hora_vuelta: string
+          id?: string
+          m3: number
+          m3_planificado?: number | null
+          mixer_id?: string | null
+          n: number
+          origen?: string
+          pedido_id: string
+          plant_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actualizado_por?: string | null
+          created_at?: string
+          dispatch_id?: string | null
+          estado?: string
+          hora_carga?: string
+          hora_fin_descarga?: string
+          hora_llegada?: string
+          hora_salida?: string
+          hora_vuelta?: string
+          id?: string
+          m3?: number
+          m3_planificado?: number | null
+          mixer_id?: string | null
+          n?: number
+          origen?: string
+          pedido_id?: string
+          plant_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "viajes_dispatch_id_fkey"
+            columns: ["dispatch_id"]
+            isOneToOne: false
+            referencedRelation: "dispatches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_mixer_id_fkey"
+            columns: ["mixer_id"]
+            isOneToOne: false
+            referencedRelation: "mixers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "scheduled_dispatches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "viajes_plant_id_fkey"
+            columns: ["plant_id"]
+            isOneToOne: false
+            referencedRelation: "plants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1949,6 +2210,7 @@ export type Database = {
       _ancla_stock: { Args: { p_material_id: string; p_desde: string }; Returns: string }
       _aplicar_neto: { Args: { p_dispatch_id: string; p_desde: string; p_neto: Json; p_nota: string }; Returns: Json }
       _consumo_formula: { Args: { p_formula_id: string; p_plant_id: string; p_m3: number }; Returns: ({ mat_id: string; mat_nombre: string; mat_tipo: string; descuenta: boolean; kg_m3: number; kg_seco: number; humedad_pct: number; kg_humedo: number })[] }
+      _material_controla_stock: { Args: { p_material_id: string }; Returns: boolean }
       _material_en_planta: { Args: { p_material_id: string; p_plant_id: string; p_contexto?: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
       _mover_stock: { Args: { p_mapa: Json }; Returns: undefined }
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
@@ -1956,6 +2218,7 @@ export type Database = {
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
+      guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string; p_origen?: string }; Returns: Json }
       registrar_despacho: { Args: { p: Json }; Returns: Json }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
     }
