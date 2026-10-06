@@ -653,15 +653,25 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   }
 
   // Fase 2b (C): con el interruptor, los pedidos con viajes se ven viaje por viaje en su franja (hora de llegada)
+  // (solo los pedidos cuyos viajes caen todos el mismo día del pedido: si no, se muestra la tarjeta de siempre)
   const pedidosConViajes = new Set(
-    ve ? dispatches.filter((d) => d.status !== "cancelled" && (viajesPorPedido[d.id] || []).some((v) => v.estado !== "cancelado")).map((d) => d.id) : [],
+    ve
+      ? dispatches
+          .filter((d) => {
+            const vs = (viajesPorPedido[d.id] || []).filter((v) => v.estado !== "cancelado")
+            return d.status !== "cancelled" && vs.length > 0 && vs.every((v) => isSameDay(parseISO(v.hora_llegada), parseISO(d.scheduled_arrival_time)))
+          })
+          .map((d) => d.id)
+      : [],
   )
+  // Los viajes que llegan antes de la primera franja o después de la última se muestran en ellas (con su hora real)
+  const franjaDe = (h: number) => Math.min(HOURS[HOURS.length - 1], Math.max(HOURS[0], h))
   function getViajesForSlot(date: Date, hour: number) {
     if (!ve) return []
     return dispatches
       .filter((d) => pedidosConViajes.has(d.id))
       .flatMap((d) => (viajesPorPedido[d.id] || []).filter((v) => v.estado !== "cancelado").map((v) => ({ d, v })))
-      .filter(({ v }) => { const t = parseISO(v.hora_llegada); return isSameDay(t, date) && t.getHours() === hour })
+      .filter(({ v }) => { const t = parseISO(v.hora_llegada); return isSameDay(t, date) && franjaDe(t.getHours()) === hour })
       .sort((a, b) => a.v.hora_llegada.localeCompare(b.v.hora_llegada))
   }
 
@@ -764,13 +774,14 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                               d.is_urgent && "ring-1 ring-red-500",
                             )}
                             title={`${d.clients?.name} · ${d.construction_sites?.name} · viaje ${v.n}/${total} · ${v.m3} m³ · llega ${format(parseISO(v.hora_llegada), "HH:mm")}${pat ? ` · ${pat}` : ""}${v.estado === "despachado" ? " · despachado" : ""}`}
-                            onClick={(e) => { e.stopPropagation(); setGerenciar(d as unknown as PedidoGerenciador) }}
+                            // Pedido completo o cancelado: se abre el pedido (como en el menú ⋯, que no ofrece Viajes)
+                            onClick={(e) => { e.stopPropagation(); if (["cancelled", "completed"].includes(d.status)) openEditDispatch(d); else setGerenciar(d as unknown as PedidoGerenciador) }}
                           >
                             <div className="min-w-0 cursor-pointer">
                               <div className="font-medium truncate">
                                 {selectedPlant === "all" && plantNameById[d.plant_id] ? `${plantNameById[d.plant_id].slice(0, 3)} · ` : ""}{(d.construction_sites?.name || d.clients?.name || "").slice(0, 16)}
                               </div>
-                              <div>{format(parseISO(v.hora_llegada), "HH:mm")} · {v.n}/{total} · {v.m3} m³{pat ? ` · ${pat}` : ""}{d.confirmado_at && v.n === 1 ? " · 👍" : ""}</div>
+                              <div>{parseISO(v.hora_llegada).getHours() !== hour && <span className="font-semibold text-amber-700">fuera de horario · </span>}{format(parseISO(v.hora_llegada), "HH:mm")} · {v.n}/{total} · {v.m3} m³{pat ? ` · ${pat}` : ""}{d.confirmado_at && v.n === 1 ? " · 👍" : ""}</div>
                             </div>
                             <div onClick={(e) => e.stopPropagation()}>{menuPedido(d)}</div>
                           </div>

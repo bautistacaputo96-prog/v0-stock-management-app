@@ -147,7 +147,11 @@ function aFilas(p: PedidoParaViajes, base: number, viajesPlan: ViajePlan[], exis
  * (el camión sugerido es el del pedido o el que ya tenía ese viaje). Respeta la boca de carga
  * dentro del pedido. Devuelve solo los planificados nuevos; los despachados quedan como están.
  */
-export function generarViajes(p: PedidoParaViajes, prm: Parametros, existentes: ViajeRow[] = []): ViajeRow[] {
+export function generarViajes(
+  p: PedidoParaViajes, prm: Parametros, existentes: ViajeRow[] = [],
+  /** Viajes de otros pedidos del día (cualquier planta, incluidos los despachados): sus camiones están ocupados */
+  otrosViajes: ViajeRow[] = [],
+): ViajeRow[] {
   const { base, pendiente, llegada } = entradaPedido(p, existentes, prm)
   if (pendiente <= 0.01) return []
   const tam = m3PorViajeDe(p)
@@ -159,8 +163,9 @@ export function generarViajes(p: PedidoParaViajes, prm: Parametros, existentes: 
   )
   const anteriores = pendientes(existentes)
   const filas = aFilas(p, base, plan.viajes, existentes, (_, i) => anteriores[i]?.mixer_id ?? p.mixer_id ?? null)
-  // El camión sugerido que se conserva no puede quedar en dos viajes que se pisan: si choca, queda sin camión
-  const fijos = existentes.filter((v) => v.estado === "despachado")
+  // El camión sugerido que se conserva no puede quedar en dos viajes que se pisan (en este pedido o en otro, de
+  // cualquier planta): si choca, queda sin camión
+  const fijos = [...existentes.filter((v) => v.estado === "despachado"), ...otrosViajes.filter((o) => o.pedido_id !== p.id && o.estado !== "cancelado")]
   filas.forEach((v, i) => {
     if (v.mixer_id && [...fijos, ...filas.slice(0, i)].some((o) => o.mixer_id === v.mixer_id && pisan(o, v))) v.mixer_id = null
   })
@@ -215,25 +220,37 @@ function ocupadosDe(viajes: ViajeRow[], base: number, pedidosDelPlan: Set<string
 // ---------------------------------------------------------------------------
 // Camión ocupado (fase 2b, D): un camión no puede estar en dos viajes que se pisan, en el mismo pedido o en otro
 // ---------------------------------------------------------------------------
-export type ChoqueCamion = { viaje: ViajeRow; otro: ViajeRow }
+/** otroAntes: el otro viaje carga antes (este camión "todavía vuelve de…"); si no, carga después ("tiene que salir a…") */
+export type ChoqueCamion = { viaje: ViajeRow; otro: ViajeRow; otroAntes: boolean }
 const clave = (v: ViajeRow) => `${v.pedido_id}:${v.n}`
 const pisan = (a: ViajeRow, b: ViajeRow) =>
   new Date(a.hora_carga).getTime() < new Date(b.hora_vuelta).getTime() && new Date(b.hora_carga).getTime() < new Date(a.hora_vuelta).getTime()
 
 /**
- * Para cada viaje con camión, el otro viaje del mismo camión que todavía no volvió a planta cuando este carga
- * (el que cargó antes). Clave: "pedido:n".
+ * Para cada viaje con camión que se pisa con otro viaje del mismo camión (en los dos sentidos: el otro carga antes
+ * o después; mismo pedido u otro; cualquier estado salvo cancelado), ese otro viaje. Se marcan los DOS viajes.
+ * Si hay varios, se prefiere el que carga antes (el aviso "todavía vuelve de…"). Clave: "pedido:n".
  */
 export function choquesDeCamion(viajes: ViajeRow[]): Map<string, ChoqueCamion> {
   const out = new Map<string, ChoqueCamion>()
   const vs = viajes.filter((v) => v.mixer_id && v.estado !== "cancelado")
+  const t = (iso: string) => new Date(iso).getTime()
   for (const v of vs) {
-    const otro = vs
-      .filter((o) => o !== v && clave(o) !== clave(v) && o.mixer_id === v.mixer_id && pisan(o, v) && new Date(o.hora_carga).getTime() <= new Date(v.hora_carga).getTime())
-      .sort((a, b) => new Date(b.hora_vuelta).getTime() - new Date(a.hora_vuelta).getTime())[0]
-    if (otro) out.set(clave(v), { viaje: v, otro })
+    const pisados = vs.filter((o) => o !== v && clave(o) !== clave(v) && o.mixer_id === v.mixer_id && pisan(o, v))
+    if (!pisados.length) continue
+    const antes = pisados.filter((o) => t(o.hora_carga) <= t(v.hora_carga)).sort((a, b) => t(b.hora_vuelta) - t(a.hora_vuelta))[0]
+    const otro = antes || pisados.sort((a, b) => t(a.hora_carga) - t(b.hora_carga))[0]
+    out.set(clave(v), { viaje: v, otro, otroAntes: !!antes })
   }
   return out
+}
+
+/** "AF431GU todavía vuelve de Obra X a las 09:40" / "AF431GU tiene que cargar para Obra X a las 09:10" */
+export function textoChoque(ch: ChoqueCamion, patente: string, obra: string) {
+  const hh = (iso: string) => { const d = new Date(iso); return aHora(d.getHours() * 60 + d.getMinutes()) }
+  return ch.otroAntes
+    ? `${patente} todavía vuelve de ${obra} a las ${hh(ch.otro.hora_vuelta)}`
+    : `${patente} tiene que cargar para ${obra} a las ${hh(ch.otro.hora_carga)}, antes de volver de este viaje`
 }
 export const claveViaje = clave
 
@@ -354,12 +371,15 @@ export function agregarViaje(vs: ViajeRow[], p: PedidoParaViajes, prm: Parametro
   const fin = new Date(llegada.getTime() + descargaDe(p, m3, prm) * MIN)
   const vuelta = new Date(fin.getTime() + (prm.lavadoMin + viajeMinDe(p)) * MIN)
   const n = Math.max(0, ...vs.map((v) => v.n)) + 1
-  return [...vs, {
+  const nuevo: ViajeRow = {
     pedido_id: p.id, plant_id: p.plant_id, n, m3,
     hora_carga: carga.toISOString(), hora_salida: salida.toISOString(), hora_llegada: llegada.toISOString(),
     hora_fin_descarga: fin.toISOString(), hora_vuelta: vuelta.toISOString(),
     mixer_id: ult?.mixer_id ?? p.mixer_id ?? null, estado: "planificado",
-  }]
+  }
+  // Se propone el camión del último viaje solo si llega a volver (si no, queda sin camión para elegir)
+  if (nuevo.mixer_id && vs.some((o) => o.estado !== "cancelado" && o.mixer_id === nuevo.mixer_id && pisan(o, nuevo))) nuevo.mixer_id = null
+  return [...vs, nuevo]
 }
 
 /** Quita un viaje pendiente y renumera los pendientes (los despachados conservan su número). */
@@ -473,7 +493,14 @@ export async function regenerarViajesPedido(
     if (e2 || !p) return { ...nada, error: e2?.message || "No se encontró el pedido" }
     if (p.status === "cancelled" || p.status === "completed") return nada
     const { data: planta } = await sb.from("plants").select("*").eq("id", p.plant_id).maybeSingle()
-    const nuevos = generarViajes(p as PedidoParaViajes, parametrosDePlanta(planta), existentes)
+    // Viajes de otros pedidos del día (cualquier planta): un camión que quedaría en dos viajes a la vez se quita
+    const ini = new Date(p.scheduled_arrival_time); ini.setHours(0, 0, 0, 0)
+    const { data: otrosData } = await sb.from("viajes").select("*").neq("pedido_id", pedidoId).neq("estado", "cancelado")
+      .gte("hora_carga", new Date(ini.getTime() - 6 * 60 * MIN).toISOString()).lt("hora_carga", new Date(ini.getTime() + 30 * 60 * MIN).toISOString())
+    const otros = ((otrosData || []) as ViajeRow[])
+    const sinGenerarChoque = generarViajes(p as PedidoParaViajes, parametrosDePlanta(planta), existentes)
+    const nuevos = generarViajes(p as PedidoParaViajes, parametrosDePlanta(planta), existentes, otros)
+    const quitados = nuevos.filter((v, i) => !v.mixer_id && sinGenerarChoque[i]?.mixer_id).map((v) => v.n)
     const antes = pendientes(existentes)
     const reemplazoManual = antes.some((v) => v.origen === "plan_dia" || v.origen === "gerenciador")
     const { error } = await guardarViajes(sb, pedidoId, [...existentes.filter((v) => v.estado !== "planificado"), ...nuevos], usuario, "automatico")
@@ -482,6 +509,7 @@ export async function regenerarViajesPedido(
       ? { Viajes: `recalculados por cambio de ${opts.motivo || "datos del pedido"}`, "Viajes pendientes": `${antes.length} → ${nuevos.length}` }
       : { Viajes: `armados al guardar el pedido (${nuevos.length})` }
     if (reemplazoManual) detalle.Aviso = "se reemplazaron horarios o camiones ajustados a mano (plan del día / gerenciador)"
+    if (quitados.length) detalle["Camión quitado"] = `viaje${quitados.length > 1 ? "s" : ""} ${quitados.join(", ")}: con la hora nueva el camión estaría en otro viaje a la vez`
     await sb.from("activity_log").insert({
       user_name: usuario, action: "editar", entity: "pedido", entity_id: pedidoId,
       reference: (p as any).construction_sites?.name || null, plant_id: p.plant_id, details: detalle,

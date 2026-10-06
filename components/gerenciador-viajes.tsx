@@ -24,7 +24,7 @@ import { parametrosDePlanta, PARAMETROS_BASE, type Parametros } from "@/lib/plan
 import { cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import {
   generarViajes, correrPendientes, ajustarAHora, agregarViaje, quitarViaje, cambiarM3, m3Faltantes, m3Entregados, ordenarPorN,
-  guardarViajes, totalViajes, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, type PedidoParaViajes, type ViajeRow,
+  guardarViajes, totalViajes, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, type PedidoParaViajes, type ViajeRow,
 } from "@/lib/viajes"
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { format } from "date-fns"
@@ -90,7 +90,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
       setEmpresas(emps)
       setOriginal(existentes)
       setM3Texto({})
-      if (existentes.length === 0) {
+      if (existentes.length === 0 && pedido.status !== "completed" && pedido.status !== "cancelled") {
         setViajes(generarViajes(pedido, p, []))
         setSinGuardar(true)
       } else {
@@ -108,6 +108,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const enviadoPedido = pedido ? m3Entregados(pedido, viajes) : 0
   const m3Invalidos = Object.entries(m3Texto).filter(([n, t]) => viajes.some((v) => v.n === Number(n) && v.estado === "planificado") && !(Number(t.replace(",", ".")) > 0)).map(([n]) => Number(n))
   const faltan = pedido ? m3Faltantes(viajes, pedido) : 0
+  // Pedido completo o cancelado: solo se miran los viajes (no se guarda nada)
+  const soloLectura = pedido?.status === "completed" || pedido?.status === "cancelled"
   const hayPendientes = viajes.some((v) => v.estado === "planificado")
   const cambiado = sinGuardar || JSON.stringify(ordenarPorN(original)) !== JSON.stringify(ordenarPorN(viajes))
   // Fase 2b (D): un camión no puede estar en dos viajes que se pisan (en este pedido o en otro)
@@ -186,12 +188,16 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
           <div className="py-12 text-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />Cargando viajes...</div>
         ) : (
           <div className="space-y-3">
-            {sinGuardar && (
+            {soloLectura && (
+              <p className="text-xs rounded-md border bg-muted/50 px-3 py-2">El pedido está {pedido.status === "cancelled" ? "cancelado" : "completo"}: los viajes se pueden ver pero no cambiar.</p>
+            )}
+            {sinGuardar && !soloLectura && (
               <p className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2">
                 Este pedido todavía no tiene viajes guardados. Esta es la propuesta con los tiempos de la planta: revisala y tocá Guardar.
               </p>
             )}
-            {/* Acciones */}
+            {!soloLectura && (
+            /* Acciones */
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" className="gap-1" disabled={!hayPendientes} onClick={() => setViajes((vs) => correrPendientes(vs, -5))}><Minus className="h-3.5 w-3.5" />5 min</Button>
               <Button size="sm" variant="outline" className="gap-1" disabled={!hayPendientes} onClick={() => setViajes((vs) => correrPendientes(vs, 5))}><Plus className="h-3.5 w-3.5" />5 min</Button>
@@ -204,6 +210,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
               {faltan < -0.01 && <span className="text-xs text-amber-700">Sobran {Math.abs(faltan)} m³ planificados: quitá un viaje o bajá los m³.</span>}
               {faltan > 0.01 && <span className="text-xs text-amber-700">Faltan {faltan} m³ por planificar.</span>}
             </div>
+            )}
 
             {/* Gantt */}
             {ordenados.length === 0 ? (
@@ -221,7 +228,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                     <span />
                   </div>
                   {ordenados.map((v) => {
-                    const fijo = v.estado !== "planificado"
+                    const fijo = soloLectura || v.estado !== "planificado"
                     const tip = `Viaje ${v.n}/${total} · ${v.m3} m³ — carga ${hh(v.hora_carga)}, sale ${hh(v.hora_salida)}, llega ${hh(v.hora_llegada)}, termina ${hh(v.hora_fin_descarga)}, vuelve ${hh(v.hora_vuelta)}`
                     const choque = !fijo ? choques.get(claveViaje(v)) : undefined
                     const libres = choque ? camionesLibresPara(v, todosDelDia, mixers).slice(0, 4) : []
@@ -257,7 +264,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                           </div>
                         )}
                         {fijo ? (
-                          <span className="text-xs text-muted-foreground">{patente(v.mixer_id)} · {v.estado === "despachado" ? "despachado" : "cancelado"}</span>
+                          <span className="text-xs text-muted-foreground">{patente(v.mixer_id)} · {v.estado === "despachado" ? "despachado" : v.estado === "cancelado" ? "cancelado" : "pendiente"}</span>
                         ) : (
                           <Select value={v.mixer_id || "none"} onValueChange={(m) => setViajes((vs) => vs.map((x) => (x.n === v.n && x.estado === "planificado" ? { ...x, mixer_id: m === "none" ? null : m } : x)))}>
                             <SelectTrigger className={cn("h-8 text-xs", choque && "border-red-500 text-red-700")}><SelectValue /></SelectTrigger>
@@ -281,7 +288,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                       {choque && (
                         <div className="ml-[72px] mb-1 flex items-center gap-2 flex-wrap text-xs text-red-700">
                           <AlertTriangle className="h-3.5 w-3.5" />
-                          {patente(v.mixer_id)} todavía vuelve de {obraDe(choque.otro)} a las {hh(choque.otro.hora_vuelta)}
+                          {textoChoque(choque, patente(v.mixer_id), obraDe(choque.otro))}
                           {libres.length > 0 ? (
                             <>
                               <span className="text-muted-foreground">· libres:</span>
@@ -314,7 +321,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
           {choquesPendientes.length > 0 && <span className="text-xs text-red-600 self-center">Hay camiones en dos viajes a la vez: cambialos para guardar.</span>}
           {m3Invalidos.length > 0 && <span className="text-xs text-red-600 self-center">Completá los m³ de cada viaje para guardar.</span>}
-          <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0 || choquesPendientes.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>
+          {!soloLectura && <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0 || choquesPendientes.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -29,7 +29,7 @@ import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settin
 import { currentUserName, useFuncionesNuevas } from "@/lib/current-user"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
-import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
+import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import { type Ocupado } from "@/lib/planificador"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
@@ -581,7 +581,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                           const pat = (id: string | null | undefined) => mixers.find((m) => m.id === id)?.license_plate || "—"
                           return (
                             <p key={v.n} className="mt-1 text-xs text-red-700 flex items-center gap-1 flex-wrap">
-                              <AlertTriangle className="h-3 w-3" />Viaje {v.n}: {pat(v.mixer_id)} todavía vuelve de {obraDeViaje(ch.otro)} a las {format(new Date(ch.otro.hora_vuelta), "HH:mm")}
+                              <AlertTriangle className="h-3 w-3" />Viaje {v.n}: {textoChoque(ch, pat(v.mixer_id), obraDeViaje(ch.otro))}
                               {libres.length ? <span className="text-muted-foreground"> · libres: {libres.map((m) => m.license_plate).join(", ")} (cambialo en Viajes u Ordená el día)</span> : <span className="text-muted-foreground"> · no hay camiones libres a esa hora</span>}
                             </p>
                           )
