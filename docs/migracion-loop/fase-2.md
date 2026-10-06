@@ -269,3 +269,20 @@ APROBADO CON CAMBIOS. Arreglado en `1a3e64c`:
 - **Base:** 171/171 en `BEGIN … ROLLBACK`. Como la 2b ya está en producción, se vuelve a aplicar dos veces para probar que es idempotente. Nueva prueba: un pedido a las 08:00 con el camión que a las 09:00 carga para Hudson se pasa a las 09:30 y se rearma; el camión se quita y no queda ningún choque.
 - **Build y tipos:** build limpio; `tsc` 54 líneas, igual que `main`.
 
+
+### Buscador de obras (05/10/2026, obrero)
+Pedido de Bautista: ubicar la obra "como en Google Maps". Commit `09d7351`, misma rama. Es una mejora del control compartido `obra-ubicacion.tsx` (formulario del pedido, Clientes y alta rápida), así que lo ven todos; no depende del interruptor.
+- **Buscador libre con sugerencias** mientras se escribe: espera 300 ms, desde 3 letras. Se maneja con flechas, Enter y Esc, y muestra el nombre y el texto secundario. Al elegir una sugerencia pone el pin, centra el mapa y calcula km y minutos con `/api/geo/ruta`. Siguen andando el botón "Ubicar dirección en el mapa" y pegar un link de Google Maps o coordenadas.
+- **Proveedor: Google Places API (New), solo desde el servidor:**
+  - `/api/geo/autocompletar?q=&planta=&sesion=` llama a `places:autocomplete` en español, solo Argentina, con sesgo de 50 km alrededor de la planta del pedido (o del centro de la zona). Google acepta como máximo 50 km, no 60.
+  - `/api/geo/lugar?id=&sesion=` llama a Place Details con la máscara `location,formattedAddress,displayName` (Essentials).
+  - El navegador genera un token de sesión por búsqueda y lo pasa a las dos llamadas.
+  - La clave está en `GOOGLE_MAPS_API_KEY` (no es NEXT_PUBLIC). No está en el código, ni en los logs, ni en el paquete del navegador (verificado en el build).
+  - Si falta la clave o Google falla, se usa sin avisar el buscador de OpenStreetMap, con la misma respuesta. Ese buscador se movió a `lib/geo-osm.ts` y `/api/geo/buscar` responde igual.
+  - "Powered by Google" aparece debajo de las sugerencias solo cuando vienen de Google.
+- **Mapa / Satélite** en `mapa-base.tsx`: Esri World Imagery, con la atribución "Tiles © Esri". Por defecto sigue el mapa de OSM y el pin se sigue arrastrando. También aparece en el mapa de Logística, que usa el mismo componente.
+- **Pruebas** (`/private/tmp/claude-501/-Users-bautistacaputo-Documents-v0-plant-production-control/aec4cd85-59dc-45a8-9077-b068ee49c837/scratchpad/fase2/geo/test.mts`): **20/20**. Cubren los normalizadores de Google y de OSM y el pedido a Google (idioma, región, sesgo, sesión, clave solo en el encabezado). Para el respaldo: sin clave, error 403, excepción, OSM también caído y menos de 3 letras. Para el detalle: id `osm:` sin llamadas, máscara y sesión, e id inválido. Además, prueba local sin clave: `/api/geo/autocompletar` devuelve las sugerencias de OSM y `/api/geo/buscar` responde igual que antes. Build limpio; `tsc` 54 líneas, igual que `main`.
+- **Falta (Bautista):**
+  - Crear la clave en Google Cloud, con Places API (New) habilitada, facturación activa y la clave restringida a Places API.
+  - Cargarla en Vercel como `GOOGLE_MAPS_API_KEY` (Production y Preview).
+  - Hasta entonces el buscador anda con OpenStreetMap.
