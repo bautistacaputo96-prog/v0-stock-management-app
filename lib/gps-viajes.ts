@@ -900,6 +900,17 @@ export async function todasLasFilas<T = any>(armar: (desde: number, hasta: numbe
   return out
 }
 
+/** Consulta por lotes de ids (un `.in()` con cientos de ids arma una URL demasiado larga). */
+export async function porLotes<T = any>(ids: string[], consulta: (lote: string[]) => PromiseLike<{ data: T[] | null; error: any }>, tam = 200): Promise<T[]> {
+  const out: T[] = []
+  for (let k = 0; k < ids.length; k += tam) {
+    const { data, error } = await consulta(ids.slice(k, k + tam))
+    if (error) throw error
+    out.push(...(data || []))
+  }
+  return out
+}
+
 /**
  * Guarda los viajes de un camión para un rango de días sin dejarlo nunca vacío:
  * 1) upsert de los viajes nuevos con procesado_at = ahora (clave mixer_id + salida_planta);
@@ -922,32 +933,4 @@ export async function guardarViajesCamion(sb: any, mixerId: string, filas: Viaje
     .lte("fecha", hasta)
     .lt("procesado_at", ahora)
   if (error) throw error
-}
-
-// ---------------------------------------------------------------------------
-// 9. Freno del endpoint (hasta que la fase 0c ponga autenticación)
-// ---------------------------------------------------------------------------
-export const FRENO = { ventanaMin: 5, maxLlamadasVentana: 30 }
-
-/**
- * Decide si una llamada manual se rechaza (429) para no castigar a Wialon: el mismo rango (o uno que se
- * superpone, con el mismo modo simular) ya se pidió hace menos de 5 min, o hubo demasiadas llamadas manuales
- * en esos 5 min. Las del cron de Vercel no se frenan. Devuelve el motivo, o null si se puede seguir.
- */
-export function motivoFreno(
-  recientes: { desde: string; hasta: string; simular: boolean; origen: string; inicio: string }[],
-  pedido: { desde: string; hasta: string; simular: boolean; cron: boolean },
-  ahora: Date,
-  F = FRENO,
-): string | null {
-  if (pedido.cron) return null
-  const limite = ahora.getTime() - F.ventanaMin * 60000
-  const ventana = recientes.filter((r) => new Date(r.inicio).getTime() >= limite)
-  if (ventana.some((r) => r.simular === pedido.simular && r.desde <= pedido.hasta && pedido.desde <= r.hasta)) {
-    return `Ese rango ya se ${pedido.simular ? "simuló" : "procesó"} hace menos de ${F.ventanaMin} min. Esperá un rato.`
-  }
-  if (ventana.filter((r) => r.origen !== "cron").length >= F.maxLlamadasVentana) {
-    return `Demasiadas llamadas en los últimos ${F.ventanaMin} min. Esperá un rato.`
-  }
-  return null
 }

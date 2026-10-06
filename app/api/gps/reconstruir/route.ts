@@ -10,13 +10,14 @@
  * viajes_gps, el registro gps_reconstrucciones y las ubicaciones aprendidas de obras sin ubicación a mano.
  *
  * TODO(fase 0c): autenticación real. Mientras tanto, freno barato para no castigar a Wialon: una llamada manual
- * que repite (o se superpone con) un rango pedido hace menos de 5 min, o más de 30 llamadas en 5 min, recibe 429.
+ * que repite (o se superpone con) un rango pedido hace menos de 5 min, o la 7.ª llamada manual en 5 min, recibe 429.
+ * El control y el registro son atómicos (función gps_reconstruir_registrar, con candado en la base).
  * Las del cron de Vercel (header x-vercel-cron o user-agent vercel-cron) no se frenan. Los dos se pueden falsificar.
  */
 import { NextResponse } from "next/server"
 import { reconstruirRango } from "@/lib/gps-reconstruir"
 import { sbAdmin } from "@/lib/wialon"
-import { FRENO, fechaAR, motivoFreno, sumarDias } from "@/lib/gps-viajes"
+import { fechaAR, sumarDias } from "@/lib/gps-viajes"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -44,22 +45,16 @@ export async function GET(req: Request) {
   const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000) + 1
   if (dias > MAX_DIAS) return NextResponse.json({ error: `Máximo ${MAX_DIAS} días por llamada` }, { status: 400 })
 
-  // Freno + registro de la llamada
+  // Freno + registro de la llamada, en una sola transacción (ver la migración de la fase 4a)
   const sb = sbAdmin()
-  const ahora = new Date()
-  const { data: recientes, error: eLog } = await sb
-    .from("gps_reconstrucciones")
-    .select("desde, hasta, simular, origen, inicio")
-    .gte("inicio", new Date(ahora.getTime() - FRENO.ventanaMin * 60000).toISOString())
-    .limit(200)
-  if (eLog) return NextResponse.json({ ok: false, error: "Falta aplicar la migración de la fase 4a (gps_reconstrucciones)" }, { status: 500 })
-  const motivo = motivoFreno(recientes || [], { desde, hasta, simular, cron }, ahora)
-  if (motivo) return NextResponse.json({ ok: false, error: motivo }, { status: 429 })
-  const { data: reg } = await sb
-    .from("gps_reconstrucciones")
-    .insert({ desde, hasta, simular, origen: cron ? "cron" : "manual", inicio: ahora.toISOString() })
-    .select("id")
-    .single()
+  const { data: reg, error: eLog } = await sb.rpc("gps_reconstruir_registrar", {
+    p_desde: desde,
+    p_hasta: hasta,
+    p_simular: simular,
+    p_origen: cron ? "cron" : "manual",
+  })
+  if (eLog) return NextResponse.json({ ok: false, error: "Falta aplicar la migración de la fase 4a (gps_reconstruir_registrar)" }, { status: 500 })
+  if (reg?.motivo) return NextResponse.json({ ok: false, error: reg.motivo }, { status: 429 })
   const cerrar = async (resultado: any) => {
     if (reg?.id) await sb.from("gps_reconstrucciones").update({ fin: new Date().toISOString(), resultado }).eq("id", reg.id)
   }

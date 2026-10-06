@@ -21,6 +21,7 @@ import {
   REFERENCIAS_LOOP,
   fechaAR,
   llegadaPrimerCamion,
+  porLotes,
   promedio,
   resumirViajes,
   sumarDias,
@@ -148,10 +149,10 @@ export function LogisticaTiempos() {
         const idsPed = [...new Set(ds.map((d) => d.scheduled_dispatch_id).filter(Boolean))] as string[]
         const idsObra = [...new Set(vs.filter((v) => !v.dispatch_id && v.construction_site_id).map((v) => v.construction_site_id!))]
         const [{ data: ped }, { data: ob }] = await Promise.all([
-          idsPed.length
-            ? sb.from("scheduled_dispatches").select("id, scheduled_arrival_time, plant_id, client_id, clients(name), construction_sites(name)").in("id", idsPed)
-            : Promise.resolve({ data: [] as any[] }),
-          idsObra.length ? sb.from("construction_sites").select("id, name, clients(name)").in("id", idsObra) : Promise.resolve({ data: [] as any[] }),
+          porLotes(idsPed, (lote) =>
+            sb.from("scheduled_dispatches").select("id, scheduled_arrival_time, plant_id, client_id, clients(name), construction_sites(name)").in("id", lote) as any,
+          ).then((data) => ({ data })),
+          porLotes(idsObra, (lote) => sb.from("construction_sites").select("id, name, clients(name)").in("id", lote) as any).then((data) => ({ data })),
         ])
         if (!vivo) return
         setPlantas((pl as any) || [])

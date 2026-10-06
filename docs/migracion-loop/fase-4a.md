@@ -121,9 +121,15 @@ Nota sobre la carga: la hora de despacho que carga el operario no es la de la ca
 
 Verificación de la revisión: `npm run test:gps` 16/16 (nuevas: guardado seguro, ubicación aprendida y su recálculo, alineación ordenada con igual cantidad, paginado, freno, primer camión); migración otra vez en `BEGIN … ROLLBACK` 12/12 (upsert + borrar lo viejo deja 24 y limpia una fila vieja, `anon` no ve `gps_reconstrucciones`); simulación 26/09–02/10: 46 viajes, 44 con remito, 1 remito sin viaje (el "755" repetido), 0 aprendidas (cada obra de esa semana tiene un solo día); build OK; `tsc` sin errores nuevos (18, igual que `main`).
 
+### Segunda revisión (05/10/2026, APROBADO) — dos ajustes
+- Freno más estricto y atómico: función `gps_reconstruir_registrar` (en la misma migración, solo `service_role`) que con un candado de la base (`pg_advisory_xact_lock`) controla y registra la llamada en una sola transacción. Manual: rechaza un rango superpuesto (mismo modo simular) de hace < 5 min o la 7.ª llamada en 5 min; el cron pasa siempre. La regla vive solo en la base (se quitó la copia en TS). Probado en `BEGIN … ROLLBACK` 8/8, incluida una segunda conexión que queda esperando el candado.
+- Pantalla: pedidos y obras se piden en lotes de 200 ids (`porLotes`).
+- `test:gps` 17/17, migración 12/12, build OK, `tsc` 18 (igual que `main`).
+- Consecuencia para la carga histórica: con 6 llamadas manuales cada 5 min, ir de a una cada ~50 s (≈ 50 min por pasada).
+
 ### Pasos para publicar
 1. Aplicar `supabase/migrations/202610052200_fase4a_viajes_gps.sql` en producción (solo agrega `viajes_gps` y `gps_reconstrucciones`; probada dos veces en `BEGIN … ROLLBACK`: 24 viajes reales, reproceso sin duplicar, índice único, no pisa ubicaciones manuales, FK al remito con `SET NULL`, anon lee). Regenerar `types/database.ts`.
 2. Bautista mira el preview de la rama (`/logistica/tiempos`); antes de cargar, se puede controlar con `/api/gps/reconstruir?fecha=2026-10-02&simular=1`.
 3. Merge a `main` (activa el cron de las 06:00).
-4. Carga histórica: llamar `/api/gps/reconstruir?desde=…&hasta=…` semana por semana desde el 01/09/2025 hasta ayer (≈ 57 llamadas de ~15 s, de a una; el freno permite hasta 30 cada 5 min). **Correrla dos veces** desde abril 2026: la segunda pasada usa las ubicaciones aprendidas en la primera y sube la confianza.
+4. Carga histórica: llamar `/api/gps/reconstruir?desde=…&hasta=…` semana por semana desde el 01/09/2025 hasta ayer (≈ 57 llamadas de ~15 s, de a una y con ~50 s entre llamadas: el freno permite 6 manuales cada 5 min). **Correrla dos veces** desde abril 2026: la segunda pasada usa las ubicaciones aprendidas en la primera y sube la confianza.
 5. Controlar: `select fecha, count(*), count(dispatch_id), count(*) filter (where confianza='alta') from viajes_gps group by 1 order by 1 desc`, las obras con `gps_source='gps_aprendido'`, y 2 viajes contra B-Track.

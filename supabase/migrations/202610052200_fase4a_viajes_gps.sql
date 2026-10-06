@@ -81,3 +81,39 @@ COMMENT ON TABLE public.gps_reconstrucciones IS 'Fase 4a: registro y freno de /a
 
 REVOKE ALL ON TABLE public.gps_reconstrucciones FROM anon, authenticated;
 GRANT ALL ON TABLE public.gps_reconstrucciones TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- Freno atómico de /api/gps/reconstruir (hasta que la 0c ponga autenticación).
+-- Controla y registra la llamada en una sola transacción con un candado: dos llamadas simultáneas no pueden
+-- pasar las dos. Una llamada manual se rechaza si se superpone con un rango pedido (mismo modo simular) hace
+-- menos de 5 min o si ya hubo 6 llamadas manuales en 5 min. Las del cron pasan siempre.
+-- Devuelve {"id": …} si se registró, o {"motivo": "…"} si se rechaza.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.gps_reconstruir_registrar(p_desde date, p_hasta date, p_simular boolean, p_origen text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_id uuid;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('gps_reconstruir_registrar'));
+  IF p_origen <> 'cron' THEN
+    IF EXISTS (
+      SELECT 1 FROM gps_reconstrucciones
+      WHERE inicio > now() - interval '5 minutes'
+        AND simular = p_simular AND desde <= p_hasta AND p_desde <= hasta
+    ) THEN
+      RETURN jsonb_build_object('motivo', format('Ese rango ya se %s hace menos de 5 min. Esperá un rato.', CASE WHEN p_simular THEN 'simuló' ELSE 'procesó' END));
+    END IF;
+    IF (SELECT count(*) FROM gps_reconstrucciones WHERE inicio > now() - interval '5 minutes' AND origen <> 'cron') >= 6 THEN
+      RETURN jsonb_build_object('motivo', 'Demasiadas llamadas en los últimos 5 min. Esperá un rato.');
+    END IF;
+  END IF;
+  INSERT INTO gps_reconstrucciones (desde, hasta, simular, origen) VALUES (p_desde, p_hasta, p_simular, p_origen) RETURNING id INTO v_id;
+  RETURN jsonb_build_object('id', v_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.gps_reconstruir_registrar(date, date, boolean, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.gps_reconstruir_registrar(date, date, boolean, text) TO service_role;
