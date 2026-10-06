@@ -5,7 +5,7 @@
  * Por día, resumen del período, ranking de tiempo en obra y puntualidad. Las referencias de Loop van en gris.
  * Solo lee (viajes_gps la llena el proceso nocturno /api/gps/reconstruir).
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent } from "@/components/ui/card"
@@ -17,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AlertTriangle, Info, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { KPIS, type DatosKpi, type KpiDef, type PedidoKpi, type ViajeKpi } from "@/lib/kpis-logistica"
+import { KpiDetalle, KpiTarjeta } from "@/components/kpi-logistica"
 import {
   REFERENCIAS_LOOP,
   fechaAR,
@@ -54,22 +56,10 @@ const n0 = (x: number | null | undefined) => (x == null ? "–" : String(Math.ro
 const n1 = (x: number | null | undefined) => (x == null ? "–" : Number(x).toLocaleString("es-AR", { maximumFractionDigits: 1 }))
 const fechaCorta = (f: string) => `${f.slice(8, 10)}/${f.slice(5, 7)}`
 const inicioAR = (f: string) => new Date(`${f}T00:00:00-03:00`).toISOString()
+/** Clave de un viaje (para ir a su fila desde el detalle de un indicador). */
+const claveViaje = (v: { mixer_id: string; salida_planta: string }) => `${v.mixer_id}|${new Date(v.salida_planta).toISOString()}`
+const num = (x: unknown): number | null => (x == null || !Number.isFinite(Number(x)) ? null : Number(x))
 
-function Kpi({ titulo, valor, unidad, loop, nota }: { titulo: string; valor: string; unidad?: string; loop?: string; nota?: string }) {
-  return (
-    <Card>
-      <CardContent className="p-3 md:p-4">
-        <p className="text-xs text-muted-foreground">{titulo}</p>
-        <p className="text-2xl font-semibold tabular-nums">
-          {valor}
-          {unidad && valor !== "–" && <span className="text-sm font-normal text-muted-foreground ml-1">{unidad}</span>}
-        </p>
-        {loop && <p className="text-[11px] text-gray-400">Loop: {loop}</p>}
-        {nota && <p className="text-[11px] text-muted-foreground mt-0.5">{nota}</p>}
-      </CardContent>
-    </Card>
-  )
-}
 
 function Confianza({ v }: { v: Viaje }) {
   if (!v.dispatch_id) return <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-800 border-amber-300">Sin remito</Badge>
@@ -85,6 +75,10 @@ export function LogisticaTiempos() {
   const [desde, setDesde] = useState(params.get("desde") || sumarDias(ayer, -6))
   const [hasta, setHasta] = useState(params.get("hasta") || ayer)
   const [dia, setDia] = useState(params.get("dia") || params.get("hasta") || ayer)
+  const [tab, setTab] = useState(params.get("tab") || "dia")
+  const [kpiAbierto, setKpiAbierto] = useState<KpiDef | null>(null)
+  const [resaltado, setResaltado] = useState<string | null>(null)
+  const resaltadoRef = useRef<HTMLTableRowElement | null>(null)
   const [planta, setPlanta] = useState("todas")
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -242,7 +236,7 @@ export function LogisticaTiempos() {
         const tol = plantas.find((x) => x.id === p.plant_id)?.tolerancia_puntualidad_min ?? 15
         const llegada = primero?.llegada ?? null
         const dif = llegada ? Math.round((new Date(llegada).getTime() - new Date(p.scheduled_arrival_time!).getTime()) / 60000) : null
-        return { p, fecha, remito: dPrimero?.remito ?? null, llegada, dif, tol, puntual: dif == null ? null : dif <= tol }
+        return { p, fecha, remito: dPrimero?.remito ?? null, desp: dPrimero, llegada, dif, tol, puntual: dif == null ? null : dif <= tol }
       })
       .filter((f) => f.fecha >= desde && f.fecha <= hasta)
       // Primero los más atrasados; los "sin dato" al final
@@ -266,6 +260,69 @@ export function LogisticaTiempos() {
       porCliente: [...porCliente.values()].sort((a, b) => (a.pedidos ? a.puntuales / a.pedidos : 2) - (b.pedidos ? b.puntuales / b.pedidos : 2)),
     }
   }, [viajes, despachos, despPorId, pedidos, plantas, planta, desde, hasta])
+
+  // ---------- Indicadores (definiciones en lib/kpis-logistica.ts) ----------
+  const datosKpi: DatosKpi = useMemo(() => {
+    const vk: ViajeKpi[] = delPeriodo.map((v) => ({
+      key: claveViaje(v),
+      fecha: v.fecha,
+      mixer_id: v.mixer_id,
+      camion: mixers[v.mixer_id] || "?",
+      chofer: v.chofer,
+      obra_id: v.construction_site_id,
+      obra: v.obra,
+      cliente_id: v.client_id,
+      cliente: v.cliente,
+      remito: v.desp?.remito ?? null,
+      dispatch_id: v.dispatch_id,
+      m3: v.m3,
+      confianza: v.confianza,
+      estado: v.estado,
+      min_en_planta: num(v.min_en_planta),
+      min_motor_parado_planta: num(v.min_motor_parado_planta),
+      min_ida: num(v.min_ida),
+      min_obra: num(v.min_obra),
+      min_vuelta: num(v.min_vuelta),
+      ciclo_min: num(v.ciclo_min),
+      km_ida: num(v.km_ida),
+      km_vuelta: num(v.km_vuelta),
+      min_paradas_extra: (v.paradas_extra || []).reduce((s, p) => s + (Number(p.min) || 0), 0),
+      paradas_extra: (v.paradas_extra || []).length,
+    }))
+    const viajePorRemito = new Map(viajes.filter((v) => v.dispatch_id).map((v) => [v.dispatch_id!, v]))
+    const pk: PedidoKpi[] = puntualidad.filas.map((f) => {
+      const vj = f.desp ? viajePorRemito.get(f.desp.id) : undefined
+      return {
+        key: f.p.id,
+        fecha: f.fecha,
+        mixer_id: f.desp?.mixer_id ?? null,
+        camion: f.desp ? mixers[f.desp.mixer_id] || "?" : null,
+        chofer: f.desp?.choferes?.nombre ?? null,
+        obra_id: f.desp?.construction_site_id ?? null,
+        obra: f.p.construction_sites?.name ?? null,
+        cliente_id: f.p.client_id,
+        cliente: f.p.clients?.name ?? null,
+        remito: f.remito,
+        viaje_key: vj ? claveViaje(vj) : null,
+        dif: f.dif,
+        tolerancia: f.tol,
+      }
+    })
+    return { viajes: vk, pedidos: pk }
+  }, [delPeriodo, viajes, puntualidad, mixers])
+
+  // Desde el detalle de un indicador: ir a la fila del viaje en la vista del día
+  const irAViaje = (fecha: string, key: string) => {
+    setKpiAbierto(null)
+    setDia(fecha)
+    setTab("dia")
+    setResaltado(key)
+  }
+  useEffect(() => {
+    if (!resaltado || tab !== "dia") return
+    const t = setTimeout(() => resaltadoRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 350)
+    return () => clearTimeout(t)
+  }, [resaltado, tab, dia, cargando])
 
   if (error === "SIN_TABLA") {
     return (
@@ -308,7 +365,7 @@ export function LogisticaTiempos() {
       </div>
       {error && <p className="text-sm text-red-600 flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />{error}</p>}
 
-      <Tabs defaultValue={params.get("tab") || "dia"}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="dia">Por día</TabsTrigger>
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
@@ -354,7 +411,11 @@ export function LogisticaTiempos() {
                 </TableHeader>
                 <TableBody>
                   {delDia.map((v) => (
-                    <TableRow key={`${v.mixer_id}-${v.salida_planta}`} className={cn(!v.dispatch_id && "bg-amber-50/50")}>
+                    <TableRow
+                      key={`${v.mixer_id}-${v.salida_planta}`}
+                      ref={claveViaje(v) === resaltado ? resaltadoRef : undefined}
+                      className={cn(!v.dispatch_id && "bg-amber-50/50", claveViaje(v) === resaltado && "bg-sky-100 ring-2 ring-sky-400 ring-inset")}
+                    >
                       <TableCell className="whitespace-nowrap">
                         <span className="font-medium">{mixers[v.mixer_id] || "?"}</span>
                         {v.chofer && <span className="block text-xs text-muted-foreground">{v.chofer}</span>}
@@ -438,24 +499,9 @@ export function LogisticaTiempos() {
           <p className="text-sm text-muted-foreground">
             {fechaCorta(desde)} al {fechaCorta(hasta)} · {resumen.viajes} viajes ({resumen.completos} completos, {resumen.sinRemito} sin remito) · {n1(resumen.m3)} m³
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
-            <Kpi titulo="Ciclo con planta" valor={n0(resumen.cicloConPlanta)} unidad="min" loop={`~${REFERENCIAS_LOOP.ciclo}`} nota="tiempo en planta + salida → vuelta (como Loop: con la carga)" />
-            <Kpi titulo="Ciclo en la calle" valor={n0(resumen.ciclo)} unidad="min" nota="salida → vuelta a planta, sin la carga" />
-            <Kpi titulo="Tiempo en obra" valor={n0(resumen.obra)} unidad="min" loop={`~${REFERENCIAS_LOOP.obra}`} />
-            <Kpi titulo="Ida / vuelta" valor={resumen.ida == null ? "–" : `${n0(resumen.ida)} / ${n0(resumen.vuelta)}`} unidad="min" loop={`ruta ~${REFERENCIAS_LOOP.ruta} (ida + vuelta)`} />
-            <Kpi titulo="Tiempo en planta" valor={n0(resumen.enPlanta)} unidad="min" loop={`carga ${REFERENCIAS_LOOP.carga}`} nota="incluye la espera y la carga" />
-            <Kpi
-              titulo="Ralentí en planta"
-              valor={n0(resumen.motorParadoPlanta)}
-              unidad="min/viaje"
-              loop={`buena práctica ~${REFERENCIAS_LOOP.ralenti}; típico al empezar ~${REFERENCIAS_LOOP.ralentiTipico}`}
-              nota="motor encendido y parado · 10 min ≈ 1 L de gasoil"
-            />
-            <Kpi titulo="Uso de la flota" valor={n0(resumen.usoFlota)} unidad="%" nota="horas en viaje / jornada de 11 h, días trabajados" />
-            <Kpi titulo="Minutos por m³" valor={n1(resumen.minPorM3)} unidad="min" nota="ciclo / m³ de los viajes con remito" />
-            <Kpi titulo="Km por viaje" valor={n1(resumen.kmPorViaje)} unidad="km" nota="ida + vuelta" />
-            <Kpi titulo="Viajes" valor={String(resumen.viajes)} nota={`${resumen.conRemito} con remito`} />
-            <Kpi titulo="m³ entregados" valor={n1(resumen.m3)} unidad="m³" nota="de los viajes con remito" />
+          <p className="text-xs text-muted-foreground flex items-center gap-1"><Info className="h-3.5 w-3.5" />Tocá un indicador para ver qué mide, cómo se calcula, la referencia de Loop, la evolución por día y los viajes que lo forman.</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 md:gap-3">
+            {KPIS.map((k) => <KpiTarjeta key={k.id} k={k} datos={datosKpi} onAbrir={() => setKpiAbierto(k)} />)}
           </div>
 
           <div className="grid lg:grid-cols-2 gap-3">
@@ -516,6 +562,13 @@ export function LogisticaTiempos() {
             </Card>
           </div>
           <p className="text-[11px] text-gray-400">Referencias de Loop 4 (empresas de hormigón elaborado): ciclo ~150 min con la carga, obra ~70, carga menos de 20–25, ruta ~60, ralentí en planta ~35 por viaje.</p>
+          <KpiDetalle
+            k={kpiAbierto}
+            datos={datosKpi}
+            periodo={`${fechaCorta(desde)} al ${fechaCorta(hasta)}${planta !== "todas" ? ` · ${nombrePlanta(planta)}` : ""}`}
+            onCerrar={() => setKpiAbierto(null)}
+            onIrAViaje={irAViaje}
+          />
         </TabsContent>
 
         {/* ---------------- Tiempo en obra ---------------- */}

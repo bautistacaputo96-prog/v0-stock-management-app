@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test:gps": "node --experimental-strip-types --no-warnings --test lib/__tests__/gps-viajes.test.mjs"
+    "test:gps": "node --experimental-strip-types --no-warnings --test lib/__tests__/gps-viajes.test.mjs lib/__tests__/kpis-logistica.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
