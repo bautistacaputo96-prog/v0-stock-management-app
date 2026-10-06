@@ -29,7 +29,8 @@ import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settin
 import { currentUserName, useFuncionesNuevas } from "@/lib/current-user"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
-import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
+import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
+import { type Ocupado } from "@/lib/planificador"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -54,6 +55,8 @@ type PedidoDB = {
   m3_por_viaje?: number | null
   espaciado_min?: number | null
   mixer_id?: string | null
+  viaje_min?: number | null // fase 2b
+  descarga_min?: number | null
   clients: { name: string } | null
   construction_sites: { id: string; name: string; travel_time_minutes: number | null; gps_lat: number | null; requires_pump: boolean | null } | null
   formulas: { code: string } | null
@@ -107,6 +110,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const [guardandoPlan, setGuardandoPlan] = useState(false)
   const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
   const [confirmando, setConfirmando] = useState<string | null>(null)
+  // Fase 2b: viajes del mismo día de otros pedidos (la otra planta): sus camiones están ocupados
+  const [otrosViajes, setOtrosViajes] = useState<(ViajeRow & { obra?: string })[]>([])
 
   // Tiempos de la planta elegida (en la base, no en el navegador)
   const cargarTiempos = useCallback(async () => {
@@ -165,7 +170,16 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     setMixers((ms as any) || [])
     setHoras({})
     setPropuesta(null)
-    if (ve) setViajesPorPedido(await cargarViajes(sb, ((ps as any) || []).map((p: PedidoDB) => p.id)))
+    if (ve) {
+      const ids = ((ps as any) || []).map((p: PedidoDB) => p.id)
+      const [vs, { data: ot }] = await Promise.all([
+        cargarViajes(sb, ids),
+        sb.from("viajes").select("*, scheduled_dispatches(construction_sites(name))").neq("estado", "cancelado")
+          .gte("hora_carga", new Date(ini.getTime() - 6 * 3600000).toISOString()).lt("hora_carga", fin.toISOString()),
+      ])
+      setViajesPorPedido(vs)
+      setOtrosViajes(((ot as any[]) || []).filter((v) => !ids.includes(v.pedido_id)).map((v) => ({ ...v, m3: Number(v.m3), obra: v.scheduled_dispatches?.construction_sites?.name || "otra obra" })))
+    }
     let guardados: string[] | null = null
     try { const g = localStorage.getItem(LS_CAMIONES(planta)); if (g) guardados = JSON.parse(g) } catch {}
     const ids = ((ms as any) || []).map((m: Mixer) => m.id)
@@ -195,14 +209,21 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
         obra: p.construction_sites?.name || "",
         m3: simular ? Number(p.quantity_m3) : Math.max(0, Number(p.quantity_m3) - Number(p.dispatched_m3 || 0)),
         llegada: aMin(horaDe(p)),
-        viajeMin: p.construction_sites?.travel_time_minutes || 30,
+        viajeMin: ve ? viajeMinDe(p as unknown as PedidoParaViajes) : p.construction_sites?.travel_time_minutes || 30,
         conBomba: (p.metodo_descarga || (p.construction_sites?.requires_pump ? "bomba" : "directo")) === "bomba",
+        // Fase 2b (con el interruptor): descarga, m³ por camión y espaciado del pedido
+        ...(ve ? { descargaMin: Number(p.descarga_min) > 0 ? Number(p.descarga_min) : null, m3PorViaje: m3PorViajeDe(p as unknown as PedidoParaViajes), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null } : {}),
       }))
       .filter((p) => p.m3 > 0.01)
     const cams = mixers.filter((m) => disponibles.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
     if (!entradas.length || !cams.length) return null
-    return planificar(entradas, cams, prm)
-  }, [pedidos, mixers, disponibles, prm, horas, simular]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Con el interruptor, los camiones que están en viajes de la otra planta no se usan a esa hora
+    const base = startOfDay(dia).getTime()
+    const ocupados: Ocupado[] = ve
+      ? otrosViajes.filter((v) => v.mixer_id).map((v) => ({ camionId: v.mixer_id!, desde: (new Date(v.hora_carga).getTime() - base) / 60000, hasta: (new Date(v.hora_vuelta).getTime() - base) / 60000 }))
+      : []
+    return planificar(entradas, cams, prm, ocupados)
+  }, [pedidos, mixers, disponibles, prm, horas, simular, ve, otrosViajes, dia]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const colorDe = (pedidoId: string) => COLORES[Math.max(0, pedidos.findIndex((p) => p.id === pedidoId)) % COLORES.length]
 
@@ -250,7 +271,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
 
   /** "Ordenar el día": planificar() con todos los pedidos; se muestra y recién se guarda con "Guardar plan del día". */
   function ordenarDia() {
-    const { filas } = planDelDia(pedidos as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prm)
+    const { filas } = planDelDia(pedidos as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prm, otrosViajes)
     setPropuesta(filas)
     if (!Object.keys(filas).length) toast({ title: "No hay nada para ordenar", description: "Los pedidos del día ya están despachados o no hay camiones disponibles." })
   }
@@ -315,6 +336,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const anc = (a: number, b: number) => `${Math.max(0.3, ((b - a) / (t1 - t0)) * 100)}%`
 
   const ultimaVuelta = plan?.viajes.length ? Math.max(...plan.viajes.map((v) => v.vuelta)) : null
+  // Fase 2b: plan por pedido con los camiones que hay (para "con N camiones termina…") y choques de camión
+  const planVe = useMemo(() => (ve ? planDelDia(pedidos as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prm, otrosViajes) : null),
+    [ve, pedidos, viajesPorPedido, disponibles, mixers, prm, otrosViajes]) // eslint-disable-line react-hooks/exhaustive-deps
+  const todosDelDia = useMemo(() => [...Object.values(viajesPorPedido).flat().filter((v) => v.estado !== "cancelado"), ...otrosViajes], [viajesPorPedido, otrosViajes])
+  const choques = useMemo(() => (ve ? choquesDeCamion(todosDelDia) : new Map()), [ve, todosDelDia])
+  const obraDeViaje = (v: ViajeRow) => (v as any).obra || pedidos.find((x) => x.id === v.pedido_id)?.construction_sites?.name || "otra obra"
+  const camionesUsados = plan ? plan.camiones.filter((c) => c.viajes > 0).length : 0
   const usoProm = plan ? Math.round(plan.camiones.filter((c) => c.viajes > 0).reduce((s, c) => s + c.utilizacion, 0) / Math.max(1, plan.camiones.filter((c) => c.viajes > 0).length)) : 0
   const tituloDia = (() => { const t = format(dia, "EEEE d 'de' MMMM", { locale: es }); return t.charAt(0).toUpperCase() + t.slice(1) })()
 
@@ -437,7 +465,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                 ["Viajes", String(plan.viajes.length)],
                 ["Primera carga", plan.primeraCarga != null ? aHora(plan.primeraCarga) : "—"],
                 ["Última vuelta a planta", ultimaVuelta != null ? aHora(ultimaVuelta) : "—"],
-                ["Uso de mixers", `${usoProm}%`],
+                ve ? ["Camiones usados", `${camionesUsados} de ${plan.camiones.length} · uso ${usoProm}%`] : ["Uso de mixers", `${usoProm}%`],
               ].map(([l, v]) => (
                 <div key={l} className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">{l}</p><p className="text-lg font-semibold">{v}</p></div>
               ))}
@@ -534,6 +562,30 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                             )}
                           </div>
                         )}
+                        {/* Fase 2b: cuántos camiones hacen falta y qué pasa con los que hay */}
+                        {ve && !completo && r && (() => {
+                          const pv = p as unknown as PedidoParaViajes
+                          const flota = explicarFlota(pv, prm, r.viajes)
+                          const menos = planVe?.filas[p.id] ? textoConMenosCamiones(planVe.filas[p.id], generarViajes(pv, prm, viajesPorPedido[p.id] || []), new Set(planVe.filas[p.id].map((v) => v.mixer_id)).size) : null
+                          return (
+                            <div className="mt-1 text-[11px] text-muted-foreground space-y-0.5">
+                              <p>{flota.texto}{Number(p.descarga_min) > 0 ? " (descarga corregida en el pedido)" : ""}</p>
+                              {menos && <p className="text-amber-700">{menos}</p>}
+                            </div>
+                          )
+                        })()}
+                        {/* Fase 2b (D): camión asignado que en ese momento está en otro viaje */}
+                        {ve && (viajesPorPedido[p.id] || []).filter((v) => v.estado === "planificado" && choques.has(claveViaje(v))).map((v) => {
+                          const ch = choques.get(claveViaje(v))!
+                          const libres = camionesLibresPara(v, todosDelDia, mixers.filter((m) => disponibles.includes(m.id))).slice(0, 4)
+                          const pat = (id: string | null | undefined) => mixers.find((m) => m.id === id)?.license_plate || "—"
+                          return (
+                            <p key={v.n} className="mt-1 text-xs text-red-700 flex items-center gap-1 flex-wrap">
+                              <AlertTriangle className="h-3 w-3" />Viaje {v.n}: {pat(v.mixer_id)} todavía vuelve de {obraDeViaje(ch.otro)} a las {format(new Date(ch.otro.hora_vuelta), "HH:mm")}
+                              {libres.length ? <span className="text-muted-foreground"> · libres: {libres.map((m) => m.license_plate).join(", ")} (cambialo en Viajes u Ordená el día)</span> : <span className="text-muted-foreground"> · no hay camiones libres a esa hora</span>}
+                            </p>
+                          )
+                        })}
                       </div>
                       <div className="text-xs md:text-right">
                         {completo && !simular ? (
