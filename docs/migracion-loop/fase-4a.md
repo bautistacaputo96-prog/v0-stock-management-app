@@ -70,4 +70,45 @@ Nota sobre la carga: la hora de despacho que carga el operario no es la de la ca
 6. Build limpio y `tsc` sin errores nuevos. "No se pierde nada": ninguna pantalla existente cambia, salvo el ítem nuevo en Logística.
 
 ## Hecho
-_(lo completa la sesión obrero)_
+
+**05/10/2026 — obrero.** Rama `loop/fase-4a-tiempos-gps` (local, sin subir). Commits: `9ad61f6` algoritmo + pruebas, `274fa6b` migración, `8a2e0c2` endpoint + cron, `30ff79b` pantalla, más este registro.
+
+**Agregado aprobado el 05/10 (Bautista, vía coordinador):** se **muestra** también la métrica 9, ralentí en planta (motor encendido y parado antes de salir): promedio por viaje en el resumen, por camión y por chofer, con la referencia de Loop en gris (buena práctica ~35 min por viaje; típico al empezar ~60; 10 min ≈ 1 L de gasoil). En la tabla del día va por viaje.
+
+### Qué se hizo
+- `lib/gps-viajes.ts` (lógica pura, sin dependencias): mensajes → viajes → cruce → ubicación aprendida → resúmenes y `tiemposMedidos()` / `medianasTramos()` para la Fase 2 (integración en el pedido, pendiente como dice la spec).
+- `lib/wialon.ts`: `abrirSesion`, `unidades`, `mensajesIntervalo`, `cerrarSesion`. Solo `token/login`, `core/search_items`, `messages/load_interval`, `messages/unload`, `core/logout`; sesión propia por proceso.
+- `lib/gps-reconstruir.ts` + `GET /api/gps/reconstruir?fecha=` o `?desde=&hasta=` (≤ 7 días; sin parámetros = ayer y los 2 previos). Reemplaza los viajes de cada camión en esos días (borra e inserta; si un camión falla en Wialon no se le borra nada). `&simular=1` calcula todo y devuelve las filas **sin escribir** (sirve para controlar antes de la carga). `maxDuration = 60`; medido: 1 día ≈ 12 s, 7 días ≈ 13 s.
+- Cron en `vercel.json`: `0 9 * * *`. Hobby hoy permite **100 crons por proyecto** (una vez por día, con ±59 min de precisión): el tercero no es problema.
+- Pantalla `/logistica/tiempos` (`components/logistica-tiempos.tsx`); en el menú, Logística pasa a ser grupo con **En vivo** (sin cambios) y **Tiempos reales**. Pestañas: Por día (con viajes sin remito y remitos sin viaje), Resumen, Tiempo en obra (ranking por cliente y obra), Puntualidad (primer camión vs. hora pedida, tolerancia de la planta). Sin gráficos (solo tablas y tarjetas). Si la tabla no existe muestra "Todavía no hay tiempos medidos". En desarrollo, `?simular=1` usa el endpoint de simulación.
+- Pruebas: `npm run test:gps` (`node --test`, 10/10) sobre `lib/__fixtures__/gps-viajes-dias-reales.json` (mensajes reales del 02/10 y 26/09 de AE402HE y AG083GT, despachos anonimizados).
+- Tipos: `ViajeGpsFila` está en `lib/gps-viajes.ts`. **No** se tocó `types/database.ts` (lo regenera la Fase 2 y chocaría); regenerarlo después de aplicar la migración.
+
+### Reglas y umbrales (los de la spec, más lo que pidieron los datos reales)
+- Geocerca de planta 250 m; parada = el camión queda en un círculo de 200 m (aguanta las maniobras en obra); principal ≥ 5 min (la más larga), extra ≥ 3 min; obra confirmada a < 400 m. **No hubo que cambiarlos.**
+- Salida que nunca pasa de 400 m de la planta = sigue en planta (portón, playa).
+- **Camión guardado afuera:** una parada con motor apagado ≥ 60 min no puede ser la obra (con hormigón el trompo necesita el motor). Si no vuelve a planta ese día, el viaje termina al llegar ahí (queda incompleto). Pasa de verdad: AG083GT y AF431GU duermen en un mismo punto cerca de Hudson.
+- Tiempo en planta: desde que llegó; si pasó la noche (o > 4 h, o empieza antes de los mensajes), desde que arrancó el motor tras ≥ 30 min apagado. Ralentí = motor encendido y velocidad < 3 km/h, sumando tramos de hasta 5 min.
+- Incompleto: hueco > 15 min sin mensajes con > 1 km de movimiento, o no volvió a planta.
+- **Orden del día de los remitos:** por hora y, dentro de cada planta, por **número de remito** (el talonario sigue el orden de carga; la hora no: el manual queda en 12:00 y el plantista carga en tanda). Misma cantidad → 1.º con 1.º; distinta → alineación ordenada de menor costo (hora fuera de la ventana del viaje, planta distinta, obra). **Tandas** (remitos cargados con < 10 min, a obras distintas, alguna ubicada): se prueba cada orden y gana el que coincide con la obra.
+- Confianza: con obra ubicada, alta o baja según la distancia (y se toma como principal la parada en la obra); sin ubicar, media, o baja si no cierran cantidades o planta.
+- Ubicación aprendida: mediana de las paradas de viajes "media" (y "alta" sobre una aprendida), mínimo 2 que coincidan a < 0,5 km y que sean ≥ 60 %. Solo escribe si la obra no tiene ubicación o la que tiene es `gps_aprendido`. Después de aprender, se vuelve a cruzar el rango.
+
+### Validación con días reales (Wialon de verdad, base de producción, sin escribir)
+- **02/10** (25 remitos): 24 viajes, 24 con remito. AE402HE 6/6 (salidas 07:16, 10:13, 12:11, 14:37, 16:12, 17:55; ej. 1.º: obra 07:44–09:20, vuelta 09:49, ciclo 153, 22,7/22 km; 2.º: ciclo 84, obra 31), CRN449 5/5, LES431 5/5, AF431GU 4/4 (2 de Hudson y 2 de Canning; el 2.º sale de Hudson y vuelve a Canning), AG083GT 4 viajes / 5 remitos: el "755" de Canning (manual 12:00, repetido del "755 HUDSON") queda **remito sin viaje**; el último viaje no volvió a planta (incompleto). La obra de la platea se aprende sola (17 paradas coincidentes) → 18 alta, 2 media, 4 baja. 755/756 de Hudson se cargaron en el mismo minuto y el GPS muestra el orden al revés: se corrige solo cuando esas obras queden ubicadas (aprendidas o a mano).
+- **26/09** (20 remitos): 21 viajes, 20 con remito, **20/20 confirmados por ubicación** después de aprender PAVIMENTO y CANCHA PADEL. El viaje sin remito es un traslado Hudson → Canning a las 05:45. Sin el orden por número de remito, AE402HE cruzaba 2 de 4 al revés (horas 12:00 del manual).
+- **01/10** (día tranquilo, lluvia, 0 remitos): 1 viaje sin remito (AF431GU, traslado al lugar donde duerme), nada roto.
+- Semana 15–21/09: **19/09** tiene 38 remitos (314 m³, "Pueblos del Plata", Hudson) y los camiones **no salieron de 100 m de la planta** en todo el día: obra pegada a la planta (o bombeada desde ahí). Quedan como "remitos sin viaje" y la pantalla lo explica. Revisar con Bautista.
+- 01–07/09/2025: hay viajes pero no remitos (el sistema se usa desde abril 2026): la historia anterior da uso de flota y tiempos, sin cruce.
+- No se miraron viajes en B-Track a mano (criterio 5): queda para Bautista/arquitecto con el preview.
+
+### Pendiente / para el revisor
+- Clientes muestra una ubicación aprendida como "Ubicada" (sin aclarar que es sugerida); se corrige igual moviendo el pin. No se cambió para no tocar pantallas existentes.
+- El endpoint no tiene secreto (como dice la spec; lo cubre la 0c).
+
+### Pasos para publicar
+1. Aplicar `supabase/migrations/202610052200_fase4a_viajes_gps.sql` en producción (solo agrega la tabla; probada dos veces en `BEGIN … ROLLBACK`: 24 viajes reales, reproceso sin duplicar, índice único, no pisa ubicaciones manuales, FK al remito con `SET NULL`, anon lee). Regenerar `types/database.ts`.
+2. Bautista mira el preview de la rama (`/logistica/tiempos`); antes de cargar, se puede controlar con `/api/gps/reconstruir?fecha=2026-10-02&simular=1`.
+3. Merge a `main` (activa el cron de las 06:00).
+4. Carga histórica: llamar `/api/gps/reconstruir?desde=…&hasta=…` semana por semana desde el 01/09/2025 hasta ayer (≈ 57 llamadas de ~15 s, de a una). **Correrla dos veces** desde abril 2026: la segunda pasada usa las ubicaciones aprendidas en la primera y sube la confianza.
+5. Controlar: `select fecha, count(*), count(dispatch_id), count(*) filter (where confianza='alta') from viajes_gps group by 1 order by 1 desc`, las obras con `gps_source='gps_aprendido'`, y 2 viajes contra B-Track.
