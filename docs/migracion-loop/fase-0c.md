@@ -121,7 +121,7 @@ Permisos iniciales por persona: los de la tabla de arriba, más Titan con Manten
 
 ## 0c-1 · Especificación técnica
 
-Estado: **escrita por el arquitecto el 06/10/2026, falta el OK de Bautista.** Rama `loop/fase-0c-usuarios`. Migración escrita y **sin aplicar**: `supabase/migrations/202610061800_fase0c1_usuarios_permisos.sql`.
+Estado: **escrita por el arquitecto el 06/10/2026; respuestas de Bautista en el punto 18; implementada por el obrero (ver "Hecho"), falta revisor.** Rama `loop/fase-0c-usuarios`. Migración escrita y **sin aplicar**: `supabase/migrations/202610061800_fase0c1_usuarios_permisos.sql`.
 
 ### 1. Objetivo
 - Cada persona entra con **su nombre y su contraseña propia**. Se terminan la contraseña común, el alta libre de usuarios y la contraseña fija de "Ajustar stock".
@@ -698,4 +698,49 @@ No se pudo probar contra una base (acá no hay Postgres local y no se escribe en
 6. **Actividad: solo gerenciales.** Confirmado.
 
 ## Hecho
-_(lo completa la sesión obrero)_
+
+### 0c-1 · Obrero (06/10/2026) — rama `loop/fase-0c-usuarios`, sin push
+
+**Commits**
+1. `docs(migracion-loop): fase 0c-1, especificación y respuestas de Bautista`
+2. `feat(usuarios): … (fase 0c-1, bloque a)`: migración ajustada al punto 18, `lib/permisos.ts`, `lib/auth/*`, rutas `/api/sesion/*` y `/api/usuarios/*`, login nuevo, "Elegí tu contraseña", menú del usuario, pantalla Usuarios, menú filtrado, páginas envueltas en `SeccionProtegida`, mails a `tipo = gerencial`, `npm run test:sesion`.
+3. `feat(permisos): … (fase 0c-1, bloques b y c)`: todos los botones del punto 8 condicionados, motivo obligatorio, Actividad completa, `types/database.ts` regenerado.
+
+**Qué se hizo (resumen)**
+- Login con nombre y contraseña propia; sesión en cookie `rebucret_sesion` (httpOnly, firmada con `SESION_SECRETO`, 30 días, se renueva sola). Primer ingreso de los 7 con la contraseña de siempre, que obliga a elegir una propia. Bloqueo de 10 minutos a los 5 errores. "Cambiar mi contraseña" y "Salir (cambiar de usuario)" en el menú del usuario (abajo a la izquierda y en el círculo de arriba, que ahora muestra las iniciales).
+- La contraseña común quedó solo en `lib/auth/clave.ts` (servidor). Se borraron la del login, el "Agregar nuevo usuario" del login, el "Agregar" del selector Responsable y las dos contraseñas fijas de "Ajustar stock". Se buscó en `.next/static` después del build: no aparecen.
+- Pantalla **Usuarios** (`/usuarios`, solo gerenciales): lista con tipo, "Carga en", "Edita/borra" a mano, estado de la contraseña, último ingreso, bloqueado, interruptor de funciones nuevas; recuadro "Primer ingreso pendiente" con "Cerrar el ingreso con la contraseña común"; diálogo con tipo (3 botones), matriz con marca "a mano" y "Volver a la plantilla", contraseña inicial, blanqueo, baja/reactivar. Actividad deja de tener la tarjeta del interruptor y su filtro "Tipo" sale de un mapa + lo que haya en los datos.
+- `puede()` / `usePermisos()` / `esGerencial()` en `lib/current-user.ts`; `puedeAjustarPedido` en `lib/permisos.ts`. Ningún componente compara `role`. `tipo` solo se compara en el editor de la pantalla Usuarios (sobre la persona que se edita, no sobre la sesión) y en `lib/current-user.ts`.
+- Motivo (`components/motivo.tsx`) en toda edición y borrado del punto 8 y en el recuento. Va a Actividad (`Motivo`), al mail de borrado, a `editar_despacho` (jsonb `motivo`), `ajustar_material_despacho` (`p_motivo`) y `anular_despacho` (`p_motivo`, antes iba `null`).
+
+**Desvíos de la especificación y por qué**
+1. **Acciones que no existen se guardan en `false` también en la base.** `recuentos.ver` queda `false` (4.2 dice "—"; el ejemplo de 4.3 lo mostraba en `true`), y la plantilla gerencial de la migración pasó de "todo `true` en todas las secciones" a "todas las acciones que existen". Así lo guardado es idéntico a `normalizarPermisos` (probado). No cambia nada en pantalla: gerencial puede todo igual.
+2. **`decidirIngreso` recibe también `esComun`** además de `verificar`: así queda pura y sin imports (se prueba con `node --test` sin tocar la contraseña real).
+3. **No hay `lib/supabase/servicio.ts`**: `sbServicio()` reusa `sbAdmin()` de `lib/wialon.ts` (la spec dejaba elegir; no se duplica).
+4. **"Agregar muestra" no pide motivo**: con la respuesta 18.3 pasó a ser `historial.cargar`, y la regla 9 pide motivo solo en editar/borrar. Queda en Actividad igual (muestra, asentamiento, probetas creadas).
+5. **Granulometría pendiente**: completar un ensayo que todavía no tiene resultados (los que nacen del ingreso con "muestra tomada") se hace con `laboratorio.cargar` y sin motivo; corregir uno ya cargado pide `laboratorio.editar` y motivo. Si no, David no podría cargar esos resultados (hoy se cargan con el lápiz).
+6. **Editar un pedido desde el formulario de Semana siempre pide motivo**, también a Felipe con sus propios pedidos (es una edición de algo ya cargado). Los ajustes rápidos de la vista Día (hora, método, 👍, viajes) no piden motivo, como antes.
+7. **Vista Día**: "Ordenar el día" y "Guardar plan del día" solo con `programacion.editar` (18.4: tocan el día entero). Hora/método/👍 se deshabilitan en los pedidos ajenos para quien solo carga. Los tiempos de la planta se pueden seguir tocando para mirar el plan, pero el botón Guardar (con motivo) es de `programacion.editar`.
+8. **Rotura y calibración** sin `laboratorio.cargar`: los campos de la fila quedan deshabilitados y el botón "Calibración" no aparece (antes se podía abrir para mirar las constantes).
+9. **Camiones › Dar de baja**: el botón de la papelera no abría nada (el diálogo nunca se dibujaba). Ahora abre la confirmación con motivo y funciona. Las bajas de clientes/obras/camiones dejaron la doble confirmación y pasaron a una sola con motivo.
+10. **Cancelar OT**: el motivo se guarda en las observaciones de la orden (`Cancelada: …`) y en Actividad.
+11. **Responsable**: en Semana ya no hay selector (el pedido lo carga la persona en sesión, 18.4). En el despacho manual queda el selector "Responsable", sin "Agregar" y con la persona en sesión por defecto.
+12. **Rutas de Usuarios** (`/api/usuarios*`) además de gerencial piden que la persona ya haya elegido su contraseña. Cambiar el tipo mantiene `role` coherente (gerencial → `supervisor`, resto → `operario`).
+13. El modo de prueba local también vale para `GET /api/usuarios` (para ver la pantalla Usuarios sin grabar).
+
+**Cómo se probó**
+- `npm run test:sesion`: 20 pruebas OK (plantillas, gerencial puede todo, usuarios no se habilita por persona, basura normalizada, `puedeAjustarPedido`, hash/verificación, formatos inválidos, validación de la nueva, token firmado/adulterado/vencido/sin secreto, los 7 casos de `decidirIngreso` + bloqueo a los 5 + "con la suya, la común no vale").
+- Migración en producción **dos veces dentro de un `BEGIN … ROLLBACK`** (script en el scratchpad, `probar-migracion.mjs`): los 7 con el tipo y los permisos de 4.5 + 18 (Titan con `clientes.cargar` y sin `programacion.borrar`; los operarios con `historial.cargar`); lo guardado ya normalizado; los avisos del final iguales en las dos corridas; 7 credenciales con primer ingreso pendiente; `anon` y `authenticated` reciben "permission denied" en `app_user_credenciales`; `editar_despacho` sin motivo da el mismo resultado, la misma Actividad y los mismos 6 movimientos de stock que la función de producción, y con motivo deja "Motivo" en Actividad y en la nota del movimiento; `ajustar_material_despacho` con los 5 parámetros con nombre de main da lo mismo que producción y con `p_motivo` deja "Motivo"; queda una sola firma; un alta como la del login viejo queda `consulta`; el índice frena nombres repetidos. Después del ROLLBACK se verificó que producción quedó igual (sin columnas nuevas, sin tabla, firma vieja). **Nada se aplicó.**
+- `tsc --noEmit`: 17 errores, todos viejos (había 18: se arregló el de `transferir` en `ActivityAction`). Ninguno nuevo en los archivos tocados.
+- `next build --webpack` (con variables de relleno): OK. En `.next/static` no aparecen la contraseña común, las de "Ajustar stock", `scrypt` ni el secreto.
+- Revisión a mano archivo por archivo de la lista del punto 8.
+- **No se probó en pantalla** (no se usa el navegador en esta sesión) ni el modo de prueba local: antes de aplicar la migración las columnas `tipo`/`permisos` no existen y `GET /api/sesion` no tiene qué leer.
+
+**Para el día de la publicación**
+1. Bautista carga `SESION_SECRETO` (48+ caracteres) en Vercel, Production y Preview, y confirma `SUPABASE_SERVICE_ROLE_KEY` en Preview.
+2. La sesión principal aplica la migración avisándole a Bautista. **Tiene que estar aplicada antes del merge**: el front nuevo lee `tipo`/`permisos`/credenciales y manda `p_motivo` a `ajustar_material_despacho` (main sigue andando igual con la migración aplicada; probado).
+3. Con la migración aplicada: capturas con el modo de prueba local (`SESION_LOCAL_COMO`) como Bautista, Titan, Felipe, Braian y Joaquín, y regenerar tipos si cambió algo.
+4. Preview: los pasos de 14.4 (Bautista elige su contraseña, alta de David como Operario + Laboratorio, "Ajustar" sin contraseña y con motivo, sin grabar datos de prueba).
+5. Merge al final del día; al abrir, todos ven el login (el caché viejo no vale como sesión) y entran con la de siempre la primera vez. Mensaje al grupo de 14.5.
+6. A la semana (o cuando estén todos): "Cerrar el ingreso con la contraseña común".
+
