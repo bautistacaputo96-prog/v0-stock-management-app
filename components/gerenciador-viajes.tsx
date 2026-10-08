@@ -10,6 +10,9 @@
  * Solo se muestra a los usuarios con el interruptor de funciones nuevas.
  * Fase 0c-1: sin permiso para ajustar el pedido (programacion.editar, o cargar y el pedido es propio) se
  * abre en solo lectura.
+ * Tiempos reales del GPS: la propuesta, "Agregar viaje" y el cambio de m³ usan la ida y la descarga reales de la
+ * obra y el tiempo en planta real (docs/migracion-loop/tiempos-gps-programacion.md); arriba se dice de dónde sale
+ * cada número.
  */
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -27,7 +30,9 @@ import { cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maes
 import {
   generarViajes, correrPendientes, ajustarAHora, agregarViaje, quitarViaje, cambiarM3, m3Faltantes, m3Entregados, ordenarPorN,
   guardarViajes, totalViajes, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, type PedidoParaViajes, type ViajeRow,
+  parametrosConGps, conTiemposGps, tiemposDelPedido, textoTiempos, textoDescargaObra, m3ParaSugerir,
 } from "@/lib/viajes"
+import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -58,7 +63,10 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const { ajustaPedido } = usePermisos()
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
+  // prm = los de la planta con lo real del GPS; prmBase = los guardados en la planta (para decir de dónde sale cada número)
   const [prm, setPrm] = useState<Parametros>(PARAMETROS_BASE)
+  const [prmBase, setPrmBase] = useState<Parametros>(PARAMETROS_BASE)
+  const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [empresas, setEmpresas] = useState<EmpresaBombeo[]>([])
   const [original, setOriginal] = useState<ViajeRow[]>([])
@@ -77,16 +85,20 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
       const sb = createClient()
       const ini = new Date(pedido.scheduled_arrival_time); ini.setHours(0, 0, 0, 0)
       const fin = new Date(ini.getTime() + 24 * 60 * MIN)
-      const [{ data: pl }, { data: ms }, { data: vs, error }, emps, { data: ot }] = await Promise.all([
+      const [{ data: pl }, { data: ms }, { data: vs, error }, emps, { data: ot }, tg] = await Promise.all([
         sb.from("plants").select("*").eq("id", pedido.plant_id).maybeSingle(),
         sb.from("mixers").select("id, license_plate").eq("active", true).order("license_plate"),
         sb.from("viajes").select("*").eq("pedido_id", pedido.id).order("n"),
         cargarEmpresasBombeo(sb),
         sb.from("viajes").select("*, scheduled_dispatches(construction_sites(name))").neq("pedido_id", pedido.id).neq("estado", "cancelado")
           .gte("hora_carga", new Date(ini.getTime() - 6 * 60 * MIN).toISOString()).lt("hora_carga", fin.toISOString()),
+        cargarTiemposGps(sb),
       ])
       if (!vivo) return
-      const p = parametrosDePlanta(pl as any)
+      const base = parametrosDePlanta(pl as any)
+      const p = parametrosConGps(base, pedido.plant_id, tg)
+      setPrmBase(base)
+      setTiempos(tg)
       const existentes = error ? [] : ((vs as ViajeRow[]) || []).map((v) => ({ ...v, m3: Number(v.m3) }))
       setPrm(p)
       setMixers((ms as any) || [])
@@ -95,7 +107,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
       setOriginal(existentes)
       setM3Texto({})
       if (existentes.length === 0 && pedido.status !== "completed" && pedido.status !== "cancelled") {
-        setViajes(generarViajes(pedido, p, []))
+        setViajes(generarViajes(conTiemposGps(pedido, p, tg), p, []))
         setSinGuardar(true)
       } else {
         setViajes(existentes)
@@ -124,7 +136,12 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const choques = useMemo(() => choquesDeCamion(todosDelDia), [todosDelDia])
   const obraDe = (v: ViajeRow) => (v.pedido_id === pedido?.id ? `${pedido?.construction_sites?.name || "esta obra"} (viaje ${v.n})` : (v as any).obra || "otra obra")
   const choquesPendientes = viajes.filter((v) => v.estado === "planificado" && choques.has(claveViaje(v)))
-  const flota = pedido ? explicarFlota(pedido, prm, total) : null
+  // El pedido con la ida y la descarga reales de su obra (lo del pedido gana siempre)
+  const ped = useMemo(() => (pedido ? conTiemposGps(pedido, prm, tiempos) : null), [pedido, prm, tiempos])
+  const td = useMemo(() => (pedido ? tiemposDelPedido(pedido, prmBase, tiempos) : null), [pedido, prmBase, tiempos])
+  const flota = ped ? explicarFlota(ped, prm, total) : null
+  const descObra = td ? textoDescargaObra(td) : null
+  const sugM3 = td && pedido ? m3ParaSugerir(td, pedido.m3_por_viaje) : null
 
   // Escala horaria del Gantt
   const t0 = ordenados.length ? Math.floor(Math.min(...ordenados.map((v) => new Date(v.hora_carga).getTime())) / (60 * MIN)) * 60 * MIN : 0
@@ -185,7 +202,10 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                   <span>· llegada pedida {hh(pedido.scheduled_arrival_time)}</span>
                   <span className="font-medium text-foreground">· entregado {enviadoPedido.toLocaleString("es-AR")} / {Number(pedido.quantity_m3).toLocaleString("es-AR")} m³</span>
                 </p>
-                {flota && total > 0 && <p className="text-xs">{flota.texto}{Number(pedido.descarga_min) > 0 ? " (descarga corregida en el pedido)" : ""}</p>}
+                {flota && total > 0 && <p className="text-xs">{flota.texto}</p>}
+                {td && <p className="text-xs">Tiempos: {textoTiempos(td)}</p>}
+                {descObra && <p className="text-xs">{descObra}</p>}
+                {sugM3 && <p className="text-xs text-violet-700">Esta obra suele llevar {sugM3.m3.toLocaleString("es-AR")} m³ por camión ({sugM3.viajes} viajes, de {sugM3.desde.toLocaleString("es-AR")} a {sugM3.hasta.toLocaleString("es-AR")}). Se cambia en el pedido (m³ por camión).</p>}
               </div>
             </DialogDescription>
           )}
@@ -204,7 +224,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
             )}
             {sinGuardar && !soloLectura && (
               <p className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2">
-                Este pedido todavía no tiene viajes guardados. Esta es la propuesta con los tiempos de la planta: revisala y tocá Guardar.
+                Este pedido todavía no tiene viajes guardados. Esta es la propuesta con los tiempos reales del GPS (o los de la planta, si no hay datos): revisala y tocá Guardar.
               </p>
             )}
             {!soloLectura && (
@@ -215,7 +235,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
               <Button size="sm" variant="outline" className="gap-1" disabled={!hayPendientes} onClick={() => setViajes((vs) => ajustarAHora(vs, new Date()))} title="El próximo viaje pendiente carga ahora y los demás se corren lo mismo">
                 <Clock className="h-3.5 w-3.5" />Ajustar a la hora actual
               </Button>
-              <Button size="sm" variant="outline" className="gap-1" onClick={() => setViajes((vs) => agregarViaje(vs, pedido, prm))}>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => setViajes((vs) => agregarViaje(vs, ped || pedido, prm))}>
                 <Plus className="h-3.5 w-3.5" />{faltan > 0.01 ? `Agregar viaje faltante (${faltan} m³)` : "Agregar viaje"}
               </Button>
               {faltan < -0.01 && <span className="text-xs text-amber-700">Sobran {Math.abs(faltan)} m³ planificados: quitá un viaje o bajá los m³.</span>}
@@ -267,7 +287,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                                 const t = e.target.value
                                 setM3Texto((m) => ({ ...m, [v.n]: t }))
                                 const x = Number(t.replace(",", "."))
-                                if (x > 0) setViajes((vs) => cambiarM3(vs, v.n, x, pedido, prm))
+                                if (x > 0) setViajes((vs) => cambiarM3(vs, v.n, x, ped || pedido, prm))
                               }}
                               className={cn("h-8 w-20", m3Invalidos.includes(v.n) && "border-red-500 focus-visible:ring-red-500")}
                             />

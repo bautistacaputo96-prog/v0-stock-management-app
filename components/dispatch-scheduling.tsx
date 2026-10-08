@@ -32,6 +32,9 @@ import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
 import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, descarga8De, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
+// Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
+import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoDescargaObra, m3ParaSugerir, type FuenteTiempo } from "@/lib/viajes"
+import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 
 type Plant = { id: string; name: string }
@@ -228,6 +231,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [ubicObra, setUbicObra] = useState<UbicacionObra>(UBIC_VACIA)
   const [ruta, setRuta] = useState<{ km: number | null; minutos: number | null; planta: string } | null>(null)
   const [viajeTocado, setViajeTocado] = useState(false)
+  // De dónde salen los minutos de viaje escritos en el formulario: a mano, de la ruta del mapa o ya guardados
+  const [viajeOrigen, setViajeOrigen] = useState<"a_mano" | "ruta" | "pedido" | null>(null)
+  // Tiempos reales del GPS (solo con el interruptor; null = los de la planta)
+  const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
   const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
 
   const [form, setForm] = useState({
@@ -308,10 +315,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setLoading(false)
     // Fase 2: viajes de la semana y tiempos de cada planta (solo con el interruptor)
     if (ve) {
-      const [vs, { data: pls }] = await Promise.all([
+      const [vs, { data: pls }, tg] = await Promise.all([
         cargarViajes(supabase, (dispatchesRes.data || []).map((d: any) => d.id)),
         supabase.from("plants").select("*"),
+        cargarTiemposGps(supabase),
       ])
+      setTiempos(tg)
       setViajesPorPedido(vs)
       setParamsPorPlanta(Object.fromEntries(((pls as any[]) || []).map((pl) => [pl.id, parametrosDePlanta(pl)])))
       setPlantasGps(Object.fromEntries(((pls as any[]) || []).map((pl) => [pl.id, { name: pl.name, lat: pl.gps_lat != null ? Number(pl.gps_lat) : null, lng: pl.gps_lng != null ? Number(pl.gps_lng) : null }])))
@@ -322,15 +331,29 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const selectedSite = selectedClient?.construction_sites?.find((s) => s.id === form.construction_site_id)
 
   // Fase 2: "Empieza a cargar a las…" y choque en la boca de carga con otro pedido de la misma planta
+  /** Parámetros de una planta con lo real del GPS (descarga y espera en planta) */
+  const prmGps = (plantaId: string) => (paramsPorPlanta[plantaId] ? parametrosConGps(paramsPorPlanta[plantaId], plantaId, tiempos) : undefined)
+  // Qué tiempos usaría el motor sin nada escrito en el pedido, y de dónde salen (placeholders y "Se usa")
+  const tiemposAuto = useMemo(() => {
+    if (!ve || !isDialogOpen || !form.plant_id || !paramsPorPlanta[form.plant_id]) return null
+    return tiemposDelPedido({
+      id: editingDispatch?.id || "nuevo", plant_id: form.plant_id, construction_site_id: form.construction_site_id || null, quantity_m3: 0,
+      scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null,
+      construction_sites: selectedSite ? { travel_time_minutes: selectedSite.travel_time_minutes, requires_pump: selectedSite.requires_pump } : null,
+    }, paramsPorPlanta[form.plant_id], tiempos)
+  }, [ve, isDialogOpen, form.plant_id, form.construction_site_id, form.metodo_descarga, paramsPorPlanta, tiempos, selectedSite, editingDispatch])
+  const idaGps = tiemposAuto?.viaje.fuente === "gps_obra" ? tiemposAuto.viaje : null
+  const idaGpsMin = idaGps ? idaGps.min : null // para los efectos (un número, no un objeto nuevo en cada cálculo)
+
   const sugerencia = useMemo(() => {
     if (!ve || !isDialogOpen || !form.plant_id || !form.arrival_date || !form.arrival_time || !form.metodo_descarga) return null
-    const prm = paramsPorPlanta[form.plant_id]
+    const prm = prmGps(form.plant_id)
     const m3 = parseFloat(form.quantity_m3)
     if (!prm || !(m3 > 0)) return null
     const llegada = new Date(`${form.arrival_date}T${form.arrival_time}:00`)
     if (isNaN(llegada.getTime())) return null
     const base: PedidoParaViajes = {
-      id: editingDispatch?.id || "nuevo", plant_id: form.plant_id, quantity_m3: m3,
+      id: editingDispatch?.id || "nuevo", plant_id: form.plant_id, construction_site_id: form.construction_site_id || null, quantity_m3: m3,
       dispatched_m3: editingDispatch?.dispatched_m3 ?? 0, scheduled_arrival_time: llegada.toISOString(),
       metodo_descarga: form.metodo_descarga, m3_por_viaje: parseFloat(form.m3_por_viaje) || 8,
       espaciado_min: parseInt(form.espaciado_min) || null,
@@ -338,24 +361,32 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       construction_sites: selectedSite ? { travel_time_minutes: selectedSite.travel_time_minutes, requires_pump: selectedSite.requires_pump } : null,
     }
     const existentes = editingDispatch ? viajesPorPedido[editingDispatch.id] || [] : []
-    const armar = (d: Date) => generarViajes({ ...base, scheduled_arrival_time: d.toISOString() }, prm, existentes)
+    const conGps = conTiemposGps(base, prm, tiempos)
+    const armar = (d: Date) => generarViajes({ ...conGps, scheduled_arrival_time: d.toISOString() }, prm, existentes)
     const otros: OtroPedido[] = dispatches
       .filter((d) => d.plant_id === form.plant_id && d.id !== editingDispatch?.id && d.status !== "cancelled" && d.status !== "completed" && isSameDay(parseISO(d.scheduled_arrival_time), llegada))
       .map((d) => ({
         id: d.id,
         obra: d.construction_sites?.name || d.clients?.name || "otro pedido",
-        viajes: viajesPorPedido[d.id]?.length ? viajesPorPedido[d.id].filter((v) => v.estado !== "cancelado") : generarViajes(d as unknown as PedidoParaViajes, paramsPorPlanta[d.plant_id] || prm, []),
+        viajes: viajesPorPedido[d.id]?.length ? viajesPorPedido[d.id].filter((v) => v.estado !== "cancelado") : generarViajes(conTiemposGps(d as unknown as PedidoParaViajes, prmGps(d.plant_id) || prm, tiempos), prmGps(d.plant_id) || prm, []),
       }))
     const vs = armar(llegada)
     if (!vs.length) return null
     const choque = chocaEnBoca(vs, otros, prm)
     return { carga: vs[0].hora_carga, viajes: vs.length, choque, sug: choque ? horariosSinChoque(llegada, armar, otros, prm) : null }
-  }, [ve, isDialogOpen, form, paramsPorPlanta, editingDispatch, viajesPorPedido, dispatches, selectedSite])
+  }, [ve, isDialogOpen, form, paramsPorPlanta, editingDispatch, viajesPorPedido, dispatches, selectedSite, tiempos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fase 2b: obra ubicada (en la base o recién marcada en el formulario) → viaje real desde la planta del pedido
   const obraLat = ubicObra.lat ?? (selectedSite?.gps_lat != null ? Number(selectedSite.gps_lat) : null)
   const obraLng = ubicObra.lng ?? (selectedSite?.gps_lng != null ? Number(selectedSite.gps_lng) : null)
   useEffect(() => { setUbicObra(UBIC_VACIA) }, [form.construction_site_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Tiempos reales: si la obra tiene ida real desde esta planta, la ruta del mapa no se escribe en el pedido
+  // (y si se había escrito sola, se saca). Lo escrito a mano o ya guardado no se toca.
+  useEffect(() => {
+    if (!ve || !isDialogOpen || viajeTocado || viajeOrigen !== "ruta" || idaGpsMin == null) return
+    setForm((f) => ({ ...f, viaje_min: "" }))
+    setViajeOrigen(null)
+  }, [ve, isDialogOpen, idaGpsMin, viajeTocado, viajeOrigen])
   useEffect(() => {
     if (!ve || !isDialogOpen || obraLat == null || obraLng == null) { setRuta(null); return }
     const pl = plantasGps[form.plant_id]
@@ -366,12 +397,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       .then((d) => {
         if (!vivo) return
         setRuta({ km: d.km ?? null, minutos: d.minutos ?? null, planta: pl.name })
-        // Se propone en el pedido, salvo que ya se haya escrito a mano
-        if (d.minutos && !viajeTocado) setForm((f) => ({ ...f, viaje_min: String(d.minutos) }))
+        // Se propone en el pedido, salvo que ya se haya escrito a mano o que la obra tenga ida real del GPS
+        if (d.minutos && !viajeTocado && idaGpsMin == null) { setForm((f) => ({ ...f, viaje_min: String(d.minutos) })); setViajeOrigen("ruta") }
       })
       .catch(() => vivo && setRuta(null))
     return () => { vivo = false }
-  }, [ve, isDialogOpen, form.plant_id, obraLat, obraLng, plantasGps]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ve, isDialogOpen, form.plant_id, obraLat, obraLng, plantasGps, idaGpsMin]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function usarLlegada(d: Date) {
     const h = format(d, "HH:mm")
@@ -415,6 +446,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       descarga_min: "",
     })
     setViajeTocado(false)
+    setViajeOrigen(null)
     setEditingDispatch(null)
     setCuitPrompt("")
     setIsDialogOpen(true)
@@ -449,6 +481,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     })
     // Si el pedido ya tenía un viaje cargado, la ruta no lo pisa
     setViajeTocado(dispatch.viaje_min != null)
+    setViajeOrigen(dispatch.viaje_min != null ? "pedido" : null)
     setEditingDispatch(dispatch)
     setCuitPrompt("")
     setIsDialogOpen(true)
@@ -490,7 +523,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       // Convertir hora local del browser a UTC para guardar con timezone correcta
       const arrivalTime = new Date(`${form.arrival_date}T${form.arrival_time}:00`).toISOString()
       const viajeMin = ve ? parseInt(form.viaje_min) || null : null
-      const departureTime = viajeMin ? addMinutes(parseISO(arrivalTime), -viajeMin).toISOString() : calculateDepartureTime(arrivalTime, selectedSite)
+      // Sin minutos en el pedido, la ida real del GPS de la obra (con el interruptor)
+      const viajeSalida = viajeMin || (ve && idaGps ? idaGps.min : null)
+      const departureTime = viajeSalida ? addMinutes(parseISO(arrivalTime), -viajeSalida).toISOString() : calculateDepartureTime(arrivalTime, selectedSite)
       // Fase 2b: si se ubicó la obra en el formulario, se guarda en la obra (igual que en Clientes)
       if (ve && selectedSite && ubicObra.lat != null && ubicObra.lng != null) {
         const ubic = { gps_lat: ubicObra.lat, gps_lng: ubicObra.lng, gps_source: ubicObra.fuente, travel_distance_km: ubicObra.km, gps_updated_at: new Date().toISOString() }
@@ -1106,19 +1141,43 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                       ? <>Viaje estimado desde {ruta.planta}: <strong>{ruta.km} km · {ruta.minutos} min</strong></>
                       : ruta === null && plantasGps[form.plant_id]?.lat == null ? "La planta no tiene ubicación cargada para calcular el viaje" : "Calculando el viaje..."}
                     {selectedSite.gps_lat != null && <NuevoBadge />}
+                    {idaGps && <span className="text-xs text-violet-700">· real GPS: {idaGps.min} min ({idaGps.viajes} viajes), se usa ese</span>}
                   </p>
                 )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Minutos de viaje de este pedido</Label>
-                    <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setForm({ ...form, viaje_min: e.target.value }) }} placeholder={`${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
+                    <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setViajeOrigen("a_mano"); setForm({ ...form, viaje_min: e.target.value }) }}
+                      placeholder={tiemposAuto ? `${tiemposAuto.viaje.min} (${textoFuente(tiemposAuto.viaje)})` : `${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
+                    {tiemposAuto && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Se usa: {parseInt(form.viaje_min) > 0
+                          ? `${parseInt(form.viaje_min)} min · ${textoFuente({ fuente: (viajeOrigen || "a_mano") as FuenteTiempo })}`
+                          : `${tiemposAuto.viaje.min} min · ${textoFuente(tiemposAuto.viaje)}`}
+                        {parseInt(form.viaje_min) > 0 && idaGps && parseInt(form.viaje_min) !== idaGps.min ? ` (real GPS: ${idaGps.min} min, ${idaGps.viajes} viajes)` : ""}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Descarga por camión de 8 m³ (min)</Label>
                     <Input type="number" min="1" className="bg-background" value={form.descarga_min} onChange={(e) => setForm({ ...form, descarga_min: e.target.value })}
-                      placeholder={form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
+                      placeholder={tiemposAuto ? `${tiemposAuto.descarga.min} (${tiemposAuto.descarga.fuente === "planta" ? "la de la planta" : textoFuente(tiemposAuto.descarga)})`
+                        : form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
+                    {tiemposAuto && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Se usa: {parseInt(form.descarga_min) > 0 ? `${parseInt(form.descarga_min)} min · cargado a mano` : `${tiemposAuto.descarga.min} min · ${textoFuente(tiemposAuto.descarga)}`}
+                      </p>
+                    )}
                   </div>
                 </div>
+                {tiemposAuto && !(parseInt(form.descarga_min) > 0) && textoDescargaObra(tiemposAuto) && (
+                  <p className="text-xs text-violet-800">{textoDescargaObra(tiemposAuto)}.</p>
+                )}
+                {tiemposAuto?.enPlanta.fuente === "gps_planta" && (
+                  <p className="text-xs text-muted-foreground">
+                    Tiempo en planta real ({textoFuente(tiemposAuto.enPlanta)}): {tiemposAuto.enPlanta.min} min = carga {tiemposAuto.enPlanta.carga} + espera {tiemposAuto.enPlanta.espera} antes de volver a cargar.
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">El viaje depende de la planta que despacha. La descarga es el dato que marca el ritmo de los camiones: corregila si la obra es más lenta o más rápida.</p>
               </div>
             )}
@@ -1235,6 +1294,16 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     <Input type="number" min="1" className="bg-background" value={form.espaciado_min} onChange={(e) => setForm({ ...form, espaciado_min: e.target.value })} placeholder="Lo que tarda en descargar" />
                   </div>
                 </div>
+                {(() => {
+                  // Tiempos reales: m³ por camión habituales de la obra (si tiene un patrón claro y es distinto)
+                  const sug = tiemposAuto ? m3ParaSugerir(tiemposAuto, parseFloat(form.m3_por_viaje)) : null
+                  return sug ? (
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-violet-800">
+                      <span>Esta obra suele llevar <strong>{sug.m3.toLocaleString("es-AR")} m³ por camión</strong> ({sug.viajes} viajes, de {sug.desde.toLocaleString("es-AR")} a {sug.hasta.toLocaleString("es-AR")}).</span>
+                      <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" disabled={soloLectura} onClick={() => setForm({ ...form, m3_por_viaje: String(sug.m3) })}>Usar {sug.m3.toLocaleString("es-AR")} m³</Button>
+                    </div>
+                  ) : null
+                })()}
                 <p className="text-xs text-muted-foreground">Al guardar se arman los viajes. El último camión lleva el resto. Los viajes no tocan stock.</p>
               </div>
             )}

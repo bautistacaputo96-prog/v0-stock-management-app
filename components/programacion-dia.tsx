@@ -32,6 +32,9 @@ import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import { type Ocupado } from "@/lib/planificador"
+// Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
+import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
+import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -59,6 +62,9 @@ type PedidoDB = {
   mixer_id?: string | null
   viaje_min?: number | null // fase 2b
   descarga_min?: number | null
+  construction_site_id?: string | null
+  viaje_min_gps?: number | null // tiempos reales del GPS (no son columnas, ver conTiemposGps)
+  descarga_min_gps?: number | null
   clients: { name: string } | null
   construction_sites: { id: string; name: string; travel_time_minutes: number | null; gps_lat: number | null; requires_pump: boolean | null } | null
   formulas: { code: string } | null
@@ -83,6 +89,7 @@ const ETIQUETAS: Record<keyof Parametros, string> = {
   finJornada: "Fin de jornada",
   toleranciaMin: "Tolerancia de puntualidad (min)",
   bocasCarga: "Bocas de carga",
+  esperaPlantaMin: "Espera en planta (min)", // sale del GPS: no se edita ni se guarda
 }
 
 export function ProgramacionDia({ plants }: { plants: Plant[] }) {
@@ -119,6 +126,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const [confirmando, setConfirmando] = useState<string | null>(null)
   // Fase 2b: viajes del mismo día de otros pedidos (la otra planta): sus camiones están ocupados
   const [otrosViajes, setOtrosViajes] = useState<(ViajeRow & { obra?: string })[]>([])
+  // Tiempos reales del GPS (solo con el interruptor; null = los de la planta)
+  const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
 
   // Tiempos de la planta elegida (en la base, no en el navegador)
   const cargarTiempos = useCallback(async () => {
@@ -186,11 +195,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     setPropuesta(null)
     if (ve) {
       const ids = ((ps as any) || []).map((p: PedidoDB) => p.id)
-      const [vs, { data: ot }] = await Promise.all([
+      const [vs, { data: ot }, tg] = await Promise.all([
         cargarViajes(sb, ids),
         sb.from("viajes").select("*, scheduled_dispatches(construction_sites(name))").neq("estado", "cancelado")
           .gte("hora_carga", new Date(ini.getTime() - 6 * 3600000).toISOString()).lt("hora_carga", fin.toISOString()),
+        cargarTiemposGps(sb),
       ])
+      setTiempos(tg)
       setViajesPorPedido(vs)
       setOtrosViajes(((ot as any[]) || []).filter((v) => !ids.includes(v.pedido_id)).map((v) => ({ ...v, m3: Number(v.m3), obra: v.scheduled_dispatches?.construction_sites?.name || "otra obra" })))
     }
@@ -213,9 +224,18 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
 
   const horaDe = (p: PedidoDB) => horas[p.id] ?? format(new Date(p.scheduled_arrival_time), "HH:mm")
 
+  // Con el interruptor, el motor usa los tiempos reales del GPS: los de la planta (descarga, espera en planta) y
+  // los de cada obra (ida, descarga). Los campos de "Tiempos y camiones" siguen siendo los guardados en la planta.
+  const prmEf = useMemo(() => (ve ? parametrosConGps(prm, planta, tiempos) : prm), [ve, prm, planta, tiempos])
+  const pedidosEf = useMemo(
+    () => (ve ? pedidos.map((p) => conTiemposGps(p as unknown as PedidoParaViajes, prmEf, tiempos) as unknown as PedidoDB) : pedidos),
+    [ve, pedidos, prmEf, tiempos],
+  )
+  const gpsPlanta = ve && tiempos ? tiempos.plantas[planta] || null : null
+
   // Solo lo que falta despachar entra al plan
   const plan = useMemo(() => {
-    const entradas: PedidoPlan[] = pedidos
+    const entradas: PedidoPlan[] = pedidosEf
       .filter((p) => simular || p.status !== "completed")
       .map((p) => ({
         id: p.id,
@@ -226,7 +246,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
         viajeMin: ve ? viajeMinDe(p as unknown as PedidoParaViajes) : p.construction_sites?.travel_time_minutes || 30,
         conBomba: (p.metodo_descarga || (p.construction_sites?.requires_pump ? "bomba" : "directo")) === "bomba",
         // Fase 2b (con el interruptor): descarga, m³ por camión y espaciado del pedido
-        ...(ve ? { descargaMin: Number(p.descarga_min) > 0 ? Number(p.descarga_min) : null, m3PorViaje: m3PorViajeDe(p as unknown as PedidoParaViajes), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null } : {}),
+        ...(ve ? { descargaMin: descargaPropiaDe(p as unknown as PedidoParaViajes), m3PorViaje: m3PorViajeDe(p as unknown as PedidoParaViajes), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null } : {}),
       }))
       .filter((p) => p.m3 > 0.01)
     const cams = mixers.filter((m) => disponibles.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
@@ -236,8 +256,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     const ocupados: Ocupado[] = ve
       ? otrosViajes.filter((v) => v.mixer_id).map((v) => ({ camionId: v.mixer_id!, desde: (new Date(v.hora_carga).getTime() - base) / 60000, hasta: (new Date(v.hora_vuelta).getTime() - base) / 60000 }))
       : []
-    return planificar(entradas, cams, prm, ocupados)
-  }, [pedidos, mixers, disponibles, prm, horas, simular, ve, otrosViajes, dia]) // eslint-disable-line react-hooks/exhaustive-deps
+    return planificar(entradas, cams, prmEf, ocupados)
+  }, [pedidosEf, mixers, disponibles, prmEf, horas, simular, ve, otrosViajes, dia]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const colorDe = (pedidoId: string) => COLORES[Math.max(0, pedidos.findIndex((p) => p.id === pedidoId)) % COLORES.length]
 
@@ -286,7 +306,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
 
   /** "Ordenar el día": planificar() con todos los pedidos; se muestra y recién se guarda con "Guardar plan del día". */
   function ordenarDia() {
-    const { filas } = planDelDia(pedidos as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prm, otrosViajes)
+    const { filas } = planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes)
     setPropuesta(filas)
     if (!Object.keys(filas).length) toast({ title: "No hay nada para ordenar", description: "Los pedidos del día ya están despachados o no hay camiones disponibles." })
   }
@@ -331,12 +351,12 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   // Demanda: con los viajes guardados (o los ideales a la hora pedida, si el pedido no tiene)
   const demanda = useMemo(() => {
     if (!ve) return []
-    const vs = activos.flatMap((p) => {
+    const vs = pedidosEf.filter((p) => p.status !== "completed").flatMap((p) => {
       const g = viajesPorPedido[p.id]
-      return g?.length ? g.filter((v) => v.estado === "planificado") : generarViajes(p as unknown as PedidoParaViajes, prm, [])
+      return g?.length ? g.filter((v) => v.estado === "planificado") : generarViajes(p as unknown as PedidoParaViajes, prmEf, [])
     })
     return demandaPorMediaHora(vs, dia)
-  }, [ve, activos, viajesPorPedido, prm, dia]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ve, pedidosEf, viajesPorPedido, prmEf, dia]) // eslint-disable-line react-hooks/exhaustive-deps
   // +1 de aire arriba para que la línea de disponibles no quede pegada al borde
   const maxDemanda = Math.max(1, disponibles.length, ...demanda.map((d) => d.camiones)) + 1
 
@@ -353,8 +373,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
 
   const ultimaVuelta = plan?.viajes.length ? Math.max(...plan.viajes.map((v) => v.vuelta)) : null
   // Fase 2b: plan por pedido con los camiones que hay (para "con N camiones termina…") y choques de camión
-  const planVe = useMemo(() => (ve ? planDelDia(pedidos as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prm, otrosViajes) : null),
-    [ve, pedidos, viajesPorPedido, disponibles, mixers, prm, otrosViajes]) // eslint-disable-line react-hooks/exhaustive-deps
+  const planVe = useMemo(() => (ve ? planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes) : null),
+    [ve, pedidosEf, viajesPorPedido, disponibles, mixers, prmEf, otrosViajes]) // eslint-disable-line react-hooks/exhaustive-deps
   const todosDelDia = useMemo(() => [...Object.values(viajesPorPedido).flat().filter((v) => v.estado !== "cancelado"), ...otrosViajes], [viajesPorPedido, otrosViajes])
   const choques = useMemo(() => (ve ? choquesDeCamion(todosDelDia) : new Map()), [ve, todosDelDia])
   const obraDeViaje = (v: ViajeRow) => (v as any).obra || pedidos.find((x) => x.id === v.pedido_id)?.construction_sites?.name || "otra obra"
@@ -415,7 +435,9 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
             </div>
             <div>
               <p className="text-sm font-medium mb-2">
-                Tiempos de {plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">(valores de referencia hasta medirlos con el GPS; se guardan en la planta)</span>
+                Tiempos de {plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">{ve
+                  ? "(se guardan en la planta; si hay datos del GPS, los viajes usan el real y estos quedan de respaldo)"
+                  : "(valores de referencia hasta medirlos con el GPS; se guardan en la planta)"}</span>
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {CAMPOS_TIEMPO.map(([k, l]) => (
@@ -425,9 +447,30 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                       <Input type="number" min={1} value={prm[k]} onChange={(e) => setPrm({ ...prm, [k]: Math.max(1, Number(e.target.value) || 1) })} className="h-8 w-20" />
                       <span className="text-muted-foreground">min</span>
                     </div>
+                    {/* Tiempos reales del GPS (con el interruptor): lo que usan los viajes */}
+                    {gpsPlanta && k === "descargaDirectaMin" && gpsPlanta.directo && (
+                      <span className="block text-violet-700">Real GPS: {prmEf.descargaDirectaMin} min · {gpsPlanta.directo.viajes} viajes · se usa en los viajes</span>
+                    )}
+                    {gpsPlanta && k === "descargaBombaMin" && gpsPlanta.bomba && (
+                      <span className="block text-violet-700">Real GPS: {prmEf.descargaBombaMin} min · {gpsPlanta.bomba.viajes} viajes · se usa en los viajes</span>
+                    )}
+                    {gpsPlanta && k === "cargaMin" && gpsPlanta.enPlanta && (
+                      <span className="block text-violet-700">En planta real: {gpsPlanta.enPlanta.min} min ({gpsPlanta.enPlanta.viajes} viajes)</span>
+                    )}
                   </label>
                 ))}
               </div>
+              {gpsPlanta && (gpsPlanta.enPlanta || gpsPlanta.directo || gpsPlanta.bomba) && (
+                <div className="mt-2 rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-0.5">
+                  <p className="font-medium flex items-center gap-1.5">Tiempos reales del GPS (últimos 90 días) <NuevoBadge /></p>
+                  {gpsPlanta.enPlanta && (
+                    <p>En planta, de que llega a que sale: <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca) + espera {prmEf.esperaPlantaMin || 0} antes de volver a cargar (no ocupa la boca).</p>
+                  )}
+                  {gpsPlanta.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³ (con el lavado) → descarga de 8 m³ {prmEf.descargaDirectaMin} min.</p>}
+                  {gpsPlanta.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ → descarga de 8 m³ {prmEf.descargaBombaMin} min.</p>}
+                  <p className="text-muted-foreground">Se recalcula solo cada mañana con los viajes del GPS. Las obras con 3 viajes o más usan sus propios tiempos. Se corrige a mano en cada pedido.</p>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
                 <label className="text-xs space-y-1">
                   <span className="text-muted-foreground block">Inicio de jornada</span>
@@ -542,6 +585,9 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
               <div className="divide-y">
                 {pedidos.map((p) => {
                   const r = plan?.pedidos.find((x) => x.pedidoId === p.id)
+                  // Con el interruptor: el pedido con los tiempos reales y de dónde sale cada número
+                  const pv = (pedidosEf.find((x) => x.id === p.id) || p) as unknown as PedidoParaViajes
+                  const td = ve ? tiemposDelPedido(p as unknown as PedidoParaViajes, prm, tiempos) : null
                   const cambiada = cambiados.includes(p.id)
                   const completo = p.status === "completed"
                   const ajusta = ajustaPedido(p)
@@ -559,7 +605,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                         <p className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                           <span>{Number(p.quantity_m3)} m³{p.dispatched_m3 ? ` (${Number(p.dispatched_m3)} ya enviados)` : ""}</span>
                           <span>· {p.formulas?.code}</span>
-                          <span>· viaje {p.construction_sites?.travel_time_minutes || 30} min</span>
+                          {td ? <span>· viaje {td.viaje.min} min ({textoFuente(td.viaje)})</span> : <span>· viaje {p.construction_sites?.travel_time_minutes || 30} min</span>}
                           {p.construction_sites?.gps_lat == null && <span className="text-amber-700 flex items-center gap-0.5"><MapPin className="h-3 w-3" />obra sin ubicar</span>}
                           <span className="inline-flex rounded border overflow-hidden">
                             {(["bomba", "directo"] as const).map((m) => (
@@ -592,12 +638,16 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                         )}
                         {/* Fase 2b: cuántos camiones hacen falta y qué pasa con los que hay */}
                         {ve && !completo && r && (() => {
-                          const pv = p as unknown as PedidoParaViajes
-                          const flota = explicarFlota(pv, prm, r.viajes)
-                          const menos = planVe?.filas[p.id] ? textoConMenosCamiones(planVe.filas[p.id], generarViajes(pv, prm, viajesPorPedido[p.id] || []), new Set(planVe.filas[p.id].map((v) => v.mixer_id)).size) : null
+                          const flota = explicarFlota(pv, prmEf, r.viajes)
+                          const menos = planVe?.filas[p.id] ? textoConMenosCamiones(planVe.filas[p.id], generarViajes(pv, prmEf, viajesPorPedido[p.id] || []), new Set(planVe.filas[p.id].map((v) => v.mixer_id)).size) : null
+                          const descObra = td ? textoDescargaObra(td) : null
+                          const sugM3 = td ? m3ParaSugerir(td, p.m3_por_viaje) : null
                           return (
                             <div className="mt-1 text-[11px] text-muted-foreground space-y-0.5">
-                              <p>{flota.texto}{Number(p.descarga_min) > 0 ? " (descarga corregida en el pedido)" : ""}</p>
+                              <p>{flota.texto}</p>
+                              {td && <p>Tiempos: {textoTiempos(td)}</p>}
+                              {descObra && <p>{descObra}</p>}
+                              {sugM3 && <p className="text-violet-700">Esta obra suele llevar {sugM3.m3.toLocaleString("es-AR")} m³ por camión ({sugM3.viajes} viajes, de {sugM3.desde.toLocaleString("es-AR")} a {sugM3.hasta.toLocaleString("es-AR")}); este pedido tiene {m3PorViajeDe(pv).toLocaleString("es-AR")}. Se cambia en el pedido (m³ por camión).</p>}
                               {menos && <p className="text-amber-700">{menos}</p>}
                             </div>
                           )
@@ -620,7 +670,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                           <Badge variant="outline" className="text-emerald-700 border-emerald-300">Completado</Badge>
                         ) : r ? (
                           <>
-                            <p>{r.viajes} viajes · carga desde <strong>{aHora(r.primeraLlegada - (p.construction_sites?.travel_time_minutes || 30) - prm.cargaMin)}</strong> · termina <strong>{aHora(r.finVaciado)}</strong></p>
+                            <p>{r.viajes} viajes · carga desde <strong>{aHora(r.primeraLlegada - (ve ? viajeMinDe(pv) : p.construction_sites?.travel_time_minutes || 30) - prm.cargaMin)}</strong> · termina <strong>{aHora(r.finVaciado)}</strong></p>
                             {r.demoraInicio > prm.toleranciaMin ? (
                               <p className="text-red-600 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />El primer camión llega {aHora(r.primeraLlegada)}, {r.demoraInicio} min tarde</p>
                             ) : r.huecosMin > 0 ? (
