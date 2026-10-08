@@ -24,6 +24,12 @@ export type Parametros = {
   toleranciaMin: number
   /** Camiones que la planta puede cargar a la vez */
   bocasCarga: number
+  /**
+   * Minutos que el camión, después de volver a planta, tarda en poder cargar otra vez (esperar, lavar, papeles),
+   * además de la carga. No ocupa la boca. Sale del tiempo en planta real del GPS (tiempo en planta − carga);
+   * no se guarda en la planta. Sin valor = 0 (como antes).
+   */
+  esperaPlantaMin?: number
 }
 
 export const PARAMETROS_BASE: Parametros = {
@@ -153,6 +159,8 @@ export type Ocupado = { camionId: string; desde: number; hasta: number }
 export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE, ocupados: Ocupado[] = []): Plan {
   const inicio = aMin(prm.inicioJornada)
   const fin = aMin(prm.finJornada)
+  // Tiempo en planta después de volver, antes de poder cargar otra vez (0 = como antes)
+  const esperaPlanta = Math.max(0, Number(prm.esperaPlantaMin) || 0)
   // Cuándo queda libre cada camión en planta, y la boca de carga
   const libre = new Map(camiones.map((c) => [c.id, -Infinity]))
   const cargas: { desde: number; hasta: number }[] = []
@@ -174,7 +182,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
   }
   // Ventanas en que cada camión está en otro viaje (fuera de este plan)
   const ocup = new Map<string, { desde: number; hasta: number }[]>()
-  for (const o of ocupados) (ocup.get(o.camionId) || ocup.set(o.camionId, []).get(o.camionId)!).push({ desde: o.desde, hasta: o.hasta })
+  for (const o of ocupados) (ocup.get(o.camionId) || ocup.set(o.camionId, []).get(o.camionId)!).push({ desde: o.desde, hasta: o.hasta + esperaPlanta })
   /** Primer momento ≥ t en que el camión puede cargar sin pisar sus otros viajes (fin(x) = cuándo volvería) */
   const primerHueco = (id: string, t: number, fin: (x: number) => number) => {
     let x = t
@@ -197,10 +205,11 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
     let resto = p.m3
     const tam = p.m3PorViaje && p.m3PorViaje > 0 ? p.m3PorViaje : 8
     while (resto > 0.01) { const q = Math.min(tam, resto); cant.push(Math.round(q * 100) / 100); resto -= q }
-    const descarga8 = descargaDe(p, 8, prm)
+    // Ritmo y ciclo con un camión lleno del pedido (8 m³ salvo que el pedido diga otra cosa)
+    const descargaLleno = descargaDe(p, tam, prm)
     const espaciado = p.espaciadoMin && p.espaciadoMin > 0 ? p.espaciadoMin : null
-    const ritmo = espaciado ?? descarga8
-    const ciclo = prm.cargaMin + p.viajeMin + descarga8 + prm.lavadoMin + p.viajeMin
+    const ritmo = espaciado ?? descargaLleno
+    const ciclo = prm.cargaMin + esperaPlanta + p.viajeMin + descargaLleno + prm.lavadoMin + p.viajeMin
     const ideal = Math.min(cant.length, Math.ceil(ciclo / ritmo))
 
     let proximaLlegada = p.llegada
@@ -214,7 +223,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       const vueltaSi = (x: number) => {
         const lleg = Math.max(x + prm.cargaMin + p.viajeMin, proximaLlegada)
         const ini = finAnterior != null ? Math.max(lleg, finAnterior) : lleg
-        return ini + desc + prm.lavadoMin + p.viajeMin
+        return ini + desc + prm.lavadoMin + p.viajeMin + esperaPlanta
       }
       // Cada camión: cuándo podría cargar. Primero los que llegan a tiempo; entre ellos, el ya usado que se liberó
       // más tarde (ahorra camiones); un camión nuevo solo si ninguno usado llega.
@@ -241,7 +250,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       const salidaObra = finDescarga + prm.lavadoMin
       const vuelta = salidaObra + p.viajeMin
       cargas.push({ desde: inicioCarga, hasta: salida })
-      libre.set(elegido.c.id, vuelta)
+      libre.set(elegido.c.id, vuelta + esperaPlanta)
       usados.add(elegido.c.id)
       viajes.push({ pedidoId: p.id, camionId: elegido.c.id, n: i + 1, m3, inicioCarga, salida, llegada: inicioDescarga, finDescarga, salidaObra, vuelta, esperaObra: espera })
       finAnterior = finDescarga
