@@ -7,8 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Loader2,
   TrendingUp,
@@ -17,7 +15,6 @@ import {
   Calendar,
   ExternalLink,
   Pencil,
-  Lock,
   AlertTriangle,
   LayoutDashboard,
   BarChart3,
@@ -27,6 +24,7 @@ import {
 import { AdjustStockDialog } from "@/components/adjust-stock-dialog"
 import { TransferStockDialog } from "@/components/transfer-stock-dialog"
 import { formatStock, esMaterialFino } from "@/lib/stock-format"
+import { usePermisos } from "@/lib/current-user"
 import { format, subDays } from "date-fns"
 import { es } from "date-fns/locale"
 import {
@@ -61,8 +59,6 @@ interface StockEvolutionChartProps {
   plantId: string
 }
 
-const ADJUST_PASSWORD = "18/12/2018"
-
 export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   const [view, setView] = useState<"dashboard" | "detail">("dashboard")
   const [materials, setMaterials] = useState<Material[]>([])
@@ -81,10 +77,10 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   const [dayDetailData, setDayDetailData] = useState<any[]>([])
   const [loadingDayDetail, setLoadingDayDetail] = useState(false)
 
-  // Password gate
-  const [showPasswordDialog, setShowPasswordDialog] = useState(false)
-  const [passwordInput, setPasswordInput] = useState("")
-  const [passwordError, setPasswordError] = useState(false)
+  // Fase 0c-1: "Ajustar" con el permiso de recuentos (sin contraseña fija); "Mover" con materia prima
+  const { puede } = usePermisos()
+  const puedeAjustar = puede("recuentos", "cargar")
+  const puedeMover = puede("materia_prima", "cargar")
   const [adjustTarget, setAdjustTarget] = useState<Material | null>(null)
   const [transferTarget, setTransferTarget] = useState<Material | null>(null)
   const [showAdjustDialog, setShowAdjustDialog] = useState(false)
@@ -399,19 +395,9 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
   }, [dayDetailData])
 
   function handleAdjustClick(material: Material) {
+    if (!puedeAjustar) return
     setAdjustTarget(material)
-    setPasswordInput("")
-    setPasswordError(false)
-    setShowPasswordDialog(true)
-  }
-
-  function handlePasswordSubmit() {
-    if (passwordInput.trim().toLowerCase() === "gonza" || passwordInput === ADJUST_PASSWORD) {
-      setShowPasswordDialog(false)
-      setShowAdjustDialog(true)
-    } else {
-      setPasswordError(true)
-    }
+    setShowAdjustDialog(true)
   }
 
   function getCardBorder(status: "ok" | "warning" | "critical") {
@@ -546,16 +532,18 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                           <BarChart3 className="h-3 w-3 mr-1" />
                           Ver evolución
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-xs"
-                          onClick={() => handleAdjustClick(mat)}
-                        >
-                          <Pencil className="h-3 w-3 mr-1" />
-                          Ajustar
-                        </Button>
-                        {esMaterialFino(mat.name) && (
+                        {puedeAjustar && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => handleAdjustClick(mat)}
+                          >
+                            <Pencil className="h-3 w-3 mr-1" />
+                            Ajustar
+                          </Button>
+                        )}
+                        {esMaterialFino(mat.name) && puedeMover && (
                           <Button variant="outline" size="sm" className="text-xs" title="Mover a otra planta" onClick={() => setTransferTarget(mat as any)}>
                             <ArrowLeftRight className="h-3 w-3 mr-1" />
                             Mover
@@ -601,15 +589,17 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-2"
-                  disabled={!materialInfo}
-                  onClick={() => materialInfo && handleAdjustClick(materialInfo)}
-                >
-                  <Pencil className="h-4 w-4" />
-                  <span className="hidden sm:inline">Ajustar Stock</span>
-                </Button>
+                {puedeAjustar && (
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-2"
+                    disabled={!materialInfo}
+                    onClick={() => materialInfo && handleAdjustClick(materialInfo)}
+                  >
+                    <Pencil className="h-4 w-4" />
+                    <span className="hidden sm:inline">Ajustar Stock</span>
+                  </Button>
+                )}
               </div>
             </div>
             <div>
@@ -1045,54 +1035,6 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ── PASSWORD DIALOG ────────────────────────────────────────────────────── */}
-      <Dialog
-        open={showPasswordDialog}
-        onOpenChange={(open) => {
-          setShowPasswordDialog(open)
-          if (!open) {
-            setPasswordInput("")
-            setPasswordError(false)
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Lock className="h-5 w-5" />
-              Ajustar Stock — {adjustTarget?.name}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <Label htmlFor="adjust-password">Contraseña</Label>
-            <Input
-              id="adjust-password"
-              type="password"
-              placeholder="Ingresá la contraseña"
-              value={passwordInput}
-              onChange={(e) => {
-                setPasswordInput(e.target.value)
-                setPasswordError(false)
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
-              autoFocus
-            />
-            {passwordError && (
-              <p className="text-sm text-red-600 flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                Contraseña incorrecta
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handlePasswordSubmit}>Confirmar</Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

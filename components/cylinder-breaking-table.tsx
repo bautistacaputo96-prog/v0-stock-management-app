@@ -11,6 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { usePermisos } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 
 // La ecuación de calibración calcula la fuerza Y; según su unidad se convierte a Newton y luego a MPa
 const FUERZA_A_NEWTON: Record<string, number> = { tf: 9806.65, kN: 1000, kgf: 9.80665, N: 1 }
@@ -69,6 +72,10 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
   const [discardTarget, setDiscardTarget] = useState<CylinderBreakingRow | null>(null)
   const [discardReason, setDiscardReason] = useState("")
   const [discarding, setDiscarding] = useState(false)
+  // Fase 0c-1: cargar rotura y calibración = laboratorio.cargar; descartar = laboratorio.borrar (con motivo)
+  const { puede } = usePermisos()
+  const puedeCargar = puede("laboratorio", "cargar")
+  const puedeBorrar = puede("laboratorio", "borrar")
 
   // Calibration state
   const [calibration, setCalibration] = useState<PressCalibration | null>(null)
@@ -115,6 +122,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
   }
 
   const saveCalibration = async () => {
+    if (!puedeCargar) return
     setSavingCalibration(true)
     const supabase = createClient()
 
@@ -143,9 +151,14 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
       if (error) {
         toast({ title: "Error", description: error.message, variant: "destructive" })
       } else {
+        const antes = calibration
         setCalibration(data)
         setCalibrationDialog(false)
         toast({ title: "Calibracion guardada", description: "La nueva calibracion esta activa" })
+        const campos: [string, keyof PressCalibration][] = [["A", "constant_a"], ["B", "constant_b"], ["C", "constant_c"], ["D", "constant_d"], ["Diámetro (cm)", "cylinder_diameter_cm"], ["Fecha", "calibration_date"], ["Unidad", "force_unit" as keyof PressCalibration]]
+        const detalle: Record<string, string> = {}
+        for (const [l, k] of campos) detalle[l] = `${antes ? String((antes as any)[k] ?? "-") : "-"} → ${String((data as any)?.[k] ?? "-")}`
+        logActivity({ action: "crear", entity: "calibracion", entityId: (data as any)?.id ?? null, reference: `Prensa ${calibrationForm.calibration_date}`, details: detalle })
         // Reload to ensure state is correct
         await loadCalibration()
       }
@@ -268,17 +281,24 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
   }
 
   const handleDiscard = async () => {
-    if (!discardTarget) return
+    if (!discardTarget || !puedeBorrar || !motivoValido(discardReason)) return
     setDiscarding(true)
     const supabase = createClient()
     const { error } = await supabase
       .from("test_cylinders")
-      .update({ discarded: true, discard_reason: discardReason || null, updated_at: new Date().toISOString() })
+      .update({ discarded: true, discard_reason: discardReason.trim(), updated_at: new Date().toISOString() })
       .eq("id", discardTarget.id)
     if (error) {
       toast({ title: "Error", description: "No se pudo descartar la probeta", variant: "destructive" })
     } else {
       toast({ title: "Probeta descartada", description: "Se quitó de la lista de pendientes/vencidas" })
+      logActivity({
+        action: "editar",
+        entity: "probeta",
+        entityId: discardTarget.id,
+        reference: `${discardTarget.dispatch?.sample_number || "-"}-${discardTarget.cylinder_number}`,
+        details: { Estado: "pendiente → descartada", Edad: `${discardTarget.test_age_days} días`, Motivo: discardReason.trim() },
+      })
       setDiscardTarget(null)
       setDiscardReason("")
       loadCylinders()
@@ -363,6 +383,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
   }
 
   const handleSave = async (cylinderId: string) => {
+    if (!puedeCargar) return
     const values = editingValues[cylinderId]
     if (!values || !values.dial) {
       toast({
@@ -428,6 +449,19 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
         title: "Rotura registrada",
         description: "La probeta se ha ensayado y aparecerá en la tabla de extracción",
       })
+      logActivity({
+        action: "crear",
+        entity: "probeta",
+        entityId: cylinderId,
+        reference: `${cyl?.dispatch?.sample_number || "-"}-${cyl?.cylinder_number ?? "-"}`,
+        details: {
+          Rotura: testDate,
+          Edad: `${cyl?.test_age_days ?? "-"} días`,
+          Dial: dialReading,
+          MPa: mpa !== null ? Math.round(mpa * 100) / 100 : "sin calibración",
+          ...(values.weight ? { "Peso (g)": Number.parseFloat(values.weight) } : {}),
+        },
+      })
       setCylinders((prev) => prev.filter((cyl) => cyl.id !== cylinderId))
       setEditingValues((prev) => {
         const newValues = { ...prev }
@@ -487,10 +521,12 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
             </span>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => setCalibrationDialog(true)}>
-          <Settings2 className="h-4 w-4 mr-2" />
-          Calibracion
-        </Button>
+        {puedeCargar && (
+          <Button variant="outline" size="sm" onClick={() => setCalibrationDialog(true)}>
+            <Settings2 className="h-4 w-4 mr-2" />
+            Calibracion
+          </Button>
+        )}
       </div>
 
       <div className="relative max-w-md">
@@ -551,6 +587,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       type="date"
                       value={editingValues[cylinder.id]?.testDate ?? getTodayDate()}
                       onChange={(e) => handleInputChange(cylinder.id, "testDate", e.target.value)}
+                      disabled={!puedeCargar}
                       min={cylinder.dispatch?.dispatch_date?.slice(0, 10)}
                       max={getTodayDate()}
                       className="h-8 text-xs"
@@ -563,6 +600,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       placeholder="Peso"
                       value={editingValues[cylinder.id]?.weight ?? cylinder.weight_grams ?? ""}
                       onChange={(e) => handleInputChange(cylinder.id, "weight", e.target.value)}
+                      disabled={!puedeCargar}
                       className="h-8 text-xs"
                     />
                   </TableCell>
@@ -573,6 +611,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       placeholder="Lectura"
                       value={editingValues[cylinder.id]?.dial ?? cylinder.dial_reading ?? ""}
                       onChange={(e) => handleInputChange(cylinder.id, "dial", e.target.value)}
+                      disabled={!puedeCargar}
                       className="h-8 text-xs w-20"
                     />
                   </TableCell>
@@ -600,20 +639,21 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       placeholder="Observaciones"
                       value={editingValues[cylinder.id]?.comments ?? cylinder.comments ?? ""}
                       onChange={(e) => handleInputChange(cylinder.id, "comments", e.target.value)}
+                      disabled={!puedeCargar}
                       className="h-8 text-xs"
                     />
                   </TableCell>
                   <TableCell className="py-2 px-3">
                     <div className="flex gap-1">
-                      <Button
+                      {puedeCargar && <Button
                         size="sm"
                         onClick={() => handleSave(cylinder.id)}
                         disabled={!hasDialReading || isSaving}
                         className="h-7 flex-1 text-xs"
                       >
                         {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                      </Button>
-                      <Button
+                      </Button>}
+                      {puedeBorrar && <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => { setDiscardTarget(cylinder); setDiscardReason("") }}
@@ -621,7 +661,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                         title="Descartar (no se va a romper)"
                       >
                         <Trash2 className="h-3 w-3" />
-                      </Button>
+                      </Button>}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -640,17 +680,16 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
               {discardTarget && `${discardTarget.dispatch?.sample_number || "-"}-${discardTarget.cylinder_number}`} — se saca de la lista de pendientes/vencidas sin registrar rotura. Queda en el histórico como descartada.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label>Motivo (opcional)</Label>
-            <Input
-              value={discardReason}
-              onChange={(e) => setDiscardReason(e.target.value)}
-              placeholder="Ej: muestra perdida, no se hizo, dato viejo..."
-            />
-          </div>
+          <CampoMotivo
+            id="motivo-descarte"
+            label="Motivo del descarte (obligatorio)"
+            value={discardReason}
+            onChange={setDiscardReason}
+            ejemplo="Ej: muestra perdida, no se hizo, dato viejo..."
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDiscardTarget(null); setDiscardReason("") }}>Cancelar</Button>
-            <Button variant="destructive" onClick={handleDiscard} disabled={discarding}>
+            <Button variant="destructive" onClick={handleDiscard} disabled={discarding || !motivoValido(discardReason)}>
               {discarding ? "Descartando..." : "Descartar"}
             </Button>
           </DialogFooter>

@@ -4,6 +4,7 @@
  * Una orden de trabajo abierta: lo que ve el operario mientras la hace.
  * Fotos del manual para ubicar el componente, qué va a necesitar, el
  * checklist que va tildando, fotos de evidencia, comentario y completar.
+ * Fase 0c-1: sin mantenimiento.cargar se abre en solo lectura; cancelar pide mantenimiento.borrar y motivo.
  */
 
 import { useState, useEffect, useRef } from "react"
@@ -16,7 +17,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { currentUserName } from "@/lib/current-user"
+import { currentUserName, usePermisos } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
+import { ConfirmarConMotivo } from "@/components/motivo"
 import { Camera, Package, ListChecks, Image as ImageIcon, Play, CheckCircle2, History, X, Loader2, Wrench, AlertTriangle } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
@@ -43,6 +46,10 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
   const inputFoto = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
   const usuario = currentUserName()
+  const { puede } = usePermisos()
+  const puedeCargar = puede("mantenimiento", "cargar")
+  const puedeCancelar = puede("mantenimiento", "borrar")
+  const [confirmarCancelar, setConfirmarCancelar] = useState(false)
 
   useEffect(() => {
     if (!orden) return
@@ -59,8 +66,11 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
   const imagenes = tarea?.maint_task_images || []
   const marcados = listaPasos.filter((p) => pasos[p.id]).length
   const cerrada = orden.estado === "completada" || orden.estado === "cancelada"
+  // Sin permiso de carga, la orden se mira pero no se toca
+  const bloqueada = cerrada || !puedeCargar
 
   async function togglePaso(id: string, v: boolean) {
+    if (bloqueada) return
     const nuevo = { ...pasos, [id]: v }
     setPasos(nuevo)
     const supabase = createClient()
@@ -69,6 +79,7 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
   }
 
   async function empezar() {
+    if (bloqueada) return
     setGuardando(true)
     const supabase = createClient()
     await supabase.from("maint_work_orders").update({ estado: "en_curso", fecha_inicio: new Date().toISOString(), asignado_a: orden!.asignado_a || usuario }).eq("id", orden!.id)
@@ -78,7 +89,7 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
 
   async function subirFoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (!file || bloqueada) return
     setSubiendo(true)
     try {
       const url = await subirFotoOrden(createClient(), orden!.id, file, usuario)
@@ -92,6 +103,7 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
   }
 
   async function completar(fechaManual?: string) {
+    if (bloqueada) return
     if (!fechaManual && listaPasos.length && marcados < listaPasos.length) {
       const ok = confirm(`Marcaste ${marcados} de ${listaPasos.length} pasos. ¿Completar igual?`)
       if (!ok) return
@@ -124,14 +136,41 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
     }
     setGuardando(false)
     toast({ title: "Orden completada", description: orden!.titulo })
+    logActivity({
+      action: "editar",
+      entity: "orden_trabajo",
+      entityId: orden!.id,
+      reference: `OT-${String(orden!.numero).padStart(4, "0")}`,
+      details: {
+        Orden: orden!.titulo,
+        Estado: `${orden!.estado} → completada`,
+        ...(fechaManual ? { "Ya estaba hecha": fechaManual } : {}),
+        ...(listaPasos.length ? { Pasos: `${marcados} de ${listaPasos.length}` } : {}),
+        ...(obs ? { Comentario: obs } : {}),
+      },
+    })
     onCambio()
     onClose()
   }
 
-  async function cancelar() {
-    if (!confirm("¿Cancelar esta orden? No queda registrada como hecha.")) return
+  async function cancelar(motivo: string) {
+    if (!puedeCancelar || cerrada) return
     const supabase = createClient()
-    await supabase.from("maint_work_orders").update({ estado: "cancelada", observaciones: obs || null, completado_por: usuario, fecha_fin: new Date().toISOString() }).eq("id", orden!.id)
+    // El motivo queda en las observaciones de la orden (obligatorio desde la fase 0c-1)
+    const observaciones = obs ? `${obs} · Cancelada: ${motivo}` : `Cancelada: ${motivo}`
+    const { error } = await supabase.from("maint_work_orders").update({ estado: "cancelada", observaciones, completado_por: usuario, fecha_fin: new Date().toISOString() }).eq("id", orden!.id)
+    if (error) {
+      toast({ title: "No se pudo cancelar", description: error.message, variant: "destructive" })
+      return
+    }
+    logActivity({
+      action: "editar",
+      entity: "orden_trabajo",
+      entityId: orden!.id,
+      reference: `OT-${String(orden!.numero).padStart(4, "0")}`,
+      details: { Orden: orden!.titulo, Estado: `${orden!.estado} → cancelada`, Motivo: motivo },
+    })
+    setConfirmarCancelar(false)
     onCambio()
     onClose()
   }
@@ -196,8 +235,8 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
                 </div>
                 <div className="rounded-lg border divide-y">
                   {listaPasos.map((p, i) => (
-                    <label key={p.id} className={cn("flex items-start gap-3 p-3 cursor-pointer", cerrada && "cursor-default")}>
-                      <Checkbox checked={!!pasos[p.id]} disabled={cerrada} onCheckedChange={(v) => togglePaso(p.id, !!v)} className="mt-0.5 h-5 w-5" />
+                    <label key={p.id} className={cn("flex items-start gap-3 p-3 cursor-pointer", bloqueada && "cursor-default")}>
+                      <Checkbox checked={!!pasos[p.id]} disabled={bloqueada} onCheckedChange={(v) => togglePaso(p.id, !!v)} className="mt-0.5 h-5 w-5" />
                       <span className={cn("text-sm leading-snug", pasos[p.id] && "line-through text-muted-foreground")}>
                         <span className="text-muted-foreground mr-1.5">{i + 1}.</span>{p.texto}
                       </span>
@@ -216,7 +255,7 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
                     <img src={f.url} alt="" className="h-20 w-20 rounded border object-cover" />
                   </button>
                 ))}
-                {!cerrada && (
+                {!bloqueada && (
                   <button
                     onClick={() => inputFoto.current?.click()}
                     disabled={subiendo}
@@ -233,11 +272,11 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
             {/* Comentario */}
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-muted-foreground">Comentario</Label>
-              <Textarea value={obs} onChange={(e) => setObs(e.target.value)} disabled={cerrada} placeholder="Qué encontraste, qué cambiaste, algo para avisar..." rows={3} />
+              <Textarea value={obs} onChange={(e) => setObs(e.target.value)} disabled={bloqueada} placeholder="Qué encontraste, qué cambiaste, algo para avisar..." rows={3} />
             </div>
 
             {/* Registrar como ya hecha (puesta a cero) */}
-            {!cerrada && modoYaHecha && (
+            {!bloqueada && modoYaHecha && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
                 <p className="text-sm font-medium text-amber-900">¿Cuándo se hizo por última vez?</p>
                 <p className="text-xs text-amber-800">Sirve para poner al día el plan sin repetir un trabajo que ya está hecho.</p>
@@ -251,9 +290,9 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
           </div>
 
           {/* Acciones */}
-          {!cerrada && (
+          {!cerrada && (puedeCargar || puedeCancelar) && (
             <div className="sticky bottom-0 bg-background border-t p-3 space-y-2">
-              {orden.estado === "pendiente" ? (
+              {!puedeCargar ? null : orden.estado === "pendiente" ? (
                 <Button className="w-full h-11 text-base" onClick={empezar} disabled={guardando}>
                   <Play className="h-4 w-4 mr-2" /> Empezar
                 </Button>
@@ -263,17 +302,27 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
                 </Button>
               )}
               <div className="flex justify-between">
-                {orden.tipo === "preventiva" && !modoYaHecha ? (
+                {orden.tipo === "preventiva" && !modoYaHecha && puedeCargar ? (
                   <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setModoYaHecha(true)}>
                     <History className="h-3.5 w-3.5 mr-1" /> Ya estaba hecha
                   </Button>
                 ) : <span />}
-                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={cancelar}>Cancelar orden</Button>
+                {puedeCancelar && <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setConfirmarCancelar(true)}>Cancelar orden</Button>}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmarConMotivo
+        open={confirmarCancelar}
+        onOpenChange={setConfirmarCancelar}
+        titulo="Cancelar orden"
+        descripcion={`${orden.titulo}. No queda registrada como hecha.`}
+        textoBoton="Cancelar orden"
+        ejemplo="Ej: el equipo se dio de baja, la tarea no corresponde"
+        onConfirmar={cancelar}
+      />
 
       <Dialog open={!!fotoAmpliada} onOpenChange={(o) => !o && setFotoAmpliada(null)}>
         <DialogContent className="max-w-3xl p-2">

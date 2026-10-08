@@ -1,7 +1,7 @@
 /**
- * Avisa por mail a los supervisores cuando alguien borra un despacho o un
- * ingreso de materia prima. Los destinatarios salen de app_users (rol
- * supervisor con mail cargado), así que se cambian desde el sistema sin tocar
+ * Avisa por mail a los gerenciales cuando alguien borra un despacho o un
+ * ingreso de materia prima. Los destinatarios salen de app_users (tipo
+ * gerencial con mail cargado), así que se cambian desde el sistema sin tocar
  * el código.
  */
 import { NextResponse } from "next/server"
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const { data: supervisores } = await supabase
       .from("app_users")
       .select("email")
-      .eq("role", "supervisor")
+      .eq("tipo", "gerencial") // fase 0c-1: antes role = supervisor
       .eq("active", true)
       .not("email", "is", null)
 

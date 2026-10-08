@@ -11,7 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Pencil, Truck, Search, CheckCircle, XCircle, Wrench, AlertTriangle, Trash2 } from "lucide-react"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { usePermisos } from "@/lib/current-user"
+import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 
 type Mixer = {
   id: string
@@ -44,8 +46,10 @@ export function MixersManagement() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingMixer, setEditingMixer] = useState<Mixer | null>(null)
   const [deleteMixerConfirm, setDeleteMixerConfirm] = useState<Mixer | null>(null)
-  const [deleteMixerStep, setDeleteMixerStep] = useState(1)
   const { toast } = useToast()
+  // Fase 0c-1: flota = cargar / editar (también el estado) / borrar; editar y dar de baja piden motivo
+  const { puede } = usePermisos()
+  const [motivo, setMotivo] = useState("")
 
   const [form, setForm] = useState({
     license_plate: "",
@@ -96,6 +100,11 @@ export function MixersManagement() {
   }
 
   async function handleSave() {
+    if (editingMixer ? !puede("flota", "editar") : !puede("flota", "cargar")) return
+    if (editingMixer && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el camión.", variant: "destructive" })
+      return
+    }
     const supabase = createClient()
 
     const data = {
@@ -129,14 +138,24 @@ export function MixersManagement() {
         return
       }
       toast({ title: "Camion actualizado" })
+      await logCambio({
+        entity: "camion",
+        entityId: editingMixer.id,
+        reference: data.license_plate,
+        antes: { ...editingMixer, capacity_m3: Number(editingMixer.capacity_m3) } as unknown as Record<string, unknown>,
+        despues: data,
+        etiquetas: { license_plate: "Patente", brand: "Marca", capacity_m3: "Capacidad (m³)", model: "Modelo", status: "Estado" },
+        motivo: motivo.trim(),
+      })
     } else {
-      const { error } = await supabase.from("mixers").insert(data)
+      const { data: creado, error } = await supabase.from("mixers").insert(data).select("id").single()
 
       if (error) {
         toast({ title: "Error", description: "No se pudo crear el camion", variant: "destructive" })
         return
       }
       toast({ title: "Camion creado" })
+      logActivity({ action: "crear", entity: "camion", entityId: (creado as any)?.id ?? null, reference: data.license_plate, details: { Patente: data.license_plate, Marca: data.brand || "-", "Capacidad (m³)": data.capacity_m3, Modelo: data.model || "-" } })
     }
 
     setIsDialogOpen(false)
@@ -145,7 +164,9 @@ export function MixersManagement() {
     loadData()
   }
 
+  // El estado es operativo: no pide motivo, pero sí permiso de editar (fase 0c-1)
   async function updateStatus(mixer: Mixer, newStatus: string) {
+    if (!puede("flota", "editar")) return
     const supabase = createClient()
     const { error } = await supabase.from("mixers").update({ status: newStatus }).eq("id", mixer.id)
 
@@ -157,6 +178,7 @@ export function MixersManagement() {
   }
 
   function openEdit(mixer: Mixer) {
+    setMotivo("")
     setEditingMixer(mixer)
     setForm({
       license_plate: mixer.license_plate || "",
@@ -183,16 +205,10 @@ export function MixersManagement() {
 
   function startDeleteMixer(mixer: Mixer) {
     setDeleteMixerConfirm(mixer)
-    setDeleteMixerStep(1)
   }
 
-  async function confirmDeleteMixer() {
-    if (deleteMixerStep === 1) {
-      setDeleteMixerStep(2)
-      return
-    }
-
-    if (!deleteMixerConfirm) return
+  async function confirmDeleteMixer(motivoBaja: string) {
+    if (!deleteMixerConfirm || !puede("flota", "borrar")) return
     const supabase = createClient()
 
     // Soft delete - set active to false
@@ -207,8 +223,19 @@ export function MixersManagement() {
     }
 
     toast({ title: "Camion eliminado" })
+    await logDeletion({
+      entity: "camion",
+      entityId: deleteMixerConfirm.id,
+      reference: deleteMixerConfirm.license_plate,
+      details: {
+        Patente: deleteMixerConfirm.license_plate,
+        Marca: deleteMixerConfirm.brand || "-",
+        "Capacidad (m³)": deleteMixerConfirm.capacity_m3,
+        Baja: "se da de baja (active = false); no se borra",
+      },
+      motivo: motivoBaja,
+    })
     setDeleteMixerConfirm(null)
-    setDeleteMixerStep(1)
     loadData()
   }
 
@@ -259,7 +286,7 @@ export function MixersManagement() {
             className="pl-9"
           />
         </div>
-        <Button
+        {puede("flota", "cargar") && <Button
           onClick={() => {
             setEditingMixer(null)
             setForm({ license_plate: "", brand: "", capacity_m3: "8", model: "", status: "available" })
@@ -269,7 +296,7 @@ export function MixersManagement() {
         >
           <Plus className="h-4 w-4" />
           Nuevo Camion
-        </Button>
+        </Button>}
       </div>
 
       {/* Mixer cards */}
@@ -283,12 +310,16 @@ export function MixersManagement() {
                   {mixer.brand && <p className="text-sm text-muted-foreground">{mixer.brand}</p>}
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(mixer)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => startDeleteMixer(mixer)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {puede("flota", "editar") && (
+                    <Button variant="ghost" size="sm" onClick={() => openEdit(mixer)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {puede("flota", "borrar") && (
+                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => startDeleteMixer(mixer)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -306,7 +337,7 @@ export function MixersManagement() {
               <div className="pt-2 border-t">
                 <div className="flex items-center justify-between">
                   {getStatusBadge(mixer.status)}
-                  <Select value={mixer.status} onValueChange={(value) => updateStatus(mixer, value)}>
+                  {puede("flota", "editar") && <Select value={mixer.status} onValueChange={(value) => updateStatus(mixer, value)}>
                     <SelectTrigger className="w-[130px] h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
@@ -317,7 +348,7 @@ export function MixersManagement() {
                         </SelectItem>
                       ))}
                     </SelectContent>
-                  </Select>
+                  </Select>}
                 </div>
               </div>
             </CardContent>
@@ -389,16 +420,27 @@ export function MixersManagement() {
               </Select>
             </div>
           </div>
+          {editingMixer && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-camion" ejemplo="Ej: la patente estaba mal escrita" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSave} disabled={!form.license_plate}>
+            <Button onClick={handleSave} disabled={!form.license_plate || (!!editingMixer && !motivoValido(motivo))}>
               {editingMixer ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dar de baja: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteMixerConfirm}
+        onOpenChange={(open) => !open && setDeleteMixerConfirm(null)}
+        titulo="Dar de baja camión"
+        descripcion={<>Se da de baja <strong>{deleteMixerConfirm?.license_plate}</strong>: deja de aparecer para despachar. Lo cargado queda igual.</>}
+        textoBoton="Dar de baja"
+        onConfirmar={confirmDeleteMixer}
+      />
     </div>
   )
 }

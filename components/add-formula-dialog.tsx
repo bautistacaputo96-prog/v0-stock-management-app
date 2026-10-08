@@ -21,6 +21,7 @@ import { Plus, Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
+import { logActivity } from "@/lib/activity-log"
 
 type Material = {
   id: string
@@ -154,6 +155,19 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
       )
 
       if (materialsError) throw materialsError
+
+      logActivity({
+        action: "crear",
+        entity: "formula",
+        entityId: formula.id,
+        reference: generatedCode,
+        plantId,
+        details: {
+          "Código": generatedCode,
+          "Rinde (m³)": Number.parseFloat(formData.yield_m3),
+          Materiales: formulaMaterials.map((m) => `${materials.find((x: any) => x.id === m.material_id)?.name || "?"} ${m.quantity}`).join(" · "),
+        },
+      })
 
       toast({
         title: "Formula agregada",

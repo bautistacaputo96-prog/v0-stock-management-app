@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -24,9 +23,9 @@ import { es } from "date-fns/locale"
 import { AddClientDialog } from "@/components/add-client-dialog"
 import { AddMixerDialog } from "@/components/add-mixer-dialog"
 import { AddConstructionSiteDialog } from "@/components/add-construction-site-dialog"
-import { UserSelector } from "@/components/user-selector"
-import { currentUserName, useFuncionesNuevas } from "@/lib/current-user"
-import { logActivity } from "@/lib/activity-log"
+import { currentUserName, useFuncionesNuevas, usePermisos } from "@/lib/current-user"
+import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { FINALIDADES, cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 // Fase 2 (solo con el interruptor de funciones nuevas)
 import { NuevoBadge } from "@/components/nuevo-badge"
@@ -212,6 +211,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [saving, setSaving] = useState(false)
   const [cuitPrompt, setCuitPrompt] = useState("")
   const { toast } = useToast()
+  // Fase 0c-1: permisos. Ajustar un pedido = programacion.editar, o cargar y que el pedido sea propio
+  const { puede, ajustaPedido } = usePermisos()
+  const puedeCrear = puede("programacion", "cargar")
+  const [motivo, setMotivo] = useState("")
+  const [cancelar, setCancelar] = useState<ScheduledDispatch | null>(null)
+  // Formulario abierto en modo lectura (pedido ajeno sin permiso de editar)
+  const soloLectura = !!editingDispatch && !ajustaPedido(editingDispatch)
   // Fase 2: viajes, solo para los usuarios con el interruptor de funciones nuevas
   const ve = useFuncionesNuevas()
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
@@ -380,6 +386,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   }
 
   function openNewDispatch(date: Date, hour: number) {
+    if (!puedeCrear) return
+    setMotivo("")
     setSelectedDate(date)
     setSelectedHour(hour)
     setEditingDispatch(null)
@@ -413,6 +421,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   }
 
   function openEditDispatch(dispatch: ScheduledDispatch) {
+    setMotivo("")
     setEditingDispatch(dispatch)
     const arrival = parseISO(dispatch.scheduled_arrival_time)
     setForm({
@@ -447,6 +456,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
 
   async function handleSave() {
     if (saving) return // Prevenir doble click
+    if (editingDispatch ? soloLectura : !puedeCrear) return
+    if (editingDispatch && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el pedido.", variant: "destructive" })
+      return
+    }
     if (!form.metodo_descarga) {
       toast({ title: "Falta el método de descarga", description: "Elegí si el pedido va con bomba o directo. Define cuánto tarda cada camión en obra.", variant: "destructive" })
       return
@@ -467,6 +481,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         }
         await supabase.from("clients").update({ cuit: cuitPrompt.trim() }).eq("id", selectedClient.id)
         setClients(clients.map((c) => (c.id === selectedClient.id ? { ...c, cuit: cuitPrompt.trim() } : c)))
+        logActivity({ action: "editar", entity: "cliente", entityId: selectedClient.id, reference: selectedClient.name, details: { CUIT: `- → ${cuitPrompt.trim()}` } })
       }
 
       // La planta a usar viene del formulario (preseleccionada con la planta real del despacho al editar,
@@ -529,6 +544,35 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           return
         }
         toast({ title: "Despacho actualizado" })
+        // Fase 0c-1: Actividad con el antes → después y el motivo
+        const nombreCli = (id: string | null | undefined) => clients.find((c) => c.id === id)?.name || "-"
+        const nombreObra = (id: string | null | undefined) => clients.flatMap((c) => c.construction_sites || []).find((o) => o.id === id)?.name || "-"
+        const codigoForm = (id: string | null | undefined) => formulas.find((f) => f.id === id)?.code || "-"
+        const patente = (id: string | null | undefined) => mixers.find((m) => m.id === id)?.license_plate || "-"
+        const hora = (iso: string | null | undefined) => (iso ? format(parseISO(iso), "dd/MM HH:mm") : "-")
+        await logCambio({
+          entity: "pedido",
+          entityId: editingDispatch.id,
+          reference: `${nombreCli(editingDispatch.client_id)} · ${nombreObra(editingDispatch.construction_site_id)}`,
+          plantId: plantToUse,
+          antes: {
+            planta: plantNameById[editingDispatch.plant_id] || "-", cliente: nombreCli(editingDispatch.client_id), obra: nombreObra(editingDispatch.construction_site_id),
+            formula: codigoForm(editingDispatch.formula_id), camion: patente(editingDispatch.mixer_id), m3: Number(editingDispatch.quantity_m3),
+            llegada: hora(editingDispatch.scheduled_arrival_time), descarga: editingDispatch.metodo_descarga || "", fibra: editingDispatch.fiber_kg_per_m3 ?? "",
+            urgente: editingDispatch.is_urgent, observaciones: editingDispatch.observations || "", finalidad: editingDispatch.finalidad || "",
+          },
+          despues: {
+            planta: plantNameById[plantToUse] || "-", cliente: nombreCli(form.client_id), obra: nombreObra(form.construction_site_id),
+            formula: codigoForm(form.formula_id), camion: patente(form.mixer_id || null), m3: parseFloat(form.quantity_m3),
+            llegada: hora(arrivalTime), descarga: form.metodo_descarga, fibra: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : "",
+            urgente: form.is_urgent, observaciones: form.observations || "", finalidad: form.finalidad || "",
+          },
+          etiquetas: {
+            planta: "Planta", cliente: "Cliente", obra: "Obra", formula: "Fórmula", camion: "Camión", m3: "m³", llegada: "Llegada",
+            descarga: "Descarga", fibra: "Fibra (kg/m³)", urgente: "Urgente", observaciones: "Observaciones", finalidad: "Finalidad",
+          },
+          motivo: motivo.trim(),
+        })
       } else {
         // Crear un único pedido con el total de m3
         const fila = {
@@ -542,16 +586,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           scheduled_departure_time: departureTime,
           observations: form.observations || null,
           is_urgent: form.is_urgent,
-          created_by: form.created_by || currentUserName(),
+          // Fase 0c-1: lo carga la persona en sesión (sirve para saber de quién es el pedido)
+          created_by: currentUserName(),
           fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
           metodo_descarga: form.metodo_descarga,
           ...datosFase1,
           ...datosFase2,
         }
-        // Con el interruptor se pide el id para armar los viajes; sin él, el insert es el de siempre
-        const { data: creado, error } = ve
-          ? await supabase.from("scheduled_dispatches").insert(fila as any).select("id").single()
-          : await supabase.from("scheduled_dispatches").insert(fila as any)
+        // Se pide el id para Actividad (fase 0c-1) y para armar los viajes (fase 2)
+        const { data: creado, error } = await supabase.from("scheduled_dispatches").insert(fila as any).select("id").single()
         pedidoId = (creado as any)?.id || null
         if (error) {
           toast({ title: "Error", description: "No se pudo crear", variant: "destructive" })
@@ -559,6 +602,21 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           return
         }
         toast({ title: "Despacho programado", description: `${form.quantity_m3} m3` })
+        logActivity({
+          action: "crear",
+          entity: "pedido",
+          entityId: pedidoId,
+          reference: `${selectedClient?.name || "-"} · ${selectedSite?.name || "-"}`,
+          plantId: plantToUse,
+          details: {
+            Cliente: selectedClient?.name || "-",
+            Obra: selectedSite?.name || "-",
+            "Fórmula": formulas.find((f) => f.id === form.formula_id)?.code || "-",
+            "m³": parseFloat(form.quantity_m3),
+            Llegada: format(parseISO(arrivalTime), "dd/MM HH:mm"),
+            Planta: plantNameById[plantToUse] || "-",
+          },
+        })
       }
 
       // Fase 2: viajes. Se rearman solo si cambió algo que los afecta (hora, cantidad, descarga, obra, m³ por
@@ -593,8 +651,22 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteDispatch) return
+  /** Copia del pedido para Actividad y el mail de borrado. */
+  function copiaPedido(d: ScheduledDispatch) {
+    return {
+      Cliente: d.clients?.name || "-",
+      Obra: d.construction_sites?.name || "-",
+      "Fórmula": d.formulas?.code || "-",
+      "m³": d.quantity_m3,
+      Llegada: format(parseISO(d.scheduled_arrival_time), "dd/MM/yyyy HH:mm"),
+      Planta: plantNameById[d.plant_id] || "-",
+      Estado: d.status,
+      "Cargado por": d.created_by || "-",
+    }
+  }
+
+  async function handleDelete(motivoBorrado: string) {
+    if (!deleteDispatch || !puede("programacion", "borrar")) return
     setSaving(true)
     const supabase = createClient()
     const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
@@ -602,19 +674,37 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       toast({ title: "Error", description: "No se pudo eliminar el despacho", variant: "destructive" })
     } else {
       toast({ title: "Despacho eliminado" })
+      await logDeletion({
+        entity: "pedido",
+        entityId: deleteDispatch.id,
+        reference: `${deleteDispatch.clients?.name || "-"} · ${deleteDispatch.construction_sites?.name || "-"}`,
+        plantId: deleteDispatch.plant_id,
+        details: copiaPedido(deleteDispatch),
+        motivo: motivoBorrado,
+      })
       loadData()
     }
     setDeleteDispatch(null)
     setSaving(false)
   }
 
-  async function cancelDispatch(dispatch: ScheduledDispatch) {
+  async function cancelDispatch(dispatch: ScheduledDispatch, motivoCancelado: string) {
+    if (!puede("programacion", "borrar")) return
     const supabase = createClient()
     const { error } = await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", dispatch.id)
     if (error) {
       toast({ title: "Error", description: "No se pudo cancelar", variant: "destructive" })
     } else {
       toast({ title: "Despacho cancelado" })
+      // Sin mail: el pedido no se borra
+      await logActivity({
+        action: "editar",
+        entity: "pedido",
+        entityId: dispatch.id,
+        reference: `${dispatch.clients?.name || "-"} · ${dispatch.construction_sites?.name || "-"}`,
+        plantId: dispatch.plant_id,
+        details: { ...copiaPedido(dispatch), Estado: `${dispatch.status} → cancelado`, Motivo: motivoCancelado },
+      })
       loadData()
     }
   }
@@ -635,7 +725,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openEditDispatch(d)}>
             <Pencil className="h-4 w-4 mr-2" />
-            Editar
+            {ajustaPedido(d) ? "Editar" : "Ver pedido"}
           </DropdownMenuItem>
           {ve && !["cancelled", "completed"].includes(d.status) && (
             <DropdownMenuItem onClick={() => setGerenciar(d as unknown as PedidoGerenciador)}>
@@ -643,10 +733,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Viajes <NuevoBadge className="ml-2" />
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
-            <Trash2 className="h-4 w-4 mr-2" />
-            Eliminar
-          </DropdownMenuItem>
+          {puede("programacion", "borrar") && (
+            <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
+              <Trash2 className="h-4 w-4 mr-2" />
+              Eliminar
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     )
@@ -756,7 +848,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   return (
                     <div
                       key={`${day.toISOString()}-${hour}`}
-                      className={`p-1 border-r last:border-r-0 min-h-[60px] cursor-pointer hover:bg-muted/50 transition-colors ${
+                      className={`p-1 border-r last:border-r-0 min-h-[60px] ${puedeCrear ? "cursor-pointer hover:bg-muted/50" : ""} transition-colors ${
                         isSameDay(day, new Date()) ? "bg-primary/5" : ""
                       }`}
                       onClick={() => openNewDispatch(day, hour)}
@@ -842,9 +934,14 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingDispatch ? "Editar Despacho" : "Nuevo Despacho Programado"}</DialogTitle>
+            <DialogTitle>{editingDispatch ? (soloLectura ? "Ver pedido" : "Editar Despacho") : "Nuevo Despacho Programado"}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+          {soloLectura && (
+            <p className="text-xs rounded-md border bg-muted/50 px-3 py-2">
+              Pedido cargado por {editingDispatch?.created_by || "otra persona"}: lo podés ver, pero no cambiar.
+            </p>
+          )}
+          <fieldset disabled={soloLectura} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 min-w-0">
             {/* Selector de planta: siempre visible para ver/elegir a qué planta pertenece el despacho */}
             <div className="space-y-2">
               <Label>Planta *</Label>
@@ -889,7 +986,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Cliente *</Label>
-                <AddClientDialog
+                {puede("clientes", "cargar") && !soloLectura && <AddClientDialog
                   plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
                   trigger={
                     <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
@@ -901,7 +998,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     setClients([...clients, { ...newClient, construction_sites: [] }])
                     setForm({ ...form, client_id: newClient.id, construction_site_id: "" })
                   }}
-                />
+                />}
               </div>
               <Select value={form.client_id} onValueChange={(v) => setForm({ ...form, client_id: v, construction_site_id: "" })}>
                 <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
@@ -924,7 +1021,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label>Obra *</Label>
-                  <AddConstructionSiteDialog
+                  {puede("clientes", "cargar") && !soloLectura && <AddConstructionSiteDialog
                     clientId={form.client_id}
                     trigger={
                       <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
@@ -945,7 +1042,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                       setClients(updatedClients)
                       setForm({ ...form, construction_site_id: newSite.id })
                     }}
-                  />
+                  />}
                 </div>
                 <Select value={form.construction_site_id} onValueChange={(v) => setForm({ ...form, construction_site_id: v })}>
                   <SelectTrigger><SelectValue placeholder="Seleccionar obra" /></SelectTrigger>
@@ -1168,7 +1265,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Camion (opcional)</Label>
-                <AddMixerDialog
+                {puede("flota", "cargar") && !soloLectura && <AddMixerDialog
                   plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
                   trigger={
                     <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
@@ -1180,7 +1277,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     setMixers([...mixers, { ...newMixer, capacity_m3: 8, status: "available" }])
                     setForm({ ...form, mixer_id: newMixer.id })
                   }}
-                />
+                />}
               </div>
               <Select value={form.mixer_id || "none"} onValueChange={(v) => setForm({ ...form, mixer_id: v === "none" ? "" : v })}>
                 <SelectTrigger><SelectValue placeholder="Asignar despues" /></SelectTrigger>
@@ -1199,26 +1296,26 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               <Textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} rows={2} />
             </div>
             
-            {!editingDispatch && (
-              <UserSelector
-                value={form.created_by}
-                onValueChange={(v) => setForm({ ...form, created_by: v })}
-                label="Programado por"
-                required
-              />
-            )}
-          </div>
+            {/* Fase 0c-1: el pedido lo carga la persona en sesión (sin selector) */}
+            <p className="text-xs text-muted-foreground">
+              Programado por: <span className="font-medium text-foreground">{editingDispatch ? editingDispatch.created_by || "-" : currentUserName()}</span>
+            </p>
+          </fieldset>
+
+          {editingDispatch && !soloLectura && <CampoMotivo value={motivo} onChange={setMotivo} ejemplo="Ej: el cliente cambió la hora" />}
 
           <DialogFooter className="gap-2">
-            {editingDispatch && editingDispatch.status !== "cancelled" && (
-              <Button variant="destructive" onClick={() => { cancelDispatch(editingDispatch); setIsDialogOpen(false) }}>
+            {editingDispatch && editingDispatch.status !== "cancelled" && puede("programacion", "borrar") && (
+              <Button variant="destructive" onClick={() => { setCancelar(editingDispatch); setIsDialogOpen(false) }}>
                 Cancelar Despacho
               </Button>
             )}
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
-<Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga}>
-  {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
-            </Button>
+            {!soloLectura && (
+              <Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo))}>
+                {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1226,33 +1323,39 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       {/* Fase 2: gerenciador de viajes */}
       <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => loadData()} onEditarPedido={gerenciar ? () => openEditDispatch(gerenciar as unknown as ScheduledDispatch) : undefined} />
 
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteDispatch} onOpenChange={(open) => !open && setDeleteDispatch(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Despacho Programado</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                <span>¿Estas seguro que deseas eliminar este despacho? Esta accion no se puede deshacer.</span>
-                {deleteDispatch && (
-                  <div className="mt-2 p-2 bg-muted rounded text-sm">
-                    <div><strong>Cliente:</strong> {deleteDispatch.clients?.name}</div>
-                    <div><strong>Obra:</strong> {deleteDispatch.construction_sites?.name}</div>
-                    <div><strong>Cantidad:</strong> {deleteDispatch.quantity_m3}m3</div>
-                    <div><strong>Fecha:</strong> {format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy HH:mm")}</div>
-                  </div>
-                )}
+      {/* Eliminar y cancelar: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteDispatch}
+        onOpenChange={(open) => !open && setDeleteDispatch(null)}
+        titulo="Eliminar Despacho Programado"
+        descripcion={
+          deleteDispatch && (
+            <div>
+              <span>Esta acción no se puede deshacer. Queda una copia en Actividad y se avisa por mail.</span>
+              <div className="mt-2 p-2 bg-muted rounded text-sm">
+                <div><strong>Cliente:</strong> {deleteDispatch.clients?.name}</div>
+                <div><strong>Obra:</strong> {deleteDispatch.construction_sites?.name}</div>
+                <div><strong>Cantidad:</strong> {deleteDispatch.quantity_m3}m3</div>
+                <div><strong>Fecha:</strong> {format(parseISO(deleteDispatch.scheduled_arrival_time), "dd/MM/yyyy HH:mm")}</div>
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={saving} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {saving ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </div>
+          )
+        }
+        textoBoton="Eliminar"
+        onConfirmar={handleDelete}
+      />
+      <ConfirmarConMotivo
+        open={!!cancelar}
+        onOpenChange={(open) => !open && setCancelar(null)}
+        titulo="Cancelar pedido"
+        descripcion={cancelar && `${cancelar.clients?.name || ""} · ${cancelar.construction_sites?.name || ""} · ${cancelar.quantity_m3} m³. El pedido no se borra: queda cancelado.`}
+        textoBoton="Cancelar pedido"
+        ejemplo="Ej: se suspende por lluvia"
+        onConfirmar={async (m) => {
+          if (cancelar) await cancelDispatch(cancelar, m)
+          setCancelar(null)
+        }}
+      />
     </div>
   )
 }

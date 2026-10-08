@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server"
 import { ProgramacionTabs } from "@/components/programacion-tabs"
+import { SeccionProtegida } from "@/components/seccion-protegida"
 
 export default async function ProgramacionPage() {
   const supabase = await createClient()
@@ -12,12 +13,14 @@ export default async function ProgramacionPage() {
     .order("name")
 
   return (
-    <div className="py-4 px-4 md:py-6 md:px-6">
-      <div className="mb-4 md:mb-6">
-        <h1 className="text-xl md:text-2xl font-bold">Programacion de Despachos</h1>
-        <p className="text-xs md:text-sm text-foreground/70 font-medium">Planificá la semana y ordená los camiones de cada día</p>
+    <SeccionProtegida seccion="programacion">
+      <div className="py-4 px-4 md:py-6 md:px-6">
+        <div className="mb-4 md:mb-6">
+          <h1 className="text-xl md:text-2xl font-bold">Programacion de Despachos</h1>
+          <p className="text-xs md:text-sm text-foreground/70 font-medium">Planificá la semana y ordená los camiones de cada día</p>
+        </div>
+        <ProgramacionTabs plants={plants || []} />
       </div>
-      <ProgramacionTabs plants={plants || []} />
-    </div>
+    </SeccionProtegida>
   )
 }

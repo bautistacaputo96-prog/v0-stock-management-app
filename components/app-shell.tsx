@@ -21,10 +21,15 @@ import {
   LogOut,
   Wrench,
   MapPinned,
+  KeyRound,
+  UserCog,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { getCurrentUser, clearCurrentUser } from "@/lib/current-user"
+import { usePermisos } from "@/lib/current-user"
+import { seccionDeRuta, NOMBRE_TIPO } from "@/lib/permisos"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { CambiarClaveDialog, salirDelSistema } from "@/components/elegir-clave"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { HighContrastToggle } from "@/components/high-contrast-toggle"
 
@@ -67,19 +72,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [logisticaOpen, setLogisticaOpen] = useState(pathname.startsWith("/logistica"))
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  // El registro de actividad solo se ofrece a supervisores
-  const [supervisor, setSupervisor] = useState(false)
-  const [userName, setUserName] = useState("")
-  useEffect(() => {
-    const u = getCurrentUser()
-    setSupervisor(u?.role === "supervisor")
-    setUserName(u?.name || "")
-  }, [])
+  // Fase 0c-1: el menú se filtra por "ver"; Actividad y Usuarios, solo gerenciales
+  const { puede, esGerencial, usuario } = usePermisos()
+  const userName = usuario?.name || ""
+  const tipoTexto = usuario ? NOMBRE_TIPO[usuario.tipo] : ""
+  const iniciales = userName.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "?"
+  const [cambiarClave, setCambiarClave] = useState(false)
+  const veRuta = (href: string) => {
+    const s = seccionDeRuta(href)
+    return !s || puede(s, "ver")
+  }
+  const navItems = mainNavItems.filter((i) => veRuta(i.href))
+  const dispatchItems = dispatchSubItems.filter((i) => veRuta(i.href))
+  const veCalidad = veRuta("/calidad")
 
   function handleLogout() {
-    clearCurrentUser()
-    window.localStorage.removeItem("rebucret-auth")
-    window.location.reload()
+    salirDelSistema()
   }
 
   // Close mobile menu on route change
@@ -95,7 +103,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Shared navigation content
   const NavContent = ({ isMobile = false }: { isMobile?: boolean }) => (
     <div className="flex flex-col gap-1">
-      {mainNavItems.filter((item) => item.href !== "/logistica").map((item) => {
+      {navItems.filter((item) => item.href !== "/logistica").map((item) => {
         const Icon = item.icon
         const active = isActive(item.href)
         return (
@@ -149,6 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Dispatch section */}
+      {dispatchItems.length > 0 && (<>
       <button
         onClick={() => setDispatchOpen(!dispatchOpen)}
         className={cn(
@@ -164,7 +173,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </button>
       {dispatchOpen && (
         <div className="ml-4 flex flex-col gap-0.5 border-l border-[#1e293b] pl-4">
-          {dispatchSubItems.map((sub) => (
+          {dispatchItems.map((sub) => (
             <Link
               key={sub.href}
               href={sub.href}
@@ -180,7 +189,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
+      </>)}
+
       {/* Quality section */}
+      {veCalidad && (<>
       <button
         onClick={() => setQualityOpen(!qualityOpen)}
         className={cn(
@@ -214,6 +226,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
+      </>)}
+
       <Link
         href="/informes"
         onClick={() => isMobile && setMobileOpen(false)}
@@ -228,7 +242,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <span>Informes</span>
       </Link>
 
-      {supervisor && (
+      {esGerencial && (
+        <Link
+          href="/usuarios"
+          onClick={() => isMobile && setMobileOpen(false)}
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+            isActive("/usuarios")
+              ? "bg-[#1e293b] text-white"
+              : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
+          )}
+        >
+          <UserCog className="h-[18px] w-[18px] flex-shrink-0" />
+          <span>Usuarios</span>
+        </Link>
+      )}
+
+      {esGerencial && (
         <Link
           href="/actividad"
           onClick={() => isMobile && setMobileOpen(false)}
@@ -280,7 +310,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <NavContent />
           ) : (
             <div className="flex flex-col gap-1">
-              {mainNavItems.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon
                 const active = isActive(item.href)
                 return (
@@ -299,8 +329,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 )
               })}
-              <Link
-                href="/programacion"
+              {dispatchItems.length > 0 && <Link
+                href={dispatchItems[0].href}
                 className={cn(
                   "flex items-center justify-center rounded-md p-2.5 transition-colors",
                   (pathname.startsWith("/programacion") || pathname.startsWith("/plantista") || pathname.startsWith("/historial-despachos"))
@@ -310,8 +340,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 title="Despachos"
               >
                 <Calendar className="h-[18px] w-[18px]" />
-              </Link>
-              <Link
+              </Link>}
+              {veCalidad && <Link
                 href="/calidad"
                 className={cn(
                   "flex items-center justify-center rounded-md p-2.5 transition-colors",
@@ -322,7 +352,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 title="Calidad"
               >
                 <ShieldCheck className="h-[18px] w-[18px]" />
-              </Link>
+              </Link>}
               <Link
                 href="/informes"
                 className={cn(
@@ -346,20 +376,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-xs text-white truncate font-medium">{userName}</p>
-                  <p className="text-[10px] text-[#64748b]">{supervisor ? "Supervisor" : "Operario"}</p>
+                  <p className="text-[10px] text-[#64748b]">{tipoTexto}</p>
                 </div>
-                <button
-                  onClick={handleLogout}
-                  title="Cerrar sesion"
-                  className="text-[#94a3b8] hover:text-white transition-colors shrink-0"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setCambiarClave(true)}
+                    title="Cambiar mi contraseña"
+                    className="text-[#94a3b8] hover:text-white transition-colors"
+                  >
+                    <KeyRound className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    title="Salir (cambiar de usuario)"
+                    className="text-[#94a3b8] hover:text-white transition-colors"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             ) : (
               <button
                 onClick={handleLogout}
-                title={`${userName} — Cerrar sesion`}
+                title={`${userName} (${tipoTexto}) — Salir`}
                 className="w-full flex justify-center text-[#94a3b8] hover:text-white transition-colors"
               >
                 <LogOut className="h-4 w-4" />
@@ -425,9 +464,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2 md:gap-3">
             <HighContrastToggle />
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold">
-              OP
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold"
+                  title={`${userName} · ${tipoTexto}`}
+                >
+                  {iniciales}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <p className="text-sm font-medium truncate">{userName}</p>
+                  <p className="text-xs font-normal text-muted-foreground">{tipoTexto}</p>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setCambiarClave(true)}>
+                  <KeyRound className="h-4 w-4 mr-2" />
+                  Cambiar mi contraseña
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleLogout}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Salir (cambiar de usuario)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <CambiarClaveDialog open={cambiarClave} onOpenChange={setCambiarClave} />
           </div>
         </header>
 

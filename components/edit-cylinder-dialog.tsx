@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
+import { logCambio } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 
 interface EditCylinderDialogProps {
   cylinder: {
@@ -64,6 +66,7 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
     extra_water_liters: cylinder.dispatch?.extra_water_liters?.toString() || "",
   })
   const [saving, setSaving] = useState(false)
+  const [motivo, setMotivo] = useState("") // fase 0c-1
   const [calibration, setCalibration] = useState<PressCalibration | null>(null)
 
   useEffect(() => {
@@ -98,6 +101,10 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!motivoValido(motivo)) {
+      toast.error("Escribí el motivo de la corrección")
+      return
+    }
     setSaving(true)
 
     const supabase = createClient()
@@ -160,6 +167,37 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
 
     setSaving(false)
     toast.success("Probeta actualizada correctamente")
+    // Fase 0c-1: Actividad con el antes → después (también de los campos del despacho que se sincronizan)
+    await logCambio({
+      entity: "probeta",
+      entityId: cylinder.id,
+      reference: `${formData.sample_number || cylinder.dispatch?.sample_number || "-"}-${formData.cylinder_number || cylinder.cylinder_number || "-"}`,
+      antes: {
+        cylinder_number: cylinder.cylinder_number ?? "", test_age_days: cylinder.test_age_days ?? "", scheduled_test_date: cylinder.scheduled_test_date || "",
+        actual_test_date: cylinder.actual_test_date || "", dial_reading: cylinder.dial_reading ?? "", strength_mpa: cylinder.strength_mpa ?? "",
+        weight_grams: cylinder.weight_grams ?? "", comments: cylinder.comments || "",
+        ...(cylinder.dispatch_id ? {
+          sample_number: cylinder.dispatch?.sample_number || "", remito: cylinder.dispatch?.remito || "",
+          actual_slump_cm: cylinder.dispatch?.actual_slump_cm ?? "", extra_water_liters: cylinder.dispatch?.extra_water_liters ?? "",
+        } : {}),
+      },
+      despues: {
+        cylinder_number: cylinderUpdate.cylinder_number ?? "", test_age_days: cylinderUpdate.test_age_days ?? "", scheduled_test_date: cylinderUpdate.scheduled_test_date || "",
+        actual_test_date: cylinderUpdate.actual_test_date || "", dial_reading: cylinderUpdate.dial_reading ?? "", strength_mpa: cylinderUpdate.strength_mpa ?? "",
+        weight_grams: cylinderUpdate.weight_grams ?? "", comments: cylinderUpdate.comments || "",
+        ...(cylinder.dispatch_id ? {
+          sample_number: formData.sample_number || "", remito: formData.remito || "",
+          actual_slump_cm: formData.actual_slump_cm ? Number.parseFloat(formData.actual_slump_cm) : "",
+          extra_water_liters: formData.extra_water_liters ? Number.parseFloat(formData.extra_water_liters) : "",
+        } : {}),
+      },
+      etiquetas: {
+        cylinder_number: "Cilindro", test_age_days: "Edad (días)", scheduled_test_date: "Fecha programada", actual_test_date: "Fecha de rotura",
+        dial_reading: "Dial", strength_mpa: "MPa", weight_grams: "Peso (g)", comments: "Comentarios",
+        sample_number: "Muestra (despacho)", remito: "Remito (despacho)", actual_slump_cm: "Asentamiento (despacho)", extra_water_liters: "Agua extra (despacho)",
+      },
+      motivo: motivo.trim(),
+    })
     onUpdate()
     onClose()
   }
@@ -330,11 +368,13 @@ export function EditCylinderDialog({ cylinder, onClose, onUpdate }: EditCylinder
             </div>
           </div>
 
+          <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-probeta" ejemplo="Ej: el dial se cargó mal" />
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || !motivoValido(motivo)}>
               {saving ? "Guardando..." : "Guardar Cambios"}
             </Button>
           </DialogFooter>

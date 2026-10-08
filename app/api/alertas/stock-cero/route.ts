@@ -3,7 +3,7 @@
  * las crea un trigger de la base cuando un material queda en 0 o negativo).
  * La llama la base en el momento (pg_net) y un cron diario como respaldo.
  * Llamarla de más no hace daño: solo manda lo que todavía no se mandó.
- * Destinatarios: supervisores activos con mail en app_users (hoy Bautista y Juan).
+ * Destinatarios: gerenciales activos con mail en app_users (hoy Bautista y Juan).
  */
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
@@ -40,7 +40,7 @@ async function enviarPendientes() {
   const { data: supervisores } = await supabase
     .from("app_users")
     .select("email")
-    .eq("role", "supervisor")
+    .eq("tipo", "gerencial") // fase 0c-1: antes role = supervisor
     .eq("active", true)
     .not("email", "is", null)
   const destinatarios = (supervisores || []).map((s: any) => s.email).filter(Boolean)

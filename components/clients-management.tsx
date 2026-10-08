@@ -15,7 +15,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Pencil, Search, Trash2 } from "lucide-react"
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { usePermisos } from "@/lib/current-user"
+import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 
 type Client = {
   id: string
@@ -102,6 +104,17 @@ const EMPTY_SITE_FORM = {
   observations: "",
 }
 
+// Fase 0c-1: nombres en pantalla de los campos que quedan en Actividad al editar
+const ETIQUETAS_CLIENTE: Record<string, string> = {
+  name: "Nombre", razon_social: "Razón social", cuit: "CUIT", cond_iva: "Condición IVA", direccion_fiscal: "Dirección fiscal",
+  cp: "CP", localidad_cliente: "Localidad", provincia: "Provincia", cond_pago: "Condición de pago", phone: "Teléfono", email: "Mail", contact: "Contacto",
+}
+const ETIQUETAS_OBRA: Record<string, string> = {
+  name: "Nombre", address: "Dirección", localidad: "Localidad", travel_time_minutes: "Viaje (min)", unload_time_minutes: "Descarga (min)",
+  requires_pump: "Bomba", reception_hours_start: "Recibe desde", reception_hours_end: "Recibe hasta", site_contact: "Contacto en obra",
+  site_phone: "Teléfono en obra", observations: "Observaciones", gps: "Ubicación",
+}
+
 export function ClientsManagement() {
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
@@ -112,9 +125,10 @@ export function ClientsManagement() {
   const [editingClient, setEditingClient] = useState<Client | null>(null)
   const [editingSite, setEditingSite] = useState<ConstructionSite | null>(null)
   const [deleteClientConfirm, setDeleteClientConfirm] = useState<Client | null>(null)
-  const [deleteClientStep, setDeleteClientStep] = useState(1)
   const [deleteSiteConfirm, setDeleteSiteConfirm] = useState<ConstructionSite | null>(null)
-  const [deleteSiteStep, setDeleteSiteStep] = useState(1)
+  // Fase 0c-1: clientes y obras = permiso "clientes"; editar y borrar piden motivo
+  const { puede } = usePermisos()
+  const [motivo, setMotivo] = useState("")
   const { toast } = useToast()
 
   const [clientForm, setClientForm] = useState({ ...EMPTY_CLIENT_FORM })
@@ -150,6 +164,11 @@ export function ClientsManagement() {
   )
 
   async function handleSaveClient() {
+    if (editingClient ? !puede("clientes", "editar") : !puede("clientes", "cargar")) return
+    if (editingClient && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el cliente.", variant: "destructive" })
+      return
+    }
     if (!clientForm.name.trim()) {
       toast({ title: "Error", description: "El nombre es obligatorio", variant: "destructive" })
       return
@@ -192,10 +211,20 @@ export function ClientsManagement() {
       const { error } = await supabase.from("clients").update(payload).eq("id", editingClient.id)
       if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return }
       toast({ title: "Cliente actualizado" })
+      await logCambio({
+        entity: "cliente",
+        entityId: editingClient.id,
+        reference: payload.name,
+        antes: editingClient as unknown as Record<string, unknown>,
+        despues: payload,
+        etiquetas: ETIQUETAS_CLIENTE,
+        motivo: motivo.trim(),
+      })
     } else {
-      const { error } = await supabase.from("clients").insert({ ...payload, active: true })
+      const { data: creado, error } = await supabase.from("clients").insert({ ...payload, active: true }).select("id").single()
       if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return }
       toast({ title: "Cliente creado" })
+      logActivity({ action: "crear", entity: "cliente", entityId: (creado as any)?.id ?? null, reference: payload.name, details: { Cliente: payload.name, CUIT: payload.cuit, "Condición IVA": payload.cond_iva || "-" } })
     }
 
     setIsClientDialogOpen(false)
@@ -206,6 +235,11 @@ export function ClientsManagement() {
 
   async function handleSaveSite() {
     if (!selectedClient) return
+    if (editingSite ? !puede("clientes", "editar") : !puede("clientes", "cargar")) return
+    if (editingSite && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige la obra.", variant: "destructive" })
+      return
+    }
     if (!siteForm.name.trim()) {
       toast({ title: "Error", description: "El nombre de la obra es obligatorio", variant: "destructive" })
       return
@@ -244,10 +278,26 @@ export function ClientsManagement() {
       const { error } = await supabase.from("construction_sites").update(siteData).eq("id", editingSite.id)
       if (error) { toast({ title: "Error", description: "No se pudo actualizar la obra", variant: "destructive" }); return }
       toast({ title: "Obra actualizada" })
+      await logCambio({
+        entity: "obra",
+        entityId: editingSite.id,
+        reference: siteData.name,
+        antes: {
+          ...editingSite,
+          reception_hours_start: editingSite.reception_hours_start?.slice(0, 5) || null,
+          reception_hours_end: editingSite.reception_hours_end?.slice(0, 5) || null,
+          gps: editingSite.gps_lat != null ? `${Number(editingSite.gps_lat)}, ${Number(editingSite.gps_lng)}` : "",
+        } as unknown as Record<string, unknown>,
+        despues: { ...siteData, gps: siteData.gps_lat != null ? `${Number(siteData.gps_lat)}, ${Number(siteData.gps_lng)}` : "" },
+        etiquetas: ETIQUETAS_OBRA,
+        motivo: motivo.trim(),
+        extra: { Cliente: selectedClient.name },
+      })
     } else {
-      const { error } = await supabase.from("construction_sites").insert(siteData)
+      const { data: creada, error } = await supabase.from("construction_sites").insert(siteData).select("id").single()
       if (error) { toast({ title: "Error", description: "No se pudo crear la obra", variant: "destructive" }); return }
       toast({ title: "Obra creada" })
+      logActivity({ action: "crear", entity: "obra", entityId: (creada as any)?.id ?? null, reference: siteData.name, details: { Obra: siteData.name, Cliente: selectedClient.name, "Dirección": siteData.address, Localidad: siteData.localidad, "Viaje (min)": siteData.travel_time_minutes } })
     }
 
     setIsSiteDialogOpen(false)
@@ -258,6 +308,7 @@ export function ClientsManagement() {
   }
 
   function openEditClient(client: Client) {
+    setMotivo("")
     setEditingClient(client)
     setClientForm({
       name:              client.name,
@@ -277,6 +328,7 @@ export function ClientsManagement() {
   }
 
   function openEditSite(site: ConstructionSite) {
+    setMotivo("")
     setEditingSite(site)
     setSiteUbic({
       lat: site.gps_lat != null ? Number(site.gps_lat) : null,
@@ -301,28 +353,50 @@ export function ClientsManagement() {
     setIsSiteDialogOpen(true)
   }
 
-  async function confirmDeleteClient() {
-    if (deleteClientStep === 1) { setDeleteClientStep(2); return }
-    if (!deleteClientConfirm) return
+  async function confirmDeleteClient(motivoBaja: string) {
+    if (!deleteClientConfirm || !puede("clientes", "borrar")) return
     const supabase = createClient()
     const { error } = await supabase.from("clients").update({ active: false }).eq("id", deleteClientConfirm.id)
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return }
     toast({ title: "Cliente eliminado" })
+    await logDeletion({
+      entity: "cliente",
+      entityId: deleteClientConfirm.id,
+      reference: deleteClientConfirm.name,
+      details: {
+        Cliente: deleteClientConfirm.name,
+        CUIT: deleteClientConfirm.cuit || "-",
+        Obras: deleteClientConfirm.construction_sites?.map((o) => o.name).join(", ") || "-",
+        Baja: "se da de baja (active = false); no se borra",
+      },
+      motivo: motivoBaja,
+    })
     setDeleteClientConfirm(null)
-    setDeleteClientStep(1)
     if (selectedClient?.id === deleteClientConfirm.id) setSelectedClient(null)
     loadClients()
   }
 
-  async function confirmDeleteSite() {
-    if (deleteSiteStep === 1) { setDeleteSiteStep(2); return }
-    if (!deleteSiteConfirm) return
+  async function confirmDeleteSite(motivoBorrado: string) {
+    if (!deleteSiteConfirm || !puede("clientes", "borrar")) return
     const supabase = createClient()
     const { error } = await supabase.from("construction_sites").delete().eq("id", deleteSiteConfirm.id)
     if (error) { toast({ title: "Error", description: "No se pudo eliminar la obra", variant: "destructive" }); return }
     toast({ title: "Obra eliminada" })
+    await logDeletion({
+      entity: "obra",
+      entityId: deleteSiteConfirm.id,
+      reference: deleteSiteConfirm.name,
+      details: {
+        Obra: deleteSiteConfirm.name,
+        Cliente: clients.find((c) => c.id === deleteSiteConfirm.client_id)?.name || "-",
+        "Dirección": deleteSiteConfirm.address || "-",
+        Localidad: deleteSiteConfirm.localidad || "-",
+        "Viaje (min)": deleteSiteConfirm.travel_time_minutes,
+        "Descarga (min)": deleteSiteConfirm.unload_time_minutes,
+      },
+      motivo: motivoBorrado,
+    })
     setDeleteSiteConfirm(null)
-    setDeleteSiteStep(1)
     loadClients()
   }
 
@@ -341,9 +415,11 @@ export function ClientsManagement() {
             className="pl-9"
           />
         </div>
-        <Button onClick={() => { setEditingClient(null); setClientForm({ ...EMPTY_CLIENT_FORM }); setIsClientDialogOpen(true) }} className="gap-2">
-          <Plus className="h-4 w-4" /> Nuevo Cliente
-        </Button>
+        {puede("clientes", "cargar") && (
+          <Button onClick={() => { setEditingClient(null); setClientForm({ ...EMPTY_CLIENT_FORM }); setIsClientDialogOpen(true) }} className="gap-2">
+            <Plus className="h-4 w-4" /> Nuevo Cliente
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -368,12 +444,16 @@ export function ClientsManagement() {
                       </p>
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); openEditClient(client) }}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteClientConfirm(client); setDeleteClientStep(1) }}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {puede("clientes", "editar") && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); openEditClient(client) }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {puede("clientes", "borrar") && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteClientConfirm(client) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -395,9 +475,11 @@ export function ClientsManagement() {
                     {selectedClient.cond_iva && ` · ${selectedClient.cond_iva}`}
                   </p>
                 </div>
-                <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setSiteUbic(UBIC_VACIA); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
-                  <Plus className="h-4 w-4" /> Nueva Obra
-                </Button>
+                {puede("clientes", "cargar") && (
+                  <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setSiteUbic(UBIC_VACIA); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
+                    <Plus className="h-4 w-4" /> Nueva Obra
+                  </Button>
+                )}
               </CardHeader>
               <CardContent className="px-0">
                 <Table>
@@ -432,8 +514,8 @@ export function ClientsManagement() {
                           </TableCell>
                           <TableCell className="py-2">
                             <div className="flex items-center gap-0.5">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSite(site)}><Pencil className="h-3.5 w-3.5" /></Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeleteSiteConfirm(site); setDeleteSiteStep(1) }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                              {puede("clientes", "editar") && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSite(site)}><Pencil className="h-3.5 w-3.5" /></Button>}
+                              {puede("clientes", "borrar") && <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteSiteConfirm(site)}><Trash2 className="h-3.5 w-3.5" /></Button>}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -568,9 +650,10 @@ export function ClientsManagement() {
               </div>
             </div>
           </div>
+          {editingClient && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-cliente" ejemplo="Ej: el CUIT estaba mal cargado" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsClientDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveClient} disabled={!clientForm.razon_social || !clientForm.cuit}>
+            <Button onClick={handleSaveClient} disabled={!clientForm.razon_social || !clientForm.cuit || (!!editingClient && !motivoValido(motivo))}>
               {editingClient ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>
@@ -668,60 +751,40 @@ export function ClientsManagement() {
               </div>
             </div>
           </div>
+          {editingSite && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-obra" ejemplo="Ej: el cliente pasó otra dirección" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsSiteDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveSite} disabled={!siteForm.name || !siteForm.address || !siteForm.localidad}>
+            <Button onClick={handleSaveSite} disabled={!siteForm.name || !siteForm.address || !siteForm.localidad || (!!editingSite && !motivoValido(motivo))}>
               {editingSite ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Client */}
-      <AlertDialog open={!!deleteClientConfirm} onOpenChange={(open) => { if (!open) { setDeleteClientConfirm(null); setDeleteClientStep(1) } }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{deleteClientStep === 1 ? "Eliminar Cliente" : "Confirmar Eliminación"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteClientStep === 1 ? (
-                <>¿Seguro que querés eliminar a <strong>{deleteClientConfirm?.name}</strong>?
-                  {(deleteClientConfirm?.construction_sites?.length || 0) > 0 && (
-                    <span className="block mt-2 text-destructive font-medium">También se eliminarán {deleteClientConfirm?.construction_sites?.length} obra(s) asociada(s).</span>
-                  )}
-                </>
-              ) : (
-                <span className="text-destructive font-medium">Esta acción no se puede deshacer.</span>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setDeleteClientConfirm(null); setDeleteClientStep(1) }}>Cancelar</AlertDialogCancel>
-            <Button variant="destructive" onClick={(e) => { e.preventDefault(); confirmDeleteClient() }}>
-              {deleteClientStep === 1 ? "Continuar" : "Sí, eliminar"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Delete Site */}
-      <AlertDialog open={!!deleteSiteConfirm} onOpenChange={(open) => { if (!open) { setDeleteSiteConfirm(null); setDeleteSiteStep(1) } }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{deleteSiteStep === 1 ? "Eliminar Obra" : "Confirmar Eliminación"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteSiteStep === 1
-                ? <>¿Seguro que querés eliminar la obra <strong>{deleteSiteConfirm?.name}</strong>?</>
-                : <span className="text-destructive font-medium">Esta acción no se puede deshacer.</span>}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setDeleteSiteConfirm(null); setDeleteSiteStep(1) }}>Cancelar</AlertDialogCancel>
-            <Button variant="destructive" onClick={(e) => { e.preventDefault(); confirmDeleteSite() }}>
-              {deleteSiteStep === 1 ? "Continuar" : "Sí, eliminar"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Baja de cliente y eliminar obra: con motivo (fase 0c-1) */}
+      <ConfirmarConMotivo
+        open={!!deleteClientConfirm}
+        onOpenChange={(open) => !open && setDeleteClientConfirm(null)}
+        titulo="Eliminar Cliente"
+        descripcion={
+          <>
+            ¿Seguro que querés eliminar a <strong>{deleteClientConfirm?.name}</strong>?
+            {(deleteClientConfirm?.construction_sites?.length || 0) > 0 && (
+              <span className="block mt-2 text-destructive font-medium">También dejan de verse sus {deleteClientConfirm?.construction_sites?.length} obra(s).</span>
+            )}
+          </>
+        }
+        textoBoton="Sí, eliminar"
+        onConfirmar={confirmDeleteClient}
+      />
+      <ConfirmarConMotivo
+        open={!!deleteSiteConfirm}
+        onOpenChange={(open) => !open && setDeleteSiteConfirm(null)}
+        titulo="Eliminar Obra"
+        descripcion={<>¿Seguro que querés eliminar la obra <strong>{deleteSiteConfirm?.name}</strong>? Esta acción no se puede deshacer.</>}
+        textoBoton="Sí, eliminar"
+        onConfirmar={confirmDeleteSite}
+      />
     </div>
   )
 }

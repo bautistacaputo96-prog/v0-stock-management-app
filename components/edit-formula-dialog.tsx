@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, X, Droplets } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
+import { logCambio } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 
 type Material = {
   id: string
@@ -53,6 +55,7 @@ export function EditFormulaDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [loading, setLoading] = useState(false)
+  const [motivo, setMotivo] = useState("") // fase 0c-1
   const [formData, setFormData] = useState({
     code: formula.code,
     name: formula.name,
@@ -90,6 +93,10 @@ export function EditFormulaDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!motivoValido(motivo)) {
+      toast({ variant: "destructive", title: "Falta el motivo", description: "Escribí por qué se cambia la fórmula." })
+      return
+    }
 
     if (formulaMaterials.length === 0) {
       toast({
@@ -155,6 +162,30 @@ export function EditFormulaDialog({
       )
 
       if (materialsError) throw materialsError
+
+      // Fase 0c-1: Actividad con materiales y cantidades antes → después
+      const nombreMat = (id: string) => materials.find((m) => m.id === id)?.name || "?"
+      const antesMat: Record<string, unknown> = {}
+      for (const fm of formula.formula_materials) antesMat[`mat:${fm.materials.name}`] = Number(fm.quantity)
+      const despuesMat: Record<string, unknown> = {}
+      for (const m of allMaterials) despuesMat[`mat:${nombreMat(m.material_id)}`] = Number.parseFloat(m.quantity)
+      const claves = Array.from(new Set([...Object.keys(antesMat), ...Object.keys(despuesMat)]))
+      for (const k of claves) {
+        if (!(k in antesMat)) antesMat[k] = ""
+        if (!(k in despuesMat)) despuesMat[k] = ""
+      }
+      await logCambio({
+        entity: "formula",
+        entityId: formula.id,
+        reference: formData.code,
+        antes: { code: formula.code, name: formula.name, description: formula.description || "", yield_m3: Number(formula.yield_m3), ...antesMat },
+        despues: { code: formData.code, name: formData.name, description: formData.description || "", yield_m3: Number.parseFloat(formData.yield_m3), ...despuesMat },
+        etiquetas: {
+          code: "Código", name: "Nombre", description: "Descripción", yield_m3: "Rinde (m³)",
+          ...Object.fromEntries(claves.map((k) => [k, k.slice(4)])),
+        },
+        motivo: motivo.trim(),
+      })
 
       toast({
         title: "Fórmula actualizada",
@@ -291,11 +322,13 @@ export function EditFormulaDialog({
             </div>
           </div>
 
+          <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-formula" ejemplo="Ej: se ajustó el cemento después del ensayo" />
+
           <div className="flex justify-end gap-2 pt-4">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || !motivoValido(motivo)}>
               {loading ? "Guardando..." : "Guardar Cambios"}
             </Button>
           </div>

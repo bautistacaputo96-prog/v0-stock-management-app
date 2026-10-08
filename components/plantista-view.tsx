@@ -18,8 +18,9 @@ import { Switch } from "@/components/ui/switch"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { AddDispatchDialog } from "@/components/add-dispatch-dialog"
 import { cn } from "@/lib/utils"
-import { currentUserName } from "@/lib/current-user"
+import { currentUserName, usePermisos } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
+import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, cargarEmpresasBombeo, choferPorCamionDelDia, textoBomba, type Chofer, type EmpresaBombeo } from "@/lib/maestros"
 // Fase 2 (solo con el interruptor de funciones nuevas)
@@ -116,6 +117,12 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   const [humidityChecked, setHumidityChecked] = useState(false)
   const [humidityForm, setHumidityForm] = useState<Record<string, { mode: "direct" | "calculate"; humidity: string; wetWeight: string; dryWeight: string }>>({})
   const [savingHumidity, setSavingHumidity] = useState(false)
+  // Fase 0c-1: permisos
+  const { puede } = usePermisos()
+  const puedeDespachar = puede("despacho", "cargar")
+  const puedeHumedad = puede("materia_prima", "cargar")
+  const [motivoTotal, setMotivoTotal] = useState("")
+  const [cancelarPedido, setCancelarPedido] = useState<ScheduledDispatch | null>(null)
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000)
@@ -129,10 +136,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   }, [selectedPlant, selectedDate, ve])
 
   useEffect(() => {
-    if (selectedPlant && isToday(selectedDate) && !humidityChecked) {
+    // Fase 0c-1: el aviso de humedad solo le aparece a quien carga materia prima
+    if (selectedPlant && isToday(selectedDate) && !humidityChecked && puedeHumedad) {
       checkDailyHumidity()
     }
-  }, [selectedPlant])
+  }, [selectedPlant, puedeHumedad]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadLastSampleNumber() {
     const supabase = createClient()
@@ -183,6 +191,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   }
 
   async function saveHumidity() {
+    if (!puedeHumedad) return
     setSavingHumidity(true)
     const supabase = createClient()
     if (!supabase) { setSavingHumidity(false); return }
@@ -221,6 +230,14 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
           recorded_by: currentUserName(),
         }, { onConflict: "plant_id,material_id,reading_date" })
         if (error) throw error
+        logActivity({
+          action: "crear",
+          entity: "humedad",
+          entityId: material.id,
+          reference: material.name,
+          plantId: selectedPlant,
+          details: { Material: material.name, "Humedad (%)": Math.round(humidity * 100) / 100, Fecha: today },
+        })
       }
       toast({ title: "Humedad registrada", description: "Los valores de humedad del acopio fueron actualizados" })
       setShowHumidityModal(false)
@@ -285,6 +302,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
    * despachado; los m³ pendientes se anotan en las observaciones.
    */
   async function finalizarPedido(pedido: ScheduledDispatch) {
+    if (!puedeDespachar) return
     const supabase = createClient()
     if (!supabase) return
     const despachado = pedido.dispatched_m3 || 0
@@ -301,18 +319,41 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       .eq("id", pedido.id)
     setFinalizarDialog(null)
     toast({ title: "Pedido finalizado", description: nota })
+    logActivity({
+      action: "editar",
+      entity: "pedido",
+      entityId: pedido.id,
+      reference: `${pedido.clients?.name || "-"} · ${pedido.construction_sites?.name || "-"}`,
+      plantId: pedido.plant_id || selectedPlant,
+      details: { Estado: "→ completado", Finalizado: `con ${despachado.toFixed(1)} de ${pedido.quantity_m3} m³` },
+    })
     loadData()
   }
 
-  async function cancelPedido(pedido: ScheduledDispatch) {
+  async function cancelPedido(pedido: ScheduledDispatch, motivo: string) {
+    if (!puede("programacion", "borrar")) return
     const supabase = createClient()
     if (!supabase) return
-    await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", pedido.id)
+    const { error } = await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", pedido.id)
+    if (error) {
+      toast({ title: "No se pudo cancelar", description: error.message, variant: "destructive" })
+      return
+    }
     toast({ title: "Pedido cancelado" })
+    // Sin mail: el pedido no se borra
+    logActivity({
+      action: "editar",
+      entity: "pedido",
+      entityId: pedido.id,
+      reference: `${pedido.clients?.name || "-"} · ${pedido.construction_sites?.name || "-"}`,
+      plantId: pedido.plant_id || selectedPlant,
+      details: { Estado: `${pedido.status} → cancelado`, "m³": pedido.quantity_m3, Enviado: pedido.dispatched_m3 || 0, Motivo: motivo },
+    })
     loadData()
   }
 
   async function confirmDelivery(mixerId: string) {
+    if (!puedeDespachar) return
     const supabase = createClient()
     if (!supabase) return
     await supabase.from("mixers").update({ status: "available" }).eq("id", mixerId)
@@ -321,16 +362,33 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   }
 
   async function saveEditQuantity() {
-    if (!editDialog) return
+    if (!editDialog || !puede("programacion", "editar")) return
     const qty = parseFloat(editQuantity)
     if (isNaN(qty) || qty <= 0) {
       toast({ title: "Error", description: "Ingrese una cantidad valida", variant: "destructive" })
       return
     }
+    if (!motivoValido(motivoTotal)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se cambia el total.", variant: "destructive" })
+      return
+    }
     const supabase = createClient()
     if (!supabase) return
-    await supabase.from("scheduled_dispatches").update({ quantity_m3: qty }).eq("id", editDialog.id)
+    const { error } = await supabase.from("scheduled_dispatches").update({ quantity_m3: qty }).eq("id", editDialog.id)
+    if (error) {
+      toast({ title: "No se pudo guardar", description: error.message, variant: "destructive" })
+      return
+    }
     toast({ title: "Total actualizado", description: `Nueva cantidad: ${qty} m3` })
+    if (qty !== Number(editDialog.quantity_m3))
+      logActivity({
+        action: "editar",
+        entity: "pedido",
+        entityId: editDialog.id,
+        reference: `${editDialog.clients?.name || "-"} · ${editDialog.construction_sites?.name || "-"}`,
+        plantId: editDialog.plant_id || selectedPlant,
+        details: { "m³": `${editDialog.quantity_m3} → ${qty}`, Origen: "Editar total (Despacho diario)", Motivo: motivoTotal.trim() },
+      })
     // Fase 2: si el pedido ya tenía viajes y cambió el total, los pendientes se rearman
     if (qty !== Number(editDialog.quantity_m3)) {
       const rv = await regenerarViajesPedido(supabase, editDialog.id, currentUserName(), { soloSiTiene: true, motivo: "cantidad" })
@@ -383,7 +441,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
   }
 
   async function handleDispatch() {
-    if (!dispatchDialog) return
+    if (!dispatchDialog || !puedeDespachar) return
 
     const quantityThisTruck = parseFloat(dispatchForm.quantity_m3)
     if (isNaN(quantityThisTruck) || quantityThisTruck <= 0) {
@@ -566,14 +624,16 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
         </div>
 
         <div className="flex gap-2">
-          <AddDispatchDialog
-            formulas={formulas}
-            clients={clients}
-            mixers={mixers}
-            plantId={selectedPlant}
-            onSuccess={(d) => { loadData(); if (d?.id) setRemitoListo(d) }}
-            triggerLabel="Carga despacho manual"
-          />
+          {puedeDespachar && (
+            <AddDispatchDialog
+              formulas={formulas}
+              clients={clients}
+              mixers={mixers}
+              plantId={selectedPlant}
+              onSuccess={(d) => { loadData(); if (d?.id) setRemitoListo(d) }}
+              triggerLabel="Carga despacho manual"
+            />
+          )}
           <Button variant="outline" onClick={loadData} className="gap-2"><RefreshCw className="h-4 w-4" />Actualizar</Button>
         </div>
       </div>
@@ -766,30 +826,36 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             </div>
                           </div>
                           <div className="flex flex-col gap-2 items-end shrink-0">
+                            {(puede("programacion", "editar") || puede("programacion", "borrar") || ve) && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => { setEditQuantity(pedido.quantity_m3.toString()); setEditDialog(pedido) }}>
-                                  <Pencil className="h-4 w-4 mr-2" />Editar total
-                                </DropdownMenuItem>
+                                {puede("programacion", "editar") && (
+                                  <DropdownMenuItem onClick={() => { setEditQuantity(pedido.quantity_m3.toString()); setMotivoTotal(""); setEditDialog(pedido) }}>
+                                    <Pencil className="h-4 w-4 mr-2" />Editar total
+                                  </DropdownMenuItem>
+                                )}
                                 {ve && (
                                   <DropdownMenuItem onClick={() => setGerenciar({ ...(pedido as any), plant_id: pedido.plant_id || selectedPlant })}>
                                     <Truck className="h-4 w-4 mr-2" />Viajes <NuevoBadge className="ml-2" />
                                   </DropdownMenuItem>
                                 )}
-                                <DropdownMenuItem onClick={() => cancelPedido(pedido)} className="text-destructive">
-                                  <XCircle className="h-4 w-4 mr-2" />Cancelar pedido
-                                </DropdownMenuItem>
+                                {puede("programacion", "borrar") && (
+                                  <DropdownMenuItem onClick={() => setCancelarPedido(pedido)} className="text-destructive">
+                                    <XCircle className="h-4 w-4 mr-2" />Cancelar pedido
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            {remaining > 0 && (
+                            )}
+                            {remaining > 0 && puedeDespachar && (
                               <Button size="sm" onClick={() => openDispatchDialog(pedido)} className="gap-1">
                                 <Truck className="h-3 w-3" />Despachar
                               </Button>
                             )}
-                            {dispatched > 0 && remaining > 0 && (
+                            {dispatched > 0 && remaining > 0 && puedeDespachar && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -886,9 +952,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             )}
                           </div>
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => confirmDelivery(dispatch.mixer_id)}>
-                          <CheckCircle className="h-4 w-4 mr-1" />Entregado
-                        </Button>
+                        {puedeDespachar && (
+                          <Button size="sm" variant="outline" onClick={() => confirmDelivery(dispatch.mixer_id)}>
+                            <CheckCircle className="h-4 w-4 mr-1" />Entregado
+                          </Button>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -1171,14 +1239,28 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                 </div>
                 <p className="text-xs text-muted-foreground">Valor actual: {editDialog.quantity_m3} m3</p>
               </div>
+              <CampoMotivo value={motivoTotal} onChange={setMotivoTotal} id="motivo-total" ejemplo="Ej: la obra pidió 4 m³ más" />
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditDialog(null)}>Cancelar</Button>
-            <Button onClick={saveEditQuantity}>Guardar</Button>
+            <Button onClick={saveEditQuantity} disabled={!motivoValido(motivoTotal)}>Guardar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmarConMotivo
+        open={!!cancelarPedido}
+        onOpenChange={(v) => !v && setCancelarPedido(null)}
+        titulo="Cancelar pedido"
+        descripcion={cancelarPedido && `${cancelarPedido.clients?.name || ""} · ${cancelarPedido.construction_sites?.name || ""} · ${cancelarPedido.quantity_m3} m³. El pedido no se borra: queda cancelado.`}
+        textoBoton="Cancelar pedido"
+        ejemplo="Ej: se suspende por lluvia"
+        onConfirmar={async (m) => {
+          if (cancelarPedido) await cancelPedido(cancelarPedido, m)
+          setCancelarPedido(null)
+        }}
+      />
 
       {/* Daily Humidity Modal */}
       <Dialog open={showHumidityModal} onOpenChange={setShowHumidityModal}>

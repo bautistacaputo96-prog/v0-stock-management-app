@@ -22,6 +22,7 @@ import { VistaPlanta } from "@/components/mantenimiento/planta"
 import { VistaHistorial } from "@/components/mantenimiento/historial"
 import { OrdenTrabajoDialog } from "@/components/mantenimiento/orden-trabajo-dialog"
 import { ReportarFallaDialog } from "@/components/mantenimiento/reportar-falla-dialog"
+import { usePermisos } from "@/lib/current-user"
 
 type Equipo = { id: string; nombre: string; modelo: string | null; fabricante: string | null; plant_id: string; plants?: { name: string } }
 
@@ -48,6 +49,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
   const [loading, setLoading] = useState(true)
   const [ordenAbierta, setOrdenAbierta] = useState<OrdenTrabajo | null>(null)
   const [reportar, setReportar] = useState(false)
+  const { puede } = usePermisos() // fase 0c-1: reportar falla = mantenimiento.cargar
 
   const cargar = useCallback(async (sincronizar = false) => {
     if (!equipo) return
@@ -94,9 +96,11 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
             ))}
           </TabsList>
         </Tabs>
-        <Button variant="outline" className="border-amber-400 text-amber-800 hover:bg-amber-50" onClick={() => setReportar(true)}>
-          <AlertTriangle className="h-4 w-4 mr-2" /> Reportar falla
-        </Button>
+        {puede("mantenimiento", "cargar") && (
+          <Button variant="outline" className="border-amber-400 text-amber-800 hover:bg-amber-50" onClick={() => setReportar(true)}>
+            <AlertTriangle className="h-4 w-4 mr-2" /> Reportar falla
+          </Button>
+        )}
       </div>
 
       <p className="text-xs text-muted-foreground -mt-2">

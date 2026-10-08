@@ -1,120 +1,211 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Lock, UserPlus, Loader2 } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Lock, Loader2, WifiOff, RefreshCw, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { createClient } from "@/lib/supabase/client"
-import { getCurrentUser, setCurrentUser, setVeFuncionesNuevas, type CurrentUser } from "@/lib/current-user"
+import { getCurrentUser, setCurrentUser, clearCurrentUser } from "@/lib/current-user"
+import { CampoClave, ElegirClave } from "@/components/elegir-clave"
 
-// Normaliza texto: minúsculas, sin tildes/acentos y sin espacios sobrantes.
-function normalize(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .trim()
+/**
+ * Login (fase 0c-1): cada persona entra con su nombre y su contraseña propia.
+ *
+ * - La sesión es una cookie firmada del servidor (httpOnly). Acá solo se guarda un caché de quién es y
+ *   qué puede hacer, que se refresca con `GET /api/sesion` al abrir y cada 15 minutos.
+ * - Sin conexión con el servidor: si ya había entrado, sigue con sus permisos guardados (franja de aviso)
+ *   y se reintenta cada minuto. Así un corte de internet no deja a nadie sin despachar.
+ * - No hay contraseña en el código del navegador ni alta de usuarios: eso es de la pantalla Usuarios.
+ */
+
+type Estado = "cargando" | "login" | "elegir" | "dentro" | "error" | "sin_secreto" | "sin_clave_servicio"
+
+/** Códigos de configuración que devuelven las rutas de sesión (500). */
+function estadoDeConfiguracion(codigo: unknown): Estado | null {
+  return codigo === "sin_secreto" || codigo === "sin_clave_servicio" ? codigo : null
 }
+type Nombre = { id: string; name: string }
 
-// Contraseña común a todos los usuarios. La identidad se toma del nombre
-// elegido, así queda registrado quién carga cada movimiento.
-const VALID_PASSWORD = normalize("Rebucret")
-const STORAGE_KEY = "rebucret-auth"
-
-type AppUser = { id: string; name: string; role: string; ve_funciones_nuevas?: boolean | null }
+const QUINCE_MIN = 15 * 60 * 1000
+const UN_MIN = 60 * 1000
 
 export function LoginGate({ children }: { children: React.ReactNode }) {
-  const [authenticated, setAuthenticated] = useState(false)
-  const [checked, setChecked] = useState(false)
-  const [users, setUsers] = useState<AppUser[]>([])
-  const [selectedUser, setSelectedUser] = useState("")
-  const [password, setPassword] = useState("")
+  const [estado, setEstado] = useState<Estado>("cargando")
+  const [sinConexion, setSinConexion] = useState(false)
+  const [modoLocal, setModoLocal] = useState(false)
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [nombres, setNombres] = useState<Nombre[]>([])
+  const [usuarioId, setUsuarioId] = useState("")
+  const [clave, setClave] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [newUserName, setNewUserName] = useState("")
-  const [saving, setSaving] = useState(false)
+  const [entrando, setEntrando] = useState(false)
+  const estadoRef = useRef<Estado>("cargando")
+  estadoRef.current = estado
 
-  useEffect(() => {
-    const sessionOk = typeof window !== "undefined" && window.localStorage.getItem(STORAGE_KEY) === "true"
-    if (sessionOk && getCurrentUser()) setAuthenticated(true)
-    setChecked(true)
-    loadUsers().then((lista) => {
-      // Fase 2: refresca el interruptor de funciones nuevas del usuario en sesión (lo puede cambiar un supervisor)
-      const actual = sessionOk ? getCurrentUser() : null
-      const u = actual ? lista.find((x) => x.name === actual.name) : null
-      // (solo si la columna existe: sin la migración no se toca nada)
-      if (u && "ve_funciones_nuevas" in u) setVeFuncionesNuevas(u.ve_funciones_nuevas === true)
-    })
+  const cargarNombres = useCallback(async () => {
+    try {
+      const r = await fetch("/api/sesion/usuarios", { cache: "no-store" })
+      if (r.status === 500) {
+        const d = await r.json().catch(() => ({}))
+        const conf = estadoDeConfiguracion(d?.codigo)
+        if (conf) return setEstado(conf)
+      }
+      if (!r.ok) throw new Error(String(r.status))
+      setNombres(await r.json())
+    } catch {
+      setError("Sin conexión con el servidor. Probá de nuevo en un rato.")
+    }
   }, [])
 
-  async function loadUsers(): Promise<AppUser[]> {
-    const supabase = createClient()
-    if (!supabase) return []
-    // "*" y no una lista de columnas: así anda igual con o sin la columna ve_funciones_nuevas (fase 2)
-    const { data } = await supabase
-      .from("app_users")
-      .select("*")
-      .eq("active", true)
-      .order("name")
-    const lista = ((data as AppUser[] | null) || [])
-    setUsers(lista)
-    return lista
-  }
+  const irAlLogin = useCallback(
+    (mensaje: string | null) => {
+      clearCurrentUser()
+      setAviso(mensaje)
+      setClave("")
+      setEstado("login")
+      cargarNombres()
+    },
+    [cargarNombres],
+  )
 
-  function handleSubmit(e: React.FormEvent) {
+  /** Pregunta al servidor quién está en sesión. `inicial`: al abrir el sistema. */
+  const revisar = useCallback(
+    async (inicial: boolean) => {
+      try {
+        const r = await fetch("/api/sesion", { cache: "no-store" })
+        if (r.status === 401) {
+          // Si estaba adentro, la sesión se cerró (baja, blanqueo, cambio de contraseña en otro equipo)
+          irAlLogin(inicial ? null : "Tu sesión se cerró. Entrá de nuevo.")
+          setSinConexion(false)
+          return
+        }
+        const d = await r.json().catch(() => ({}))
+        const conf = estadoDeConfiguracion(d?.codigo)
+        if (conf) {
+          setEstado(conf)
+          return
+        }
+        if (!r.ok || !d?.usuario) throw new Error(String(r.status))
+        setCurrentUser(d.usuario)
+        setModoLocal(d.modoPruebaLocal === true)
+        setSinConexion(false)
+        setEstado(d.debeCambiarClave ? "elegir" : "dentro")
+      } catch {
+        // Error de red o del servidor: con caché, se sigue trabajando con los permisos guardados
+        if (getCurrentUser()) {
+          setSinConexion(true)
+          if (inicial || estadoRef.current === "cargando") setEstado("dentro")
+        } else if (inicial) {
+          setEstado("error")
+        } else {
+          setSinConexion(true)
+        }
+      }
+    },
+    [irAlLogin],
+  )
+
+  useEffect(() => {
+    revisar(true)
+  }, [revisar])
+
+  // Revalida cada 15 minutos (o cada minuto si está sin conexión)
+  useEffect(() => {
+    if (estado !== "dentro") return
+    const t = window.setInterval(() => revisar(false), sinConexion ? UN_MIN : QUINCE_MIN)
+    return () => window.clearInterval(t)
+  }, [estado, sinConexion, revisar])
+
+  async function ingresar(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedUser) {
-      setError("Elegí tu nombre para continuar")
-      return
-    }
-    if (normalize(password) !== VALID_PASSWORD) {
-      setError("Contraseña incorrecta")
-      return
-    }
-    const user = users.find((u) => u.name === selectedUser)
-    const session: CurrentUser = {
-      name: selectedUser,
-      role: user?.role === "supervisor" ? "supervisor" : "operario",
-      veFuncionesNuevas: user?.ve_funciones_nuevas === true,
-    }
-    setCurrentUser(session)
-    window.localStorage.setItem(STORAGE_KEY, "true")
-    setAuthenticated(true)
+    if (!usuarioId) return setError("Elegí tu nombre para continuar.")
+    if (!clave) return setError("Poné tu contraseña.")
+    setEntrando(true)
     setError(null)
-  }
-
-  async function handleAddUser() {
-    const name = newUserName.trim()
-    if (!name) return
-    setSaving(true)
     try {
-      const supabase = createClient()
-      const { error: insertError } = await supabase
-        .from("app_users")
-        .insert({ name, active: true, role: "operario" })
-      if (insertError) throw insertError
-      await loadUsers()
-      setSelectedUser(name)
-      setNewUserName("")
-      setAdding(false)
-      setError(null)
+      const r = await fetch("/api/sesion/ingresar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuarioId, clave }),
+      })
+      const d = await r.json().catch(() => ({}))
+      const conf = estadoDeConfiguracion(d?.codigo)
+      if (conf) return setEstado(conf)
+      if (!r.ok || !d?.usuario) {
+        setError(d?.error || "No se pudo entrar. Probá de nuevo.")
+        return
+      }
+      setCurrentUser(d.usuario)
+      setClave("")
+      setAviso(null)
+      setEstado(d.debeCambiarClave ? "elegir" : "dentro")
     } catch {
-      setError("No se pudo agregar el usuario")
+      setError("Sin conexión con el servidor. Probá de nuevo en un rato.")
     } finally {
-      setSaving(false)
+      setEntrando(false)
     }
   }
 
-  // Evita el parpadeo del login antes de comprobar el estado guardado.
-  if (!checked) {
-    return null
+  if (estado === "cargando") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0f172a]">
+        <Loader2 className="h-6 w-6 animate-spin text-white/70" />
+      </div>
+    )
   }
 
-  if (authenticated) {
-    return <>{children}</>
+  if (estado === "sin_secreto" || estado === "sin_clave_servicio" || estado === "error") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0f172a] px-4">
+        <Card className="w-full max-w-sm">
+          <CardContent className="pt-6 text-center space-y-3">
+            <AlertTriangle className="h-10 w-10 mx-auto text-amber-500" />
+            {estado === "sin_secreto" ? (
+              <p className="text-sm">El sistema no está bien configurado (falta SESION_SECRETO). Avisale a Bautista.</p>
+            ) : estado === "sin_clave_servicio" ? (
+              <p className="text-sm">El sistema no está bien configurado (falta la clave de servicio). Avisale a Bautista.</p>
+            ) : (
+              <p className="text-sm">No hay conexión con el servidor. Revisá internet y probá de nuevo.</p>
+            )}
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                setEstado("cargando")
+                revisar(true)
+              }}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Reintentar
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (estado === "elegir") {
+    return <ElegirClave nombre={getCurrentUser()?.name || ""} onListo={() => setEstado("dentro")} />
+  }
+
+  if (estado === "dentro") {
+    return (
+      <>
+        {sinConexion && (
+          <div className="fixed bottom-0 inset-x-0 z-50 bg-amber-100 border-t border-amber-300 text-amber-900 text-xs px-4 py-1.5 flex items-center justify-center gap-2">
+            <WifiOff className="h-3.5 w-3.5" />
+            Sin conexión con el servidor: se usan tus permisos guardados.
+          </div>
+        )}
+        {modoLocal && (
+          <div className="fixed bottom-0 inset-x-0 z-50 bg-violet-100 border-t border-violet-300 text-violet-900 text-xs px-4 py-1.5 text-center">
+            Modo prueba local: se ve como {getCurrentUser()?.name}. No se graba nada desde Usuarios ni el login.
+          </div>
+        )}
+        {children}
+      </>
+    )
   }
 
   return (
@@ -126,83 +217,58 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
           </div>
           <div className="space-y-1">
             <CardTitle className="text-xl">Rebucret S.A.</CardTitle>
-            <CardDescription>Elegí tu nombre e ingresá la contraseña</CardDescription>
+            <CardDescription>
+              Elegí tu nombre y poné tu contraseña. Si es tu primera vez con contraseña propia, poné la de siempre: el
+              sistema te va a pedir que elijas una nueva.
+            </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {aviso && <p className="mb-4 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">{aviso}</p>}
+          <form onSubmit={ingresar} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="user">Usuario</Label>
               <Select
-                value={selectedUser}
+                value={usuarioId}
                 onValueChange={(v) => {
-                  setSelectedUser(v)
+                  setUsuarioId(v)
                   setError(null)
                 }}
               >
-                <SelectTrigger id="user">
+                <SelectTrigger id="user" className="h-11">
                   <SelectValue placeholder="Seleccioná tu nombre" />
                 </SelectTrigger>
                 <SelectContent>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
+                  {nombres.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Contraseña</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value)
-                  setError(null)
-                }}
-                placeholder="Contraseña"
-                autoComplete="current-password"
-              />
-            </div>
+            <CampoClave
+              id="password"
+              label="Contraseña"
+              value={clave}
+              onChange={(v) => {
+                setClave(v)
+                setError(null)
+              }}
+              autoComplete="current-password"
+            />
 
             {error && (
-              <p className="text-sm text-destructive" role="alert">{error}</p>
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
             )}
 
-            <Button type="submit" className="w-full">
-              <Lock className="mr-2 h-4 w-4" />
-              Ingresar
+            <Button type="submit" className="w-full h-11" disabled={entrando}>
+              {entrando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Lock className="mr-2 h-4 w-4" />Ingresar</>}
             </Button>
           </form>
-
-          <div className="mt-4 border-t pt-4">
-            {adding ? (
-              <div className="space-y-2">
-                <Label htmlFor="new-user">Nombre completo</Label>
-                <Input
-                  id="new-user"
-                  value={newUserName}
-                  onChange={(e) => setNewUserName(e.target.value)}
-                  placeholder="Ej: Juan Perez"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => { setAdding(false); setNewUserName("") }}>
-                    Cancelar
-                  </Button>
-                  <Button type="button" className="flex-1" onClick={handleAddUser} disabled={saving || !newUserName.trim()}>
-                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button type="button" variant="ghost" className="w-full text-sm" onClick={() => setAdding(true)}>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Agregar nuevo usuario
-              </Button>
-            )}
-          </div>
         </CardContent>
       </Card>
     </div>

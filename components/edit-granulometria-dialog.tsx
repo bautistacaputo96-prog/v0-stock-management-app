@@ -13,6 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/hooks/use-toast"
 import { Loader2, AlertCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { logActivity } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 
 interface EditGranulometriaDialogProps {
   open: boolean
@@ -20,6 +22,8 @@ interface EditGranulometriaDialogProps {
   testId: string
   plants: Array<{ id: string; name: string }>
   onTestUpdated: () => void
+  /** Fase 0c-1: corregir un ensayo ya cargado pide motivo; completar uno pendiente, no. */
+  requiereMotivo?: boolean
 }
 
 const SIEVES = ['3/8"', "#4", "#8", "#16", "#30", "#50", "#100", "#200", "Pasa #200"]
@@ -41,8 +45,11 @@ export function EditGranulometriaDialog({
   testId,
   plants,
   onTestUpdated,
+  requiereMotivo = true,
 }: EditGranulometriaDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [motivo, setMotivo] = useState("")
+  const [antes, setAntes] = useState<{ mf: number | null; remito: string; humedad: number | null }>({ mf: null, remito: "", humedad: null })
   const [loadingData, setLoadingData] = useState(true)
   const [materials, setMaterials] = useState<Material[]>([])
   const [allSuppliers, setAllSuppliers] = useState<Record<string, Supplier[]>>({})
@@ -180,6 +187,8 @@ export function EditGranulometriaDialog({
         : new Date().toISOString().split("T")[0]
       const testDate = testData.test_date ? String(testData.test_date).split("T")[0] : ""
 
+      setMotivo("")
+      setAntes({ mf: testData.fineness_modulus ?? null, remito: testData.remito || "", humedad: testData.moisture_percent ?? null })
       setFormData({
         extraction_date: extractionDate,
         test_date: testDate,
@@ -292,6 +301,10 @@ export function EditGranulometriaDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (requiereMotivo && !motivoValido(motivo)) {
+      toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el ensayo.", variant: "destructive" })
+      return
+    }
     setLoading(true)
     setRemitoError("")
 
@@ -373,6 +386,22 @@ export function EditGranulometriaDialog({
       toast({
         title: "Ensayo actualizado",
         description: `Módulo de finura: ${finenessModulus.toFixed(2)} MF`,
+      })
+      logActivity({
+        action: antes.mf == null ? "crear" : "editar",
+        entity: "granulometria",
+        entityId: testId,
+        reference: formData.remito || null,
+        plantId: formData.plant_id || null,
+        details: {
+          Agregado: selectedMaterial?.name || "-",
+          Proveedor: selectedSupplier?.name || "-",
+          ...(antes.mf == null
+            ? { "Módulo de finura": Math.round(finenessModulus * 100) / 100, Origen: "resultado de un ensayo pendiente" }
+            : { "Módulo de finura": `${antes.mf} → ${Math.round(finenessModulus * 100) / 100}`, Humedad: `${antes.humedad ?? "-"} → ${moisture}` }),
+          ...(antes.remito && antes.remito !== formData.remito ? { Remito: `${antes.remito} → ${formData.remito}` } : {}),
+          ...(requiereMotivo ? { Motivo: motivo.trim() } : {}),
+        },
       })
 
       onTestUpdated()
@@ -587,11 +616,13 @@ export function EditGranulometriaDialog({
             />
           </div>
 
+          {requiereMotivo && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-granulometria" ejemplo="Ej: se pesó mal el tamiz #30" />}
+
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || (requiereMotivo && !motivoValido(motivo))}>
               {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               Actualizar Ensayo
             </Button>

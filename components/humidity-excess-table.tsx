@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { CheckCircle, AlertTriangle, FileSpreadsheet, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { usePermisos } from "@/lib/current-user"
+import { logActivity } from "@/lib/activity-log"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
@@ -48,6 +50,9 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
   const [loading, setLoading] = useState(true)
   const { toast } = useToast()
   const supabase = createClient()
+  // Fase 0c-1: marcar acreditado = cargar en materia prima
+  const { puede } = usePermisos()
+  const puedeAcreditar = puede("materia_prima", "cargar")
 
   useEffect(() => {
     loadSuppliers()
@@ -244,6 +249,7 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
   }
 
   const markAsCredited = async (entryId: string, creditNoteNumber: string) => {
+    if (!puedeAcreditar) return
     const { error } = await supabase
       .from("humidity_excess_log")
       .update({ 
@@ -255,6 +261,14 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
 
     if (!error) {
       toast({ title: "Marcado como acreditado" })
+      const e = entries.find((x) => x.id === entryId) as any
+      logActivity({
+        action: "editar",
+        entity: "ingreso",
+        entityId: e?.stock_entry_id ?? entryId,
+        reference: e?.remito ?? null,
+        details: { "Excedente de humedad": "pendiente → acreditado", "Nota de crédito": creditNoteNumber, "Exceso (Tn)": e?.excess_quantity_tn ?? "-" },
+      })
       loadEntries()
     }
   }
@@ -421,6 +435,11 @@ export function HumidityExcessTable({ plantId }: { plantId: string }) {
                       <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                         <CheckCircle className="h-3 w-3 mr-1" />
                         Acreditado
+                      </Badge>
+                    ) : !puedeAcreditar ? (
+                      <Badge variant="outline" className="text-amber-600 border-amber-300">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Pendiente
                       </Badge>
                     ) : (
                       <CreditNoteInput 

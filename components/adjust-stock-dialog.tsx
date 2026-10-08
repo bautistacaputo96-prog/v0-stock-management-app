@@ -15,8 +15,9 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
+import { logActivity } from "@/lib/activity-log"
+import { CampoMotivo, motivoValido } from "@/components/motivo"
 import { useToast } from "@/hooks/use-toast"
 import { ArrowRight } from "lucide-react"
 
@@ -65,6 +66,8 @@ export function AdjustStockDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (Number.isNaN(newStock)) return
+    // Fase 0c-1: el recuento pide motivo (va al movimiento, como antes, y a Actividad)
+    if (!motivoValido(notes)) return
     setLoading(true)
 
     try {
@@ -90,10 +93,24 @@ export function AdjustStockDialog({
         movement_type: "ajuste",
         movement_date: new Date().toISOString().substring(0, 10),
         reference_type: "recuento",
-        notes: notes || `Ajuste por recuento. Anterior: ${Math.round(currentStock)} ${material.unit}, Nuevo: ${Math.round(newStock)} ${material.unit}`,
+        notes: notes.trim() || `Ajuste por recuento. Anterior: ${Math.round(currentStock)} ${material.unit}, Nuevo: ${Math.round(newStock)} ${material.unit}`,
       })
 
       if (movementError) throw movementError
+
+      logActivity({
+        action: "editar",
+        entity: "stock",
+        entityId: material.id,
+        reference: material.name,
+        details: {
+          Material: material.name,
+          Antes: `${Math.round(currentStock * 1000) / 1000} ${material.unit}`,
+          Ahora: `${Math.round(newStock * 1000) / 1000} ${material.unit}`,
+          Diferencia: `${difference >= 0 ? "+" : ""}${Math.round(difference * 1000) / 1000} ${material.unit}`,
+          Motivo: notes.trim(),
+        },
+      })
 
       toast({
         title: "Stock ajustado",
@@ -161,22 +178,19 @@ export function AdjustStockDialog({
             </p>
           )}
 
-          <div className="space-y-2">
-            <Label htmlFor="adjust-notes">Observaciones (opcional)</Label>
-            <Textarea
-              id="adjust-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Motivo del ajuste, responsable del recuento, etc."
-              rows={2}
-            />
-          </div>
+          <CampoMotivo
+            id="adjust-notes"
+            label="Motivo del ajuste (obligatorio)"
+            value={notes}
+            onChange={setNotes}
+            ejemplo="Ej: recuento de fin de mes, lo contó Titan"
+          />
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={loading || Number.isNaN(newStock)}>
+            <Button type="submit" disabled={loading || Number.isNaN(newStock) || !motivoValido(notes)}>
               {loading ? "Guardando..." : "Guardar Ajuste"}
             </Button>
           </div>

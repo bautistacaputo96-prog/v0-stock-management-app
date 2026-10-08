@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -90,6 +91,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
       if (error) throw error
 
       toast.success("Cliente agregado exitosamente")
+      logActivity({ action: "crear", entity: "cliente", entityId: data?.id, reference: data?.name, plantId, details: { Cliente: formData.name, CUIT: formData.cuit.trim(), "Condición IVA": formData.cond_iva || "-" } })
       setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "" })
       setOpen(false)
 

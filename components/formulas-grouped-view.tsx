@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils"
 import { ViewFormulaDialog } from "@/components/view-formula-dialog"
 import { EditFormulaDialog } from "@/components/edit-formula-dialog"
 import { DeleteFormulaDialog } from "@/components/delete-formula-dialog"
+import { usePermisos } from "@/lib/current-user"
 
 type Material = {
   id: string
@@ -62,6 +63,7 @@ export function FormulasGroupedView({ groupedFormulas, materials, onUpdate, expa
   const [viewFormula, setViewFormula] = useState<Formula | null>(null)
   const [editFormula, setEditFormula] = useState<Formula | null>(null)
   const [deleteFormula, setDeleteFormula] = useState<Formula | null>(null)
+  const { puede } = usePermisos() // fase 0c-1: editar y borrar según el permiso de fórmulas
 
   useEffect(() => {
     if (expandedGroup) {
@@ -218,12 +220,16 @@ export function FormulasGroupedView({ groupedFormulas, materials, onUpdate, expa
                               <Button variant="ghost" size="sm" onClick={() => setViewFormula(formula)}>
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => setEditFormula(formula)}>
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => setDeleteFormula(formula)}>
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
+                              {puede("formulas", "editar") && (
+                                <Button variant="ghost" size="sm" onClick={() => setEditFormula(formula)}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {puede("formulas", "borrar") && (
+                                <Button variant="ghost" size="sm" onClick={() => setDeleteFormula(formula)}>
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>

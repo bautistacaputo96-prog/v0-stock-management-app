@@ -8,6 +8,8 @@
  * hora actual, agregar o quitar, cambiar m³ y camión sugerido. Nada se graba hasta "Guardar", que pasa
  * por guardar_viajes_pedido (todo o nada) y queda en Actividad. Los viajes no tocan stock.
  * Solo se muestra a los usuarios con el interruptor de funciones nuevas.
+ * Fase 0c-1: sin permiso para ajustar el pedido (programacion.editar, o cargar y el pedido es propio) se
+ * abre en solo lectura.
  */
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -19,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { logActivity } from "@/lib/activity-log"
-import { currentUserName } from "@/lib/current-user"
+import { currentUserName, usePermisos } from "@/lib/current-user"
 import { parametrosDePlanta, PARAMETROS_BASE, type Parametros } from "@/lib/planificador"
 import { cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import {
@@ -31,6 +33,7 @@ import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 
 export type PedidoGerenciador = PedidoParaViajes & {
+  created_by?: string | null
   finalidad?: string | null
   bomba_la_pone?: "rebucret" | "cliente" | null
   bomba_empresa_id?: string | null
@@ -52,6 +55,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   onEditarPedido?: () => void
 }) {
   const { toast } = useToast()
+  const { ajustaPedido } = usePermisos()
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [prm, setPrm] = useState<Parametros>(PARAMETROS_BASE)
@@ -109,7 +113,10 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const m3Invalidos = Object.entries(m3Texto).filter(([n, t]) => viajes.some((v) => v.n === Number(n) && v.estado === "planificado") && !(Number(t.replace(",", ".")) > 0)).map(([n]) => Number(n))
   const faltan = pedido ? m3Faltantes(viajes, pedido) : 0
   // Pedido completo o cancelado: solo se miran los viajes (no se guarda nada)
-  const soloLectura = pedido?.status === "completed" || pedido?.status === "cancelled"
+  const cerrado = pedido?.status === "completed" || pedido?.status === "cancelled"
+  // Fase 0c-1: sin permiso para ajustar este pedido, también solo lectura
+  const sinPermiso = !!pedido && !ajustaPedido(pedido)
+  const soloLectura = cerrado || sinPermiso
   const hayPendientes = viajes.some((v) => v.estado === "planificado")
   const cambiado = sinGuardar || JSON.stringify(ordenarPorN(original)) !== JSON.stringify(ordenarPorN(viajes))
   // Fase 2b (D): un camión no puede estar en dos viajes que se pisan (en este pedido o en otro)
@@ -189,7 +196,11 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
         ) : (
           <div className="space-y-3">
             {soloLectura && (
-              <p className="text-xs rounded-md border bg-muted/50 px-3 py-2">El pedido está {pedido.status === "cancelled" ? "cancelado" : "completo"}: los viajes se pueden ver pero no cambiar.</p>
+              <p className="text-xs rounded-md border bg-muted/50 px-3 py-2">
+                {cerrado
+                  ? `El pedido está ${pedido.status === "cancelled" ? "cancelado" : "completo"}: los viajes se pueden ver pero no cambiar.`
+                  : "Este pedido lo cargó otra persona: los viajes se pueden ver pero no cambiar."}
+              </p>
             )}
             {sinGuardar && !soloLectura && (
               <p className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2">
@@ -317,7 +328,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
         )}
 
         <DialogFooter>
-          {onEditarPedido && <Button variant="ghost" className="mr-auto" onClick={() => { onOpenChange(false); onEditarPedido() }}>Editar pedido</Button>}
+          {onEditarPedido && <Button variant="ghost" className="mr-auto" onClick={() => { onOpenChange(false); onEditarPedido() }}>{ajustaPedido(pedido) ? "Editar pedido" : "Ver pedido"}</Button>}
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
           {choquesPendientes.length > 0 && <span className="text-xs text-red-600 self-center">Hay camiones en dos viajes a la vez: cambialos para guardar.</span>}
           {m3Invalidos.length > 0 && <span className="text-xs text-red-600 self-center">Completá los m³ de cada viaje para guardar.</span>}

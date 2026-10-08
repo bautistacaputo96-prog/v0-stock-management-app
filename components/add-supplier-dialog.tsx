@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
+import { logActivity } from "@/lib/activity-log"
 import { useToast } from "@/hooks/use-toast"
 
 type Material = {
@@ -124,6 +125,13 @@ export function AddSupplierDialog({
 
       const plantLabel = plantMode === "ambas" ? "ambas plantas" : plants.find((p) => p.id === plantMode)?.name || "la planta"
 
+      logActivity({
+        action: "crear",
+        entity: "proveedor",
+        entityId: returnedSupplierId,
+        reference: formData.name.trim(),
+        details: { Proveedor: formData.name.trim(), Plantas: plantLabel, Contacto: formData.contact || "-", "Teléfono": formData.phone || "-" },
+      })
       toast({
         title: "Proveedor agregado",
         description: `${formData.name} fue agregado para ${plantLabel}`,
