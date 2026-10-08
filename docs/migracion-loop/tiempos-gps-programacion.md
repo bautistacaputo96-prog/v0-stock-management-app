@@ -57,6 +57,9 @@ Valores absurdos que se descartan, tramo por tramo:
   Se usa con **3 viajes o más** desde esa planta. La vuelta del planificador sigue siendo igual a la ida.
 - **Tiempo en obra real** = mediana de `min_obra` con **3 viajes o más** (de cualquier planta), junto con la
   mediana de los m³ de esos viajes.
+- **Obra que el GPS no ve bien:** si en menos de la mitad de sus viajes hay una parada de obra válida (8 min o más),
+  no se usan ni su ida ni su tiempo en obra: va lo de la planta. Pasa en los pavimentos (el camión avanza mientras
+  descarga): PAVIMENTO de FARIÑA tiene 16 paradas válidas de 62 viajes, con 11 min en obra y 40 de "ida".
 - **m³ sugeridos** = mediana de los m³ (redondeada a 0,5) si hay 3 viajes o más **y** al menos 2 de cada 3
   están a ±1 m³ de ella (patrón claro). Se muestra solo si difiere en 0,5 m³ o más de lo cargado en el pedido.
 
@@ -93,6 +96,11 @@ cuando vuelve a planta. La descarga se guarda **por camión de 8 m³** y cada vi
    `esperaPlantaMin` (en el motor, no en la base); con 0 el planificador da exactamente lo mismo que hoy.
 
 3. **Ida real → minutos de viaje** del pedido.
+
+4. **Ritmo y ciclo con el camión lleno del pedido.** El cálculo de flota ("un camión cada N min → hacen falta K
+   camiones") usaba siempre la descarga de 8 m³. Con m³ por camión distinto de 8 queda mal (CORDONES: "un camión
+   cada 205 min"), así que ahora usa la descarga de un camión con los m³ del pedido ("descarga 77 (3 m³) … un
+   camión cada 77 min"). Con 8 m³ por camión da lo mismo que antes. Los horarios de los viajes no cambian por esto.
 
 ### Qué número se usa (orden de prioridad)
 
@@ -186,8 +194,103 @@ Si `viajes_gps` no se puede leer, todo funciona como hoy (los tiempos de la plan
   unos minutos. Queda en Actividad con los tiempos usados.
 - **Minutos de viaje ya guardados por el mapa** (fase 2b) ganan sobre la ida real del GPS, porque no se sabe si
   los escribió alguien. Se pueden borrar en el pedido para que use el GPS.
-- **Hoy casi ningún pedido viejo tiene método de descarga**: la descarga con bomba de la planta sale de pocos
-  viajes (Canning ≈ 18, Hudson 2: no llega a 10 y queda la de la planta).
+- **Hoy casi ningún pedido viejo tiene método de descarga** (35 de 469 viajes): la descarga con bomba de la planta
+  sale de pocos viajes. Canning tiene 18 (pasa el mínimo de 10): **38 min en obra contra los 15 de hoy**. Hudson
+  tiene 2 y sigue con la de la planta. Los viajes sin método cuentan como directo.
+
+## Ejemplos con datos reales (08/10/2026, solo lectura, viajes del 10/07 al 06/10)
+
+Calculados con las mismas funciones y la misma consulta de la app (clave anon), pedido a las 08:00, directo.
+
+**Plantas**
+
+| | Tiempo en planta | Carga + espera | Directo: en obra → descarga 8 m³ | Con bomba |
+|---|---|---|---|---|
+| Canning | 31 min (410 viajes) | 15 + 16 | 30 min → **29** (320 viajes; hoy 25) | 38 min → **37** (18 viajes; hoy 15) |
+| Hudson | 38 min (58 viajes) | 10 + 28 | 43 min → **33** (55 viajes; hoy 25; lavado 10) | sin datos: 15 (la de la planta) |
+
+**CORDONES (Fideicomiso La Tercera) desde Canning, 12 m³**
+- Tiempos: viaje 24 (real GPS · 12 viajes) · descarga 8 m³ 205 (real GPS · 12 viajes) · en planta 31.
+- "En esta obra cada camión estuvo 78 min (con 3 m³, contando el lavado): son unos 205 min de descarga por cada
+  8 m³". Sugerencia: **3 m³ por camión** (12 viajes, de 2 a 4).
+- Con 3 m³ por camión: 4 viajes; llegan 08:00, 09:17, 10:34, 11:51; cada uno 77 min de descarga + 1 de lavado;
+  "Ciclo: en planta 31 (carga 15 + espera 16) + ida 24 + descarga 77 (3 m³) + lavado 1 + vuelta 24 = 157 min · un
+  camión cada 77 min → hacen falta 3 camiones". Hoy (sin GPS): llegan 08:00, 08:15, 08:30, 08:45 con 9 min de
+  descarga cada uno.
+- Si se dejan 8 m³ por camión: 8 + 4, el primero vacía de 08:00 a 11:25 (por eso la sugerencia).
+
+**Obra común de Canning: Educación popular (INARCH), 24 m³ a 8**
+- viaje 23 (real GPS · 20 viajes) · descarga 8 m³ 27 (real GPS · 20 viajes: 28 en obra) · en planta 31.
+- Llegan 08:00, 08:27, 08:54; ciclo 105 min (hoy 101: carga 15 + ida 30 + descarga 25 + lavado 1 + vuelta 30).
+
+**Obra de Hudson: PLATANOS (MERVA SA), 32 m³ a 8**
+- viaje 15 (real GPS · 28 viajes) · descarga 8 m³ 33 (real GPS · 27 viajes: 43 en obra − 10 de lavado) · en planta 38.
+- Llegan 08:00, 08:33, 09:06, 09:39 (hoy cada 25); ciclo 111 min (hoy 105); 4 camiones.
+
+**Obra nueva** (sin viajes): desde Canning, viaje 30 (el de la obra), descarga 29 y en planta 31 (promedio de la
+planta); desde Hudson, 30 / 33 / 38. **PAVIMENTO de FARIÑA** (el GPS no ve la descarga): igual que una obra nueva.
+
+Hay 28 obras con datos en la ventana; las más usadas son PAVIMENTO y RESTAURANTE (La Tercera), PLATANOS, Educación
+popular, PLATEA, ESTADIO y CORDONES.
 
 ## Hecho
-_(lo completa el obrero)_
+
+**08/10/2026 — arquitecto y obrero (misma sesión).** Rama `loop/tiempos-gps-programacion` (local, sin push).
+Commits: `5629e62` especificación, `0c3ff92` motor + pruebas, `88f108a` pantallas, más este registro.
+
+**Sin migración.** No se toca la base: los números se calculan en el navegador desde `viajes_gps` (solo lectura).
+
+### Qué se hizo
+- `lib/gps-viajes.ts` §5: `TIEMPOS_GPS` (ventana 90 días, 3 viajes por obra, 10 por planta, límites, patrón de
+  m³, obra visible), `calcularTiemposGps()`, `m3Sugerido()`, `filaTiemposDeConsulta()` y `cargarTiemposGps()`
+  (consulta paginada, sin despachos por árido, caché de 10 min; si falla devuelve `null` y no queda en caché).
+  Reemplaza `tiemposMedidos()`, que no usaba nadie. La consulta pide el pedido con
+  `scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey` (sin el nombre de la FK PostgREST da error de
+  relación ambigua, porque `scheduled_dispatches` también tiene `dispatch_id`).
+- `lib/planificador.ts`: `esperaPlantaMin` opcional (camión libre en `vuelta + espera`, también para los camiones
+  ocupados en otros viajes; el ciclo la suma) y ritmo/ciclo con el camión lleno del pedido (punto 4 de §2).
+- `lib/viajes.ts`: `viaje_min_gps` / `descarga_min_gps` en el pedido (no son columnas), `descargaPropiaDe()`,
+  `descarga8DeObra()`, `esperaDePlanta()`, `parametrosConGps()`, `conTiemposGps()`, `tiemposDelPedido()`,
+  `textoFuente()`, `textoTiempos()`, `textoDescargaObra()`, `m3ParaSugerir()`. `explicarFlota` muestra
+  "en planta 31 (carga 15 + espera 16)". `regenerarViajesPedido` (corre también para quien no tiene el interruptor,
+  solo si el pedido ya tiene viajes) carga los tiempos reales y suma en Actividad la línea "Tiempos" cuando alguno
+  sale del GPS.
+- Formulario del pedido: placeholders con la fuente, "Se usa: … · fuente" debajo de minutos de viaje y descarga,
+  texto de la descarga de la obra, tiempo en planta real, "real GPS: 24 min (12 viajes), se usa ese" al lado de la
+  ruta, la ruta del mapa ya no se escribe sola si hay ida real (y si se había escrito sola, se saca; lo escrito a
+  mano o ya guardado no se toca), sugerencia "Usar 3 m³", y la salida programada con la ida real.
+- Vista Día: plan, Ordenar el día, demanda, flota y "con N camiones…" con los tiempos reales; por pedido "viaje 24
+  min (real GPS · 12 viajes)", la línea "Tiempos: …" y la sugerencia de m³. En "Tiempos y camiones", al lado de cada
+  campo el real del GPS y un recuadro que explica carga + espera. Los campos siguen guardando lo de la planta.
+- Gerenciador: propuesta, "Agregar viaje" y cambio de m³ con los tiempos reales; "Tiempos: …", descarga de la obra y
+  sugerencia de m³ debajo del ciclo.
+- Sin el interruptor no cambia ninguna pantalla (todo depende de `ve`; con `ve` apagado `prmEf = prm` y
+  `pedidosEf = pedidos`).
+
+### Verificación
+- `npm run test:gps`: **39/39** (24 de antes + 15 nuevas en `lib/__tests__/tiempos-gps.test.mjs`: mediana,
+  filtros, mínimos, obra no visible, m³ sugeridos, fila de la consulta, carga paginada/caché/error, descarga por
+  8 m³ y espera, parámetros con GPS, elección de la fuente, viajes de CORDONES, texto de flota, espera 0 = sin
+  espera, espera sin ocupar la boca). Para probar `lib/viajes.ts` (usa el alias `@/`) se agregó
+  `lib/__tests__/alias.mjs` (`node --import`, sin dependencias). `npm run test:sesion` 21/21.
+- Contra `main` (copias en el scratchpad, 1.000 días al azar): con 8 m³ por camión `planificar` da **idéntico**;
+  con otros m³ los viajes y camiones son idénticos y solo cambia el resumen (ritmo/ciclo, punto 4). `generarViajes`
+  (3.474 pedidos) y `planDelDia` idénticos sin tiempos GPS. La suite vieja del motor de la Fase 2: **66/66**.
+- Con datos reales (solo lectura, clave anon, la consulta de la app): los ejemplos de arriba.
+- `tsc`: 17 errores, los mismos que `main` (ninguno en los archivos tocados). `next build --webpack` limpio.
+- No se miró en el navegador (regla de esta tarea): verlo en el preview.
+
+### Para publicar
+1. Bautista mira el preview (con su interruptor prendido): un pedido a CORDONES desde Canning (fuente "real GPS",
+   sugerencia de 3 m³), uno a una obra nueva ("promedio de la planta"), la vista Día con "Tiempos y camiones" y el
+   gerenciador.
+2. Merge a `main`. No hay migración ni cambios en Vercel.
+
+### Preguntas para Bautista
+- **Bomba en Canning:** el GPS da 38 min en obra por camión con bomba (18 viajes) contra los 15 cargados. ¿Lo usamos
+  (es lo que hace hoy) o preferís esperar más viajes con bomba (los pedidos viejos no tenían el método)?
+- **Lavado de Canning en 1 min:** el GPS no separa descarga y lavado; con 1, casi todo el tiempo en obra cuenta como
+  descarga. Si el lavado de verdad es en obra, conviene volver a 10 (no cambia el ciclo, solo el reparto).
+- **Pedidos con minutos de viaje que puso el mapa** (fase 2b) siguen ganando sobre la ida real. ¿Los borramos para
+  los pedidos futuros, así usan el GPS?
+- ¿Querés poder corregir a mano los tiempos reales de la planta (hoy solo se corrigen pedido por pedido)?
