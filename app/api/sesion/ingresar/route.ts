@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { verificarClave, esClaveComun } from "@/lib/auth/clave"
-import { decidirIngreso, ERROR_INCORRECTO } from "@/lib/auth/ingreso"
+import { decidirIngreso, errorBloqueado, errorTrasIntentoFallido, ERROR_INCORRECTO, MINUTOS_BLOQUEO } from "@/lib/auth/ingreso"
 import { exigirSecreto } from "@/lib/auth/token"
 import {
   sbServicio,
@@ -17,6 +17,9 @@ export const dynamic = "force-dynamic"
 
 /**
  * Fase 0c-1 · Ingreso con nombre y contraseña. Reglas en lib/auth/ingreso.ts (decidirIngreso).
+ * Los intentos fallidos y el reseteo al entrar se graban con funciones atómicas de la base
+ * (registrar_ingreso_fallido / registrar_ingreso_ok): varios pedidos al mismo tiempo cuentan todos, y si
+ * la cuenta se bloqueó mientras se verificaba la contraseña, no entra.
  * Body: {usuarioId, clave}. Nunca devuelve ni registra la contraseña.
  */
 export async function POST(req: Request) {
@@ -40,15 +43,22 @@ export async function POST(req: Request) {
       esComun: esClaveComun,
     })
 
-    if (r.cambios && credencial) {
-      const { error } = await sbServicio()
-        .from("app_user_credenciales")
-        .update({ ...r.cambios, updated_at: new Date().toISOString() })
-        .eq("user_id", usuarioId)
-      if (error) throw error
+    if (!r.ok) {
+      // Contraseña mal (decidirIngreso pide grabar intentos): suma 1 en la base, en forma atómica
+      if (r.cambios && credencial) {
+        const { data, error } = await sbServicio().rpc("registrar_ingreso_fallido", { p_user_id: usuarioId })
+        if (error) throw error
+        const fila = Array.isArray(data) ? data[0] : data
+        return NextResponse.json({ error: errorTrasIntentoFallido(fila, new Date()) }, { status: 401 })
+      }
+      return NextResponse.json({ error: r.error || ERROR_INCORRECTO }, { status: 401 })
     }
+    if (!usuario || !credencial) return NextResponse.json({ error: ERROR_INCORRECTO }, { status: 401 })
 
-    if (!r.ok || !usuario || !credencial) return NextResponse.json({ error: r.error || ERROR_INCORRECTO }, { status: 401 })
+    // Bien: intentos a 0 y último ingreso, solo si en este momento no está bloqueado
+    const { data: puedeEntrar, error: eOk } = await sbServicio().rpc("registrar_ingreso_ok", { p_user_id: usuarioId })
+    if (eOk) throw eOk
+    if (puedeEntrar !== true) return NextResponse.json({ error: errorBloqueado(MINUTOS_BLOQUEO) }, { status: 401 })
 
     const res = NextResponse.json({ usuario: usuarioParaElNavegador(usuario), debeCambiarClave: r.debeCambiar })
     ponerCookieSesion(res, usuario.id, credencial.sesion_version)

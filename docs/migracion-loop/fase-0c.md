@@ -294,6 +294,12 @@ Por qué:
 - Nadie (ni Bautista ni nosotros) tiene que inventar ni repartir 7 contraseñas.
 - (B) es la regla para siempre.
 
+**Decisión del 07/10/2026 (revisión): los gerenciales no entran con la contraseña común.**
+- La migración deja `permite_clave_comun = true` solo para los operarios y consulta (Titan, Felipe, Braian, Joaquín) **y para Bautista**.
+- Juan y Fernando quedan con `permite_clave_comun = false` y sin contraseña: si prueban, ven "Todavía no tenés contraseña. Pedile a un gerencial que te la dé desde Usuarios."
+- Bautista es el único gerencial que entra con la común, una sola vez, en el preview (protegido con el login de Vercel), justo después de aplicar la migración. Elige su contraseña y desde Usuarios les da una inicial a Juan y Fernando (la cambian al entrar).
+- Así nadie que sepa la común puede quedarse con una cuenta gerencial durante la transición.
+
 **Riesgo de (A):** mientras dure la transición, alguien que sepa la común podría elegir la contraseña de otro antes que él. Se acota así:
 1. la ventana es por persona y se cierra sola cuando cada uno elige la suya;
 2. un gerencial la cierra para todos con un botón ("Cerrar el ingreso con la contraseña común");
@@ -736,11 +742,32 @@ No se pudo probar contra una base (acá no hay Postgres local y no se escribe en
 - Revisión a mano archivo por archivo de la lista del punto 8.
 - **No se probó en pantalla** (no se usa el navegador en esta sesión) ni el modo de prueba local: antes de aplicar la migración las columnas `tipo`/`permisos` no existen y `GET /api/sesion` no tiene qué leer.
 
+**Ajustes de la revisión (07–08/10/2026)**
+1. **Freno de intentos atómico.** Funciones nuevas en la migración, `SECURITY DEFINER`, `search_path = public, pg_temp`, ejecutables solo por `service_role` (REVOKE a PUBLIC, anon y authenticated):
+   - `registrar_ingreso_fallido(user)`: bloquea la fila (`FOR UPDATE`) y suma 1 en la base; al llegar a 5, `bloqueado_hasta = now() + 10 min` e intentos a 0; si ya estaba bloqueado no suma ni alarga (`ya_bloqueado`); `RETURNING` del estado grabado.
+   - `registrar_ingreso_ok(user)`: el reseteo al acertar, pero solo si en ese momento no está bloqueado. Es el chequeo atómico del bloqueo: si otro pedido lo bloqueó mientras se verificaba la contraseña, no entra.
+   - `POST /api/sesion/ingresar` usa las dos; el mensaje sale de `errorTrasIntentoFallido` (pura, con prueba).
+2. **Escritura de `app_users` cerrada para el navegador.** `REVOKE INSERT, UPDATE, DELETE, TRUNCATE` a anon y authenticated, y `GRANT` por columna solo de lo que main usa hoy (revisado en `v0-stock-management-app`): `INSERT (name, active, role)` (login y selector Responsable) y `UPDATE (ve_funciones_nuevas)` (Actividad). `tipo`, `permisos`, `email`, `name` y `active` ya no se pueden tocar con la clave pública. **Pendiente: en la 0c-2 (o en una migración posterior al merge) se sacan también esos GRANT residuales**, porque el front nuevo no escribe `app_users` desde el navegador.
+3. **Los gerenciales no entran con la contraseña común (decisión del 07/10, explicada en 5.1).** `permite_clave_comun = true` solo para Titan, Felipe, Braian, Joaquín y Bautista. Juan y Fernando quedan sin contraseña ("Todavía no tenés contraseña…") hasta que Bautista, en el preview y con la suya ya elegida, les dé una inicial desde Usuarios.
+4. **"Cerrar el ingreso con la contraseña común"** pasa por `cerrar_ingreso_clave_comun(por)`: `permite_clave_comun = false` para todos y `sesion_version + 1` donde `clave_hash` es nulo (corta las sesiones que entraron con la común y no eligieron la suya). Queda en Actividad cuántas sesiones se cerraron.
+5. **Sin `SUPABASE_SERVICE_ROLE_KEY`** las rutas devuelven 500 `{codigo: "sin_clave_servicio"}` y el login muestra "El sistema no está bien configurado (falta la clave de servicio). Avisale a Bautista.", igual que con `sin_secreto`.
+6. **Fin de línea.** Los 22 archivos que en main son CRLF (más `package.json`) volvieron a CRLF; ninguno había cambiado solo el fin de línea. `git diff origin/main --stat` bajó de 12.910/7.972 a ≈6.190/1.080 líneas.
+
+Pruebas de los ajustes:
+- `npm run test:sesion`: 21 OK.
+- Migración dos veces en `BEGIN … ROLLBACK`: 80 controles OK, entre ellos:
+  - 4 fallos suman 4; al 5.º, 10 minutos de bloqueo y los intentos a 0; bloqueado, otro fallo no suma y acertar no entra; con el bloqueo vencido entra.
+  - anon y authenticated reciben "permission denied" en las tres funciones.
+  - El cierre da `sesion_version + 1` solo a los que no tienen contraseña propia.
+  - Con `SET ROLE anon` fallan el UPDATE de `tipo`, `permisos`, `email`, `name` y `active`, el DELETE y el INSERT con `tipo`; andan el INSERT de main (con `RETURNING *`), el UPDATE de `ve_funciones_nuevas` y el SELECT.
+- `tsc` sin errores nuevos (17 viejos) y build OK.
+- `types/database.ts` regenerado.
+
 **Para el día de la publicación**
 1. Bautista carga `SESION_SECRETO` (48+ caracteres) en Vercel, Production y Preview, y confirma `SUPABASE_SERVICE_ROLE_KEY` en Preview.
 2. La sesión principal aplica la migración avisándole a Bautista. **Tiene que estar aplicada antes del merge**: el front nuevo lee `tipo`/`permisos`/credenciales y manda `p_motivo` a `ajustar_material_despacho` (main sigue andando igual con la migración aplicada; probado).
 3. Con la migración aplicada: capturas con el modo de prueba local (`SESION_LOCAL_COMO`) como Bautista, Titan, Felipe, Braian y Joaquín, y regenerar tipos si cambió algo.
-4. Preview: los pasos de 14.4 (Bautista elige su contraseña, alta de David como Operario + Laboratorio, "Ajustar" sin contraseña y con motivo, sin grabar datos de prueba).
+4. Preview: los pasos de 14.4 (Bautista entra con la común, elige su contraseña, da contraseña inicial a Juan y Fernando, alta de David como Operario + Laboratorio, "Ajustar" sin contraseña y con motivo, sin grabar datos de prueba).
 5. Merge al final del día; al abrir, todos ven el login (el caché viejo no vale como sesión) y entran con la de siempre la primera vez. Mensaje al grupo de 14.5.
 6. A la semana (o cuando estén todos): "Cerrar el ingreso con la contraseña común".
 

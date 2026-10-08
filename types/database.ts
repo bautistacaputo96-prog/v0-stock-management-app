@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 06/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 07/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -2440,11 +2440,14 @@ export type Database = {
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
       ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string; p_motivo?: string }; Returns: Json }
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
+      cerrar_ingreso_clave_comun: { Args: { p_por: string }; Returns: ({ user_id: string; tenia_clave_comun: boolean; sesion_cerrada: boolean })[] }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
       gps_reconstruir_registrar: { Args: { p_desde: string; p_hasta: string; p_simular: boolean; p_origen: string }; Returns: Json }
       guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string; p_origen?: string }; Returns: Json }
       registrar_despacho: { Args: { p: Json }; Returns: Json }
+      registrar_ingreso_fallido: { Args: { p_user_id: string }; Returns: ({ intentos: number; bloqueado: string; ya_bloqueado: boolean })[] }
+      registrar_ingreso_ok: { Args: { p_user_id: string }; Returns: boolean }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
     }
     Enums: {

@@ -19,7 +19,12 @@ import { CampoClave, ElegirClave } from "@/components/elegir-clave"
  * - No hay contraseña en el código del navegador ni alta de usuarios: eso es de la pantalla Usuarios.
  */
 
-type Estado = "cargando" | "login" | "elegir" | "dentro" | "error" | "sin_secreto"
+type Estado = "cargando" | "login" | "elegir" | "dentro" | "error" | "sin_secreto" | "sin_clave_servicio"
+
+/** Códigos de configuración que devuelven las rutas de sesión (500). */
+function estadoDeConfiguracion(codigo: unknown): Estado | null {
+  return codigo === "sin_secreto" || codigo === "sin_clave_servicio" ? codigo : null
+}
 type Nombre = { id: string; name: string }
 
 const QUINCE_MIN = 15 * 60 * 1000
@@ -43,7 +48,8 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
       const r = await fetch("/api/sesion/usuarios", { cache: "no-store" })
       if (r.status === 500) {
         const d = await r.json().catch(() => ({}))
-        if (d?.codigo === "sin_secreto") return setEstado("sin_secreto")
+        const conf = estadoDeConfiguracion(d?.codigo)
+        if (conf) return setEstado(conf)
       }
       if (!r.ok) throw new Error(String(r.status))
       setNombres(await r.json())
@@ -75,8 +81,9 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
           return
         }
         const d = await r.json().catch(() => ({}))
-        if (d?.codigo === "sin_secreto") {
-          setEstado("sin_secreto")
+        const conf = estadoDeConfiguracion(d?.codigo)
+        if (conf) {
+          setEstado(conf)
           return
         }
         if (!r.ok || !d?.usuario) throw new Error(String(r.status))
@@ -123,7 +130,8 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ usuarioId, clave }),
       })
       const d = await r.json().catch(() => ({}))
-      if (d?.codigo === "sin_secreto") return setEstado("sin_secreto")
+      const conf = estadoDeConfiguracion(d?.codigo)
+      if (conf) return setEstado(conf)
       if (!r.ok || !d?.usuario) {
         setError(d?.error || "No se pudo entrar. Probá de nuevo.")
         return
@@ -147,7 +155,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (estado === "sin_secreto" || estado === "error") {
+  if (estado === "sin_secreto" || estado === "sin_clave_servicio" || estado === "error") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0f172a] px-4">
         <Card className="w-full max-w-sm">
@@ -155,6 +163,8 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
             <AlertTriangle className="h-10 w-10 mx-auto text-amber-500" />
             {estado === "sin_secreto" ? (
               <p className="text-sm">El sistema no está bien configurado (falta SESION_SECRETO). Avisale a Bautista.</p>
+            ) : estado === "sin_clave_servicio" ? (
+              <p className="text-sm">El sistema no está bien configurado (falta la clave de servicio). Avisale a Bautista.</p>
             ) : (
               <p className="text-sm">No hay conexión con el servidor. Revisá internet y probá de nuevo.</p>
             )}

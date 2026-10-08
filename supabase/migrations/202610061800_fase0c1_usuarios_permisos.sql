@@ -16,6 +16,12 @@
 --                                     cerrar sesiones), intentos fallidos. RLS prendida y sin políticas:
 --                                     SOLO la lee y escribe el servidor (clave service_role), como
 --                                     `integraciones` y `alertas_stock`. El navegador no la ve nunca.
+--   registrar_ingreso_fallido / registrar_ingreso_ok / cerrar_ingreso_clave_comun
+--                                     freno de intentos y cierre del ingreso con la contraseña común,
+--                                     atómicos en la base. Solo los ejecuta el servidor (service_role).
+--   app_users: escritura del navegador cerrada salvo las columnas que main usa hoy (INSERT name/active/
+--                                     role, UPDATE ve_funciones_nuevas). tipo, permisos y email solo los
+--                                     escribe el servidor.
 --   editar_despacho                   lee un "motivo" opcional del jsonb y lo deja en Actividad.
 --   ajustar_material_despacho         parámetro nuevo p_motivo (opcional) que queda en Actividad.
 --
@@ -26,9 +32,11 @@
 --     pantalla Usuarios. Nadie queda con más permisos de los definidos.
 --   - La columna vieja `role` (supervisor / operario / mantenimiento) NO se toca: el front de main la
 --     sigue usando hasta el merge. Después del merge el front usa `tipo`; `role` queda sin uso.
---   - Ningún usuario tiene contraseña propia todavía: cada uno queda con "primer ingreso pendiente"
---     (permite_clave_comun = true). La primera vez que entre con la contraseña común de siempre, el
---     sistema le obliga a elegir la suya y desde ahí la común deja de valer para esa persona.
+--   - Ningún usuario tiene contraseña propia todavía. Decisión del 07/10/2026: entran con la contraseña
+--     común de siempre (UNA vez, y el sistema les obliga a elegir la suya) solo los operarios y consulta
+--     (Titan, Felipe, Braian, Joaquín) y Bautista. Los otros gerenciales (Juan, Fernando) NO: quedan "sin
+--     contraseña" hasta que Bautista, ya con la suya, les dé una inicial desde Usuarios. Así nadie que sepa
+--     la común puede quedarse con una cuenta gerencial.
 --   - Activity_log, despachos, pedidos, etc.: no se tocan.
 --   - Un usuario creado entre esta migración y el merge (con el "Agregar nuevo usuario" viejo del login)
 --     queda como consulta y sin credencial: no puede entrar con el front nuevo hasta que un gerencial le
@@ -224,10 +232,103 @@ REVOKE ALL ON TABLE public.app_user_credenciales FROM PUBLIC, anon, authenticate
 GRANT ALL ON TABLE public.app_user_credenciales TO service_role;
 
 -- Primer ingreso pendiente para los usuarios que ya existen (activos). No pisa filas existentes.
+-- Decisión del 07/10/2026: la contraseña común vale (una vez) para operarios, consulta y Bautista; los
+-- demás gerenciales quedan sin contraseña hasta que un gerencial les dé una inicial desde Usuarios.
 INSERT INTO public.app_user_credenciales (user_id, debe_cambiar, permite_clave_comun, actualizado_por)
-SELECT u.id, true, coalesce(u.active, true), 'Migración fase 0c-1'
+SELECT u.id, true,
+       coalesce(u.active, true)
+         AND (u.tipo <> 'gerencial'
+              OR (u.id = 'fdedc2eb-26d1-4add-a7a4-27b0b36e3f23' AND u.name = 'Bautista Caputo')),
+       'Migración fase 0c-1'
   FROM public.app_users u
 ON CONFLICT (user_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Freno de intentos y cierre del ingreso con la contraseña común (atómicos; solo service_role)
+-- ---------------------------------------------------------------------------
+-- Contraseña mal: suma 1 en la base (no "lo que leyó el servidor + 1"), así varios intentos al mismo
+-- tiempo cuentan todos. Al llegar a 5: 10 minutos de bloqueo e intentos a 0. Si ya estaba bloqueado no
+-- suma ni alarga el bloqueo (ya_bloqueado = true). Sin fila de credencial no devuelve nada.
+CREATE OR REPLACE FUNCTION public.registrar_ingreso_fallido(p_user_id uuid)
+ RETURNS TABLE (intentos integer, bloqueado timestamptz, ya_bloqueado boolean)
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH viejo AS (
+    -- Bloquea la fila: los pedidos simultáneos de la misma persona se ordenan acá
+    SELECT v.user_id, coalesce(v.bloqueado_hasta > now(), false) AS bloq, v.intentos_fallidos + 1 AS sig
+      FROM public.app_user_credenciales v
+     WHERE v.user_id = p_user_id
+     FOR UPDATE)
+  UPDATE public.app_user_credenciales c
+     SET intentos_fallidos = CASE WHEN viejo.bloq THEN c.intentos_fallidos WHEN viejo.sig >= 5 THEN 0 ELSE viejo.sig END,
+         bloqueado_hasta   = CASE WHEN viejo.bloq THEN c.bloqueado_hasta WHEN viejo.sig >= 5 THEN now() + interval '10 minutes' ELSE c.bloqueado_hasta END,
+         updated_at = now()
+    FROM viejo
+   WHERE c.user_id = viejo.user_id
+  RETURNING c.intentos_fallidos, c.bloqueado_hasta, viejo.bloq;
+$function$;
+
+-- Contraseña bien: intentos a 0 y último ingreso, SOLO si no está bloqueado en ese mismo momento
+-- (chequeo atómico: si otro pedido lo bloqueó mientras se verificaba, no entra). true = puede entrar.
+CREATE OR REPLACE FUNCTION public.registrar_ingreso_ok(p_user_id uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH u AS (
+    UPDATE public.app_user_credenciales c
+       SET intentos_fallidos = 0, bloqueado_hasta = NULL, ultimo_ingreso_at = now(), updated_at = now()
+     WHERE c.user_id = p_user_id AND (c.bloqueado_hasta IS NULL OR c.bloqueado_hasta <= now())
+    RETURNING 1)
+  SELECT EXISTS (SELECT 1 FROM u);
+$function$;
+
+-- "Cerrar el ingreso con la contraseña común" (pantalla Usuarios): nadie más entra con la común, y a los
+-- que entraron con ella y todavía no eligieron la suya se les cierran las sesiones (sesion_version + 1).
+-- Devuelve las personas afectadas.
+CREATE OR REPLACE FUNCTION public.cerrar_ingreso_clave_comun(p_por text)
+ RETURNS TABLE (user_id uuid, tenia_clave_comun boolean, sesion_cerrada boolean)
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH viejo AS (
+    SELECT v.user_id, v.permite_clave_comun AS comun, v.clave_hash IS NULL AS sin_clave
+      FROM public.app_user_credenciales v
+     WHERE v.permite_clave_comun OR v.clave_hash IS NULL
+     FOR UPDATE)
+  UPDATE public.app_user_credenciales c
+     SET permite_clave_comun = false,
+         sesion_version = CASE WHEN viejo.sin_clave THEN c.sesion_version + 1 ELSE c.sesion_version END,
+         actualizado_por = p_por,
+         updated_at = now()
+    FROM viejo
+   WHERE c.user_id = viejo.user_id
+  RETURNING c.user_id, viejo.comun, viejo.sin_clave;
+$function$;
+
+REVOKE ALL ON FUNCTION public.registrar_ingreso_fallido(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.registrar_ingreso_ok(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.cerrar_ingreso_clave_comun(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_ingreso_fallido(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.registrar_ingreso_ok(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.cerrar_ingreso_clave_comun(text) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- app_users: el navegador ya no escribe tipo, permisos ni email
+-- ---------------------------------------------------------------------------
+-- Hasta hoy anon/authenticated podían escribir cualquier columna. Desde acá, con la clave pública solo se
+-- puede lo que el front de MAIN usa hoy (para no romperlo entre esta migración y el merge):
+--   INSERT (name, active, role)   "Agregar nuevo usuario" del login y "Agregar" del selector Responsable
+--   UPDATE (ve_funciones_nuevas)  interruptor de funciones nuevas en Actividad
+-- La lectura no cambia. Después del merge el front nuevo no escribe app_users (todo pasa por /api/usuarios
+-- con service_role): esos GRANT residuales se sacan en la 0c-2 o en una migración posterior al merge.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_users FROM anon, authenticated;
+GRANT INSERT (name, active, role) ON public.app_users TO anon, authenticated;
+GRANT UPDATE (ve_funciones_nuevas) ON public.app_users TO anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Motivo en Actividad para las ediciones hechas por funciones de la base

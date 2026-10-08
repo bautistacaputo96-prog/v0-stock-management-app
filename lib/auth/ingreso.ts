@@ -100,3 +100,16 @@ export async function decidirIngreso(opts: {
     cambios: { intentos_fallidos: 0, bloqueado_hasta: null, ultimo_ingreso_at: ahora.toISOString() },
   }
 }
+
+/**
+ * Mensaje después de grabar un intento fallido con la función atómica de la base
+ * (`registrar_ingreso_fallido`), que devuelve el estado que quedó grabado.
+ */
+export function errorTrasIntentoFallido(
+  r: { intentos: number | null; bloqueado: string | null; ya_bloqueado: boolean | null } | null | undefined,
+  ahora: Date,
+): string {
+  const hasta = r?.bloqueado ? new Date(r.bloqueado).getTime() : NaN
+  if (Number.isFinite(hasta) && hasta > ahora.getTime()) return errorBloqueado((hasta - ahora.getTime()) / 60000)
+  return ERROR_INCORRECTO
+}

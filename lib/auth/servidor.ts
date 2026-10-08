@@ -62,7 +62,17 @@ export const COLUMNAS_USUARIO =
 export const COLUMNAS_CREDENCIAL =
   "user_id, clave_hash, debe_cambiar, permite_clave_comun, sesion_version, intentos_fallidos, bloqueado_hasta, clave_cambiada_at, ultimo_ingreso_at"
 
+/** Falta SUPABASE_SERVICE_ROLE_KEY: las rutas lo devuelven como 500 {codigo: "sin_clave_servicio"}. */
+export class SinClaveServicioError extends Error {
+  codigo = "sin_clave_servicio"
+  constructor() {
+    super("Falta SUPABASE_SERVICE_ROLE_KEY")
+    this.name = "SinClaveServicioError"
+  }
+}
+
 export function sbServicio() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new SinClaveServicioError()
   return sbAdmin()
 }
 
@@ -215,8 +225,14 @@ export async function registrarActividad(opts: {
   }
 }
 
-/** Respuesta para un error inesperado (sin secreto → 500 {codigo: "sin_secreto"}). */
+/** Respuesta para un error inesperado (sin secreto o sin clave de servicio → 500 con su código). */
 export function respuestaError(e: unknown) {
+  if (e instanceof SinClaveServicioError || (e as any)?.codigo === "sin_clave_servicio") {
+    return NextResponse.json(
+      { codigo: "sin_clave_servicio", error: "El sistema no está bien configurado (falta la clave de servicio). Avisale a Bautista." },
+      { status: 500 },
+    )
+  }
   if (e instanceof SinSecretoError || (e as any)?.codigo === "sin_secreto") {
     return NextResponse.json(
       { codigo: "sin_secreto", error: "El sistema no está bien configurado (falta SESION_SECRETO). Avisale a Bautista." },
