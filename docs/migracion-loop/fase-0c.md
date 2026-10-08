@@ -110,6 +110,7 @@ Permisos iniciales por persona: los de la tabla de arriba, más Titan con Manten
   - reporte semanal y aviso de stock: con secreto del cron.
 - **Coordinar con Concretus:** su reporte diario de WhatsApp lee la base de Rebucret con la clave anónima. Antes de prender RLS hay que darle una lectura propia (una vista o clave de servicio en su servidor), o el reporte se corta.
 - Se hace en una noche sin despachos, con vuelta atrás preparada.
+- **Pendiente para la 0c-2 (tiempos GPS en la programación, 08/10/2026):** la programación lee desde el navegador `viajes_gps` (`mixer_id, fecha, salida_planta, llegada_planta_previa, plant_id_salida, construction_site_id, min_en_planta, min_ida, min_obra, estado, confianza`), `dispatches` (`quantity_m3, is_test_dispatch, scheduled_dispatch_id`), `scheduled_dispatches` (`metodo_descarga`) y `construction_sites` (`requires_pump`), y escribe `plants.tiempos_a_mano`. Las políticas de RLS tienen que dejar leer esas columnas a quien programa. Con RLS, una lectura sin permiso vuelve **vacía** y no da error: `cargarTiemposGps` ya no guarda en caché una lectura vacía (sigue con los tiempos de la planta y reintenta), pero hay que probar que con RLS siga trayendo datos.
 
 ## Criterios de aceptación (resumen)
 - Cada uno de los 8 usuarios entra con su propia contraseña y ve exactamente los botones de su tipo y áreas.
