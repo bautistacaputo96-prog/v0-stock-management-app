@@ -30,6 +30,33 @@ export type Parametros = {
    * no se guarda en la planta. Sin valor = 0 (como antes).
    */
   esperaPlantaMin?: number
+  /**
+   * Tiempos reales de la planta corregidos a mano (plants.tiempos_a_mano): le ganan al GPS hasta que se vuelve a
+   * automático (se borra la clave). undefined = la columna no existe todavía (migración sin aplicar).
+   */
+  aMano?: TiemposAMano
+}
+
+/** Tiempos de la planta corregidos a mano por un gerencial (en la base: espera_planta_min, descarga_directa_min, descarga_bomba_min). */
+export type TiemposAMano = { esperaPlantaMin?: number; descargaDirectaMin?: number; descargaBombaMin?: number }
+const A_MANO_COLUMNAS = { esperaPlantaMin: "espera_planta_min", descargaDirectaMin: "descarga_directa_min", descargaBombaMin: "descarga_bomba_min" } as const
+
+/** plants.tiempos_a_mano (jsonb) → TiemposAMano (solo números válidos, ≥ 0 la espera y > 0 las descargas). */
+export function tiemposAManoDe(v: unknown): TiemposAMano | undefined {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return v === undefined ? undefined : {}
+  const o = v as Record<string, unknown>
+  const out: TiemposAMano = {}
+  for (const [k, col] of Object.entries(A_MANO_COLUMNAS) as [keyof TiemposAMano, string][]) {
+    const n = Number(o[col])
+    if (o[col] != null && o[col] !== "" && Number.isFinite(n) && (k === "esperaPlantaMin" ? n >= 0 : n > 0)) out[k] = Math.round(n)
+  }
+  return out
+}
+/** TiemposAMano → jsonb para plants.tiempos_a_mano */
+export function tiemposAManoAColumna(m: TiemposAMano): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [k, col] of Object.entries(A_MANO_COLUMNAS) as [keyof TiemposAMano, string][]) if (m[k] != null) out[col] = m[k]!
+  return out
 }
 
 export const PARAMETROS_BASE: Parametros = {
@@ -61,6 +88,8 @@ export function parametrosDePlanta(planta: Record<string, any> | null | undefine
     finJornada: hora(planta.jornada_fin, b.finJornada),
     toleranciaMin: num(planta.tolerancia_puntualidad_min, b.toleranciaMin),
     bocasCarga: Math.max(1, num(planta.bocas_carga, b.bocasCarga)),
+    // Solo si la columna existe (migración 202610081800): si no, no se manda al guardar
+    ...("tiempos_a_mano" in planta ? { aMano: tiemposAManoDe(planta.tiempos_a_mano) || {} } : {}),
   }
 }
 
@@ -75,6 +104,7 @@ export function columnasDePlanta(prm: Parametros) {
     jornada_fin: prm.finJornada,
     tolerancia_puntualidad_min: prm.toleranciaMin,
     bocas_carga: prm.bocasCarga,
+    ...(prm.aMano !== undefined ? { tiempos_a_mano: tiemposAManoAColumna(prm.aMano) } : {}),
   }
 }
 

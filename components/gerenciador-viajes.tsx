@@ -181,7 +181,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
     }
     for (const a of antes) if (!despues.some((v) => v.n === a.n) && k++ < 12) detalle[`Viaje ${a.n}`] = "quitado"
     await logActivity({ action: "editar", entity: "pedido", entityId: pedido.id, reference: pedido.construction_sites?.name || null, plantId: pedido.plant_id, details: detalle })
-    toast({ title: "Viajes guardados", description: `${pedido.construction_sites?.name || "Pedido"}: ${totalViajes(viajes)} viajes` })
+    toast({ title: "Viajes guardados", description: `${pedido.construction_sites?.name || "Pedido"}: ${totalViajes(viajes)} viaje${totalViajes(viajes) === 1 ? "" : "s"}` })
     onGuardado?.()
     onOpenChange(false)
   }

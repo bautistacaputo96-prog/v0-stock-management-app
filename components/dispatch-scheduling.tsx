@@ -338,10 +338,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     if (!ve || !isDialogOpen || !form.plant_id || !paramsPorPlanta[form.plant_id]) return null
     return tiemposDelPedido({
       id: editingDispatch?.id || "nuevo", plant_id: form.plant_id, construction_site_id: form.construction_site_id || null, quantity_m3: 0,
-      scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null,
+      scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null, m3_por_viaje: parseFloat(form.m3_por_viaje) || 8,
       construction_sites: selectedSite ? { travel_time_minutes: selectedSite.travel_time_minutes, requires_pump: selectedSite.requires_pump } : null,
     }, paramsPorPlanta[form.plant_id], tiempos)
-  }, [ve, isDialogOpen, form.plant_id, form.construction_site_id, form.metodo_descarga, paramsPorPlanta, tiempos, selectedSite, editingDispatch])
+  }, [ve, isDialogOpen, form.plant_id, form.construction_site_id, form.metodo_descarga, form.m3_por_viaje, paramsPorPlanta, tiempos, selectedSite, editingDispatch])
   const idaGps = tiemposAuto?.viaje.fuente === "gps_obra" ? tiemposAuto.viaje : null
   const idaGpsMin = idaGps ? idaGps.min : null // para los efectos (un número, no un objeto nuevo en cada cálculo)
 
@@ -670,7 +670,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           if (r.error) toast({ title: "El pedido se guardó, pero los viajes no", description: r.error, variant: "destructive" })
           else if (ve && r.generados != null)
             toast({
-              title: editingDispatch && viajesPorPedido[pedidoId]?.length ? "Se recalcularon los viajes de este pedido" : `Se armaron ${r.generados} viajes`,
+              title: editingDispatch && viajesPorPedido[pedidoId]?.length ? "Se recalcularon los viajes de este pedido" : `Se armaron ${r.generados} viaje${r.generados === 1 ? "" : "s"}`,
               description: r.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano (plan del día / gerenciador). Quedó en Actividad." : undefined,
             })
         }
@@ -941,7 +941,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                               {/* Fase 2: viajes y confirmación (solo con el interruptor) */}
                               {ve && ((viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status)) || d.confirmado_at) ? (
                                 <div className="flex items-center gap-1 text-[10px] text-violet-800">
-                                  {viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status) ? <span>{totalViajes(viajesPorPedido[d.id])} viajes</span> : null}
+                                  {viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status) ? <span>{totalViajes(viajesPorPedido[d.id])} viaje{totalViajes(viajesPorPedido[d.id]) === 1 ? "" : "s"}</span> : null}
                                   {d.confirmado_at && <span title={`Confirmado por ${d.confirmado_por || "-"}`}>· 👍</span>}
                                 </div>
                               ) : null}

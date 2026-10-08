@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { logActivity } from "@/lib/activity-log"
-import { planificar, aMin, aHora, PARAMETROS_BASE, parametrosDePlanta, columnasDePlanta, type Parametros, type Pedido as PedidoPlan } from "@/lib/planificador"
+import { planificar, aMin, aHora, PARAMETROS_BASE, parametrosDePlanta, columnasDePlanta, type Parametros, type Pedido as PedidoPlan, type TiemposAMano } from "@/lib/planificador"
 import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settings2, Truck, MapPin, ListOrdered, ThumbsUp, BarChart3 } from "lucide-react"
 // Fase 2 (solo con el interruptor de funciones nuevas)
@@ -89,7 +89,17 @@ const ETIQUETAS: Record<keyof Parametros, string> = {
   finJornada: "Fin de jornada",
   toleranciaMin: "Tolerancia de puntualidad (min)",
   bocasCarga: "Bocas de carga",
-  esperaPlantaMin: "Espera en planta (min)", // sale del GPS: no se edita ni se guarda
+  esperaPlantaMin: "Espera en planta (min)", // sale del GPS: no se edita ni se guarda (lo a mano va en aMano)
+  aMano: "Tiempos reales corregidos a mano",
+}
+/** "espera 10 · descarga directa 29" (o "automático") para Actividad */
+const textoAMano = (m: TiemposAMano | undefined) => {
+  const partes = [
+    m?.esperaPlantaMin != null ? `espera ${m.esperaPlantaMin}` : null,
+    m?.descargaDirectaMin != null ? `descarga directa ${m.descargaDirectaMin}` : null,
+    m?.descargaBombaMin != null ? `descarga con bomba ${m.descargaBombaMin}` : null,
+  ].filter(Boolean)
+  return partes.length ? partes.join(" · ") : "automático (GPS)"
 }
 
 export function ProgramacionDia({ plants }: { plants: Plant[] }) {
@@ -145,7 +155,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   useEffect(() => { cargarTiempos() }, [cargarTiempos])
   useEffect(() => { cargarEmpresasBombeo(createClient()).then(setEmpresasBombeo) }, [])
 
-  const tiemposCambiados = (Object.keys(ETIQUETAS) as (keyof Parametros)[]).filter((k) => prm[k] !== prmGuardado[k])
+  const tiemposCambiados = (Object.keys(ETIQUETAS) as (keyof Parametros)[]).filter((k) => JSON.stringify(prm[k] ?? null) !== JSON.stringify(prmGuardado[k] ?? null))
 
   async function guardarTiempos() {
     if (!editaTodo) return
@@ -166,7 +176,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     }
     const nombre = plants.find((p) => p.id === planta)?.name || null
     const detalle: Record<string, string> = {}
-    for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = `${prmGuardado[k]} → ${prm[k]}`
+    for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = k === "aMano" ? `${textoAMano(prmGuardado.aMano)} → ${textoAMano(prm.aMano)}` : `${prmGuardado[k]} → ${prm[k]}`
     detalle.Motivo = motivoTiempos.trim()
     setMotivoTiempos("")
     await logActivity({ action: "editar", entity: "planta", entityId: planta, reference: nombre, plantId: planta, details: detalle })
@@ -232,6 +242,27 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     [ve, pedidos, prmEf, tiempos],
   )
   const gpsPlanta = ve && tiempos ? tiempos.plantas[planta] || null : null
+  // Tiempos reales de la planta: lo del GPS (sin lo corregido a mano) y lo que se usa, con su fuente
+  const prmGpsSolo = useMemo(() => parametrosConGps({ ...prm, aMano: {} }, planta, tiempos), [prm, planta, tiempos])
+  const filasReales = ([
+    ["esperaPlantaMin", "Espera en planta (después de volver, antes de cargar)", gpsPlanta?.enPlanta ? gpsPlanta.enPlanta.viajes : null, 0, 0],
+    ["descargaDirectaMin", "Descarga directa (8 m³)", gpsPlanta?.directo ? gpsPlanta.directo.viajes : null, prm.descargaDirectaMin, 1],
+    ["descargaBombaMin", "Descarga con bomba (8 m³)", gpsPlanta?.bomba ? gpsPlanta.bomba.viajes : null, prm.descargaBombaMin, 1],
+  ] as const).map(([k, l, viajesGps, base, minimo]) => {
+    const aMano = prm.aMano?.[k]
+    const gps = viajesGps != null ? Number(prmGpsSolo[k]) || 0 : null
+    return {
+      k, l, minimo, aMano, gps, viajesGps,
+      usa: aMano ?? gps ?? base,
+      fuente: aMano != null ? "cargado a mano" : gps != null ? `real GPS · ${viajesGps} viaje${viajesGps === 1 ? "" : "s"}` : k === "esperaPlantaMin" ? "sin datos del GPS" : "de la planta (sin datos del GPS)",
+    }
+  })
+  const fijarAMano = (k: keyof TiemposAMano, v: number | null) => {
+    const m = { ...(prm.aMano || {}) }
+    if (v == null) delete m[k]
+    else m[k] = v
+    setPrm({ ...prm, aMano: m })
+  }
 
   // Solo lo que falta despachar entra al plan
   const plan = useMemo(() => {
@@ -444,31 +475,50 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   <label key={k} className="text-xs space-y-1">
                     <span className="text-muted-foreground">{l}</span>
                     <div className="flex items-center gap-1">
-                      <Input type="number" min={1} value={prm[k]} onChange={(e) => setPrm({ ...prm, [k]: Math.max(1, Number(e.target.value) || 1) })} className="h-8 w-20" />
+                      {/* El lavado puede ser 0 (Bautista 08/10: "todavía no hacemos lavado") */}
+                      <Input type="number" min={k === "lavadoMin" ? 0 : 1} value={prm[k]} onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setPrm({ ...prm, [k]: k === "lavadoMin" ? Math.max(0, Number.isFinite(n) ? Math.round(n) : 0) : Math.max(1, n || 1) })
+                      }} className="h-8 w-20" />
                       <span className="text-muted-foreground">min</span>
                     </div>
                     {/* Tiempos reales del GPS (con el interruptor): lo que usan los viajes */}
-                    {gpsPlanta && k === "descargaDirectaMin" && gpsPlanta.directo && (
-                      <span className="block text-violet-700">Real GPS: {prmEf.descargaDirectaMin} min · {gpsPlanta.directo.viajes} viajes · se usa en los viajes</span>
-                    )}
-                    {gpsPlanta && k === "descargaBombaMin" && gpsPlanta.bomba && (
-                      <span className="block text-violet-700">Real GPS: {prmEf.descargaBombaMin} min · {gpsPlanta.bomba.viajes} viajes · se usa en los viajes</span>
-                    )}
+                    {ve && (k === "descargaDirectaMin" || k === "descargaBombaMin") && (() => {
+                      const f = filasReales.find((x) => x.k === k)!
+                      return f.aMano != null || f.gps != null ? <span className="block text-violet-700">En los viajes: {f.usa} min · {f.fuente}</span> : null
+                    })()}
                     {gpsPlanta && k === "cargaMin" && gpsPlanta.enPlanta && (
                       <span className="block text-violet-700">En planta real: {gpsPlanta.enPlanta.min} min ({gpsPlanta.enPlanta.viajes} viajes)</span>
                     )}
                   </label>
                 ))}
               </div>
-              {gpsPlanta && (gpsPlanta.enPlanta || gpsPlanta.directo || gpsPlanta.bomba) && (
-                <div className="mt-2 rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-0.5">
-                  <p className="font-medium flex items-center gap-1.5">Tiempos reales del GPS (últimos 90 días) <NuevoBadge /></p>
-                  {gpsPlanta.enPlanta && (
-                    <p>En planta, de que llega a que sale: <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca) + espera {prmEf.esperaPlantaMin || 0} antes de volver a cargar (no ocupa la boca).</p>
+              {/* Tiempos reales de la planta (con el interruptor): GPS o corregidos a mano por un gerencial */}
+              {ve && (gpsPlanta?.enPlanta || gpsPlanta?.directo || gpsPlanta?.bomba || filasReales.some((f) => f.aMano != null)) && (
+                <div className="mt-2 rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-1.5">
+                  <p className="font-medium flex items-center gap-1.5">Tiempos reales de la planta (GPS, últimos 90 días) <NuevoBadge /></p>
+                  {gpsPlanta?.enPlanta && (
+                    <p>En planta, de que llega a que sale (sin el primer viaje del día): <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca, es el campo de arriba) + espera antes de volver a cargar (no ocupa la boca).</p>
                   )}
-                  {gpsPlanta.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³ (con el lavado) → descarga de 8 m³ {prmEf.descargaDirectaMin} min.</p>}
-                  {gpsPlanta.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ → descarga de 8 m³ {prmEf.descargaBombaMin} min.</p>}
-                  <p className="text-muted-foreground">Se recalcula solo cada mañana con los viajes del GPS. Las obras con 3 viajes o más usan sus propios tiempos. Se corrige a mano en cada pedido.</p>
+                  {gpsPlanta?.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³{prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → descarga de 8 m³ {prmGpsSolo.descargaDirectaMin} min.</p>}
+                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({gpsPlanta.bomba.viajes} viajes) → descarga de 8 m³ {prmGpsSolo.descargaBombaMin} min.</p>}
+                  <div className="divide-y rounded border bg-background">
+                    {filasReales.map((f) => (
+                      <div key={f.k} className="flex items-center gap-2 flex-wrap px-2 py-1.5">
+                        <span className="min-w-[220px]">{f.l}</span>
+                        {f.aMano != null && editaTodo && prm.aMano !== undefined ? (
+                          <Input type="number" min={f.minimo} value={f.aMano} onChange={(e) => fijarAMano(f.k, Math.max(f.minimo, Math.round(Number(e.target.value) || f.minimo)))} className="h-7 w-20" />
+                        ) : (
+                          <strong>{f.usa} min</strong>
+                        )}
+                        <span className="text-muted-foreground">{f.fuente}{f.aMano != null && f.gps != null ? ` (GPS: ${f.gps})` : ""}</span>
+                        {editaTodo && prm.aMano !== undefined && (f.aMano != null
+                          ? <Button size="sm" variant="link" className="h-auto px-0 text-xs ml-auto" onClick={() => fijarAMano(f.k, null)}>Volver a automático</Button>
+                          : <Button size="sm" variant="link" className="h-auto px-0 text-xs ml-auto" onClick={() => fijarAMano(f.k, f.usa)}>Corregir a mano</Button>)}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-muted-foreground">El GPS se recalcula solo cada mañana. Lo corregido a mano le gana al GPS hasta que se vuelve a automático (se guarda con "Guardar tiempos", con motivo). Las obras con viajes de 2 días o más usan sus propios tiempos; cada pedido se puede corregir a mano.</p>
                 </div>
               )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
@@ -507,7 +557,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   </Button>
                 )}
                 {tiemposCambiados.length > 0 && <span className="text-xs text-amber-700">{editaTodo ? "Cambios sin guardar: el plan ya los usa." : "Solo para mirar el plan: no se guardan."}</span>}
-                <Button variant="link" size="sm" className="px-0 h-auto text-xs" onClick={() => setPrm(PARAMETROS_BASE)}>Volver a los valores de referencia</Button>
+                <Button variant="link" size="sm" className="px-0 h-auto text-xs" onClick={() => setPrm({ ...PARAMETROS_BASE, ...(prm.aMano !== undefined ? { aMano: {} } : {}) })}>Volver a los valores de referencia</Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 {ultimaMod
@@ -670,11 +720,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                           <Badge variant="outline" className="text-emerald-700 border-emerald-300">Completado</Badge>
                         ) : r ? (
                           <>
-                            <p>{r.viajes} viajes · carga desde <strong>{aHora(r.primeraLlegada - (ve ? viajeMinDe(pv) : p.construction_sites?.travel_time_minutes || 30) - prm.cargaMin)}</strong> · termina <strong>{aHora(r.finVaciado)}</strong></p>
+                            <p>{r.viajes} viaje{r.viajes === 1 ? "" : "s"} · carga desde <strong>{aHora(r.primeraLlegada - (ve ? viajeMinDe(pv) : p.construction_sites?.travel_time_minutes || 30) - prm.cargaMin)}</strong> · termina <strong>{aHora(r.finVaciado)}</strong></p>
                             {r.demoraInicio > prm.toleranciaMin ? (
                               <p className="text-red-600 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />El primer camión llega {aHora(r.primeraLlegada)}, {r.demoraInicio} min tarde</p>
                             ) : r.huecosMin > 0 ? (
-                              <p className="text-amber-700 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />Para no cortar hacen falta {r.camionesIdeal} camiones (hay {Math.min(disponibles.length, r.viajes)}): {r.huecosMin} min de espera en total</p>
+                              <p className="text-amber-700 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />Para no cortar hacen falta {r.camionesIdeal} {r.camionesIdeal === 1 ? "camión" : "camiones"} (hay {Math.min(disponibles.length, r.viajes)}): {r.huecosMin} min de espera en total</p>
                             ) : (
                               <p className="text-emerald-700 flex items-center gap-1 md:justify-end"><CheckCircle2 className="h-3 w-3" />Sin cortes · {r.camionesUsados} {r.camionesUsados > 1 ? "camiones" : "camión"}{r.viajes > 1 ? `, uno cada ${r.ritmoIdealMin} min` : ""}</p>
                             )}
