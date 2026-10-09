@@ -216,7 +216,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [cuitPrompt, setCuitPrompt] = useState("")
   const { toast } = useToast()
   // Fase 0c-1: permisos. Ajustar un pedido = programacion.editar, o cargar y que el pedido sea propio
-  const { puede, ajustaPedido } = usePermisos()
+  const { puede, ajustaPedido, esGerencial } = usePermisos()
+  // Viaje y descarga los calcula el sistema (GPS, ruta o planta): quien programa no los toca; solo un gerencial los corrige
+  const corrigeTiempos = esGerencial
   const puedeCrear = puede("programacion", "cargar")
   const [motivo, setMotivo] = useState("")
   const [cancelar, setCancelar] = useState<ScheduledDispatch | null>(null)
@@ -1147,6 +1149,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Minutos de viaje de este pedido</Label>
                     <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setViajeOrigen("a_mano"); setForm({ ...form, viaje_min: e.target.value }) }}
+                      readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
                       placeholder={tiemposAuto ? `${tiemposAuto.viaje.min} (${textoFuente(tiemposAuto.viaje)})` : `${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
                     {tiemposAuto && (
                       <p className="text-[11px] text-muted-foreground">
@@ -1160,6 +1163,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Descarga por camión de 8 m³ (min)</Label>
                     <Input type="number" min="1" className="bg-background" value={form.descarga_min} onChange={(e) => setForm({ ...form, descarga_min: e.target.value })}
+                      readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
                       placeholder={tiemposAuto ? `${tiemposAuto.descarga.min} (${tiemposAuto.descarga.fuente === "planta" ? "la de la planta" : textoFuente(tiemposAuto.descarga)})`
                         : form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
                     {tiemposAuto && (
@@ -1169,6 +1173,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     )}
                   </div>
                 </div>
+                {!corrigeTiempos && (
+                  <p className="text-[11px] text-muted-foreground">Los minutos de viaje y de descarga los calcula el sistema con el GPS de los viajes anteriores. Si no te parecen bien, avisale a un gerencial.</p>
+                )}
                 {tiemposAuto && !(parseInt(form.descarga_min) > 0) && textoDescargaObra(tiemposAuto) && (
                   <p className="text-xs text-violet-800">{textoDescargaObra(tiemposAuto)}.</p>
                 )}
