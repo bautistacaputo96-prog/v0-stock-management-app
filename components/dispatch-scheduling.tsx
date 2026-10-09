@@ -170,7 +170,8 @@ export function SearchableSelect({
               {items.map((i) => (
                 <CommandItem
                   key={i.id}
-                  value={`${i.label} ${i.hint || ""}`}
+                  // El id al final evita que dos clientes u obras con el mismo nombre se confundan
+                  value={`${i.label} ${i.hint || ""} ${i.id}`}
                   onSelect={() => {
                     onChange(i.id)
                     setOpen(false)
@@ -1035,12 +1036,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   }}
                 />}
               </div>
-              <Select value={form.client_id} onValueChange={(v) => setForm({ ...form, client_id: v, construction_site_id: "" })}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
-                <SelectContent>
-                  {clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                items={clients.map((c) => ({ id: c.id, label: c.name }))}
+                value={form.client_id}
+                onChange={(v) => setForm({ ...form, client_id: v, construction_site_id: "" })}
+                placeholder="Buscar cliente..."
+                emptyText="No hay clientes con ese nombre"
+              />
             </div>
 
             {selectedClient && !selectedClient.cuit && (
@@ -1079,16 +1081,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     }}
                   />}
                 </div>
-                <Select value={form.construction_site_id} onValueChange={(v) => setForm({ ...form, construction_site_id: v })}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar obra" /></SelectTrigger>
-                  <SelectContent>
-                    {selectedClient.construction_sites?.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name} ({s.travel_time_minutes} min)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  items={(selectedClient.construction_sites || []).map((s) => ({ id: s.id, label: s.name, hint: `${s.travel_time_minutes} min` }))}
+                  value={form.construction_site_id}
+                  onChange={(v) => setForm({ ...form, construction_site_id: v })}
+                  placeholder="Buscar obra..."
+                  emptyText="No hay obras con ese nombre"
+                />
               </div>
             )}
 
