@@ -693,6 +693,12 @@ Es una tabla de 5 columnas, con los mismos permisos que `viajes`.
 20. "Despachar e imprimir" abre `doc=remitox&fondo=0`, y la página del remito tiene un solo botón. Un X sale "RM2: 0099-00003201".
 21. La pantalla vieja de Despacho diario despacha igual que antes, y su remito queda con el tipo resuelto o deducido del número.
 
+### 14.11 Camión que espera en la planta con el remito hecho (Bautista, 20/10/2026) — manda sobre 3.2, 13.7 y lo anterior
+Que un camión espere 15 minutos o más en la planta con el remito hecho es normal (mezclando, sacando muestras, obra cerca). Por eso:
+- **Con GPS, si el GPS todavía no lo vio salir de la planta**, la tarjeta dice **"Esperando en planta con remito · X min"** (desde la hora del remito). **No pregunta "¿Volvió?" ni se libera solo.**
+- Se libera **solo** cuando el GPS lo ve salir y volver (fuente GPS), o **a mano** desde ⋮ › "Volvió a planta", con la confirmación: **"El camión AE402HE tiene el remito 886 y todavía no salió. ¿Liberarlo igual?"**.
+- **Sin señal de GPS**, "¿Volvió?" aparece recién cuando pasó la **vuelta estimada** (salida + ida + descarga + vuelta) **más 30 min** de margen. Nunca por un tiempo fijo desde la salida.
+
 ## Hecho
 
 ### Obrero (20/10/2026) — rama `loop/fase-3-despacho`, sin push
@@ -781,3 +787,9 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 - Migración: dos corridas completas, **51/51** controles cada una, la primera transacción aplica la migración dos veces seguidas. Nada quedó en producción.
 - `tsc`: los mismos 17 errores de main. Build con `--webpack`: compila (`.next` borrado). `test:despacho` **27/27**, `test:gps` 44/44, `test:sesion` 21/21.
 - Script con los datos de hoy (1.425 despachos): la Parte B clasificaría **1.052** (**554 R**, **498 X**) y quedan **373 dudosos** (= los de la Parte A; la B no toca ninguno). Por motivo: repetidos 193 · letras que no son HUDSON 125 · más de 5 dígitos 28 · 4 o 5 dígitos por debajo de 2201 10 · dos grupos de números 4 · salta mucho dentro del mes 4 · HUDSON en Canning 3 · R < 600 antes de julio 2 · X > 8200 2 · sin dígitos 2. Las series quedan limpias: Hudson R 710–781 y X 3122–3200 (ago–sep) / 4202–4207 (oct); Canning R 2–887 (jul–oct) y X 2634–3307 (abr–oct).
+
+### Ajuste del 20/10/2026 (tarde) — camión esperando en planta con remito (14.11)
+- `lib/despacho.ts` (`estadoCamion`): con GPS, remito de hoy y el GPS sin haberlo visto salir → "Esperando en planta con remito" (`esperandoConRemito`), con el tiempo desde el remito, sin "¿Volvió?" ni liberar, por más que pase el rato (antes, a los 15 min preguntaba "¿Volvió?"). Se libera solo cuando el GPS lo vio afuera y vuelve (sin cambios en la base: `camion_volvio` ya exigía `p_visto_fuera_at`). Sin GPS, "¿Volvió?" a la vuelta estimada + 30 min (`MARGEN_VOLVIO_MIN`).
+- Pantalla: ⋮ › "Volvió a planta" de un camión esperando abre la confirmación "El camión … tiene el remito … y todavía no salió. ¿Liberarlo igual?" (No, sigue esperando · Sí, liberarlo).
+- Sin cambios: el camión "En ruta (sin despacho de hoy)" (quedó en ruta de otro día, sin horarios para estimar) sigue preguntando "¿Volvió?".
+- Pruebas: `test:despacho` 27/27 (esperando a los 7 min, 25 min y 1 h 53 sin ¿Volvió?; sin GPS a vuelta + 29 no pregunta y a + 31 sí; viaje largo sin pregunta a los 15 min ni a la hora). `tsc` igual a main, build OK, `test:gps` y `test:sesion` OK. No se tocó la base.

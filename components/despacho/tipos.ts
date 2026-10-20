@@ -66,6 +66,8 @@ export type CamionT = {
   /** id del despacho en curso (para el "Ahora" de la tabla) */
   despachoId: string | null
   notaTaller: string | null
+  /** remito del despacho en curso (para la confirmación de "Volvió a planta" cuando todavía no salió) */
+  remito: string | null
 }
 
 export type ViajeT = ViajeDia

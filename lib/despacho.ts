@@ -208,6 +208,8 @@ export type EstadoCamion = {
   probableObra: boolean
   /** El GPS lo ve dentro de una planta después de salir: hay que marcarlo libre (camion_volvio fuente GPS) */
   liberarPorGps: boolean
+  /** Con GPS: tiene remito y el GPS todavía no lo vio salir de la planta (liberarlo a mano pide confirmación) */
+  esperandoConRemito: boolean
   /** planta donde está (libre) o a la que vuelve */
   plantaId: string | null
   /** sin GPS (no está en Wialon o más de 3 h sin posición) */
@@ -217,6 +219,8 @@ export type EstadoCamion = {
 /** Minutos de viaje mínimos para que el GPS lo libere solo al verlo en planta (fase-3.md 11, riesgos). */
 export const MIN_VIAJE_PARA_LIBERAR = 15
 const SIN_SENAL_MS = 3 * 60 * MIN
+/** Sin GPS: margen después de la vuelta estimada para preguntar "¿Volvió?" */
+export const MARGEN_VOLVIO_MIN = 30
 
 /**
  * El estado del camión, en una sola función: GPS si hay señal (manda sobre mixers.status), si no lo estimado con
@@ -230,7 +234,7 @@ export function estadoCamion(
 ): EstadoCamion {
   const base = {
     cicloMin: null as number | null, vueltaEstimada: null as number | null, preguntarVolvio: false, llegando: false,
-    probableObra: false, liberarPorGps: false,
+    probableObra: false, liberarPorGps: false, esperandoConRemito: false,
   }
   const desdeEstado = t(m.estado_desde || m.updated_at || null)
   const desdeOk = Number.isFinite(desdeEstado) ? desdeEstado : null
@@ -253,10 +257,11 @@ export function estadoCamion(
       // (y no recién salido)
       if (conViaje && vistoFuera && ciclo! >= MIN_VIAJE_PARA_LIBERAR)
         return { ...base, clave: "planta", etiqueta: "En planta · libre", desde: ahora, fuente, despachable: "si", liberarPorGps: true, plantaId: gps.planta_id || plantaLibre, sinGps }
-      // Salió con remito pero el GPS nunca lo vio fuera de la planta (cargado esperando, o la pantalla se abrió
-      // cuando ya había vuelto): no se libera solo; pasado el rato se pregunta "¿Volvió?"
-      if (conViaje && ciclo! >= MIN_VIAJE_PARA_LIBERAR)
-        return { ...base, clave: "yendo", etiqueta: "En planta con remito", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, preguntarVolvio: true, plantaId: gps.planta_id || despacho!.plant_id, sinGps }
+      // Tiene el remito hecho y el GPS todavía no lo vio salir: está esperando en la planta (mezclando, sacando
+      // muestras, obra cerca: es normal, aunque sea más de 15 min). No pregunta "¿Volvió?" ni se libera solo;
+      // a mano se libera con confirmación (Respuesta de Bautista del 20/10, 14.11).
+      if (conViaje && !vistoFuera)
+        return { ...base, clave: "yendo", etiqueta: "Esperando en planta con remito", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, esperandoConRemito: true, plantaId: gps.planta_id || despacho!.plant_id, sinGps }
       if (conViaje)
         return { ...base, clave: "yendo", etiqueta: "Yendo a obra", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
       if (m.status === "in_transit")
@@ -288,7 +293,8 @@ export function estadoCamion(
     const est = { ...base, fuente: "estimado" as const, despachable: "avisa" as const, cicloMin: ciclo, vueltaEstimada: vuelta, plantaId: despacho!.plant_id, sinGps }
     if (ahora < llegada) return { ...est, clave: "yendo", etiqueta: "Yendo a obra", desde: salida }
     if (ahora < fin) return { ...est, clave: "obra", etiqueta: "En obra", desde: llegada }
-    return { ...est, clave: "volviendo", etiqueta: "Volviendo", desde: fin, preguntarVolvio: ahora > vuelta + 30 * MIN, llegando: ahora > vuelta && ahora <= vuelta + 30 * MIN }
+    // "¿Volvió?" recién pasada la vuelta estimada (salida + ida + descarga + vuelta) más 30 min de margen
+    return { ...est, clave: "volviendo", etiqueta: "Volviendo", desde: fin, preguntarVolvio: ahora > vuelta + MARGEN_VOLVIO_MIN * MIN, llegando: ahora > vuelta && ahora <= vuelta + MARGEN_VOLVIO_MIN * MIN }
   }
   if (m.status === "in_transit")
     return { ...base, clave: "volviendo", etiqueta: "En ruta (sin despacho de hoy)", desde: desdeOk, fuente: "estimado", despachable: "avisa", preguntarVolvio: true, plantaId: plantaLibre, sinGps }

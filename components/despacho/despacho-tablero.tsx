@@ -108,6 +108,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const [motivoTotal, setMotivoTotal] = useState("")
   const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
   const [taller, setTaller] = useState<string | null>(null)
+  // "Volvió a planta" de un camión con remito que el GPS todavía no vio salir: se confirma
+  const [liberarEsperando, setLiberarEsperando] = useState<string | null>(null)
   const [notaTaller, setNotaTaller] = useState("")
   const [remitoListo, setRemitoListo] = useState<{ id: string; remito: string; tipo?: TipoRemito; m3: number; cliente: string; obra: string; patente: string; chofer?: string } | null>(null)
 
@@ -285,6 +287,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         obra: d?.construction_sites?.name || null,
         despachoId: m.status === "in_transit" ? d?.id || null : null,
         notaTaller: notasTaller[m.id] || null,
+        remito: m.status === "in_transit" ? d?.remito || null : null,
       }
     })
     return out.sort((a, b) => ordenCamion(a.e, planta) - ordenCamion(b.e, planta) || a.patente.localeCompare(b.patente))
@@ -415,8 +418,11 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   }
 
   // ── Camión: volvió, taller, disponible ──
-  async function volvio(id: string) {
+  async function volvio(id: string, confirmado = false) {
     const c = camionPorId(id)
+    // Con remito y sin salir según el GPS (esperando en planta): liberarlo a mano pide confirmación
+    if (!confirmado && c?.e.esperandoConRemito) { setLiberarEsperando(id); return }
+    setLiberarEsperando(null)
     const sb = createClient()
     const { data, error } = await sb.rpc("camion_volvio", { p_mixer_id: id, p_fuente: "manual", p_usuario: currentUserName() })
     if (error) { toast({ title: "No se pudo marcar", description: error.message, variant: "destructive" }); return }
@@ -689,6 +695,30 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
               </DialogFooter>
             </>
           ))}
+        </DialogContent>
+      </Dialog>
+
+      {/* Liberar a mano un camión que tiene remito y todavía no salió (según el GPS) */}
+      <Dialog open={!!liberarEsperando} onOpenChange={(v) => !v && setLiberarEsperando(null)}>
+        <DialogContent className="sm:max-w-[460px]">
+          {liberarEsperando && (() => {
+            const c = camionPorId(liberarEsperando)
+            return (
+              <>
+                <DialogHeader><DialogTitle>¿Liberar {c?.patente}?</DialogTitle></DialogHeader>
+                <p className="text-sm">
+                  El camión <b>{c?.patente}</b> tiene el remito <b>{c?.remito || "sin número"}</b> y todavía no salió. ¿Liberarlo igual?
+                </p>
+                <p className="text-[13px] text-muted-foreground">
+                  Queda libre para otro viaje. El remito no se toca. Hacelo solo si el viaje no va a salir (por ejemplo, se descargó en la planta) o si el GPS falló.
+                </p>
+                <DialogFooter className="gap-2">
+                  <Button className="h-11" variant="outline" onClick={() => setLiberarEsperando(null)}>No, sigue esperando</Button>
+                  <Button className="h-11 bg-amber-600 hover:bg-amber-700" onClick={() => volvio(liberarEsperando, true)}>Sí, liberarlo</Button>
+                </DialogFooter>
+              </>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
