@@ -1,6 +1,6 @@
 # Fase 3 — Despacho diario en tres columnas
 
-Estado: **propuesta del arquitecto (08/10/2026), con las respuestas de Bautista del 08/10 (punto 13) y del 20/10 (punto 14, remito R/X). Cada una manda sobre lo anterior.** No hay nada programado.
+Estado: **propuesta del arquitecto (08/10/2026), con las respuestas de Bautista del 08/10 (punto 13) y del 20/10 (punto 14, remito R/X). Cada una manda sobre lo anterior.** Programada por el obrero el 20/10/2026 (ver "Hecho"); falta revisión.
 Maqueta navegable: [`maqueta-fase-3.html`](maqueta-fase-3.html). Se abre con doble clic, no necesita internet y no graba nada.
 
 Leer antes: `README.md` (principios), `fase-2.md` (viajes, interruptor `ve_funciones_nuevas`), `fase-4a.md` (GPS y `viajes_gps`), `fase-0c.md` (permisos). Referencias de Loop: `informe-loop.md` §2.6 y las capturas `despacho_pantalla_principal`, `despacho_form_entrega`, `despacho_filtro_betoneiras`, `despacho_suspender_programacion`, `entregas_tabla`.
@@ -693,4 +693,68 @@ Es una tabla de 5 columnas, con los mismos permisos que `viajes`.
 21. La pantalla vieja de Despacho diario despacha igual que antes, y su remito queda con el tipo resuelto o deducido del número.
 
 ## Hecho
-_(lo completa la sesión obrero)_
+
+### Obrero (20/10/2026) — rama `loop/fase-3-despacho`, sin push
+
+Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R y X en la hoja pre-impresa, "RM" el R y "RM2" el X, mismo formato; (b) repetido por planta y tipo + aviso de X usado en la otra planta; (c) del 2201 al 3200 son X; (d) sin resumen de m³ con y sin factura (queda el filtro por tipo del Historial); (e) X con 8 dígitos; (f) no se limpia el "HUDSON".
+
+**Commits**
+1. `docs(migracion-loop): especificación y maqueta de la fase 3` (lo que había dejado el arquitecto, sin cambios, + merge de main con los tiempos GPS).
+2. `feat(fase3): migración … y script de clasificación` — `supabase/migrations/202610201200_fase3_despacho.sql` y `scripts/fase3-clasificar-remitos.sql`.
+3. `feat(fase3): reglas del despacho en lib/despacho.ts con sus pruebas (test:despacho)`.
+4. `feat(fase3): despacho diario en tres columnas … con remito R/X` — pantalla, cambios chicos en las pantallas de siempre, PDF, GPS, tipos.
+5. `docs(migracion-loop): fase 3, hecho (obrero)` (este punto).
+
+**Qué se hizo**
+- **Pantalla nueva** en `/plantista` (`components/despacho/*`), solo para quien tiene `ve_funciones_nuevas`: selector "Pantalla nueva · en prueba / Pantalla de siempre" recordado en el equipo (`selector-pantalla.tsx`); para los demás `/plantista` es la de siempre. Barra (planta, ‹ día ›, hora, Carga despacho manual, Actualizar, Pantalla de siempre), aviso de muestras, 6 contadores, tres columnas con scroll propio (pestañas con menos de 900 px), leyenda de colores, tabla de entregas. Base cada 30 s y GPS cada 60 s, solo con la pestaña visible. Humedad del acopio como en la vieja (copia en `humedad-acopio.tsx` mientras convivan).
+- **Viajes**: pendientes por hora de carga, rojo "Atrasado 15 min", ámbar "Ahora", marca R/X (o "R/X ?"), "calculado" para pedidos sin viajes guardados (motor de `lib/viajes`, sin grabar), "⏸ N viajes en pausa". Botón Despachar, tocar viaje → camión (y al revés) y arrastre con pointer events (`usar-arrastre.ts`: manija ⠿, mouse con 8 px, dedo con 280 ms).
+- **Camiones**: los 5 activos, estado con `estadoCamion()` (GPS / sin GPS · estimado / a mano), tiempo en el estado, ⏱ ciclo, chofer del último despacho de hoy, "¿Volvió? Volvió a planta", ⋮ Mandar a taller (nota opcional) / Disponible / Volvió a planta / Ver en el mapa. Con GPS, al verlo en la planta después de un viaje de 15 min o más llama a `camion_volvio(…, 'gps')` (Actividad "Volvió a planta · fuente GPS").
+- **Pedidos**: tarjeta con bomba, fibra, entregado/total, R/X, 👍, puntualidad del primer camión (real de la 4a, en vivo con GPS, estimada o "1.er camión carga"), próximo viaje; suspendidos con Reabrir; completos/finalizados plegados; cancelados con "Ver cancelados". ⋮ con 👍, Viajes (gerenciador), Editar total, Ver entregas, Suspender, Reabrir (con "Correr los viajes: el próximo carga a las …" o dejarlos), Finalizar con motivo, Cancelar (solo `programacion.borrar`).
+- **Entrega**: los mismos campos de hoy + viaje, "Salió a las" y tipo de remito (lo que diga la base con su origen; si nadie lo definió, "¿Este remito va con o sin factura?"; "Cambiar solo en este remito" con `programacion.editar`). Número sugerido por planta y tipo, repetido y los 4 avisos con "Sí, el número está bien" (queda en Actividad). Despacha con `registrar_despacho`; rearma los pendientes si cambiaron los m³; actualiza la pantalla sin esperar; "Despachar e imprimir" abre `doc=remitox&fondo=0`.
+- **Pantallas de siempre**: distintivo "Suspendido · motivo" en Despacho (sin Despachar), Semana y Día; "Entregado" llama a `camion_volvio`. Formulario del pedido: Remito "Según obra o cliente (…)" · "Con factura · R" · "Sin factura · X". Clientes, obras y altas rápidas: "Remito: Se decide en cada pedido / Siempre con factura (R) / Siempre sin factura (X)". Despacho manual: misma resolución y misma pregunta. Historial: filtro "Tipo de remito" (todos · R · X · Sin tipo), columna Tipo (también en el Excel), edición del tipo con motivo y "Salió 07:12 · cargado 07:41".
+- **Remito PDF**: R → "RM: 0099-00000776", X → "RM2: 0099-00003201" (dígitos sin letras ni ceros de adelante, a 8). La página del remito tiene un solo botón (pre-impresa); `fondo=1` queda en el código sin enlace.
+- **`/api/gps/posiciones`**: despachos y minutos por `dispatch_date` (no `created_at`); suma `probable_obra` y `planta_id`.
+
+**Migración `202610201200_fase3_despacho.sql`** (NO aplicada; probada dos veces seguidas dentro de un mismo `BEGIN … ROLLBACK`, dos corridas completas, 48/48 controles; verificado después que en producción no quedó nada):
+- `mixers.estado_desde` + trigger; `scheduled_dispatches.suspendido_*`, `cierre_*`, `remito_tipo`; `construction_sites.remito_tipo`, `clients.remito_tipo`; `dispatches.remito_tipo` / `remito_tipo_origen` (CHECKs); tabla `remito_tipo_dia`; `trg_dispatches_created_at_fijo`.
+- Funciones: `remito_tipo_para`, `suspender_pedido`, `reabrir_pedido`, `finalizar_pedido`, `camion_volvio` y auxiliares `_remito_digitos`, `_remito_tipo_de_numero`, `_remito_repetido`, `_motivo_texto`. `registrar_despacho` y `editar_despacho` desde `pg_get_functiondef` de producción del 20/10, mismas firmas.
+- **Datos cargados**: `estado_desde` se completa con `updated_at`; todo lo demás queda nulo (ningún pedido suspendido, nada "definido" R/X). No se reescribe ningún remito.
+- **Compatibilidad con main** (probado): las llamadas de la pantalla de siempre (con viaje, chofer, agua, fibra y muestra; pedido sin viajes), del despacho manual, del despacho por árido y el `editar_despacho` de Historial graban exactamente lo mismo en `dispatches`, `dispatch_materials`, `stock_movements`, stock, probetas, pedido, viajes, camión, `dispatch_status_log` y Actividad. Lo único nuevo: la clave "Tipo de remito" en Actividad, `remito_tipo*` en el despacho y en lo que devuelve la función, y el mensaje de repetido ("Ya hay un remito R 776 en Hudson. No se puede cargar dos veces.").
+- Controles en ROLLBACK: repetido por planta y tipo ("88755" choca con "88755 HUDSON", no con Canning ni con un X; "877" choca con "0877"; uno viejo sin tipo vale por su número), prioridad pedido > obra > cliente > día, respuesta del día que no queda si el despacho falla, vale en la otra planta y desde la pantalla vieja, se vuelve a preguntar al día siguiente, otra respuesta el mismo día frena, origen que no coincide frena, manual entra y queda en Actividad, aviso aceptado / "Salió a las … (corregida; cargado …)" / "Pantalla" en Actividad, suspender (status no cambia, log y Actividad, los viajes no se tocan, `registrar_despacho` lo rechaza), reabrir, finalizar (nota igual a la de siempre, motivo, viajes cancelados), `camion_volvio` (manual, GPS con 15 min, no toca libres ni taller), `created_at` fijo, `editar_despacho` con tipo y repetido.
+
+**Verificaciones**
+- `npx tsc --noEmit`: 17 errores, los mismos 17 de main (comparado archivo por archivo con un checkout de `origin/main`).
+- `npx next build --webpack` con variables de relleno: compila; `.next` borrado.
+- `npm run test:despacho` 24/24 (estados del camión: cada fila de 3.2, GPS viejo, camión fuera de Wialon, ¿Volvió?, liberar por GPS; viajes calculados y en pausa; atraso; contadores con suspendidos y cancelados; puntualidad; tipo por número; sugeridos Hudson R 777 / X 3201, Canning R 842 / X 3306; repetido; avisos 780781 / 3260 / 12 / 3187 / X de la otra planta; número impreso; validación; jsonb). `npm run test:gps` 44/44, `npm run test:sesion` 21/21.
+- No se usó el navegador (regla): la pantalla no se miró en vivo ni en tablet. Hay que probarla en el preview.
+
+**Script de clasificación (datos reales, Parte A en solo lectura; Parte B probada en ROLLBACK)**
+- 1.421 despachos con remito (sin contar árido/prueba). La Parte B clasificaría **1.053**: **552 R** y **501 X**; quedan **368 dudosos** "Sin tipo" (= exactamente los de la Parte A).
+- Series que caen bien: Hudson R 710–781 (sep–oct) y X 3122–3241 (ago–sep); Canning R 2–883 (desde el 08/07/2026, empezó en 0002) y X 2228–3307 (abr–oct).
+- Dudosos por motivo: repetidos en la planta y el tipo 194 · letras que no son HUDSON 125 · más de 5 dígitos 28 · 4 o 5 dígitos por debajo de 2201 10 · X por encima de 8200 4 · HUDSON en Canning 3 · R < 600 antes de julio 2 · sin dígitos 2. **129 de los 368 son del cliente "HISTÓRICO"** (carga del historial 2025, con "N° 2004", "N°3091-3092", 0 m³).
+- Casos para mirar: "R 3110" … "R 3120" en Hudson (jun–jul, con número de X pero escritos con R), "3103-A", "3112-C", "3113-C", "3070-2", "3206-1", "3216-17", pares "2958-2959"… (dos remitos en uno), "12354"/"12355", "10000000000000000000000000000000", "Richard La Huella", "HUDSON" (06/10, Hudson, sin número), "3123/3124/3125 Hudson" cargados en Canning el 10/08, "235" en Canning el 10/04.
+- Repetidos: 114 números repetidos el mismo día (sobre todo Canning abril–junio: el mismo remito en 2 o 3 filas) y 14 en días distintos; más los pares HISTÓRICO 2025 ↔ 2026 con el mismo número X. Pares que ya chocarían por planta + tipo + dígitos: **129** (128 en Canning, 1 en Hudson: "3129 Hudson" 10/08 y 19/08). No frenan nada (el control es solo al cargar o editar, y `editar_despacho` solo lo vuelve a mirar si cambian remito, planta o tipo).
+- Ojo: en **Hudson los X saltaron a 4202–4207 desde el 15/10** (¿talonario nuevo?) y hay un "2403HUDSON" el 19/10. Con eso el sugerido X de Hudson hoy es 4208 y un 3201 avisaría "mucho más bajo".
+
+**Desvíos de la especificación y por qué**
+1. **Límite R/X = 2201** en todos lados (deducción del número, "parece del otro tipo", script), no 3100 como decían 14.2 y 14.4: es la respuesta (c). Los 2201–3099 entran directo a la Parte B como X.
+2. **Dígitos sin ceros de adelante** para comparar, sugerir y clasificar ("0841" = 841): Canning tipeó la serie R con cero adelante desde julio. El texto no se toca.
+3. **Más de 5 dígitos → sin tipo** al deducir (la pantalla vieja con "780781" deja el despacho "Sin tipo"); en el control de repetido, si de un lado no se sabe el tipo, choca igual (por las dudas).
+4. **Regla 4 del script**: "R por debajo de 600" solo antes del 01/07/2026 (si no, se iban a dudosos ~250 R buenos de Canning, que arrancó en 0002).
+5. **`editar_despacho`** controla el repetido solo si cambian el remito, la planta o el tipo (así un despacho viejo de un par repetido se puede seguir editando en otra cosa).
+6. **"Salió a las" en Actividad** solo para despachos de pedido (el despacho manual manda siempre las 12:00 del día).
+7. Se agregó la clave opcional **`pantalla`** al jsonb (Actividad "Pantalla: Despacho en tres columnas") para medir el retiro de la vieja (6.4).
+8. **`/api/gps/posiciones`** mantiene el estado `detenido` y suma `probable_obra` (cambiar el estado rompía Logística › En vivo).
+9. **Taller / Disponible** con un update de `mixers.status` + Actividad desde la pantalla (sin función de base); la nota queda en Actividad (`Nota`) y la tarjeta la lee de ahí. **Cancelar** también es un update (como hoy) que suma `cierre_motivo_tipo` / `cierre_motivo`.
+10. **"Despachar e imprimir"** abre la pestaña en el mismo clic y le carga el PDF al terminar (si no, el navegador la bloquea); si igual se bloquea, aparece el aviso con "Imprimir remito".
+11. El tipo de remito en el pedido, la obra y el cliente **se manda solo si cambió**, así esos formularios siguen andando si la migración todavía no está aplicada.
+12. **Puntualidad en vivo con GPS**: el GPS no da la hora de llegada; si lo ve en la obra antes de la tolerancia dice "En obra (GPS) · a tiempo", si no, neutro.
+13. **Consulta** ve el ⋮ del pedido solo con "Ver entregas" (un filtro, no graba nada).
+
+**Riesgos y pendientes para publicar**
+- **Aplicar la migración antes del merge** (con el OK de Bautista). El preview usa la base de producción: sin la migración, la pantalla nueva no puede suspender, reabrir, finalizar ni saber el tipo de remito (las pantallas de siempre siguen andando igual).
+- **Verificar con una impresión de prueba de un R** sobre la hoja pre-impresa ("RM: 0099-00000776", respuesta a): la posición es la misma que la del X.
+- Correr la **Parte A del script**, mostrársela a Bautista, y recién con su OK la Parte B. Los 368 dudosos se clasifican a mano desde Historial › "Sin tipo".
+- Probar en el preview, con el dedo en la tablet (1024 × 768) y con el mouse: los tres caminos de despacho, el arrastre, las pestañas y el aviso de camión no libre. No se pudo mirar en vivo.
+- Hasta que se carguen tipos en obras y clientes, la pantalla nueva va a preguntar "¿con o sin factura?" en el primer despacho de cada cliente del día.
+- La pantalla vieja sigue despachando sin elegir tipo: lo resuelve la base o lo deduce del número.
