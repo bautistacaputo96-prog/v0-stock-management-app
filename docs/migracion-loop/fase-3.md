@@ -1,6 +1,6 @@
 # Fase 3 — Despacho diario en tres columnas
 
-Estado: **propuesta del arquitecto (08/10/2026), con las respuestas de Bautista del 08/10 (punto 13) y del 20/10 (punto 14, remito R/X). Cada una manda sobre lo anterior.** Programada por el obrero el 20/10/2026 (ver "Hecho"); falta revisión.
+Estado: **revisada y aprobada (20/10/2026)**; falta aplicar la migración (con OK de Bautista), probar el preview y publicar. **propuesta del arquitecto (08/10/2026), con las respuestas de Bautista del 08/10 (punto 13) y del 20/10 (punto 14, remito R/X). Cada una manda sobre lo anterior.** Programada por el obrero el 20/10/2026 (ver "Hecho"); falta revisión.
 Maqueta navegable: [`maqueta-fase-3.html`](maqueta-fase-3.html). Se abre con doble clic, no necesita internet y no graba nada.
 
 Leer antes: `README.md` (principios), `fase-2.md` (viajes, interruptor `ve_funciones_nuevas`), `fase-4a.md` (GPS y `viajes_gps`), `fase-0c.md` (permisos). Referencias de Loop: `informe-loop.md` §2.6 y las capturas `despacho_pantalla_principal`, `despacho_form_entrega`, `despacho_filtro_betoneiras`, `despacho_suspender_programacion`, `entregas_tabla`.
@@ -743,7 +743,7 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 2. **Dígitos sin ceros de adelante** para comparar, sugerir y clasificar ("0841" = 841): Canning tipeó la serie R con cero adelante desde julio. El texto no se toca.
 3. **Más de 5 dígitos → sin tipo** al deducir (la pantalla vieja con "780781" deja el despacho "Sin tipo"); en el control de repetido, si de un lado no se sabe el tipo, choca igual (por las dudas).
 4. **Regla 4 del script**: "R por debajo de 600" solo antes del 01/07/2026 (si no, se iban a dudosos ~250 R buenos de Canning, que arrancó en 0002).
-5. **`editar_despacho`** controla el repetido solo si cambian el remito, la planta o el tipo (así un despacho viejo de un par repetido se puede seguir editando en otra cosa).
+5. **`editar_despacho`** controla el repetido solo si cambian los dígitos del remito, la planta o el tipo efectivo (ver "Ajustes de la revisión") (así un despacho viejo de un par repetido se puede seguir editando en otra cosa).
 6. **"Salió a las" en Actividad** solo para despachos de pedido (el despacho manual manda siempre las 12:00 del día).
 7. Se agregó la clave opcional **`pantalla`** al jsonb (Actividad "Pantalla: Despacho en tres columnas") para medir el retiro de la vieja (6.4).
 8. **`/api/gps/posiciones`** mantiene el estado `detenido` y suma `probable_obra` (cambiar el estado rompía Logística › En vivo).
