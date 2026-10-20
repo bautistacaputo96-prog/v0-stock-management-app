@@ -373,7 +373,7 @@ Mismo patrón que las de la fase 2 (`SECURITY DEFINER`, `search_path`, hora de A
    - el pedido y los contadores suman;
    - aparece la fila en entregas;
    - "Despachar e imprimir" abre el remito.
-5. Con GPS, un camión que vuelve a la geocerca de la planta queda libre solo, con Actividad "fuente GPS". Sin GPS, muestra "estimado" y, pasada la vuelta + 30 min, "¿Volvió?". "Volvió a planta" lo libera.
+5. Con GPS, un camión que vuelve a la geocerca de la planta queda «Volvió a planta · disponible (GPS)» solo, con Actividad. Sin GPS, muestra "estimado" y, pasada la vuelta + 30 min, "¿Volvió?". "Volvió a planta" lo deja disponible.
 6. Suspender por lluvia:
    - esconde los viajes;
    - suma al contador "Suspendido";
@@ -417,7 +417,7 @@ Mismo patrón que las de la fase 2 (`SECURITY DEFINER`, `search_path`, hora de A
    - ¿Hay algún camión de terceros que despache sin GPS?
 4. **¿Quién suspende y reabre?** Cancelar es solo gerencial (respuesta 18.1 de la 0c). Pero la lluvia se ve a las 7 en la planta, y suspender no borra nada y se deshace.
    - **Recomendación:** suspender y reabrir con `despacho.cargar` (Titan y Felipe). Cancelar sigue siendo solo gerencial.
-5. **¿Se libera solo el camión que el GPS ve volver a la planta?**
+5. **¿Queda disponible solo el camión que el GPS ve volver a la planta?**
    - **Recomendación:** sí. Queda en Actividad como "Volvió a planta · GPS". Es lo que arregla los camiones que quedaban "en ruta" para siempre.
 6. **"Salió a las", que se puede corregir.**
    - **Recomendación:** dejarla, hasta 12 h para atrás dentro del mismo día. Así lo cargado en tanda queda con la hora real y la 4a cruza mejor.
@@ -505,7 +505,7 @@ Las firmas de las funciones no cambian. Se parte de `pg_get_functiondef` de prod
 
 ### 13.7 Lo que queda con la recomendación del arquitecto
 - Pregunta 3 (camión sin GPS): estado estimado más "Volvió a planta", y "¿Volvió?" a la media hora de la vuelta estimada.
-- Pregunta 5 (se libera solo con el GPS): sí, con Actividad "fuente GPS".
+- Pregunta 5 (queda disponible solo con el GPS): sí, «Volvió a planta · disponible (GPS)» en Actividad.
 - Pregunta 8 (retiro de la pantalla vieja): dos semanas de uso solo con la nueva y el OK de Bautista.
 
 ### 13.8 Criterios de aceptación que se suman
@@ -695,8 +695,9 @@ Es una tabla de 5 columnas, con los mismos permisos que `viajes`.
 
 ### 14.11 Camión que espera en la planta con el remito hecho (Bautista, 20/10/2026) — manda sobre 3.2, 13.7 y lo anterior
 Que un camión espere 15 minutos o más en la planta con el remito hecho es normal (mezclando, sacando muestras, obra cerca). Por eso:
-- **Con GPS, si el GPS todavía no lo vio salir de la planta**, la tarjeta dice **"Esperando en planta con remito · X min"** (desde la hora del remito). **No pregunta "¿Volvió?" ni se libera solo.**
-- Se libera **solo** cuando el GPS lo ve salir y volver (fuente GPS), o **a mano** desde ⋮ › "Volvió a planta", con la confirmación: **"El camión AE402HE tiene el remito 886 y todavía no salió. ¿Liberarlo igual?"**.
+- **Con GPS, si el GPS todavía no lo vio salir de la planta**, la tarjeta dice **"Esperando en planta con remito · X min"** (desde la hora del remito). **No pregunta "¿Volvió?" ni queda disponible solo.**
+- Queda **"Volvió a planta · disponible (GPS)"** solo cuando el GPS lo ve salir y volver, o **a mano** desde ⋮ › "Volvió a planta", con la confirmación: **"El camión AE402HE tiene el remito 886 y todavía no salió. ¿Marcarlo disponible igual?"** (botones "No, sigue esperando" y "Sí, está disponible").
+- **Palabras (Bautista, 20/10):** en la pantalla, las confirmaciones, las tarjetas y Actividad no se usa "liberar"; se dice **"Volvió a planta · disponible"** (y "(GPS)" cuando lo marca el GPS).
 - **Sin señal de GPS**, "¿Volvió?" aparece recién cuando pasó la **vuelta estimada** (salida + ida + descarga + vuelta) **más 30 min** de margen. Nunca por un tiempo fijo desde la salida.
 
 ## Hecho
@@ -733,7 +734,7 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 **Verificaciones**
 - `npx tsc --noEmit`: 17 errores, los mismos 17 de main (comparado archivo por archivo con un checkout de `origin/main`).
 - `npx next build --webpack` con variables de relleno: compila; `.next` borrado.
-- `npm run test:despacho` 24/24 (estados del camión: cada fila de 3.2, GPS viejo, camión fuera de Wialon, ¿Volvió?, liberar por GPS; viajes calculados y en pausa; atraso; contadores con suspendidos y cancelados; puntualidad; tipo por número; sugeridos Hudson R 777 / X 3201, Canning R 842 / X 3306; repetido; avisos 780781 / 3260 / 12 / 3187 / X de la otra planta; número impreso; validación; jsonb). `npm run test:gps` 44/44, `npm run test:sesion` 21/21.
+- `npm run test:despacho` 24/24 (estados del camión: cada fila de 3.2, GPS viejo, camión fuera de Wialon, ¿Volvió?, volvió a planta · disponible por GPS; viajes calculados y en pausa; atraso; contadores con suspendidos y cancelados; puntualidad; tipo por número; sugeridos Hudson R 777 / X 3201, Canning R 842 / X 3306; repetido; avisos 780781 / 3260 / 12 / 3187 / X de la otra planta; número impreso; validación; jsonb). `npm run test:gps` 44/44, `npm run test:sesion` 21/21.
 - No se usó el navegador (regla): la pantalla no se miró en vivo ni en tablet. Hay que probarla en el preview.
 
 **Script de clasificación (datos reales, Parte A en solo lectura; Parte B probada en ROLLBACK)**
@@ -775,7 +776,7 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 **Cambios**
 1. **`editar_despacho`**: el repetido se vuelve a controlar solo si cambian los dígitos, la planta o el **tipo efectivo** (`coalesce(tipo, el que dice el número)` antes y después). Así los dudosos "repetidos" se pueden clasificar desde Historial. Probado con el par real "3129 Hudson" (10/08 y 19/08): los dos pasan a X sin error; pasarlo a R controla y entra (no hay otro R 3129).
 2. **Script en dos archivos**: `scripts/fase3-clasificar-remitos-A-lectura.sql` (solo SELECT, `BEGIN READ ONLY` … `ROLLBACK`) y `scripts/fase3-clasificar-remitos-B-escribe.sql` (termina en **ROLLBACK**, con el aviso de cambiarlo por COMMIT recién con el OK). Los dos con los timeouts.
-3. **El GPS libera solo si lo vio afuera**: la pantalla recuerda (en el equipo) la hora en que el GPS vio al camión **fuera** de la planta después de la salida de su despacho (`vistoFueraDePlanta`), y recién si después lo ve en una planta lo libera, mandando esa hora a `camion_volvio(…, 'gps', …, p_visto_fuera_at)`. La base no libera por GPS sin esa hora, si es anterior a la salida o si el despacho tiene menos de 15 min. Si salió con remito y el GPS nunca lo vio afuera, la tarjeta dice "En planta con remito" y pregunta "¿Volvió?" (se libera a mano). Pruebas nuevas en `test:despacho` y en la migración.
+3. **El GPS lo marca «Volvió a planta · disponible» solo si lo vio afuera**: la pantalla recuerda (en el equipo) la hora en que el GPS vio al camión **fuera** de la planta después de la salida de su despacho (`vistoFueraDePlanta`), y recién si después lo ve en una planta lo marca «Volvió a planta · disponible (GPS)», mandando esa hora a `camion_volvio(…, 'gps', …, p_visto_fuera_at)`. La base no lo marca disponible por GPS sin esa hora, si es anterior a la salida o si el despacho tiene menos de 15 min. Si salió con remito y el GPS nunca lo vio afuera, la tarjeta dice "En planta con remito" y pregunta "¿Volvió?" (se marca disponible a mano; desde el ajuste 14.11 dice "Esperando en planta con remito" y no pregunta). Pruebas nuevas en `test:despacho` y en la migración.
 4. **Script, motivos nuevos**: "2b. dos grupos de números" (`remito ~ '\d[^0-9A-Za-z]+\d'`: "0073-2", "0051-2", "3070-2", "3206-1") y "6b. salta mucho dentro del mes" (no hay otro remito de esa planta y ese tipo, en el mismo mes, a ±50: "2403HUDSON" del 19/10, "755" de Canning del 02/10, "2228" de Canning del 30/07, "3241" de Hudson del 10/08).
 5. **Candado del remito**: clave planta + dígitos, sin el tipo (en `registrar_despacho` y `editar_despacho`).
 6. **"Salió · cargado"** solo en despachos de pedido (tabla de entregas e Historial): el manual se carga con las 12:00 del día.
@@ -789,7 +790,8 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 - Script con los datos de hoy (1.425 despachos): la Parte B clasificaría **1.052** (**554 R**, **498 X**) y quedan **373 dudosos** (= los de la Parte A; la B no toca ninguno). Por motivo: repetidos 193 · letras que no son HUDSON 125 · más de 5 dígitos 28 · 4 o 5 dígitos por debajo de 2201 10 · dos grupos de números 4 · salta mucho dentro del mes 4 · HUDSON en Canning 3 · R < 600 antes de julio 2 · X > 8200 2 · sin dígitos 2. Las series quedan limpias: Hudson R 710–781 y X 3122–3200 (ago–sep) / 4202–4207 (oct); Canning R 2–887 (jul–oct) y X 2634–3307 (abr–oct).
 
 ### Ajuste del 20/10/2026 (tarde) — camión esperando en planta con remito (14.11)
-- `lib/despacho.ts` (`estadoCamion`): con GPS, remito de hoy y el GPS sin haberlo visto salir → "Esperando en planta con remito" (`esperandoConRemito`), con el tiempo desde el remito, sin "¿Volvió?" ni liberar, por más que pase el rato (antes, a los 15 min preguntaba "¿Volvió?"). Se libera solo cuando el GPS lo vio afuera y vuelve (sin cambios en la base: `camion_volvio` ya exigía `p_visto_fuera_at`). Sin GPS, "¿Volvió?" a la vuelta estimada + 30 min (`MARGEN_VOLVIO_MIN`).
-- Pantalla: ⋮ › "Volvió a planta" de un camión esperando abre la confirmación "El camión … tiene el remito … y todavía no salió. ¿Liberarlo igual?" (No, sigue esperando · Sí, liberarlo).
+- `lib/despacho.ts` (`estadoCamion`): con GPS, remito de hoy y el GPS sin haberlo visto salir → "Esperando en planta con remito" (`esperandoConRemito`), con el tiempo desde el remito, sin "¿Volvió?" ni marcarlo disponible, por más que pase el rato (antes, a los 15 min preguntaba "¿Volvió?"). Queda «Volvió a planta · disponible (GPS)» solo cuando el GPS lo vio afuera y vuelve (sin cambios en la base: `camion_volvio` ya exigía `p_visto_fuera_at`). Sin GPS, "¿Volvió?" a la vuelta estimada + 30 min (`MARGEN_VOLVIO_MIN`).
+- Pantalla: ⋮ › "Volvió a planta" de un camión esperando abre la confirmación "El camión … tiene el remito … y todavía no salió. ¿Marcarlo disponible igual?" (No, sigue esperando · Sí, está disponible).
 - Sin cambios: el camión "En ruta (sin despacho de hoy)" (quedó en ruta de otro día, sin horarios para estimar) sigue preguntando "¿Volvió?".
 - Pruebas: `test:despacho` 27/27 (esperando a los 7 min, 25 min y 1 h 53 sin ¿Volvió?; sin GPS a vuelta + 29 no pregunta y a + 31 sí; viaje largo sin pregunta a los 15 min ni a la hora). `tsc` igual a main, build OK, `test:gps` y `test:sesion` OK. No se tocó la base.
+- **Palabras (20/10, Bautista):** "liberar" se reemplazó por **"Volvió a planta · disponible"** en la confirmación ("¿Marcarlo disponible igual?", "No, sigue esperando" / "Sí, está disponible"), los avisos, la leyenda y Actividad de `camion_volvio` (`Estado: Volvió a planta · disponible (GPS)` o `(a mano)`, en vez de "en ruta → disponible" + "Volvió a planta: fuente GPS").

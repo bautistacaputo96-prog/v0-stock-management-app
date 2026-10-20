@@ -454,7 +454,7 @@ $function$;
 -- entrar a la planta. Es el "Entregado" de siempre más la hora y la fuente. No hace nada si el camión no
 -- estaba en ruta (ya libre, en taller o fuera de servicio). Con el GPS, además, solo si salió con un
 -- despacho de hoy hace al menos 15 minutos Y el GPS lo vio FUERA de la planta después de esa salida
--- (p_visto_fuera_at, la hora de la posición fuera de planta que vio la pantalla): así no se libera un camión
+-- (p_visto_fuera_at, la hora de la posición fuera de planta que vio la pantalla): así no se marca disponible un camión
 -- cargado que nunca salió de la planta, ni uno que pasa al lado.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.camion_volvio(p_mixer_id uuid, p_fuente text DEFAULT 'manual', p_usuario text DEFAULT NULL, p_visto_fuera_at timestamptz DEFAULT NULL)
@@ -501,8 +501,7 @@ BEGIN
   INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
   VALUES (CASE WHEN v_fuente = 'gps' THEN v_usuario || ' (GPS)' ELSE v_usuario END,
           'editar', 'camion', p_mixer_id::text, v_m.license_plate, coalesce(v_plant, v_m.plant_id),
-          jsonb_build_object('Estado', 'en ruta → disponible',
-                             'Volvió a planta', CASE WHEN v_fuente = 'gps' THEN 'fuente GPS' ELSE 'a mano' END)
+          jsonb_build_object('Estado', CASE WHEN v_fuente = 'gps' THEN 'Volvió a planta · disponible (GPS)' ELSE 'Volvió a planta · disponible (a mano)' END)
           || CASE WHEN v_salida IS NOT NULL THEN jsonb_build_object('Salió', to_char(v_salida, 'HH24:MI')) ELSE '{}'::jsonb END);
 
   RETURN jsonb_build_object('cambiado', true, 'status', 'available');

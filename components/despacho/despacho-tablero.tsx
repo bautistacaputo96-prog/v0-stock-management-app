@@ -253,7 +253,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     return out
   }, [mixers, despachosHoy, viajeDeDespacho, ahora, prmDePlanta])
 
-  // El GPS lo vio FUERA de la planta después de la salida de su despacho (recién ahí, al volver, se libera solo).
+  // El GPS lo vio FUERA de la planta después de la salida de su despacho (recién ahí, al volver, queda disponible solo).
   // Se recuerda en el equipo para que un refresco de la pantalla no lo pierda.
   const [vistos, setVistos] = useState<Record<string, { d: string; at: number }>>(() => {
     try { return JSON.parse(window.localStorage.getItem(CLAVE_VISTOS) || "{}") } catch { return {} }
@@ -317,7 +317,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     return m
   }, [viajes, totalPorPedido])
 
-  // ── El GPS lo vio volver a la planta: queda libre solo (Actividad "fuente GPS") ──
+  // ── El GPS lo vio volver a la planta: «Volvió a planta · disponible (GPS)» ──
   const liberados = useRef(new Set<string>())
   useEffect(() => {
     if (!puedeDespachar || !esHoy) return
@@ -331,7 +331,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     }).then((r: any) => (r.data?.cambiado ? c.patente : null))))
       .then((ok) => {
         const pats = ok.filter(Boolean)
-        if (pats.length) { toast({ title: `${pats.join(" · ")} volvió a planta (GPS)`, description: "Quedó libre solo. En Actividad: «Volvió a planta · fuente GPS»" }); cargar() }
+        if (pats.length) { toast({ title: `${pats.join(" · ")}: Volvió a planta · disponible (GPS)`, description: "Lo marcó el GPS al verlo volver. Queda en Actividad." }); cargar() }
       })
   }, [camiones, vistos, puedeDespachar, esHoy, cargar, toast])
 
@@ -420,14 +420,14 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   // ── Camión: volvió, taller, disponible ──
   async function volvio(id: string, confirmado = false) {
     const c = camionPorId(id)
-    // Con remito y sin salir según el GPS (esperando en planta): liberarlo a mano pide confirmación
+    // Con remito y sin salir según el GPS (esperando en planta): marcarlo disponible a mano pide confirmación
     if (!confirmado && c?.e.esperandoConRemito) { setLiberarEsperando(id); return }
     setLiberarEsperando(null)
     const sb = createClient()
     const { data, error } = await sb.rpc("camion_volvio", { p_mixer_id: id, p_fuente: "manual", p_usuario: currentUserName() })
     if (error) { toast({ title: "No se pudo marcar", description: error.message, variant: "destructive" }); return }
-    if ((data as any)?.cambiado === false) toast({ title: `${c?.patente || "El camión"} ya figuraba libre`, description: "No se cambió nada." })
-    else toast({ title: `${c?.patente || "El camión"} volvió a planta`, description: "Marcado a mano. Queda libre para el próximo viaje" })
+    if ((data as any)?.cambiado === false) toast({ title: `${c?.patente || "El camión"} ya figuraba disponible`, description: "No se cambió nada." })
+    else toast({ title: `${c?.patente || "El camión"}: Volvió a planta · disponible`, description: "Marcado a mano. Queda disponible para el próximo viaje" })
     cargar()
   }
   async function mandarTaller() {
@@ -637,7 +637,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         <table className="mt-2 w-full border-collapse">
           <tbody>
             {[
-              ["bg-green-600", "En planta · libre", "GPS: dentro de la planta (250 m). Si vuelve después de un viaje, queda libre solo. Sin GPS: cuando el plantista toca «Volvió a planta»."],
+              ["bg-green-600", "En planta · libre", "GPS: dentro de la planta (250 m). Si vuelve después de un viaje, queda «Volvió a planta · disponible (GPS)» solo. Sin GPS: cuando el plantista toca «Volvió a planta»."],
               ["bg-blue-600", "Yendo a obra", "GPS: salió de planta con remito y anda. Sin GPS: desde la hora de salida del remito hasta la llegada estimada."],
               ["bg-amber-500", "En obra", "GPS: a menos de 400 m de la obra. Si la obra no está ubicada: «parado fuera de planta (probable obra)». Sin GPS: estimado."],
               ["bg-cyan-600", "Volviendo", "GPS: anda de vuelta. Sin GPS: estimado, y pasada media hora de la vuelta estimada pregunta «¿Volvió?»."],
@@ -698,23 +698,23 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         </DialogContent>
       </Dialog>
 
-      {/* Liberar a mano un camión que tiene remito y todavía no salió (según el GPS) */}
+      {/* Marcar disponible a mano un camión que tiene remito y todavía no salió (según el GPS) */}
       <Dialog open={!!liberarEsperando} onOpenChange={(v) => !v && setLiberarEsperando(null)}>
         <DialogContent className="sm:max-w-[460px]">
           {liberarEsperando && (() => {
             const c = camionPorId(liberarEsperando)
             return (
               <>
-                <DialogHeader><DialogTitle>¿Liberar {c?.patente}?</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle>¿Marcar {c?.patente} disponible?</DialogTitle></DialogHeader>
                 <p className="text-sm">
-                  El camión <b>{c?.patente}</b> tiene el remito <b>{c?.remito || "sin número"}</b> y todavía no salió. ¿Liberarlo igual?
+                  El camión <b>{c?.patente}</b> tiene el remito <b>{c?.remito || "sin número"}</b> y todavía no salió. ¿Marcarlo disponible igual?
                 </p>
                 <p className="text-[13px] text-muted-foreground">
-                  Queda libre para otro viaje. El remito no se toca. Hacelo solo si el viaje no va a salir (por ejemplo, se descargó en la planta) o si el GPS falló.
+                  Queda «Volvió a planta · disponible» para otro viaje. El remito no se toca. Hacelo solo si el viaje no va a salir (por ejemplo, se descargó en la planta) o si el GPS falló.
                 </p>
                 <DialogFooter className="gap-2">
                   <Button className="h-11" variant="outline" onClick={() => setLiberarEsperando(null)}>No, sigue esperando</Button>
-                  <Button className="h-11 bg-amber-600 hover:bg-amber-700" onClick={() => volvio(liberarEsperando, true)}>Sí, liberarlo</Button>
+                  <Button className="h-11 bg-amber-600 hover:bg-amber-700" onClick={() => volvio(liberarEsperando, true)}>Sí, está disponible</Button>
                 </DialogFooter>
               </>
             )
