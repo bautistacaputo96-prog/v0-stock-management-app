@@ -170,6 +170,8 @@ export type GpsCamion = {
   ultima_posicion?: string | null
   /** id de la planta donde está (dentro de la geocerca), si está en una */
   planta_id?: string | null
+  /** parado fuera de planta, con remito de hoy y la obra sin ubicar */
+  probable_obra?: boolean
 } | null
 
 export type MixerDia = { id: string; license_plate: string; status: string; estado_desde?: string | null; updated_at?: string | null; plant_id?: string | null }
@@ -256,8 +258,11 @@ export function estadoCamion(m: MixerDia, gps: GpsCamion, despacho: DespachoCami
     if (conViaje) {
       if (gps.estado === "en_obra") return { ...base, clave: "obra", etiqueta: "En obra", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
       if (gps.estado === "volviendo") return { ...base, clave: "volviendo", etiqueta: "Volviendo", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
-      if (gps.estado === "detenido")
+      if (gps.estado === "detenido" && gps.probable_obra)
         return { ...base, clave: "obra", etiqueta: "Parado fuera de planta", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, probableObra: true, plantaId: despacho!.plant_id, sinGps }
+      // Parado en la calle (semáforo, etc.) con la obra ubicada: como en /api/gps/posiciones, por el tiempo de ida
+      if (gps.estado === "detenido" && ciclo! > despacho!.idaMin + 15)
+        return { ...base, clave: "volviendo", etiqueta: "Volviendo", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
       return { ...base, clave: "yendo", etiqueta: "Yendo a obra", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
     }
     // Sin remito de hoy en curso y fuera de planta: vale lo que diga mixers.status
@@ -551,6 +556,8 @@ export function armarPayloadDespacho(opts: {
     remito_tipo: f.tipo,
     remito_tipo_origen: f.origenTipo,
     ...(opts.aviso ? { aviso_remito: TEXTO_AVISO[opts.aviso.clave] } : {}),
+    // En Actividad, para medir cuándo se deja de usar la pantalla de siempre
+    pantalla: "Despacho en tres columnas",
   }
 }
 

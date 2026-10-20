@@ -38,6 +38,8 @@ import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+// Fase 3: distintivo "Suspendido" (se suspende desde Despacho diario)
+import { textoMotivo } from "@/lib/despacho"
 
 type Plant = { id: string; name: string }
 type PedidoDB = {
@@ -57,6 +59,9 @@ type PedidoDB = {
   // Fase 2 (no vienen si la migración no está aplicada)
   confirmado_at?: string | null
   confirmado_por?: string | null
+  // Fase 3 (no viene si la migración no está aplicada)
+  suspendido_at?: string | null
+  suspendido_motivo_tipo?: string | null
   m3_por_viaje?: number | null
   espaciado_min?: number | null
   mixer_id?: string | null
@@ -651,7 +656,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{p.clients?.name} · {p.construction_sites?.name}</p>
+                        <p className="text-sm font-medium truncate">
+                          {p.clients?.name} · {p.construction_sites?.name}
+                          {p.suspendido_at && !completo && <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">⏸ Suspendido · {textoMotivo(p.suspendido_motivo_tipo)}</span>}
+                        </p>
                         <p className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                           <span>{Number(p.quantity_m3)} m³{p.dispatched_m3 ? ` (${Number(p.dispatched_m3)} ya enviados)` : ""}</span>
                           <span>· {p.formulas?.code}</span>

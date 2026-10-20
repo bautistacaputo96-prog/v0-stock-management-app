@@ -27,8 +27,9 @@ export async function GET() {
       sb
         .from("dispatches")
         .select("id, mixer_id, remito, quantity_m3, dispatch_date, created_at, plant_id, clients(name), construction_sites(id, name, gps_lat, gps_lng, travel_time_minutes)")
-        .gte("created_at", inicio)
-        .order("created_at", { ascending: false }),
+        // Fase 3: por la hora de salida ("Salió a las", que se puede corregir), no por la de carga en el sistema
+        .gte("dispatch_date", inicio)
+        .order("dispatch_date", { ascending: false }),
     ])
 
     const norm = (p: string) => (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
@@ -46,13 +47,14 @@ export async function GET() {
             .map((p) => ({ p, km: distanciaKm(pos, { lat: Number(p.gps_lat), lng: Number(p.gps_lng) }) }))
             .sort((a, b) => a.km - b.km)[0]
         : null
-      const despacho = mixer ? (despachos || []).find((d: any) => d.mixer_id === mixer.id) : null
+      // El último que ya salió (un despacho manual de hoy con hora 12:00 todavía no salió)
+      const despacho = mixer ? (despachos || []).find((d: any) => d.mixer_id === mixer.id && new Date(d.dispatch_date).getTime() <= ahora) : null
       const obra: any = despacho?.construction_sites || null
       const obraPos = obra?.gps_lat != null ? { lat: Number(obra.gps_lat), lng: Number(obra.gps_lng) } : null
       const kmObra = pos && obraPos ? distanciaKm(pos, obraPos) : null
       const kmPlanta = plantaCerca?.km ?? null
       const enMovimiento = (u.velocidad || 0) > 5
-      const minutosDesdeSalida = despacho ? Math.round((ahora - new Date(despacho.created_at).getTime()) / 60000) : null
+      const minutosDesdeSalida = despacho ? Math.round((ahora - new Date(despacho.dispatch_date).getTime()) / 60000) : null
 
       let estado: "en_planta" | "hacia_obra" | "en_obra" | "volviendo" | "detenido" | "sin_senal" = "detenido"
       if (!pos || (u.t && ahora - u.t > 3 * 60 * 60 * 1000)) estado = "sin_senal"
@@ -63,6 +65,10 @@ export async function GET() {
         const ida = obra?.travel_time_minutes || 30
         estado = minutosDesdeSalida != null && minutosDesdeSalida > ida + 15 ? "volviendo" : "hacia_obra"
       }
+
+      // Fase 3: parado fuera de planta con remito de hoy y la obra sin ubicar = probable obra
+      const probableObra = estado === "detenido" && !!despacho && !obraPos
+      const plantaId = estado === "en_planta" && plantaCerca ? plantaCerca.p.id : null
 
       return {
         unidad_id: u.id,
@@ -75,7 +81,9 @@ export async function GET() {
         ultima_posicion: u.t ? new Date(u.t).toISOString() : null,
         motor: u.motor,
         estado,
-        planta_cercana: plantaCerca ? { nombre: plantaCerca.p.name, km: Math.round(plantaCerca.km * 10) / 10 } : null,
+        probable_obra: probableObra,
+        planta_id: plantaId,
+        planta_cercana: plantaCerca ? { id: plantaCerca.p.id, nombre: plantaCerca.p.name, km: Math.round(plantaCerca.km * 10) / 10 } : null,
         minutos_a_planta: kmPlanta != null && estado !== "en_planta" ? minutosEstimados(kmPlanta) : null,
         minutos_a_obra: kmObra != null && estado === "hacia_obra" ? minutosEstimados(kmObra) : null,
         despacho: despacho
@@ -83,7 +91,7 @@ export async function GET() {
               id: despacho.id,
               remito: despacho.remito,
               m3: despacho.quantity_m3,
-              salida: despacho.created_at,
+              salida: despacho.dispatch_date,
               minutos_desde_salida: minutosDesdeSalida,
               cliente: (despacho as any).clients?.name || null,
               obra: obra ? { id: obra.id, nombre: obra.name, lat: obraPos?.lat ?? null, lng: obraPos?.lng ?? null } : null,

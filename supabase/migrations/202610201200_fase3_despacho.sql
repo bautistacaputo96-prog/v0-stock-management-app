@@ -511,7 +511,8 @@ $function$;
 --     valida; con origen "pregunta" se graba la respuesta del día en esta misma transacción; si no viene
 --     (pantalla de siempre, despacho manual viejo), lo que resuelva la base o, si nadie lo definió, el número;
 --   - remito repetido por PLANTA y TIPO comparando dígitos (antes: el texto en todo el sistema);
---   - Actividad: tipo de remito, aviso de remito aceptado (aviso_remito, opcional) y "Salió a las" corregida.
+--   - Actividad: tipo de remito, aviso de remito aceptado (aviso_remito, opcional), "Salió a las" corregida y
+--     la pantalla desde la que se despachó (pantalla, opcional: la nueva manda "Despacho en tres columnas").
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.registrar_despacho(p jsonb)
  RETURNS jsonb
@@ -879,6 +880,8 @@ BEGIN
                              WHEN 'numero' THEN 'deducido del número'
                              ELSE coalesce(v_tipo_origen, '-') END) ELSE '{}'::jsonb END
           || CASE WHEN v_aviso IS NOT NULL THEN jsonb_build_object('Aviso de remito aceptado', v_aviso) ELSE '{}'::jsonb END
+          -- Para medir el retiro de la pantalla vieja (fase-3.md 6.4): la nueva manda "pantalla"
+          || CASE WHEN nullif(btrim(coalesce(p->>'pantalla', '')), '') IS NOT NULL THEN jsonb_build_object('Pantalla', p->>'pantalla') ELSE '{}'::jsonb END
           || CASE WHEN v_pedido_id IS NOT NULL AND p ? 'dispatch_date' AND abs(extract(epoch FROM (now() - v_fecha))) > 600
                   THEN jsonb_build_object('Salió a las', to_char(v_fecha, 'HH24:MI') || ' (corregida; cargado ' || to_char(now(), 'HH24:MI') || ')')
                   ELSE '{}'::jsonb END);

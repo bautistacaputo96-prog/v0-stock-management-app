@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 07/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 20/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -266,6 +266,7 @@ export type Database = {
           plant_id: string | null
           provincia: string | null
           razon_social: string | null
+          remito_tipo: string | null
           updated_at: string | null
         }
         Insert: {
@@ -285,6 +286,7 @@ export type Database = {
           plant_id?: string | null
           provincia?: string | null
           razon_social?: string | null
+          remito_tipo?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -304,6 +306,7 @@ export type Database = {
           plant_id?: string | null
           provincia?: string | null
           razon_social?: string | null
+          remito_tipo?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -331,6 +334,7 @@ export type Database = {
           observations: string | null
           reception_hours_end: string | null
           reception_hours_start: string | null
+          remito_tipo: string | null
           requires_pump: boolean | null
           site_contact: string | null
           site_phone: string | null
@@ -354,6 +358,7 @@ export type Database = {
           observations?: string | null
           reception_hours_end?: string | null
           reception_hours_start?: string | null
+          remito_tipo?: string | null
           requires_pump?: boolean | null
           site_contact?: string | null
           site_phone?: string | null
@@ -377,6 +382,7 @@ export type Database = {
           observations?: string | null
           reception_hours_end?: string | null
           reception_hours_start?: string | null
+          remito_tipo?: string | null
           requires_pump?: boolean | null
           site_contact?: string | null
           site_phone?: string | null
@@ -553,6 +559,8 @@ export type Database = {
           plant_id: string | null
           quantity_m3: number
           remito: string | null
+          remito_tipo: string | null
+          remito_tipo_origen: string | null
           sample_number: string | null
           sample_taken: boolean | null
           sand_stockpile_humidity: number | null
@@ -577,6 +585,8 @@ export type Database = {
           plant_id?: string | null
           quantity_m3: number
           remito?: string | null
+          remito_tipo?: string | null
+          remito_tipo_origen?: string | null
           sample_number?: string | null
           sample_taken?: boolean | null
           sand_stockpile_humidity?: number | null
@@ -601,6 +611,8 @@ export type Database = {
           plant_id?: string | null
           quantity_m3?: number
           remito?: string | null
+          remito_tipo?: string | null
+          remito_tipo_origen?: string | null
           sample_number?: string | null
           sample_taken?: boolean | null
           sand_stockpile_humidity?: number | null
@@ -1587,6 +1599,7 @@ export type Database = {
           brand: string | null
           capacity_m3: number | null
           created_at: string | null
+          estado_desde: string | null
           gps_unit_id: number | null
           id: string
           license_plate: string
@@ -1600,6 +1613,7 @@ export type Database = {
           brand?: string | null
           capacity_m3?: number | null
           created_at?: string | null
+          estado_desde?: string | null
           gps_unit_id?: number | null
           id?: string
           license_plate: string
@@ -1613,6 +1627,7 @@ export type Database = {
           brand?: string | null
           capacity_m3?: number | null
           created_at?: string | null
+          estado_desde?: string | null
           gps_unit_id?: number | null
           id?: string
           license_plate?: string
@@ -1646,6 +1661,7 @@ export type Database = {
           t_descarga_bomba_min: number
           t_descarga_directa_min: number
           t_lavado_min: number
+          tiempos_a_mano: Json
           tolerancia_puntualidad_min: number
           updated_at: string | null
         }
@@ -1663,6 +1679,7 @@ export type Database = {
           t_descarga_bomba_min?: number
           t_descarga_directa_min?: number
           t_lavado_min?: number
+          tiempos_a_mano?: Json
           tolerancia_puntualidad_min?: number
           updated_at?: string | null
         }
@@ -1680,6 +1697,7 @@ export type Database = {
           t_descarga_bomba_min?: number
           t_descarga_directa_min?: number
           t_lavado_min?: number
+          tiempos_a_mano?: Json
           tolerancia_puntualidad_min?: number
           updated_at?: string | null
         }
@@ -1747,6 +1765,38 @@ export type Database = {
           },
         ]
       }
+      remito_tipo_dia: {
+        Row: {
+          client_id: string
+          fecha: string
+          remito_tipo: string
+          respondido_at: string
+          respondido_por: string | null
+        }
+        Insert: {
+          client_id: string
+          fecha: string
+          remito_tipo: string
+          respondido_at?: string
+          respondido_por?: string | null
+        }
+        Update: {
+          client_id?: string
+          fecha?: string
+          remito_tipo?: string
+          respondido_at?: string
+          respondido_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "remito_tipo_dia_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_dispatches: {
         Row: {
           actual_arrival_time: string | null
@@ -1756,6 +1806,8 @@ export type Database = {
           bomba_hora: string | null
           bomba_la_pone: string | null
           cancelled_reason: string | null
+          cierre_motivo: string | null
+          cierre_motivo_tipo: string | null
           client_id: string
           confirmado_at: string | null
           confirmado_por: string | null
@@ -1779,9 +1831,14 @@ export type Database = {
           plant_id: string
           quantity_m3: number
           remito: string | null
+          remito_tipo: string | null
           scheduled_arrival_time: string
           scheduled_departure_time: string
           status: string | null
+          suspendido_at: string | null
+          suspendido_motivo: string | null
+          suspendido_motivo_tipo: string | null
+          suspendido_por: string | null
           updated_at: string | null
           viaje_min: number | null
         }
@@ -1793,6 +1850,8 @@ export type Database = {
           bomba_hora?: string | null
           bomba_la_pone?: string | null
           cancelled_reason?: string | null
+          cierre_motivo?: string | null
+          cierre_motivo_tipo?: string | null
           client_id: string
           confirmado_at?: string | null
           confirmado_por?: string | null
@@ -1816,9 +1875,14 @@ export type Database = {
           plant_id: string
           quantity_m3: number
           remito?: string | null
+          remito_tipo?: string | null
           scheduled_arrival_time: string
           scheduled_departure_time: string
           status?: string | null
+          suspendido_at?: string | null
+          suspendido_motivo?: string | null
+          suspendido_motivo_tipo?: string | null
+          suspendido_por?: string | null
           updated_at?: string | null
           viaje_min?: number | null
         }
@@ -1830,6 +1894,8 @@ export type Database = {
           bomba_hora?: string | null
           bomba_la_pone?: string | null
           cancelled_reason?: string | null
+          cierre_motivo?: string | null
+          cierre_motivo_tipo?: string | null
           client_id?: string
           confirmado_at?: string | null
           confirmado_por?: string | null
@@ -1853,9 +1919,14 @@ export type Database = {
           plant_id?: string
           quantity_m3?: number
           remito?: string | null
+          remito_tipo?: string | null
           scheduled_arrival_time?: string
           scheduled_departure_time?: string
           status?: string | null
+          suspendido_at?: string | null
+          suspendido_motivo?: string | null
+          suspendido_motivo_tipo?: string | null
+          suspendido_por?: string | null
           updated_at?: string | null
           viaje_min?: number | null
         }
@@ -2436,18 +2507,27 @@ export type Database = {
       _consumo_formula: { Args: { p_formula_id: string; p_plant_id: string; p_m3: number }; Returns: ({ mat_id: string; mat_nombre: string; mat_tipo: string; descuenta: boolean; kg_m3: number; kg_seco: number; humedad_pct: number; kg_humedo: number })[] }
       _material_controla_stock: { Args: { p_material_id: string }; Returns: boolean }
       _material_en_planta: { Args: { p_material_id: string; p_plant_id: string; p_contexto?: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
+      _motivo_texto: { Args: { p_tipo: string }; Returns: string }
       _mover_stock: { Args: { p_mapa: Json }; Returns: undefined }
+      _remito_digitos: { Args: { p_remito: string }; Returns: string }
+      _remito_repetido: { Args: { p_plant_id: string; p_remito: string; p_tipo: string; p_excluir?: string }; Returns: boolean }
+      _remito_tipo_de_numero: { Args: { p_remito: string }; Returns: string }
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
       ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string; p_motivo?: string }; Returns: Json }
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
+      camion_volvio: { Args: { p_mixer_id: string; p_fuente?: string; p_usuario?: string }; Returns: Json }
       cerrar_ingreso_clave_comun: { Args: { p_por: string }; Returns: ({ user_id: string; tenia_clave_comun: boolean; sesion_cerrada: boolean })[] }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
+      finalizar_pedido: { Args: { p_id: string; p_tipo: string; p_motivo?: string; p_usuario?: string }; Returns: Json }
       gps_reconstruir_registrar: { Args: { p_desde: string; p_hasta: string; p_simular: boolean; p_origen: string }; Returns: Json }
       guardar_viajes_pedido: { Args: { p_pedido_id: string; p_viajes: Json; p_usuario?: string; p_origen?: string }; Returns: Json }
+      reabrir_pedido: { Args: { p_id: string; p_usuario?: string }; Returns: Json }
       registrar_despacho: { Args: { p: Json }; Returns: Json }
       registrar_ingreso_fallido: { Args: { p_user_id: string }; Returns: ({ intentos: number; bloqueado: string; ya_bloqueado: boolean })[] }
       registrar_ingreso_ok: { Args: { p_user_id: string }; Returns: boolean }
+      remito_tipo_para: { Args: { p_pedido_id?: string; p_client_id?: string; p_site_id?: string; p_fecha?: string }; Returns: Json }
+      suspender_pedido: { Args: { p_id: string; p_tipo: string; p_motivo?: string; p_usuario?: string }; Returns: Json }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
     }
     Enums: {
