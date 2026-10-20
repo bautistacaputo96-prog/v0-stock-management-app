@@ -48,6 +48,7 @@ type ScheduledDispatch = {
   remito_tipo?: "R" | "X" | null;
   created_at?: string | null;
   is_test_dispatch?: boolean | null;
+  scheduled_dispatch_id?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -291,6 +292,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         remito_tipo: d.remito_tipo ?? null,
         created_at: d.created_at ?? null,
         is_test_dispatch: d.is_test_dispatch ?? null,
+        scheduled_dispatch_id: d.scheduled_dispatch_id ?? null,
       }))
 
       const combined = [...transformedManual].sort((a, b) =>
@@ -1154,8 +1156,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                         </TableCell>
                         <TableCell>
                           {format(parseISO(dispatch.scheduled_arrival_time), "dd/MM/yyyy")}
-                          {/* Fase 3: "Salió a las" corregida: la hora real de carga queda aparte */}
-                          {dispatch.created_at && Math.abs(new Date(dispatch.created_at).getTime() - new Date(dispatch.scheduled_arrival_time).getTime()) > 10 * 60_000
+                          {/* Fase 3: "Salió a las" corregida: la hora real de carga queda aparte (solo despachos de pedido:
+                              el manual se carga con las 12:00 del día elegido) */}
+                          {dispatch.scheduled_dispatch_id && dispatch.created_at && Math.abs(new Date(dispatch.created_at).getTime() - new Date(dispatch.scheduled_arrival_time).getTime()) > 10 * 60_000
                             && format(parseISO(dispatch.created_at), "yyyy-MM-dd") === format(parseISO(dispatch.scheduled_arrival_time), "yyyy-MM-dd") && (
                             <div className="text-[11px] text-muted-foreground">Salió {format(parseISO(dispatch.scheduled_arrival_time), "HH:mm")} · cargado {format(parseISO(dispatch.created_at), "HH:mm")}</div>
                           )}

@@ -2515,7 +2515,7 @@ export type Database = {
       _sumar_kg: { Args: { p_mapa: Json; p_material_id: string; p_kg: number }; Returns: Json }
       ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string; p_motivo?: string }; Returns: Json }
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
-      camion_volvio: { Args: { p_mixer_id: string; p_fuente?: string; p_usuario?: string }; Returns: Json }
+      camion_volvio: { Args: { p_mixer_id: string; p_fuente?: string; p_usuario?: string; p_visto_fuera_at?: string }; Returns: Json }
       cerrar_ingreso_clave_comun: { Args: { p_por: string }; Returns: ({ user_id: string; tenia_clave_comun: boolean; sesion_cerrada: boolean })[] }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }

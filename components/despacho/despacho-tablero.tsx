@@ -32,7 +32,7 @@ import { parametrosDePlanta, PARAMETROS_BASE } from "@/lib/planificador"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ajustarAHora, cargarViajes, guardarViajes, regenerarViajesPedido, viajeMinDe, type ViajeRow } from "@/lib/viajes"
 import {
-  camionPropuesto, contadoresDia, duracion, estadoCamion, hhmm, m3txt, ordenCamion, puntualidadPrimerCamion, textoFuenteEstado,
+  camionPropuesto, contadoresDia, duracion, estadoCamion, vistoFueraDePlanta, hhmm, m3txt, ordenCamion, puntualidadPrimerCamion, textoFuenteEstado,
   textoMotivo, viajesDelDia, viajesEnPausa, viajesPendientes, TIPO_TEXTO, numeroImpreso,
   type DespachoCamion, type GpsCamion, type MixerDia, type MotivoTipo, type Puntualidad, type TipoRemito,
 } from "@/lib/despacho"
@@ -51,6 +51,7 @@ import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "
 
 const MIN = 60_000
 const CLAVE_PLANTA = "rebucret_despacho_planta"
+const CLAVE_VISTOS = "rebucret_despacho_gps_afuera"
 const inicioDia = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
 const leer = (k: string) => { try { return window.localStorage.getItem(k) } catch { return null } }
 const guardar = (k: string, v: string) => { try { window.localStorage.setItem(k, v) } catch { /* sin almacenamiento */ } }
@@ -158,7 +159,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       idsHoy.length ? sb.from("viajes").select("*").in("dispatch_id", idsHoy).then((r: any) => r.data || []) : Promise.resolve([]),
       // Tipo de remito de cada pedido abierto: lo resuelve la base (pedido > obra > cliente > respuesta del día)
       Promise.all(peds.filter((p) => p.status !== "cancelled" && p.status !== "completed").map((p) =>
-        sb.rpc("remito_tipo_para", { p_pedido_id: p.id }).then((r: any) => [p.id, r.error ? null : r.data] as const))),
+        sb.rpc("remito_tipo_para", { p_pedido_id: p.id, ...(esHoy ? {} : { p_fecha: format(dia, "yyyy-MM-dd") }) }).then((r: any) => [p.id, r.error ? null : r.data] as const))),
       idsDiaPlanta.length ? sb.from("viajes_gps").select("dispatch_id, llegada_obra, llegada_planta").in("dispatch_id", idsDiaPlanta).then((r: any) => r.data || []) : Promise.resolve([]),
       enTaller.length ? sb.from("activity_log").select("entity_id, details, created_at").eq("entity", "camion").in("entity_id", enTaller).order("created_at", { ascending: false }).limit(30).then((r: any) => r.data || []) : Promise.resolve([]),
     ])
@@ -224,8 +225,10 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const choferPorId = useMemo(() => Object.fromEntries(choferes.map((c) => [c.id, c.nombre])), [choferes])
   const patentes = useMemo(() => Object.fromEntries(mixers.map((m) => [m.id, m.license_plate])), [mixers])
 
-  const camiones: CamionT[] = useMemo(() => {
-    const out = mixers.map((m) => {
+  // Último despacho de hoy de cada camión, con los minutos de su viaje (para lo estimado sin GPS)
+  const despachoDeCamion = useMemo(() => {
+    const out: Record<string, { suyos: DespachoT[]; d: DespachoT | null; dc: DespachoCamion }> = {}
+    for (const m of mixers) {
       const suyos = despachosHoy
         .filter((d) => d.mixer_id === m.id && new Date(d.dispatch_date).getTime() <= ahora)
         .sort((a, b) => new Date(b.dispatch_date).getTime() - new Date(a.dispatch_date).getTime())
@@ -243,7 +246,37 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
           vueltaMin: dif(v?.hora_fin_descarga, v?.hora_vuelta) ?? prm.lavadoMin + ida,
         }
       }
-      const e = estadoCamion(m, gps[m.id] ?? null, dc, ahora)
+      out[m.id] = { suyos, d, dc }
+    }
+    return out
+  }, [mixers, despachosHoy, viajeDeDespacho, ahora, prmDePlanta])
+
+  // El GPS lo vio FUERA de la planta después de la salida de su despacho (recién ahí, al volver, se libera solo).
+  // Se recuerda en el equipo para que un refresco de la pantalla no lo pierda.
+  const [vistos, setVistos] = useState<Record<string, { d: string; at: number }>>(() => {
+    try { return JSON.parse(window.localStorage.getItem(CLAVE_VISTOS) || "{}") } catch { return {} }
+  })
+  useEffect(() => {
+    setVistos((prev) => {
+      let cambio = false
+      const nuevo = { ...prev }
+      for (const m of mixers) {
+        const dc = despachoDeCamion[m.id]?.dc
+        if (!dc) continue
+        const ant = prev[m.id]?.d === dc.id ? prev[m.id].at : null
+        const v = vistoFueraDePlanta(ant, gps[m.id] ?? null, dc, Date.now())
+        if (v != null && v !== ant) { nuevo[m.id] = { d: dc.id, at: v }; cambio = true }
+      }
+      if (cambio) guardar(CLAVE_VISTOS, JSON.stringify(nuevo))
+      return cambio ? nuevo : prev
+    })
+  }, [gps, despachoDeCamion, mixers])
+
+  const camiones: CamionT[] = useMemo(() => {
+    const out = mixers.map((m) => {
+      const { suyos, d, dc } = despachoDeCamion[m.id] || { suyos: [], d: null, dc: null }
+      const visto = !!dc && vistos[m.id]?.d === dc.id
+      const e = estadoCamion(m, gps[m.id] ?? null, dc, ahora, visto)
       const conChofer = suyos.find((x) => x.chofer_id)
       return {
         id: m.id, patente: m.license_plate, status: m.status, e,
@@ -255,7 +288,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       }
     })
     return out.sort((a, b) => ordenCamion(a.e, planta) - ordenCamion(b.e, planta) || a.patente.localeCompare(b.patente))
-  }, [mixers, despachosHoy, viajeDeDespacho, gps, ahora, choferPorId, notasTaller, planta, prmDePlanta])
+  }, [mixers, despachoDeCamion, vistos, gps, ahora, choferPorId, notasTaller, planta])
 
   const puntualidad = useMemo(() => {
     const out: Record<string, Puntualidad> = {}
@@ -289,12 +322,15 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     const aLiberar = camiones.filter((c) => c.e.liberarPorGps && c.status === "in_transit" && !liberados.current.has(`${c.id}:${c.despachoId}`))
     if (!aLiberar.length) return
     for (const c of aLiberar) liberados.current.add(`${c.id}:${c.despachoId}`)
-    Promise.all(aLiberar.map((c) => sb.rpc("camion_volvio", { p_mixer_id: c.id, p_fuente: "gps", p_usuario: currentUserName() }).then((r: any) => (r.data?.cambiado ? c.patente : null))))
+    Promise.all(aLiberar.map((c) => sb.rpc("camion_volvio", {
+      p_mixer_id: c.id, p_fuente: "gps", p_usuario: currentUserName(),
+      p_visto_fuera_at: vistos[c.id] ? new Date(vistos[c.id].at).toISOString() : null,
+    }).then((r: any) => (r.data?.cambiado ? c.patente : null))))
       .then((ok) => {
         const pats = ok.filter(Boolean)
         if (pats.length) { toast({ title: `${pats.join(" · ")} volvió a planta (GPS)`, description: "Quedó libre solo. En Actividad: «Volvió a planta · fuente GPS»" }); cargar() }
       })
-  }, [camiones, puedeDespachar, esHoy, cargar, toast])
+  }, [camiones, vistos, puedeDespachar, esHoy, cargar, toast])
 
   // ── Despachar: botón, tocar o arrastrar ──
   const viajePorClave = (clave: string) => pendientes.find((v) => v.clave === clave) || null

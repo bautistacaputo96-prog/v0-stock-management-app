@@ -39,14 +39,14 @@ export const m3txt = (x: number | null | undefined) => Number(x || 0).toLocaleSt
 // ---------------------------------------------------------------------------
 // Motivos (los mismos códigos que el CHECK de la base)
 // ---------------------------------------------------------------------------
-export type MotivoTipo = "lluvia" | "obra_no_lista" | "falla_bomba" | "falla_camion" | "falta_material" | "pedido_cliente" | "obra_pidio_menos" | "otro"
+export type MotivoTipo = "lluvia" | "obra_no_lista" | "falla_bomba" | "falla_camion" | "falla" | "falta_material" | "pedido_cliente" | "obra_pidio_menos" | "otro"
 export const MOTIVOS_SUSPENDER: [MotivoTipo, string][] = [
   ["lluvia", "Lluvia"], ["obra_no_lista", "Obra no está lista"], ["falla_bomba", "Falla de bomba"], ["falla_camion", "Falla de camión"],
   ["falta_material", "Falta material"], ["pedido_cliente", "Pedido del cliente"], ["otro", "Otro"],
 ]
-export const MOTIVOS_FINALIZAR: [MotivoTipo, string][] = [["obra_pidio_menos", "La obra pidió menos"], ["lluvia", "Lluvia"], ["falla_bomba", "Falla"], ["otro", "Otro"]]
+export const MOTIVOS_FINALIZAR: [MotivoTipo, string][] = [["obra_pidio_menos", "La obra pidió menos"], ["lluvia", "Lluvia"], ["falla", "Falla"], ["otro", "Otro"]]
 export const MOTIVOS_CANCELAR: [MotivoTipo, string][] = MOTIVOS_SUSPENDER
-const TEXTO_MOTIVO: Record<string, string> = Object.fromEntries([...MOTIVOS_SUSPENDER, ["obra_pidio_menos", "La obra pidió menos"]])
+const TEXTO_MOTIVO: Record<string, string> = Object.fromEntries([...MOTIVOS_SUSPENDER, ["obra_pidio_menos", "La obra pidió menos"], ["falla", "Falla"]])
 export const textoMotivo = (tipo: string | null | undefined) => (tipo ? TEXTO_MOTIVO[tipo] || tipo : "-")
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,11 @@ const SIN_SENAL_MS = 3 * 60 * MIN
  * los horarios del viaje despachado, y las marcas a mano (taller, fuera de servicio, volvió a planta).
  * Yendo, en obra y volviendo se calculan: no se guardan en mixers.status.
  */
-export function estadoCamion(m: MixerDia, gps: GpsCamion, despacho: DespachoCamion, ahora: number): EstadoCamion {
+export function estadoCamion(
+  m: MixerDia, gps: GpsCamion, despacho: DespachoCamion, ahora: number,
+  /** El GPS ya lo vio FUERA de la planta después de la salida de este despacho (ver vistoFueraDePlanta) */
+  vistoFuera = false,
+): EstadoCamion {
   const base = {
     cicloMin: null as number | null, vueltaEstimada: null as number | null, preguntarVolvio: false, llegando: false,
     probableObra: false, liberarPorGps: false,
@@ -245,9 +249,14 @@ export function estadoCamion(m: MixerDia, gps: GpsCamion, despacho: DespachoCami
   if (!sinGps && gps) {
     const fuente: FuenteEstado = "gps"
     if (gps.estado === "en_planta") {
-      // Volvió: el GPS lo ve en una planta después de salir con un remito de hoy (y no recién salido)
-      if (conViaje && ciclo! >= MIN_VIAJE_PARA_LIBERAR)
+      // Volvió: el GPS lo vio fuera de la planta después de la salida del remito y ahora lo ve en una planta
+      // (y no recién salido)
+      if (conViaje && vistoFuera && ciclo! >= MIN_VIAJE_PARA_LIBERAR)
         return { ...base, clave: "planta", etiqueta: "En planta · libre", desde: ahora, fuente, despachable: "si", liberarPorGps: true, plantaId: gps.planta_id || plantaLibre, sinGps }
+      // Salió con remito pero el GPS nunca lo vio fuera de la planta (cargado esperando, o la pantalla se abrió
+      // cuando ya había vuelto): no se libera solo; pasado el rato se pregunta "¿Volvió?"
+      if (conViaje && ciclo! >= MIN_VIAJE_PARA_LIBERAR)
+        return { ...base, clave: "yendo", etiqueta: "En planta con remito", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, preguntarVolvio: true, plantaId: gps.planta_id || despacho!.plant_id, sinGps }
       if (conViaje)
         return { ...base, clave: "yendo", etiqueta: "Yendo a obra", desde: salida, fuente, despachable: "avisa", cicloMin: ciclo, plantaId: despacho!.plant_id, sinGps }
       if (m.status === "in_transit")
@@ -284,6 +293,20 @@ export function estadoCamion(m: MixerDia, gps: GpsCamion, despacho: DespachoCami
   if (m.status === "in_transit")
     return { ...base, clave: "volviendo", etiqueta: "En ruta (sin despacho de hoy)", desde: desdeOk, fuente: "estimado", despachable: "avisa", preguntarVolvio: true, plantaId: plantaLibre, sinGps }
   return { ...base, clave: "planta", etiqueta: "En planta · libre", desde: desdeOk, fuente: "a_mano", despachable: "si", plantaId: plantaLibre, sinGps }
+}
+
+/**
+ * ¿El GPS ya vio al camión fuera de la planta después de la salida del despacho? `anterior` = la hora en que se lo vio
+ * afuera (de una consulta anterior, para ese mismo despacho). Devuelve esa hora (ms) o null.
+ */
+export function vistoFueraDePlanta(anterior: number | null | undefined, gps: GpsCamion, despacho: { dispatch_date: string } | null, ahora: number): number | null {
+  if (!despacho) return null
+  const salida = t(despacho.dispatch_date)
+  if (anterior != null && anterior >= salida) return anterior
+  if (!gps || gps.estado === "sin_senal" || gps.estado === "en_planta") return null
+  const pos = gps.ultima_posicion ? t(gps.ultima_posicion) : ahora
+  if (!Number.isFinite(pos) || pos < salida || ahora - pos > SIN_SENAL_MS) return null
+  return pos
 }
 
 /** Orden de la columna Camiones: libres en esta planta, libres en la otra, en viaje (el que vuelve antes primero), taller, fuera. */

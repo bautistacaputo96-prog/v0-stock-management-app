@@ -78,11 +78,11 @@ ALTER TABLE public.scheduled_dispatches
 ALTER TABLE public.scheduled_dispatches DROP CONSTRAINT IF EXISTS scheduled_dispatches_suspendido_motivo_tipo_check;
 ALTER TABLE public.scheduled_dispatches ADD CONSTRAINT scheduled_dispatches_suspendido_motivo_tipo_check CHECK (
   suspendido_motivo_tipo IS NULL OR suspendido_motivo_tipo IN
-    ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro'));
+    ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falla', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro'));
 ALTER TABLE public.scheduled_dispatches DROP CONSTRAINT IF EXISTS scheduled_dispatches_cierre_motivo_tipo_check;
 ALTER TABLE public.scheduled_dispatches ADD CONSTRAINT scheduled_dispatches_cierre_motivo_tipo_check CHECK (
   cierre_motivo_tipo IS NULL OR cierre_motivo_tipo IN
-    ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro'));
+    ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falla', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro'));
 ALTER TABLE public.scheduled_dispatches DROP CONSTRAINT IF EXISTS scheduled_dispatches_remito_tipo_check;
 ALTER TABLE public.scheduled_dispatches ADD CONSTRAINT scheduled_dispatches_remito_tipo_check CHECK (
   remito_tipo IS NULL OR remito_tipo IN ('R', 'X'));
@@ -213,6 +213,7 @@ AS $function$
            WHEN 'falla_camion' THEN 'Falla de camión'
            WHEN 'falta_material' THEN 'Falta material'
            WHEN 'pedido_cliente' THEN 'Pedido del cliente'
+           WHEN 'falla' THEN 'Falla'
            WHEN 'obra_pidio_menos' THEN 'La obra pidió menos'
            WHEN 'otro' THEN 'Otro'
            ELSE coalesce(p_tipo, '-')
@@ -405,7 +406,7 @@ BEGIN
   IF v_p.status = 'completed' THEN
     RAISE EXCEPTION 'El pedido ya está completo o finalizado. Actualizá la pantalla.';
   END IF;
-  IF p_tipo IS NULL OR p_tipo NOT IN ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro') THEN
+  IF p_tipo IS NULL OR p_tipo NOT IN ('lluvia', 'obra_no_lista', 'falla_bomba', 'falla_camion', 'falla', 'falta_material', 'pedido_cliente', 'obra_pidio_menos', 'otro') THEN
     RAISE EXCEPTION 'Elegí por qué se cierra el pedido.';
   END IF;
   IF p_tipo = 'otro' AND v_motivo IS NULL THEN
@@ -452,9 +453,11 @@ $function$;
 -- camion_volvio: el camión en ruta vuelve a quedar libre ("Volvió a planta"), a mano o porque el GPS lo vio
 -- entrar a la planta. Es el "Entregado" de siempre más la hora y la fuente. No hace nada si el camión no
 -- estaba en ruta (ya libre, en taller o fuera de servicio). Con el GPS, además, solo si salió con un
--- despacho de hoy hace al menos 15 minutos (que no lo libere un camión que pasa al lado de la planta).
+-- despacho de hoy hace al menos 15 minutos Y el GPS lo vio FUERA de la planta después de esa salida
+-- (p_visto_fuera_at, la hora de la posición fuera de planta que vio la pantalla): así no se libera un camión
+-- cargado que nunca salió de la planta, ni uno que pasa al lado.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.camion_volvio(p_mixer_id uuid, p_fuente text DEFAULT 'manual', p_usuario text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.camion_volvio(p_mixer_id uuid, p_fuente text DEFAULT 'manual', p_usuario text DEFAULT NULL, p_visto_fuera_at timestamptz DEFAULT NULL)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -488,6 +491,9 @@ BEGIN
    LIMIT 1;
   IF v_fuente = 'gps' AND (v_salida IS NULL OR v_salida > now() - interval '15 minutes') THEN
     RETURN jsonb_build_object('cambiado', false, 'status', v_m.status, 'motivo', 'sin viaje de hoy de al menos 15 min');
+  END IF;
+  IF v_fuente = 'gps' AND (p_visto_fuera_at IS NULL OR p_visto_fuera_at < v_salida OR p_visto_fuera_at > now()) THEN
+    RETURN jsonb_build_object('cambiado', false, 'status', v_m.status, 'motivo', 'el GPS no lo vio salir de la planta');
   END IF;
 
   UPDATE mixers SET status = 'available', updated_at = now() WHERE id = p_mixer_id;
@@ -751,7 +757,7 @@ BEGIN
   -- planta y no con el 755 de la otra). El lock evita que dos pantallas carguen el mismo número a la vez.
   IF v_remito IS NOT NULL THEN
     v_dig := public._remito_digitos(v_remito);
-    PERFORM pg_advisory_xact_lock(hashtext('remito:' || v_plant_id || ':' || coalesce(v_tipo, '?') || ':' || coalesce(v_dig, v_remito)));
+    PERFORM pg_advisory_xact_lock(hashtext('remito:' || v_plant_id || ':' || coalesce(v_dig, v_remito)));
     IF public._remito_repetido(v_plant_id, v_remito, v_tipo, NULL) THEN
       RAISE EXCEPTION 'Ya hay un remito % en %. No se puede cargar dos veces.',
         coalesce(v_tipo || ' ', '') || coalesce(v_dig, v_remito), v_plant_name;
@@ -904,8 +910,8 @@ $function$;
 -- ---------------------------------------------------------------------------
 -- editar_despacho: definición de producción del 20/10/2026 (pg_get_functiondef, = 0c-1). Diff:
 --   - acepta remito_tipo (R / X; nulo = sin tipo). Si cambia, el origen pasa a "manual";
---   - el control de repetido es por planta y tipo comparando dígitos, y se hace cuando cambian el remito,
---     la planta o el tipo (excluyendo al propio despacho, como antes);
+--   - el control de repetido es por planta y tipo comparando dígitos, y se hace cuando cambian los dígitos del
+--     remito, la planta o el tipo efectivo (excluyendo al propio despacho, como antes);
 --   - Actividad: "Tipo de remito R → X".
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.editar_despacho(p_id uuid, p jsonb)
@@ -989,10 +995,12 @@ BEGIN
      AND (public._remito_digitos(v_remito) IS DISTINCT FROM public._remito_digitos(v_old_rem)
           OR (public._remito_digitos(v_remito) IS NULL AND v_remito IS DISTINCT FROM v_old_rem)
           OR v_plant IS DISTINCT FROM v_d.plant_id
-          OR v_tipo IS DISTINCT FROM v_d.remito_tipo) THEN
+          -- el tipo EFECTIVO (el guardado o, si no tiene, el que dice el número): clasificar un despacho viejo
+          -- con el tipo que ya decía su número no vuelve a controlar el repetido
+          OR coalesce(v_tipo, public._remito_tipo_de_numero(v_remito)) IS DISTINCT FROM coalesce(v_d.remito_tipo, public._remito_tipo_de_numero(v_old_rem))) THEN
     v_dig := public._remito_digitos(v_remito);
     v_tipo_ef := coalesce(v_tipo, public._remito_tipo_de_numero(v_remito));
-    PERFORM pg_advisory_xact_lock(hashtext('remito:' || v_plant || ':' || coalesce(v_tipo_ef, '?') || ':' || coalesce(v_dig, v_remito)));
+    PERFORM pg_advisory_xact_lock(hashtext('remito:' || v_plant || ':' || coalesce(v_dig, v_remito)));
     IF public._remito_repetido(v_plant, v_remito, v_tipo_ef, p_id) THEN
       RAISE EXCEPTION 'Ya hay un remito % en %. No se puede cargar dos veces.',
         coalesce(v_tipo_ef || ' ', '') || coalesce(v_dig, v_remito), coalesce((SELECT name FROM plants WHERE id = v_plant), 'esa planta');
@@ -1158,7 +1166,7 @@ GRANT EXECUTE ON FUNCTION public.remito_tipo_para(uuid, uuid, uuid, date) TO ano
 GRANT EXECUTE ON FUNCTION public.suspender_pedido(uuid, text, text, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.reabrir_pedido(uuid, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.finalizar_pedido(uuid, text, text, text) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.camion_volvio(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.camion_volvio(uuid, text, text, timestamptz) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public._remito_digitos(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public._remito_tipo_de_numero(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public._remito_repetido(uuid, text, text, uuid) TO anon, authenticated, service_role;

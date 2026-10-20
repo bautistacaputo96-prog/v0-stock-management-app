@@ -56,6 +56,7 @@ export function TablaEntregas({
             {filas.map((d) => {
               const p = d.scheduled_dispatch_id ? pedidos[d.scheduled_dispatch_id] : null
               const c = d.mixer_id ? camionPorId[d.mixer_id] : null
+              // Solo en los despachos de pedido: el manual se carga con las 12:00 del día elegido
               const cargadoDif = d.created_at ? (new Date(d.created_at).getTime() - new Date(d.dispatch_date).getTime()) / 60000 : 0
               const enCurso = c && c.despachoId === d.id && ["yendo", "obra", "volviendo"].includes(c.e.clave)
               const tipo = d.remito_tipo || (d.is_test_dispatch ? null : tipoPorNumero(d.remito))
@@ -64,7 +65,7 @@ export function TablaEntregas({
                 <tr key={d.id} className={cn("border-b", nueva === d.id && "bg-green-50")}>
                   <td className="whitespace-nowrap px-2.5 py-2 font-bold tabular-nums">
                     {hhmm(d.dispatch_date)}
-                    {Math.abs(cargadoDif) > 10 && <div className="text-xs font-semibold text-muted-foreground">cargado {hhmm(d.created_at!)}</div>}
+                    {d.scheduled_dispatch_id && Math.abs(cargadoDif) > 10 && <div className="text-xs font-semibold text-muted-foreground">cargado {hhmm(d.created_at!)}</div>}
                   </td>
                   <td className="whitespace-nowrap px-2.5 py-2 font-bold tabular-nums">
                     {!d.is_test_dispatch && <MarcaTipo tipo={tipo} className="mr-1" />}
