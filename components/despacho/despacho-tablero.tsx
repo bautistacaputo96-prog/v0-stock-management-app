@@ -126,12 +126,27 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
 
   // Reloj (atrasos y tiempos) y ancho de pantalla (tres columnas o pestañas)
   useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 30_000); return () => clearInterval(t) }, [])
+  // Tres columnas o pestañas según el ANCHO DISPONIBLE (con o sin el menú de la izquierda), y las columnas tan altas
+  // como entra en la pantalla (cada una con su scroll), para ver la mayor cantidad de viajes sin bajar
+  const raiz = useRef<HTMLDivElement>(null)
+  const grilla = useRef<HTMLDivElement>(null)
+  const [alto, setAlto] = useState(520)
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 899px)")
-    const f = () => setAngosta(mq.matches)
-    f(); mq.addEventListener("change", f)
-    return () => mq.removeEventListener("change", f)
-  }, [])
+    const medir = () => {
+      const w = raiz.current?.clientWidth ?? window.innerWidth
+      setAngosta(w < 720)
+      const g = grilla.current
+      if (g) {
+        const scroll = (g.closest("main") as HTMLElement | null)?.scrollTop || 0
+        setAlto(Math.max(380, Math.round(window.innerHeight - (g.getBoundingClientRect().top + scroll) - 8)))
+      }
+    }
+    medir()
+    const ro = new ResizeObserver(medir)
+    if (raiz.current) ro.observe(raiz.current)
+    window.addEventListener("resize", medir)
+    return () => { ro.disconnect(); window.removeEventListener("resize", medir) }
+  }, [cargando])
 
   // ── Carga de datos ──
   const cargar = useCallback(async () => {
@@ -577,43 +592,41 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   }
 
   return (
-    <div className="space-y-3 text-[15px]">
-      {/* Barra de arriba */}
-      <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-2.5 border-b bg-background/95 px-3 py-2.5 backdrop-blur">
-        <h1 className="mr-1 text-xl font-bold">Despacho</h1>
+    <div ref={raiz} className="d3c space-y-2 text-[13px]">
+      {/* Barra de arriba (compacta; los botones siguen de 40 px para el dedo) */}
+      <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background/95 px-3 py-1.5 backdrop-blur">
+        <h1 className="text-base font-semibold">Despacho</h1>
         <NuevoBadge />
-        <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
+        <div className="inline-flex rounded-md border p-0.5">
           {plants.map((p) => (
-            <button key={p.id} onClick={() => elegirPlanta(p.id)} className={cn("min-h-[38px] rounded-md px-3 font-semibold", planta === p.id ? "bg-background shadow-sm" : "text-muted-foreground")}>{p.name}</button>
+            <button key={p.id} onClick={() => elegirPlanta(p.id)} className={cn("h-7 rounded px-2.5 text-[13px]", planta === p.id ? "bg-muted font-semibold text-foreground" : "text-muted-foreground")}>{p.name}</button>
           ))}
         </div>
-        <div className="inline-flex items-center gap-1">
-          <button className="h-10 w-10 rounded-lg text-xl text-muted-foreground hover:bg-muted" title="Día anterior" onClick={() => setDia((d) => subDays(d, 1))}>‹</button>
-          <button className={cn("min-h-[40px] rounded-lg px-3 font-semibold", esHoy ? "bg-foreground text-background" : "border")} onClick={() => setDia(new Date())}>
+        <div className="inline-flex items-center">
+          <button className="h-8 w-9 rounded-md text-lg text-muted-foreground hover:bg-muted" title="Día anterior" onClick={() => setDia((d) => subDays(d, 1))}>‹</button>
+          <button className={cn("h-8 rounded-md px-2.5 text-[13px]", esHoy ? "font-semibold" : "border")} onClick={() => setDia(new Date())} title="Volver a hoy">
             {etiquetaDia ? `${etiquetaDia} · ` : ""}{format(dia, "EEE d/M", { locale: es })}
           </button>
-          <button className="h-10 w-10 rounded-lg text-xl text-muted-foreground hover:bg-muted" title="Día siguiente" onClick={() => setDia((d) => addDays(d, 1))}>›</button>
+          <button className="h-8 w-9 rounded-md text-lg text-muted-foreground hover:bg-muted" title="Día siguiente" onClick={() => setDia((d) => addDays(d, 1))}>›</button>
         </div>
-        <span className="text-lg font-bold tabular-nums">{hhmm(ahora)}</span>
+        <span className="text-sm font-semibold tabular-nums">{hhmm(ahora)}</span>
         <span className="flex-1" />
         {puedeDespachar && (
-          <AddDispatchDialog formulas={[]} clients={[]} mixers={[]} plantId={planta} plants={plants}
-            onSuccess={(d) => { cargar(); if (d?.id) setRemitoListo(d) }} triggerLabel="Carga despacho manual" />
+          <div className="[&>button]:h-8 [&>button]:px-3 [&>button]:text-[13px]">
+            <AddDispatchDialog formulas={[]} clients={[]} mixers={[]} plantId={planta} plants={plants}
+              onSuccess={(d) => { cargar(); if (d?.id) setRemitoListo(d) }} triggerLabel="Carga despacho manual" />
+          </div>
         )}
-        <Button variant="outline" className="min-h-[40px] gap-2" onClick={() => { cargar(); cargarGps() }}><RefreshCw className="h-4 w-4" />Actualizar</Button>
-        {onPantallaVieja && <Button variant="ghost" className="min-h-[40px]" onClick={onPantallaVieja}>Pantalla de siempre</Button>}
+        <Button variant="outline" className="h-8 w-8 p-0" title="Actualizar" onClick={() => { cargar(); cargarGps() }}><RefreshCw className="h-4 w-4" /></Button>
+        {onPantallaVieja && <Button variant="ghost" className="h-8 px-2.5 text-[13px] text-muted-foreground" onClick={onPantallaVieja}>Pantalla de siempre</Button>}
       </div>
 
-      <div className="flex items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-800">
-        ⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados
-      </div>
-
-      <ContadoresDia c={contadores} />
+      <ContadoresDia c={contadores} extra={<span className="text-amber-800">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</span>} />
 
       {angosta && (
-        <div className="flex gap-1.5">
+        <div className="flex gap-1">
           {(["viajes", "camiones", "pedidos"] as Tab[]).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={cn("min-h-[44px] flex-1 rounded-lg border font-bold capitalize", tab === t ? "border-foreground bg-foreground text-background" : "bg-card text-muted-foreground")}>
+            <button key={t} onClick={() => setTab(t)} className={cn("h-9 flex-1 rounded-md border text-[13px]", tab === t ? "border-foreground font-semibold" : "text-muted-foreground")}>
               {t === "viajes" ? "Viajes" : t === "camiones" ? "Camiones" : "Pedidos"}
             </button>
           ))}
@@ -621,32 +634,32 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       )}
 
       {cargando ? (
-        <div className="py-16 text-center text-muted-foreground">Cargando…</div>
+        <div className="py-12 text-center text-muted-foreground">Cargando…</div>
       ) : angosta ? (
-        <section className="flex flex-col rounded-xl border bg-card">{columnas[tab]}</section>
+        <section ref={grilla} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[tab]}</section>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div ref={grilla} className="grid grid-cols-3 gap-2">
           {(["viajes", "camiones", "pedidos"] as Tab[]).map((t) => (
-            <section key={t} className="flex h-[calc(100vh-280px)] min-h-[440px] flex-col overflow-hidden rounded-xl border bg-card">{columnas[t]}</section>
+            <section key={t} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[t]}</section>
           ))}
         </div>
       )}
 
-      <details className="rounded-xl border bg-card px-3.5 py-2.5 text-[13px]">
-        <summary className="cursor-pointer text-sm font-bold">¿Qué quiere decir cada color del camión y de dónde sale?</summary>
-        <table className="mt-2 w-full border-collapse">
+      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-[12px]">
+        <summary className="flex min-h-[32px] cursor-pointer items-center text-xs text-muted-foreground">¿Qué quiere decir cada color del camión y de dónde sale?</summary>
+        <table className="mb-1 w-full border-collapse">
           <tbody>
             {[
-              ["bg-green-600", "En planta · libre", "GPS: dentro de la planta (250 m). Si vuelve después de un viaje, queda «Volvió a planta · disponible (GPS)» solo. Sin GPS: cuando el plantista toca «Volvió a planta»."],
-              ["bg-blue-600", "Yendo a obra", "GPS: salió de planta con remito y anda. Sin GPS: desde la hora de salida del remito hasta la llegada estimada."],
+              ["bg-emerald-500", "En planta · libre", "GPS: dentro de la planta (250 m). Si vuelve después de un viaje, queda «Volvió a planta · disponible (GPS)» solo. Sin GPS: cuando el plantista toca «Volvió a planta»."],
+              ["bg-blue-500", "Yendo a obra", "GPS: salió de planta con remito y anda. «Esperando en planta con remito»: tiene el remito y el GPS todavía no lo vio salir. Sin GPS: desde la hora de salida del remito hasta la llegada estimada."],
               ["bg-amber-500", "En obra", "GPS: a menos de 400 m de la obra. Si la obra no está ubicada: «parado fuera de planta (probable obra)». Sin GPS: estimado."],
-              ["bg-cyan-600", "Volviendo", "GPS: anda de vuelta. Sin GPS: estimado, y pasada media hora de la vuelta estimada pregunta «¿Volvió?»."],
-              ["bg-slate-700", "Taller", "A mano, desde ⋮ del camión (o desde Camiones). No se puede despachar hasta tocar «Disponible»."],
+              ["bg-cyan-500", "Volviendo", "GPS: anda de vuelta. Sin GPS: estimado, y pasada media hora de la vuelta estimada pregunta «¿Volvió?»."],
+              ["bg-slate-600", "Taller", "A mano, desde ⋮ del camión (o desde Camiones). No se puede despachar hasta tocar «Disponible»."],
               ["", "Tiempo", "En viaje: desde la salida del remito (⏱ = ciclo hasta ahora). En planta o taller: desde que cambió el estado."],
             ].map(([c, t, d]) => (
               <tr key={t} className="border-t align-top">
-                <td className="whitespace-nowrap py-1.5 pr-2 font-bold">{c && <span className={cn("mr-1.5 inline-block h-3 w-3 rounded-sm align-[-1px]", c)} />}{t}</td>
-                <td className="py-1.5">{d}</td>
+                <td className="whitespace-nowrap py-1 pr-2 font-medium">{c && <span className={cn("mr-1.5 inline-block h-2.5 w-2.5 rounded-sm", c)} />}{t}</td>
+                <td className="py-1 text-muted-foreground">{d}</td>
               </tr>
             ))}
           </tbody>

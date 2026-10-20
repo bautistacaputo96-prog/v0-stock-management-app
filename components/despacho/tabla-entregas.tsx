@@ -29,29 +29,29 @@ export function TablaEntregas({
   const tot = filas.filter((d) => !d.is_test_dispatch).reduce((s, d) => s + Number(d.quantity_m3 || 0), 0)
   const camionPorId = Object.fromEntries(camiones.map((c) => [c.id, c]))
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center gap-2.5 border-b px-3.5 py-2.5">
-        <h2 className="text-base font-bold">Entregas del día</h2>
-        <span className="text-sm text-muted-foreground">{filas.length} remito{filas.length === 1 ? "" : "s"} · {m3txt(tot)} m³ · {plantaNombre}</span>
+    <section className="d3c-card overflow-hidden rounded-md border bg-card">
+      <div className="flex flex-wrap items-center gap-2 border-b px-2.5 py-1">
+        <h2 className="text-sm font-semibold">Entregas del día</h2>
+        <span className="text-xs text-muted-foreground">{filas.length} remito{filas.length === 1 ? "" : "s"} · {m3txt(tot)} m³ · {plantaNombre}</span>
         <span className="flex-1" />
         {filtroPedido && (
-          <button className="min-h-[32px] rounded-full bg-foreground px-3 text-[13px] font-semibold text-background" onClick={onQuitarFiltro}>
+          <button className="min-h-[28px] rounded-md border px-2.5 text-xs" onClick={onQuitarFiltro}>
             Solo {pedidos[filtroPedido]?.construction_sites?.name || "ese pedido"} ✕
           </button>
         )}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] text-sm">
+        <table className="w-full min-w-[900px] text-[12px]">
           <thead>
-            <tr className="bg-muted/40 text-left text-xs font-bold text-muted-foreground">
+            <tr className="text-left text-[11px] font-medium text-muted-foreground">
               {["Salió", "Remito", "Camión", "Chofer", "Cliente · obra", "Fórmula", "m³", "Viaje", "Muestra", "Ahora", "En obra / volvió", ""].map((h) => (
-                <th key={h} className="whitespace-nowrap border-b px-2.5 py-2">{h}</th>
+                <th key={h} className="whitespace-nowrap border-b px-2 py-1 font-medium">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {!filas.length && (
-              <tr><td colSpan={12} className="py-5 text-center text-muted-foreground">Todavía no salió ningún camión.</td></tr>
+              <tr><td colSpan={12} className="py-4 text-center text-muted-foreground">Todavía no salió ningún camión.</td></tr>
             )}
             {filas.map((d) => {
               const p = d.scheduled_dispatch_id ? pedidos[d.scheduled_dispatch_id] : null
@@ -63,32 +63,32 @@ export function TablaEntregas({
               const g = gps[d.id]
               return (
                 <tr key={d.id} className={cn("border-b", nueva === d.id && "bg-green-50")}>
-                  <td className="whitespace-nowrap px-2.5 py-2 font-bold tabular-nums">
+                  <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums">
                     {hhmm(d.dispatch_date)}
                     {d.scheduled_dispatch_id && Math.abs(cargadoDif) > 10 && <div className="text-xs font-semibold text-muted-foreground">cargado {hhmm(d.created_at!)}</div>}
                   </td>
-                  <td className="whitespace-nowrap px-2.5 py-2 font-bold tabular-nums">
+                  <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums">
                     {!d.is_test_dispatch && <MarcaTipo tipo={tipo} className="mr-1" />}
                     {d.remito || "—"}
                     {!d.scheduled_dispatch_id && !d.is_test_dispatch && <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] font-semibold text-slate-600">manual</span>}
                     {d.is_test_dispatch && <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] font-semibold text-slate-600">por árido / prueba</span>}
                   </td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{c?.patente || "—"}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{(d.chofer_id && choferes[d.chofer_id]) || "—"}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{d.clients?.name || "—"} · <span className="text-muted-foreground">{d.construction_sites?.name || "—"}</span></td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{d.formulas?.code || "—"}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2 font-bold tabular-nums">{m3txt(d.quantity_m3)}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{viajeDe[d.id] || (p ? "—" : "")}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2">{d.sample_taken && d.sample_number ? d.sample_number : <span className="text-muted-foreground">—</span>}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2">
-                    {enCurso ? <span className={cn("rounded px-1.5 py-0.5 text-xs font-bold", COLOR_ESTADO[c!.e.clave])}>{c!.e.etiqueta}{c!.e.fuente === "estimado" ? " (est.)" : ""}</span> : <span className="text-muted-foreground">—</span>}
+                  <td className="whitespace-nowrap px-2 py-1">{c?.patente || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1">{(d.chofer_id && choferes[d.chofer_id]) || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1">{d.clients?.name || "—"} · <span className="text-muted-foreground">{d.construction_sites?.name || "—"}</span></td>
+                  <td className="whitespace-nowrap px-2 py-1">{d.formulas?.code || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums">{m3txt(d.quantity_m3)}</td>
+                  <td className="whitespace-nowrap px-2 py-1">{viajeDe[d.id] || (p ? "—" : "")}</td>
+                  <td className="whitespace-nowrap px-2 py-1">{d.sample_taken && d.sample_number ? d.sample_number : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="whitespace-nowrap px-2 py-1">
+                    {enCurso ? <span className={cn("rounded px-1.5 py-0.5 text-xs font-semibold", COLOR_ESTADO[c!.e.clave])}>{c!.e.etiqueta}{c!.e.fuente === "estimado" ? " (est.)" : ""}</span> : <span className="text-muted-foreground">—</span>}
                   </td>
-                  <td className="whitespace-nowrap px-2.5 py-2 text-muted-foreground">
+                  <td className="whitespace-nowrap px-2 py-1 text-muted-foreground">
                     {g?.llegada_obra ? `${hhmm(g.llegada_obra)}${g.llegada_planta ? ` / ${hhmm(g.llegada_planta)}` : ""}` : "—"}
                   </td>
-                  <td className="px-2.5 py-2">
+                  <td className="px-2 py-1">
                     {!d.is_test_dispatch && (
-                      <button className="min-h-[34px] rounded-lg border px-2.5 text-sm" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>🖨</button>
+                      <button className="h-7 w-8 rounded-md border text-sm" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>🖨</button>
                     )}
                   </td>
                 </tr>

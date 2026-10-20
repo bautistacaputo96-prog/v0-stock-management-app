@@ -1,5 +1,9 @@
 "use client"
 
+/**
+ * Columna Pedidos, compacta: dos líneas por pedido (llegada, cliente, entregado/total, R/X / obra, fórmula y barra).
+ * Lo demás (bomba, fibra, confirmado, puntualidad, próximo viaje) se despliega con ▾.
+ */
 import { useState } from "react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { estadoPedido, faltaDe, hhmm, m3txt, textoMotivo, TIPO_TEXTO, type Puntualidad } from "@/lib/despacho"
@@ -35,6 +39,7 @@ export function ColumnaPedidos({
   onCancelar: (p: PedidoT) => void
 }) {
   const [verCancelados, setVerCancelados] = useState(false)
+  const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
   const ordenados = [...pedidos].sort((a, b) => new Date(a.scheduled_arrival_time).getTime() - new Date(b.scheduled_arrival_time).getTime())
   const activos = ordenados.filter((p) => ["activo", "suspendido"].includes(estadoPedido(p)))
   const cerrados = ordenados.filter((p) => estadoPedido(p) === "completo")
@@ -55,94 +60,106 @@ export function ColumnaPedidos({
     const ajusta = permisos.ajusta(p)
     const finalizado = est === "completo" && (p.cierre_motivo_tipo || desp < Number(p.quantity_m3) - 0.01)
     const pt = puntualidad[p.id]
+    const abierto = !!abiertos[p.id]
     return (
-      <div key={p.id} className={cn("relative rounded-lg border bg-card px-2.5 py-2", susp && "border-dashed bg-slate-50", cerr && "opacity-75")}>
-        <div className="flex items-start gap-1.5">
-          <div className="min-w-0 flex-1 text-[15px] font-bold">{p.clients?.name || "Cliente"}</div>
+      <div key={p.id} className={cn("d3c-card relative rounded-md border bg-card", susp && "border-dashed", cerr && "opacity-70")}>
+        <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-0.5">
+          <div className="w-[38px] shrink-0 text-[12.5px] font-semibold tabular-nums leading-tight" title="Llegada pedida">{hhmm(p.scheduled_arrival_time)}</div>
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="flex items-center gap-1">
+              <span className="min-w-0 truncate text-[13px] font-medium">{p.clients?.name || "Cliente"}</span>
+              <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground"><b className="font-semibold text-foreground">{m3txt(desp)}</b>/{m3txt(p.quantity_m3)} m³</span>
+            </div>
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              {est !== "cancelado" && <MarcaTipo tipo={tipo} />}
+              {p.confirmado_at && <span title="Confirmado">👍</span>}
+              {pt && est !== "cancelado" && <span className={cn("shrink-0", pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")} title={pt.texto}>●</span>}
+              <span className="min-w-0 truncate">{p.construction_sites?.name} · <span className="text-foreground/80">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""}{bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}</span>
+            </div>
+          </div>
+          <button
+            className="flex h-8 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+            title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
+            aria-expanded={abierto}
+            onClick={() => setAbiertos((a) => ({ ...a, [p.id]: !a[p.id] }))}
+          >
+            {abierto ? "▴" : "▾"}
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="h-9 w-9 shrink-0 rounded-md text-xl leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+              <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[240px]">
+            <DropdownMenuContent align="end" className="min-w-[230px]">
               {ajusta && (act || susp) && (
-                <DropdownMenuItem className="min-h-[42px]" onClick={() => onConfirmar(p)}>{p.confirmado_at ? "Quitar 👍 confirmación" : "👍 Confirmar"}</DropdownMenuItem>
+                <DropdownMenuItem className="min-h-[32px]" onClick={() => onConfirmar(p)}>{p.confirmado_at ? "Quitar 👍 confirmación" : "👍 Confirmar"}</DropdownMenuItem>
               )}
-              {ajusta && act && <DropdownMenuItem className="min-h-[42px]" onClick={() => onGerenciador(p)}>🚚 Viajes (gerenciador)</DropdownMenuItem>}
-              {ajusta && act && <DropdownMenuItem className="min-h-[42px]" onClick={() => onEditarTotal(p)}>✏️ Editar total</DropdownMenuItem>}
-              <DropdownMenuItem className="min-h-[42px]" onClick={() => onVerEntregas(p)}>📋 Ver entregas</DropdownMenuItem>
-              {permisos.despachar && act && <><DropdownMenuSeparator /><DropdownMenuItem className="min-h-[42px]" onClick={() => onSuspender(p)}>⏸ Suspender (lluvia, obra…)</DropdownMenuItem></>}
-              {permisos.despachar && susp && <><DropdownMenuSeparator /><DropdownMenuItem className="min-h-[42px]" onClick={() => onReabrir(p)}>▶ Reabrir</DropdownMenuItem></>}
-              {permisos.despachar && (act || susp) && desp > 0 && <DropdownMenuItem className="min-h-[42px]" onClick={() => onFinalizar(p)}>✓ Finalizar con lo enviado</DropdownMenuItem>}
-              {permisos.cancelar && (act || susp) && <DropdownMenuItem className="min-h-[42px] text-red-600" onClick={() => onCancelar(p)}>⊘ Cancelar pedido</DropdownMenuItem>}
+              {ajusta && act && <DropdownMenuItem className="min-h-[32px]" onClick={() => onGerenciador(p)}>🚚 Viajes (gerenciador)</DropdownMenuItem>}
+              {ajusta && act && <DropdownMenuItem className="min-h-[32px]" onClick={() => onEditarTotal(p)}>✏️ Editar total</DropdownMenuItem>}
+              <DropdownMenuItem className="min-h-[32px]" onClick={() => onVerEntregas(p)}>📋 Ver entregas</DropdownMenuItem>
+              {permisos.despachar && act && <><DropdownMenuSeparator /><DropdownMenuItem className="min-h-[32px]" onClick={() => onSuspender(p)}>⏸ Suspender (lluvia, obra…)</DropdownMenuItem></>}
+              {permisos.despachar && susp && <><DropdownMenuSeparator /><DropdownMenuItem className="min-h-[32px]" onClick={() => onReabrir(p)}>▶ Reabrir</DropdownMenuItem></>}
+              {permisos.despachar && (act || susp) && desp > 0 && <DropdownMenuItem className="min-h-[32px]" onClick={() => onFinalizar(p)}>✓ Finalizar con lo enviado</DropdownMenuItem>}
+              {permisos.cancelar && (act || susp) && <DropdownMenuItem className="min-h-[32px] text-red-600" onClick={() => onCancelar(p)}>⊘ Cancelar pedido</DropdownMenuItem>}
               {!permisos.cancelar && permisos.despachar && (act || susp) && <DropdownMenuItem disabled className="text-xs">Cancelar: solo gerenciales</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div className="text-sm">{p.construction_sites?.name}</div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
-          <b className="text-foreground">{p.formulas?.code}</b>
-          {p.finalidad && <span>· {p.finalidad}</span>}
-          <span>· llegada {hhmm(p.scheduled_arrival_time)}</span>
-          {bomba ? <span className="rounded bg-cyan-100 px-1.5 text-[11px] font-extrabold text-cyan-800">{bomba}</span> : <span className="rounded bg-slate-200 px-1.5 text-[11px] font-extrabold text-slate-600">DIRECTO</span>}
-          {!!p.fiber_kg_per_m3 && <span className="rounded bg-violet-100 px-1.5 text-[11px] font-extrabold text-violet-800">FIBRA {m3txt(p.fiber_kg_per_m3)} kg/m³</span>}
-        </div>
-        <div className="mt-1.5 flex justify-between text-[13px]">
-          <span>Entregado <b className="text-[15px]">{m3txt(desp)}</b> / {m3txt(p.quantity_m3)} m³</span>
-          {!cerr && falta > 0 && <span>falta <b className="text-amber-600">{m3txt(falta)}</b></span>}
-        </div>
-        <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200"><i className="block h-full rounded-full bg-green-600" style={{ width: `${pct}%` }} /></div>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {tipo
-            ? <span className="flex items-center gap-1 rounded border bg-muted/40 px-1.5 py-0.5 text-xs font-bold text-muted-foreground"><MarcaTipo tipo={tipo} /> {TIPO_TEXTO[tipo]}</span>
-            : est !== "cancelado" && <span className="rounded border border-dashed border-slate-300 bg-muted/40 px-1.5 py-0.5 text-xs font-bold text-muted-foreground">Factura: se pregunta al despachar</span>}
-          {p.confirmado_at
-            ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-bold text-emerald-700">👍 Confirmado</span>
-            : <span className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 text-xs font-bold text-muted-foreground">Sin confirmar</span>}
-          {pt && est !== "cancelado" && (
-            <span className={cn("rounded px-1.5 py-0.5 text-xs font-bold", pt.clase === "ok" ? "bg-green-100 text-green-800" : pt.clase === "mal" ? "bg-red-100 text-red-800" : "border bg-muted/40 text-muted-foreground")}>{pt.texto}</span>
-          )}
-          {prox && act && <span className="rounded border bg-muted/40 px-1.5 py-0.5 text-xs font-bold text-muted-foreground">Próximo: {prox.n}/{totalPorPedido[p.id] || "?"} · {hhmm(prox.hora_carga)}</span>}
-        </div>
+        {/* Barra de lo entregado */}
+        <div className="mx-2 mb-1 h-[3px] overflow-hidden rounded-full bg-muted"><i className="block h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
         {susp && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-200 px-2 py-1.5 text-[13px] text-slate-900">
-            <span>⏸ <b>Suspendido</b> · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
-            {permisos.despachar && <button className="min-h-[36px] rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white" onClick={() => onReabrir(p)}>Reabrir</button>}
+          <div className="flex items-center gap-2 border-t px-2 py-0.5 text-[11.5px]">
+            <span className="min-w-0 flex-1 truncate">⏸ <b className="font-semibold">Suspendido</b> · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
+            {permisos.despachar && <button className="h-8 shrink-0 rounded-md border px-2.5 text-xs font-medium" onClick={() => onReabrir(p)}>Reabrir</button>}
           </div>
         )}
-        {est === "completo" && !finalizado && <div className="mt-2 inline-block rounded bg-green-100 px-1.5 py-0.5 text-xs font-bold text-green-800">✓ Completo</div>}
-        {finalizado && <div className="mt-2 inline-block rounded border bg-muted/40 px-1.5 py-0.5 text-xs font-bold text-muted-foreground">Finalizado con {m3txt(desp)} de {m3txt(p.quantity_m3)} m³{p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}</div>}
-        {est === "cancelado" && <div className="mt-2 inline-block rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-800">Cancelado{p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}{p.cierre_motivo ? ` — ${p.cierre_motivo}` : ""}</div>}
+        {(est === "completo" || est === "cancelado") && (
+          <div className="px-2 pb-1 text-[11px] text-muted-foreground">
+            {est === "completo" && !finalizado && "✓ Completo"}
+            {finalizado && `Finalizado con ${m3txt(desp)} de ${m3txt(p.quantity_m3)} m³${p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}`}
+            {est === "cancelado" && <span className="text-red-700">Cancelado{p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}{p.cierre_motivo ? ` — ${p.cierre_motivo}` : ""}</span>}
+          </div>
+        )}
+        {abierto && (
+          <div className="space-y-0.5 border-t px-2 py-1.5 text-[11.5px] leading-snug text-muted-foreground">
+            <div className="text-foreground">{p.construction_sites?.name}</div>
+            <div><b className="font-medium text-foreground">{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+            <div>Entregado {m3txt(desp)} de {m3txt(p.quantity_m3)} m³{!cerr && falta > 0 ? ` · falta ${m3txt(falta)}` : ""}</div>
+            <div>{tipo ? `Remito ${tipo} · ${TIPO_TEXTO[tipo]}` : "Factura: se pregunta al despachar"} · {p.confirmado_at ? "👍 Confirmado" : "Sin confirmar"}</div>
+            {pt && est !== "cancelado" && <div className={cn(pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")}>{pt.texto}</div>}
+            {prox && act && <div>Próximo: viaje {prox.n}/{totalPorPedido[p.id] || "?"} · carga {hhmm(prox.hora_carga)}</div>}
+          </div>
+        )}
       </div>
     )
   }
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5">
-        <h2 className="text-base font-bold">Pedidos</h2>
-        <span className="rounded-full border bg-muted/40 px-2 text-xs font-bold text-muted-foreground">{activos.length}</span>
+      <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
+        <h2 className="text-sm font-semibold">Pedidos</h2>
+        <span className="text-xs text-muted-foreground">{activos.length}</span>
         <span className="flex-1" />
-        <span className="text-xs text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>
+        <span className="text-[11px] text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>
       </div>
-      <div className="flex flex-1 flex-col gap-2 overflow-auto p-2.5">
+      <div className="flex flex-1 flex-col gap-[3px] overflow-auto p-1.5">
         {activos.map(tarjeta)}
         {cerrados.length > 0 && (
-          <details className="group">
-            <summary className="cursor-pointer list-none px-0.5 pt-2 text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+          <details>
+            <summary className="flex min-h-[28px] cursor-pointer list-none items-center px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               ▸ Completos y finalizados ({cerrados.length})
             </summary>
-            <div className="mt-2 flex flex-col gap-2">{cerrados.map(tarjeta)}</div>
+            <div className="flex flex-col gap-[3px]">{cerrados.map(tarjeta)}</div>
           </details>
         )}
         {cancelados.length > 0 && (
           <>
-            <button className="min-h-[32px] self-start rounded-full border bg-card px-3 text-[13px] font-semibold text-muted-foreground" onClick={() => setVerCancelados((v) => !v)}>
+            <button className="min-h-[28px] self-start px-1 text-xs text-muted-foreground underline-offset-4 hover:underline" onClick={() => setVerCancelados((v) => !v)}>
               ⊘ {verCancelados ? "Ocultar" : "Ver"} cancelados ({cancelados.length})
             </button>
             {verCancelados && cancelados.map(tarjeta)}
           </>
         )}
-        {!ordenados.length && <div className="py-8 text-center text-sm text-muted-foreground">No hay pedidos para este día.</div>}
+        {!ordenados.length && <div className="py-6 text-center text-xs text-muted-foreground">No hay pedidos para este día.</div>}
       </div>
     </>
   )
