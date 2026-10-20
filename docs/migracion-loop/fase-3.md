@@ -297,7 +297,7 @@ El estado se arma en **una sola función pura**, `estadoCamion()` en `lib/despac
 | `mixers.estado_desde timestamptz` + trigger `BEFORE UPDATE OF status` que lo pone en `now()` cuando cambia el estado | "Libre hace 24 min", "En taller desde ayer 16:10" | Se completa con `updated_at` (o `now()`). Nada más cambia |
 | `scheduled_dispatches.suspendido_at`, `suspendido_por`, `suspendido_motivo_tipo`, `suspendido_motivo` | Suspender y reabrir sin tocar `status` (punto 7.1) | Quedan nulos: ningún pedido está suspendido |
 | `scheduled_dispatches.cierre_motivo_tipo`, `cierre_motivo` | Motivo de finalizar y cancelar, para contarlo después (la 4a lo dejó pendiente: "cancelados y suspendidos, cuando exista el motivo estructurado") | Nulos. Los cancelados viejos tienen su motivo en Actividad. La columna vieja `cancelled_reason`, que nunca se usó, no se toca |
-| CHECK de `*_motivo_tipo` en (`lluvia`, `obra_no_lista`, `falla_bomba`, `falla_camion`, `falta_material`, `pedido_cliente`, `obra_pidio_menos`, `otro`) | Que se pueda contar | — |
+| CHECK de `*_motivo_tipo` en (`lluvia`, `obra_no_lista`, `falla_bomba`, `falla_camion`, `falla` (el "Falla" de finalizar, revisión del 20/10), `falta_material`, `pedido_cliente`, `obra_pidio_menos`, `otro`) | Que se pueda contar | — |
 | Función `suspender_pedido(p_id, p_tipo, p_motivo, p_usuario)` | Bloquea el pedido (mismo orden que el despacho), valida que esté activo, graba las 4 columnas, `dispatch_status_log` y Actividad | — |
 | Función `reabrir_pedido(p_id, p_usuario)` | Limpia la suspensión, deja el log y Actividad. No toca los viajes: los corre el front con el gerenciador si se elige | — |
 | Función `finalizar_pedido(p_id, p_tipo, p_motivo, p_usuario)` | Lo que hoy hace el front (`status = completed` + la nota en observaciones) más el motivo, todo en la base y con el trigger de viajes de la fase 2 | La vieja puede seguir con su update hasta que se retire |
@@ -398,6 +398,7 @@ Mismo patrón que las de la fase 2 (`SECURITY DEFINER`, `search_path`, hora de A
 | Cambio grande para gente de planta (condición de Bautista del 01/10) | Sale apagada (interruptor), convive con la vieja y se puede volver con un toque. Los campos del formulario son los mismos y con los mismos nombres |
 | Otro agente cambia el cálculo de tiempos de la programación (`rebucret-tiempos`) | Esta fase **lee** los viajes guardados y usa `lib/viajes.ts` solo para los calculados. Se programa después de que ese cambio esté en main, y se rebasa |
 | Las consultas de Wialon (60 s × pantallas abiertas) | `posiciones()` ya tiene caché en el servidor. Se pide solo con la pestaña visible |
+| **Cuando los R de Canning pasen el 2200** (van por el 887 en octubre, unos 150–180 por mes: hacia mediados de 2027), la deducción por número (`_remito_tipo_de_numero`: 2201 en adelante = X) los va a confundir con X. Afecta a la pantalla de siempre (que no manda el tipo), al aviso "parece del otro tipo" y al control de repetido de los despachos sin tipo | **Propuesta:** (1) retirar la pantalla vieja antes (la nueva y el despacho manual siempre mandan el tipo) y, después del script de clasificación, que la base **exija** el tipo en todo despacho nuevo con remito; (2) limitar la deducción a los despachos anteriores a la publicación de esta fase (una fecha de corte en `_remito_tipo_de_numero`, o usar solo `remito_tipo` cuando no es nulo, que después del script son casi todos); (3) cambiar el aviso "parece del otro tipo" por la cercanía a las series de los últimos 30 días de cada tipo (el sugerido ya usa eso) en vez de un número fijo. Revisarlo cuando Canning llegue al 1800 |
 | La 0c-2 (RLS) todavía no está | Igual que el resto: la pantalla respeta los permisos y la base frena lo grave (suspendido, remito repetido, restante) |
 
 ## 12. Preguntas para Bautista (con recomendación) — respondidas el 08/10, ver punto 13
@@ -596,7 +597,7 @@ Esta sección **reemplaza**:
   - **X ya usado en la otra planta:** la numeración X es de imprenta, un solo rango 00002-00003201 a 00008200, así que no debería repetirse entre plantas. "El X 3205 ya se usó en Canning. ¿No agarraste el talonario de la otra planta?" (pregunta 14.9 b).
 
 ### 14.5 Datos viejos: clasificar los despachos que ya existen
-Es un script aparte: **`scripts/fase3-clasificar-remitos.sql`**. No va en la migración. Se corre al publicar, después de la migración y con el OK de Bautista. Tiene dos partes:
+Es un script aparte, en dos archivos: **`scripts/fase3-clasificar-remitos-A-lectura.sql`** (solo lectura) y **`scripts/fase3-clasificar-remitos-B-escribe.sql`** (termina en ROLLBACK hasta el OK). No va en la migración. Se corre al publicar, después de la migración y con el OK de Bautista. Tiene dos partes:
 
 **Parte A, solo lectura (se corre primero y se le muestra a Bautista):**
 - **Cómo se lee cada remito:**
@@ -703,7 +704,8 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 2. `feat(fase3): migración … y script de clasificación` — `supabase/migrations/202610201200_fase3_despacho.sql` y `scripts/fase3-clasificar-remitos.sql`.
 3. `feat(fase3): reglas del despacho en lib/despacho.ts con sus pruebas (test:despacho)`.
 4. `feat(fase3): despacho diario en tres columnas … con remito R/X` — pantalla, cambios chicos en las pantallas de siempre, PDF, GPS, tipos.
-5. `docs(migracion-loop): fase 3, hecho (obrero)` (este punto).
+5. `docs(migracion-loop): fase 3, hecho (obrero)`.
+6. `fix(fase3): ajustes de la revisión` y su docs (ver "Ajustes de la revisión", abajo).
 
 **Qué se hizo**
 - **Pantalla nueva** en `/plantista` (`components/despacho/*`), solo para quien tiene `ve_funciones_nuevas`: selector "Pantalla nueva · en prueba / Pantalla de siempre" recordado en el equipo (`selector-pantalla.tsx`); para los demás `/plantista` es la de siempre. Barra (planta, ‹ día ›, hora, Carga despacho manual, Actualizar, Pantalla de siempre), aviso de muestras, 6 contadores, tres columnas con scroll propio (pestañas con menos de 900 px), leyenda de colores, tabla de entregas. Base cada 30 s y GPS cada 60 s, solo con la pestaña visible. Humedad del acopio como en la vieja (copia en `humedad-acopio.tsx` mientras convivan).
@@ -729,7 +731,7 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 - No se usó el navegador (regla): la pantalla no se miró en vivo ni en tablet. Hay que probarla en el preview.
 
 **Script de clasificación (datos reales, Parte A en solo lectura; Parte B probada en ROLLBACK)**
-- 1.421 despachos con remito (sin contar árido/prueba). La Parte B clasificaría **1.053**: **552 R** y **501 X**; quedan **368 dudosos** "Sin tipo" (= exactamente los de la Parte A).
+- *(Primera corrida; los números actualizados, con los motivos nuevos, están en "Ajustes de la revisión".)* 1.421 despachos con remito (sin contar árido/prueba). La Parte B clasificaría **1.053**: **552 R** y **501 X**; quedan **368 dudosos** "Sin tipo" (= exactamente los de la Parte A).
 - Series que caen bien: Hudson R 710–781 (sep–oct) y X 3122–3241 (ago–sep); Canning R 2–883 (desde el 08/07/2026, empezó en 0002) y X 2228–3307 (abr–oct).
 - Dudosos por motivo: repetidos en la planta y el tipo 194 · letras que no son HUDSON 125 · más de 5 dígitos 28 · 4 o 5 dígitos por debajo de 2201 10 · X por encima de 8200 4 · HUDSON en Canning 3 · R < 600 antes de julio 2 · sin dígitos 2. **129 de los 368 son del cliente "HISTÓRICO"** (carga del historial 2025, con "N° 2004", "N°3091-3092", 0 m³).
 - Casos para mirar: "R 3110" … "R 3120" en Hudson (jun–jul, con número de X pero escritos con R), "3103-A", "3112-C", "3113-C", "3070-2", "3206-1", "3216-17", pares "2958-2959"… (dos remitos en uno), "12354"/"12355", "10000000000000000000000000000000", "Richard La Huella", "HUDSON" (06/10, Hudson, sin número), "3123/3124/3125 Hudson" cargados en Canning el 10/08, "235" en Canning el 10/04.
@@ -754,7 +756,28 @@ Con las respuestas finales de Bautista del 20/10 a las preguntas de 14.9: (a) R 
 **Riesgos y pendientes para publicar**
 - **Aplicar la migración antes del merge** (con el OK de Bautista). El preview usa la base de producción: sin la migración, la pantalla nueva no puede suspender, reabrir, finalizar ni saber el tipo de remito (las pantallas de siempre siguen andando igual).
 - **Verificar con una impresión de prueba de un R** sobre la hoja pre-impresa ("RM: 0099-00000776", respuesta a): la posición es la misma que la del X.
-- Correr la **Parte A del script**, mostrársela a Bautista, y recién con su OK la Parte B. Los 368 dudosos se clasifican a mano desde Historial › "Sin tipo".
+- Correr la **Parte A** (`fase3-clasificar-remitos-A-lectura.sql`), mostrársela a Bautista, y recién con su OK la **Parte B** (`…-B-escribe.sql`, cambiando su ROLLBACK final por COMMIT). Los 373 dudosos se clasifican a mano desde Historial › "Sin tipo".
 - Probar en el preview, con el dedo en la tablet (1024 × 768) y con el mouse: los tres caminos de despacho, el arrastre, las pestañas y el aviso de camión no libre. No se pudo mirar en vivo.
 - Hasta que se carguen tipos en obras y clientes, la pantalla nueva va a preguntar "¿con o sin factura?" en el primer despacho de cada cliente del día.
 - La pantalla vieja sigue despachando sin elegir tipo: lo resuelve la base o lo deduce del número.
+- **R de Canning por encima del 2200** (mediados de 2027): ver la fila nueva en el punto 11 (riesgos) con la propuesta.
+
+### Ajustes de la revisión (20/10/2026) — "aprobado con cambios menores"
+
+**Regla nueva para las pruebas en la base** (la primera corrida tuvo bloqueadas despachos, pedidos y camiones unos 30 s): cada prueba en una transacción **corta** con `SET LOCAL lock_timeout = '2s'` y `SET LOCAL statement_timeout = '60s'`, que falla si no consigue el candado y se reintenta más tarde. Las pruebas de la migración quedaron en **9 transacciones de 2,4 a 4,8 s** (datos de prueba en una sola consulta, camiones y chofer de prueba propios: no se toca ningún camión real). La Parte A del script se prueba sin la migración (funciones auxiliares en `pg_temp`, columnas nuevas como nulas): no toma ningún candado de escritura. La Parte B, con la migración, en una transacción de 1,6 s. Los tipos se regeneraron igual (3,8 s). Ojo: en esta tanda, una primera prueba de la Parte B llegó al `statement_timeout` (60 s, con las tablas tomadas) porque el `UPDATE … FROM` recalculaba los dudosos por cada fila; se arregló con los CTE `MATERIALIZED` (ahora 1,6 s) y quedó anotado en el script.
+
+**Cambios**
+1. **`editar_despacho`**: el repetido se vuelve a controlar solo si cambian los dígitos, la planta o el **tipo efectivo** (`coalesce(tipo, el que dice el número)` antes y después). Así los dudosos "repetidos" se pueden clasificar desde Historial. Probado con el par real "3129 Hudson" (10/08 y 19/08): los dos pasan a X sin error; pasarlo a R controla y entra (no hay otro R 3129).
+2. **Script en dos archivos**: `scripts/fase3-clasificar-remitos-A-lectura.sql` (solo SELECT, `BEGIN READ ONLY` … `ROLLBACK`) y `scripts/fase3-clasificar-remitos-B-escribe.sql` (termina en **ROLLBACK**, con el aviso de cambiarlo por COMMIT recién con el OK). Los dos con los timeouts.
+3. **El GPS libera solo si lo vio afuera**: la pantalla recuerda (en el equipo) la hora en que el GPS vio al camión **fuera** de la planta después de la salida de su despacho (`vistoFueraDePlanta`), y recién si después lo ve en una planta lo libera, mandando esa hora a `camion_volvio(…, 'gps', …, p_visto_fuera_at)`. La base no libera por GPS sin esa hora, si es anterior a la salida o si el despacho tiene menos de 15 min. Si salió con remito y el GPS nunca lo vio afuera, la tarjeta dice "En planta con remito" y pregunta "¿Volvió?" (se libera a mano). Pruebas nuevas en `test:despacho` y en la migración.
+4. **Script, motivos nuevos**: "2b. dos grupos de números" (`remito ~ '\d[^0-9A-Za-z]+\d'`: "0073-2", "0051-2", "3070-2", "3206-1") y "6b. salta mucho dentro del mes" (no hay otro remito de esa planta y ese tipo, en el mismo mes, a ±50: "2403HUDSON" del 19/10, "755" de Canning del 02/10, "2228" de Canning del 30/07, "3241" de Hudson del 10/08).
+5. **Candado del remito**: clave planta + dígitos, sin el tipo (en `registrar_despacho` y `editar_despacho`).
+6. **"Salió · cargado"** solo en despachos de pedido (tabla de entregas e Historial): el manual se carga con las 12:00 del día.
+7. **"Falla" al finalizar** tiene su propio valor (`falla`, en los CHECK, `_motivo_texto` y `finalizar_pedido`), ya no se graba como falla de bomba.
+8. **Riesgo de los R de Canning por encima del 2200**: anotado en el punto 11 con la propuesta.
+9. La pantalla pide `remito_tipo_para` con `p_fecha` cuando se mira otro día.
+
+**Verificaciones (después de los ajustes)**
+- Migración: dos corridas completas, **51/51** controles cada una, la primera transacción aplica la migración dos veces seguidas. Nada quedó en producción.
+- `tsc`: los mismos 17 errores de main. Build con `--webpack`: compila (`.next` borrado). `test:despacho` **27/27**, `test:gps` 44/44, `test:sesion` 21/21.
+- Script con los datos de hoy (1.425 despachos): la Parte B clasificaría **1.052** (**554 R**, **498 X**) y quedan **373 dudosos** (= los de la Parte A; la B no toca ninguno). Por motivo: repetidos 193 · letras que no son HUDSON 125 · más de 5 dígitos 28 · 4 o 5 dígitos por debajo de 2201 10 · dos grupos de números 4 · salta mucho dentro del mes 4 · HUDSON en Canning 3 · R < 600 antes de julio 2 · X > 8200 2 · sin dígitos 2. Las series quedan limpias: Hudson R 710–781 y X 3122–3200 (ago–sep) / 4202–4207 (oct); Canning R 2–887 (jul–oct) y X 2634–3307 (abr–oct).
