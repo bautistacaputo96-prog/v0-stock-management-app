@@ -60,6 +60,7 @@ Nota sobre la carga: la hora de despacho que carga el operario no es la de la ca
 - Función `tiemposMedidos(obra | cliente | planta)` con la mediana de los últimos N viajes de ida, obra y vuelta.
 - La programación la usa como valor sugerido: "Medido: 32 min en obra (12 viajes)". Así el dimensionamiento de camiones se apoya en lo real.
 - Integrarlo en el formulario del pedido queda para después del merge de la Fase 2.
+- **Hecho el 08/10/2026** en [`tiempos-gps-programacion.md`](tiempos-gps-programacion.md) (`tiemposMedidos()` se reemplazó por `cargarTiemposGps()`).
 
 ## Criterios de aceptación
 1. Un día real conocido (por ejemplo 02/10, Canning, 6 despachos de H17) reconstruye 6 viajes de ese camión. Cada uno tiene salida, llegada a obra, salida de obra y vuelta con horarios razonables (sin negativos, sin ciclos de 0 o de 12 h), y se cruza con sus remitos.

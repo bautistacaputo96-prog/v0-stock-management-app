@@ -24,6 +24,39 @@ export type Parametros = {
   toleranciaMin: number
   /** Camiones que la planta puede cargar a la vez */
   bocasCarga: number
+  /**
+   * Minutos que el camión, después de volver a planta, tarda en poder cargar otra vez (esperar, lavar, papeles),
+   * además de la carga. No ocupa la boca. Sale del tiempo en planta real del GPS (tiempo en planta − carga);
+   * no se guarda en la planta. Sin valor = 0 (como antes).
+   */
+  esperaPlantaMin?: number
+  /**
+   * Tiempos reales de la planta corregidos a mano (plants.tiempos_a_mano): le ganan al GPS hasta que se vuelve a
+   * automático (se borra la clave). undefined = la columna no existe todavía (migración sin aplicar).
+   */
+  aMano?: TiemposAMano
+}
+
+/** Tiempos de la planta corregidos a mano por un gerencial (en la base: espera_planta_min, descarga_directa_min, descarga_bomba_min). */
+export type TiemposAMano = { esperaPlantaMin?: number; descargaDirectaMin?: number; descargaBombaMin?: number }
+const A_MANO_COLUMNAS = { esperaPlantaMin: "espera_planta_min", descargaDirectaMin: "descarga_directa_min", descargaBombaMin: "descarga_bomba_min" } as const
+
+/** plants.tiempos_a_mano (jsonb) → TiemposAMano (solo números válidos, ≥ 0 la espera y > 0 las descargas). */
+export function tiemposAManoDe(v: unknown): TiemposAMano | undefined {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return v === undefined ? undefined : {}
+  const o = v as Record<string, unknown>
+  const out: TiemposAMano = {}
+  for (const [k, col] of Object.entries(A_MANO_COLUMNAS) as [keyof TiemposAMano, string][]) {
+    const n = Number(o[col])
+    if (o[col] != null && o[col] !== "" && Number.isFinite(n) && (k === "esperaPlantaMin" ? n >= 0 : n > 0)) out[k] = Math.round(n)
+  }
+  return out
+}
+/** TiemposAMano → jsonb para plants.tiempos_a_mano */
+export function tiemposAManoAColumna(m: TiemposAMano): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [k, col] of Object.entries(A_MANO_COLUMNAS) as [keyof TiemposAMano, string][]) if (m[k] != null) out[col] = m[k]!
+  return out
 }
 
 export const PARAMETROS_BASE: Parametros = {
@@ -55,6 +88,8 @@ export function parametrosDePlanta(planta: Record<string, any> | null | undefine
     finJornada: hora(planta.jornada_fin, b.finJornada),
     toleranciaMin: num(planta.tolerancia_puntualidad_min, b.toleranciaMin),
     bocasCarga: Math.max(1, num(planta.bocas_carga, b.bocasCarga)),
+    // Solo si la columna existe (migración 202610081800): si no, no se manda al guardar
+    ...("tiempos_a_mano" in planta ? { aMano: tiemposAManoDe(planta.tiempos_a_mano) || {} } : {}),
   }
 }
 
@@ -69,6 +104,7 @@ export function columnasDePlanta(prm: Parametros) {
     jornada_fin: prm.finJornada,
     tolerancia_puntualidad_min: prm.toleranciaMin,
     bocas_carga: prm.bocasCarga,
+    ...(prm.aMano !== undefined ? { tiempos_a_mano: tiemposAManoAColumna(prm.aMano) } : {}),
   }
 }
 
@@ -153,6 +189,8 @@ export type Ocupado = { camionId: string; desde: number; hasta: number }
 export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE, ocupados: Ocupado[] = []): Plan {
   const inicio = aMin(prm.inicioJornada)
   const fin = aMin(prm.finJornada)
+  // Tiempo en planta después de volver, antes de poder cargar otra vez (0 = como antes)
+  const esperaPlanta = Math.max(0, Number(prm.esperaPlantaMin) || 0)
   // Cuándo queda libre cada camión en planta, y la boca de carga
   const libre = new Map(camiones.map((c) => [c.id, -Infinity]))
   const cargas: { desde: number; hasta: number }[] = []
@@ -174,7 +212,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
   }
   // Ventanas en que cada camión está en otro viaje (fuera de este plan)
   const ocup = new Map<string, { desde: number; hasta: number }[]>()
-  for (const o of ocupados) (ocup.get(o.camionId) || ocup.set(o.camionId, []).get(o.camionId)!).push({ desde: o.desde, hasta: o.hasta })
+  for (const o of ocupados) (ocup.get(o.camionId) || ocup.set(o.camionId, []).get(o.camionId)!).push({ desde: o.desde, hasta: o.hasta + esperaPlanta })
   /** Primer momento ≥ t en que el camión puede cargar sin pisar sus otros viajes (fin(x) = cuándo volvería) */
   const primerHueco = (id: string, t: number, fin: (x: number) => number) => {
     let x = t
@@ -197,10 +235,11 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
     let resto = p.m3
     const tam = p.m3PorViaje && p.m3PorViaje > 0 ? p.m3PorViaje : 8
     while (resto > 0.01) { const q = Math.min(tam, resto); cant.push(Math.round(q * 100) / 100); resto -= q }
-    const descarga8 = descargaDe(p, 8, prm)
+    // Ritmo y ciclo con un camión lleno del pedido (8 m³ salvo que el pedido diga otra cosa)
+    const descargaLleno = descargaDe(p, tam, prm)
     const espaciado = p.espaciadoMin && p.espaciadoMin > 0 ? p.espaciadoMin : null
-    const ritmo = espaciado ?? descarga8
-    const ciclo = prm.cargaMin + p.viajeMin + descarga8 + prm.lavadoMin + p.viajeMin
+    const ritmo = espaciado ?? descargaLleno
+    const ciclo = prm.cargaMin + esperaPlanta + p.viajeMin + descargaLleno + prm.lavadoMin + p.viajeMin
     const ideal = Math.min(cant.length, Math.ceil(ciclo / ritmo))
 
     let proximaLlegada = p.llegada
@@ -214,7 +253,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       const vueltaSi = (x: number) => {
         const lleg = Math.max(x + prm.cargaMin + p.viajeMin, proximaLlegada)
         const ini = finAnterior != null ? Math.max(lleg, finAnterior) : lleg
-        return ini + desc + prm.lavadoMin + p.viajeMin
+        return ini + desc + prm.lavadoMin + p.viajeMin + esperaPlanta
       }
       // Cada camión: cuándo podría cargar. Primero los que llegan a tiempo; entre ellos, el ya usado que se liberó
       // más tarde (ahorra camiones); un camión nuevo solo si ninguno usado llega.
@@ -241,7 +280,7 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
       const salidaObra = finDescarga + prm.lavadoMin
       const vuelta = salidaObra + p.viajeMin
       cargas.push({ desde: inicioCarga, hasta: salida })
-      libre.set(elegido.c.id, vuelta)
+      libre.set(elegido.c.id, vuelta + esperaPlanta)
       usados.add(elegido.c.id)
       viajes.push({ pedidoId: p.id, camionId: elegido.c.id, n: i + 1, m3, inicioCarga, salida, llegada: inicioDescarga, finDescarga, salidaObra, vuelta, esperaObra: espera })
       finAnterior = finDescarga

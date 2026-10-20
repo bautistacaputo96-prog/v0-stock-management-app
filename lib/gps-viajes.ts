@@ -752,29 +752,189 @@ export function medianasTramos(viajes: Pick<ViajeGpsFila, "min_ida" | "min_obra"
   return { ida: r(ok.map((v) => v.min_ida)), obra: r(ok.map((v) => v.min_obra)), vuelta: r(ok.map((v) => v.min_vuelta)), viajes: ok.length }
 }
 
+// --- Tiempos reales para la programación (docs/migracion-loop/tiempos-gps-programacion.md) ---
+// Se calculan en el momento desde viajes_gps (que el proceso de las 06:00 rehace cada noche): no se guardan.
+// El paso a los parámetros del planificador (descarga por 8 m³, espera en planta) está en lib/viajes.ts.
+
+/** Reglas: ventana, mínimos de viajes y valores que se descartan por absurdos (minutos o m³, ambos inclusive). */
+export const TIEMPOS_GPS = {
+  ventanaDias: 90,
+  minViajesObra: 3,
+  /** La ida y el tiempo en obra de una obra se usan con viajes de al menos estos días distintos (un solo día puede ser raro) */
+  minDiasObra: 2,
+  /** Planta: tiempo en planta y descarga directa / con bomba (decisión de Bautista 08/10: la de bomba de Canning se usa con 18) */
+  minViajesPlanta: 10,
+  enPlanta: [1, 240] as [number, number],
+  ida: [1, 180] as [number, number],
+  // Menos de 8 min no es una descarga: el GPS no vio bien la parada (pavimentos, el camión avanza descargando)
+  obra: [8, 240] as [number, number],
+  m3: [0.01, 15] as [number, number],
+  /** m³ sugeridos: al menos esta parte de los viajes a ±1 m³ de la mediana ("patrón claro") */
+  parteM3Parecidos: 2 / 3,
+  /**
+   * Una obra se usa solo si el GPS ve la descarga en al menos esta parte de sus viajes. Si no (pavimentos: el
+   * camión avanza mientras descarga y las paradas duran 5 min), su ida y su tiempo en obra no son confiables y
+   * se usa lo de la planta. Ej.: PAVIMENTO de FARIÑA, 16 de 62 viajes.
+   */
+  parteObraVisible: 0.5,
+  /** Si la lectura tarda más, se sigue sin los tiempos reales (los de la planta) */
+  esperaLecturaMs: 3000,
+}
+export type ReglasTiemposGps = typeof TIEMPOS_GPS
+
+/** Lo mínimo de un viaje GPS para los tiempos (ya filtrado: completo, alta/media, sin árido, en la ventana). */
+export type FilaTiemposGps = {
+  plant_id_salida: string
+  construction_site_id: string | null
+  min_en_planta: number | null
+  min_ida: number | null
+  min_obra: number | null
+  /** m³ del remito */
+  m3: number | null
+  metodo: "bomba" | "directo"
+  /** Para descartar el primer viaje del día de cada camión en el tiempo en planta y contar días por obra */
+  mixer_id?: string | null
+  fecha?: string | null
+  salida_planta?: string | null
+  /** undefined = no se sabe (no se descarta); null = sin llegada previa (se descarta del tiempo en planta) */
+  llegada_planta_previa?: string | null
+}
+/** Una mediana y de cuántos viajes sale. */
+export type MedidaGps = { min: number; viajes: number }
+/** Tiempo en obra (mediana) junto con los m³ típicos (mediana) de esos mismos viajes y cuántos fueron con bomba / directo. */
+export type MedidaObraGps = MedidaGps & { m3: number; bomba?: number; directo?: number }
+export type M3SugeridoGps = { m3: number; viajes: number; desde: number; hasta: number }
+export type TiemposObraGps = {
+  /** Ida real por planta de salida (la ida depende de la planta) */
+  ida: Record<string, MedidaGps>
+  obra: MedidaObraGps | null
+  m3: M3SugeridoGps | null
+}
+export type TiemposPlantaGps = { enPlanta: MedidaGps | null; directo: MedidaObraGps | null; bomba: MedidaObraGps | null }
+export type TiemposGps = { desde: string; obras: Record<string, TiemposObraGps>; plantas: Record<string, TiemposPlantaGps> }
+
+const dentro = (x: number | null | undefined, [a, b]: [number, number]): x is number => x != null && Number.isFinite(x) && x >= a && x <= b
+const r1 = (x: number) => Math.round(x * 10) / 10
+const dias = (fs: FilaTiemposGps[]) => new Set(fs.map((f) => f.fecha ?? "")).size
+
+/** Mediana de un tramo con un mínimo de viajes (y de días) válidos; nula si no alcanza. */
+function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | null, lim: [number, number], minViajes: number, minDias = 1): MedidaGps | null {
+  const v = fs.filter((f) => dentro(valor(f), lim))
+  if (v.length < minViajes || dias(v) < minDias) return null
+  return { min: Math.round(mediana(v.map((f) => valor(f)!))!), viajes: v.length }
+}
+/** Tiempo en obra + m³ típicos, de los viajes que tienen las dos cosas válidas. */
+function medidaObra(fs: FilaTiemposGps[], P: ReglasTiemposGps, minViajes: number, minDias = 1): MedidaObraGps | null {
+  const v = fs.filter((f) => dentro(f.min_obra, P.obra) && dentro(f.m3, P.m3))
+  if (v.length < minViajes || dias(v) < minDias) return null
+  const bomba = v.filter((f) => f.metodo === "bomba").length
+  return { min: Math.round(mediana(v.map((f) => f.min_obra!))!), viajes: v.length, m3: r1(mediana(v.map((f) => f.m3!))!), bomba, directo: v.length - bomba }
+}
+/** m³ por camión con un patrón claro: mediana redondeada a 0,5 y la mayoría a ±1 m³ de ella. */
+export function m3Sugerido(m3s: (number | null | undefined)[], P: ReglasTiemposGps = TIEMPOS_GPS): M3SugeridoGps | null {
+  const v = m3s.filter((x): x is number => dentro(x, P.m3))
+  if (v.length < P.minViajesObra) return null
+  const med = mediana(v)!
+  const parecidos = v.filter((x) => Math.abs(x - med) <= 1).length
+  if (parecidos < v.length * P.parteM3Parecidos) return null
+  return { m3: Math.max(0.5, Math.round(med * 2) / 2), viajes: v.length, desde: Math.min(...v), hasta: Math.max(...v) }
+}
+
 /**
- * Mediana de los últimos N viajes medidos de una obra, de un cliente o de una planta.
- * `sb` es un cliente de Supabase (navegador o servidor). Ejemplo para la programación:
- * "Medido: 32 min en obra (12 viajes)".
+ * Viajes que no cuentan para el tiempo en planta: el primero del día de cada camión (min_en_planta mide desde que
+ * arrancó el motor: mediana 65 min) y los que no tienen llegada previa a planta o la tienen de otro día.
  */
-export async function tiemposMedidos(
-  sb: any,
-  filtro: { obraId?: string; clienteId?: string; plantaId?: string },
-  n = 20,
-): Promise<TiemposMedidos> {
-  let q = sb
-    .from("viajes_gps")
-    .select("min_ida, min_obra, min_vuelta, estado, dispatches!inner(client_id)")
-    .eq("estado", "completo")
-    .in("confianza", ["alta", "media"])
-    .order("salida_planta", { ascending: false })
-    .limit(n)
-  if (filtro.obraId) q = q.eq("construction_site_id", filtro.obraId)
-  if (filtro.clienteId) q = q.eq("dispatches.client_id", filtro.clienteId)
-  if (filtro.plantaId) q = q.eq("plant_id_salida", filtro.plantaId)
-  const { data, error } = await q
-  if (error) throw error
-  return medianasTramos(data || [])
+export function noCuentaEnPlanta(filas: FilaTiemposGps[]): Set<FilaTiemposGps> {
+  const fuera = new Set<FilaTiemposGps>()
+  const primero = new Map<string, FilaTiemposGps>()
+  for (const f of filas) {
+    if (f.llegada_planta_previa === null) fuera.add(f)
+    else if (f.llegada_planta_previa && f.fecha && fechaAR(f.llegada_planta_previa) !== f.fecha) fuera.add(f)
+    if (!f.mixer_id || !f.fecha || !f.salida_planta) continue
+    const k = `${f.mixer_id}|${f.fecha}`
+    const otro = primero.get(k)
+    if (!otro || f.salida_planta < otro.salida_planta!) primero.set(k, f)
+  }
+  for (const f of primero.values()) fuera.add(f)
+  return fuera
+}
+
+/** Tiempos reales por obra y por planta a partir de los viajes GPS (lógica pura). */
+export function calcularTiemposGps(filas: FilaTiemposGps[], desde = "", P: ReglasTiemposGps = TIEMPOS_GPS): TiemposGps {
+  const porObra = new Map<string, FilaTiemposGps[]>()
+  const porPlanta = new Map<string, FilaTiemposGps[]>()
+  for (const f of filas) {
+    if (f.construction_site_id) (porObra.get(f.construction_site_id) || porObra.set(f.construction_site_id, []).get(f.construction_site_id)!).push(f)
+    if (f.plant_id_salida) (porPlanta.get(f.plant_id_salida) || porPlanta.set(f.plant_id_salida, []).get(f.plant_id_salida)!).push(f)
+  }
+  const obras: Record<string, TiemposObraGps> = {}
+  for (const [id, fs] of porObra) {
+    const ida: Record<string, MedidaGps> = {}
+    const visible = fs.filter((f) => dentro(f.min_obra, P.obra)).length >= fs.length * P.parteObraVisible
+    for (const pl of visible ? new Set(fs.map((f) => f.plant_id_salida)) : []) {
+      const m = medida(fs.filter((f) => f.plant_id_salida === pl), (f) => f.min_ida, P.ida, P.minViajesObra, P.minDiasObra)
+      if (m) ida[pl] = m
+    }
+    const obra = visible ? medidaObra(fs, P, P.minViajesObra, P.minDiasObra) : null
+    const m3 = m3Sugerido(fs.map((f) => f.m3), P)
+    if (Object.keys(ida).length || obra || m3) obras[id] = { ida, obra, m3 }
+  }
+  const fuera = noCuentaEnPlanta(filas)
+  const plantas: Record<string, TiemposPlantaGps> = {}
+  for (const [id, fs] of porPlanta) {
+    plantas[id] = {
+      enPlanta: medida(fs.filter((f) => !fuera.has(f)), (f) => f.min_en_planta, P.enPlanta, P.minViajesPlanta),
+      directo: medidaObra(fs.filter((f) => f.metodo === "directo"), P, P.minViajesPlanta),
+      bomba: medidaObra(fs.filter((f) => f.metodo === "bomba"), P, P.minViajesPlanta),
+    }
+  }
+  return { desde, obras, plantas }
+}
+
+/** Fila de la consulta de cargarTiemposGps → FilaTiemposGps (nula si es un despacho por árido). */
+export function filaTiemposDeConsulta(x: any): FilaTiemposGps | null {
+  const d = Array.isArray(x.dispatches) ? x.dispatches[0] : x.dispatches
+  if (d?.is_test_dispatch) return null
+  const sd = d ? (Array.isArray(d.scheduled_dispatches) ? d.scheduled_dispatches[0] : d.scheduled_dispatches) : null
+  const cs = Array.isArray(x.construction_sites) ? x.construction_sites[0] : x.construction_sites
+  const num = (v: any) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v))
+  const metodo = (sd?.metodo_descarga || (cs?.requires_pump ? "bomba" : "directo")) === "bomba" ? "bomba" : "directo"
+  return {
+    plant_id_salida: x.plant_id_salida, construction_site_id: x.construction_site_id ?? null,
+    min_en_planta: num(x.min_en_planta), min_ida: num(x.min_ida), min_obra: num(x.min_obra), m3: num(d?.quantity_m3), metodo,
+    mixer_id: x.mixer_id ?? null, fecha: x.fecha ? String(x.fecha).slice(0, 10) : null, salida_planta: x.salida_planta ?? null,
+    // Sin la columna en la consulta queda undefined (no se descarta); null = el viaje no tiene llegada previa
+    llegada_planta_previa: "llegada_planta_previa" in x ? x.llegada_planta_previa ?? null : undefined,
+  }
+}
+
+let cacheTiempos: { en: number; p: Promise<TiemposGps | null> } | null = null
+const CACHE_TIEMPOS_MS = 10 * 60_000
+
+/**
+ * Tiempos reales de los últimos 90 días (solo lectura). Se guardan 10 min en memoria: viajes_gps cambia una vez por
+ * noche. Si la tabla no se puede leer, tarda más de 3 s o no trae nada (por ejemplo, con RLS sin permiso de lectura)
+ * devuelve null, no se guarda, y la programación sigue con los tiempos de la planta.
+ */
+export function cargarTiemposGps(sb: any, opts: { refrescar?: boolean; hoy?: string; esperaMs?: number } = {}): Promise<TiemposGps | null> {
+  if (!opts.refrescar && cacheTiempos && Date.now() - cacheTiempos.en < CACHE_TIEMPOS_MS) return cacheTiempos.p
+  const desde = sumarDias(opts.hoy || fechaAR(new Date()), -TIEMPOS_GPS.ventanaDias)
+  // El pedido se pide por la FK del remito (scheduled_dispatches también tiene dispatch_id: sin el nombre es ambiguo)
+  const lectura = todasLasFilas((a, b) =>
+    sb.from("viajes_gps")
+      .select("mixer_id, fecha, salida_planta, llegada_planta_previa, plant_id_salida, construction_site_id, min_en_planta, min_ida, min_obra, dispatches(quantity_m3, is_test_dispatch, scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(metodo_descarga)), construction_sites(requires_pump)")
+      .eq("estado", "completo").in("confianza", ["alta", "media"]).gte("fecha", desde)
+      .order("salida_planta").order("mixer_id").range(a, b),
+  )
+    .then((rows) => (rows.length ? calcularTiemposGps(rows.map(filaTiemposDeConsulta).filter((f): f is FilaTiemposGps => !!f), desde) : null))
+    .catch(() => null)
+  let reloj: ReturnType<typeof setTimeout> | undefined
+  const tarde = new Promise<null>((r) => { reloj = setTimeout(() => r(null), opts.esperaMs ?? TIEMPOS_GPS.esperaLecturaMs) })
+  const p = Promise.race([lectura, tarde]).finally(() => clearTimeout(reloj))
+  cacheTiempos = { en: Date.now(), p }
+  // Un error, una demora o una lectura vacía no quedan guardados: la próxima vez se vuelve a intentar
+  p.then((t) => { if (!t && cacheTiempos?.p === p) cacheTiempos = null })
+  return p
 }
 
 // ---------------------------------------------------------------------------
