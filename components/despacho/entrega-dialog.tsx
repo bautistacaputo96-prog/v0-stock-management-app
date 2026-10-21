@@ -31,6 +31,9 @@ import type { ControlReceta } from "@/lib/carga/receta"
 import type { CamionT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 
 export type EntregaAbierta = { pedido: PedidoT; viajeClave: string | null; camionId: string }
+
+/** Si la planta tiene puesto de carga que recibe órdenes (se recuerda entre aperturas, para que la Entrega no salte) */
+const puestoPorPlanta = new Map<string, boolean>()
 export type ResultadoDespacho = {
   id: string
   pedidoId: string
@@ -137,6 +140,7 @@ export function EntregaDialog({
     const vuelta = ++vueltaPlanta.current
     // Sin puesto de carga en etapa B o C (o sin la migración), no aparece nada y el despacho es el de siempre
     cargarPuesto(sb, planta.id).then(async (pu) => {
+      puestoPorPlanta.set(planta.id, mandaOrdenes(pu))
       if (!mandaOrdenes(pu)) return
       const [ctx, fs] = await Promise.all([cargarContexto(sb, pu!), cargarFormulas(sb, ped.formula_id ? [ped.formula_id] : [])])
       if (vuelta !== vueltaPlanta.current) return
@@ -180,6 +184,9 @@ export function EntregaDialog({
   const m3n = num(form.m3), fibra = num(form.fibraKgM3)
   // Con la receta que frena la carga, hay que tildar "¿Despachar igual?" (carga-planta.md 20.1)
   const frenadaFalta = !!enPlanta?.ctl.frena && !frenadaOk
+  // Mientras se controla "En la planta", se muestra la versión con puesto de carga (sin el agua, con "Sacar muestra"),
+  // salvo que ya se sepa que esta planta no tiene: así la Entrega no salta al terminar de cargar (22/10)
+  const modoPlanta = !!enPlanta || (cargandoPlanta && puestoPorPlanta.get(planta.id) !== false)
 
   function elegirTipo(t: TipoRemito) {
     const origen: OrigenTipo = sinDefinir ? "pregunta" : "manual"
@@ -322,6 +329,9 @@ export function EntregaDialog({
             </div>
           )}
 
+          {cargandoPlanta && modoPlanta && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-l-[3px] px-2.5 py-1.5 text-[12.5px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> <b className="text-foreground">En la planta</b> · controlando la receta…</div>
+          )}
           {enPlanta && (() => {
             const c = enPlanta.ctl
             const items = c.items.filter((i) => ["receta", "agua", "tolva"].includes(i.clave))
@@ -401,7 +411,7 @@ export function EntregaDialog({
             </div>
             {/* Con carga de planta, el agua extra se registra en la carga ("Extra agua", 21/10 · 6): acá no va.
                 registrar_despacho recibe 0 como siempre (extra_water_liters). */}
-            {!enPlanta && (
+            {!modoPlanta && (
               <div className="space-y-1">
                 <Label>Agua extra en planta (litros)</Label>
                 <Input className="h-[30px] text-[13px]" inputMode="numeric" value={form.agua} onChange={(e) => set({ agua: e.target.value })} />
@@ -430,7 +440,7 @@ export function EntregaDialog({
             )}
           </div>
 
-          {enPlanta ? (
+          {modoPlanta ? (
             // Con carga de planta, la muestra se carga al terminar la carga (respuestas 21/10 · 5): acá solo el aviso
             <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-1.5">
               <div><div className="font-bold">Sacar muestra a este camión</div><div className="text-xs text-muted-foreground">Es un aviso para la planta. El número y el asentamiento se cargan al terminar la carga («¿Se sacó muestra?»).</div></div>

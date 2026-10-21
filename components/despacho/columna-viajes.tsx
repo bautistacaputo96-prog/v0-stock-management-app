@@ -13,7 +13,7 @@
  * dedo, dejarlo apretado un momento (sin manija, para que la fila entre en una tarjeta angosta).
  */
 import { useState } from "react"
-import { atraso, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
+import { atraso, atrasoCorto, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { cn } from "@/lib/utils"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
@@ -92,7 +92,7 @@ export function ColumnaViajes({
               className={cn(
                 "d3c-card relative select-none rounded-md border border-l-[2px] border-l-violet-300 bg-card",
                 puedeDespachar && "cursor-pointer",
-                at.tipo === "atrasado" && "border-l-red-600",
+                at.tipo === "atrasado" && (at.min > 180 ? "border-l-slate-400" : at.min >= 60 ? "border-l-red-400" : "border-l-red-600"),
                 at.tipo === "ahora" && "border-l-amber-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
@@ -103,7 +103,10 @@ export function ColumnaViajes({
                 <div className="min-w-0 flex-1 leading-tight">
                   <div className="flex items-baseline gap-1.5 text-[12px]">
                     <span className="w-[30px] shrink-0 text-[11px] tabular-nums text-muted-foreground" title={at.texto || `Carga ${hhmm(v.hora_carga)} · viaje ${v.n}/${totalPorPedido[v.pedido_id] || "?"}`}>{hhmm(v.hora_carga)}</span>
-                    {at.tipo === "atrasado" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums text-red-700" title={at.texto || undefined}><i className="inline-block h-[5px] w-[5px] rounded-full bg-red-600" />+{at.min}&apos;</span>}
+                    {at.tipo === "atrasado" && (() => {
+                      const ac = atrasoCorto(at.min)
+                      return <span className={cn("inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums", ac.tono === "rojo" ? "text-red-700" : ac.tono === "suave" ? "text-red-600/80" : "text-muted-foreground")} title={at.texto || undefined}><i className={cn("inline-block h-[5px] w-[5px] rounded-full", ac.tono === "gris" ? "bg-slate-400" : ac.tono === "suave" ? "bg-red-400" : "bg-red-600")} />{ac.texto}</span>
+                    })()}
                     {at.tipo === "ahora" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums text-amber-800" title={at.texto || undefined}><i className="inline-block h-[5px] w-[5px] rounded-full bg-amber-500" />{at.min > 0 ? `${at.min}'` : "ya"}</span>}
                     <span className="min-w-0 truncate font-medium">{p.construction_sites?.name || "Obra"}</span>
                     <span className="ml-auto shrink-0 tabular-nums">{m3txt(v.m3)} m³</span>
@@ -130,7 +133,7 @@ export function ColumnaViajes({
                 </button>
                 {puedeDespachar && (
                   <button
-                    className="h-6 shrink-0 rounded border border-blue-300 bg-transparent px-2 text-[11.5px] text-blue-800 hover:bg-blue-50"
+                    className="h-[22px] shrink-0 rounded border border-transparent bg-transparent px-1.5 text-[11.5px] text-blue-800 hover:border-blue-300 hover:bg-blue-50"
                     onClick={(e) => { e.stopPropagation(); onDespachar(v.clave) }}
                   >
                     Despachar
