@@ -12,6 +12,7 @@ import { toast } from "sonner"
 import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { BuscarZomatik } from "@/components/zomatik/buscar-zomatik"
 
 interface AddClientDialogProps {
   plantId: string
@@ -133,6 +134,16 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
               required
             />
           </div>
+          {/* Zomatik Z0: si ya está en Rebucret, avisa; si está en Zomatik, se trae (no se escribe en Zomatik) */}
+          <BuscarZomatik
+            texto={formData.razon_social}
+            plantId={plantId}
+            onTraido={(c) => {
+              setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "", remito_tipo: "" })
+              setOpen(false)
+              onClientAdded?.(c)
+            }}
+          />
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="cuit">CUIT *</Label>

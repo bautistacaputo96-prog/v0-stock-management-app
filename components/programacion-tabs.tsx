@@ -1,11 +1,15 @@
 "use client"
 
-/** Programación: el calendario semanal de siempre y la vista del día que ordena los camiones. */
+/**
+ * Programación: el calendario semanal de siempre y la vista del día que ordena los camiones.
+ * Abajo de las dos vistas, el bloque "Acopios" (proyectos de Zomatik, solo lectura: etapa Z0).
+ */
 import { useState, useEffect } from "react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CalendarDays, CalendarClock } from "lucide-react"
 import { DispatchScheduling } from "@/components/dispatch-scheduling"
 import { ProgramacionDia } from "@/components/programacion-dia"
+import { AcopiosBloque } from "@/components/zomatik/acopios-bloque"
 
 type Plant = { id: string; name: string }
 
@@ -22,6 +26,7 @@ export function ProgramacionTabs({ plants }: { plants: Plant[] }) {
         </TabsList>
       </Tabs>
       {vista === "semana" ? <DispatchScheduling plants={plants as any} /> : <ProgramacionDia plants={plants} />}
+      <AcopiosBloque />
     </div>
   )
 }

@@ -18,6 +18,7 @@ import { Plus, Pencil, Search, Trash2 } from "lucide-react"
 import { usePermisos } from "@/lib/current-user"
 import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
+import { BuscarZomatik } from "@/components/zomatik/buscar-zomatik"
 
 type Client = {
   id: string
@@ -568,6 +569,16 @@ export function ClientsManagement() {
                     placeholder="Ej: GARCÍA JUAN CARLOS"
                   />
                 </div>
+                {/* Zomatik Z0: avisa si ya está y permite traerlo de Zomatik (no se escribe en Zomatik) */}
+                {!editingClient && (
+                  <BuscarZomatik
+                    texto={clientForm.razon_social}
+                    onTraido={() => {
+                      setIsClientDialogOpen(false)
+                      loadClients()
+                    }}
+                  />
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label>CUIT <span className="text-destructive">*</span></Label>

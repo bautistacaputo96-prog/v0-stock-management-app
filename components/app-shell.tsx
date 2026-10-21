@@ -23,6 +23,7 @@ import {
   MapPinned,
   KeyRound,
   UserCog,
+  Link2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePermisos } from "@/lib/current-user"
@@ -271,6 +272,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           <ShieldCheck className="h-[18px] w-[18px] flex-shrink-0" />
           <span>Actividad</span>
+        </Link>
+      )}
+
+      {esGerencial && (
+        <Link
+          href="/zomatik"
+          onClick={() => isMobile && setMobileOpen(false)}
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+            isActive("/zomatik")
+              ? "bg-[#1e293b] text-white"
+              : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
+          )}
+        >
+          <Link2 className="h-[18px] w-[18px] flex-shrink-0" />
+          <span>Vínculos Zomatik</span>
         </Link>
       )}
     </div>
