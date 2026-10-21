@@ -1,21 +1,21 @@
 "use client"
 
 /**
- * 22/10: sin negritas (solo la obra en peso 500), 12 px y 11 px. Línea 1: hora chica · obra · m³ a la derecha; línea 2,
- * en gris: cliente · fórmula · finalidad · bomba/directo · R/X. El atraso, un punto y "+15'" chicos (y la franja roja).
- * Despachar, chico y con borde. El ▾ muestra solo lo útil para despachar (dirección y mapa, observaciones, bomba,
- * contacto de obra y fibra).
- * Columna Viajes, compacta (21/10, Bautista: "que entre mucha más información sin scrollear", pensada para PC): una
- * fila de dos líneas por viaje con todo lo que importa a la vista (hora, obra, cliente, m³, R/X, estado / fórmula,
- * finalidad, bomba o directo). Lo que se achicó es el espacio, no los datos. El resto (dirección, horarios, camión
- * sugerido completo) se despliega con ▾.
- * Tocar la fila la elige (para tocar después el camión). Para arrastrarla: con el mouse, moverla apretada; con el
- * dedo, dejarlo apretado un momento (sin manija, para que la fila entre en una tarjeta angosta).
+ * Columna Viajes como los "Tickets" de Loop (22/10, Bautista: "copiar exactamente cómo lo hace Loop"):
+ * - fila 1, chica y gris: número de pedido (y la bomba, si es bombeado) · 👍 si está confirmado y n/N; una línea finita;
+ * - fila 2: cliente · "8 m³ › 14:13" (m³ del viaje y hora de carga), en 13 px y peso 500;
+ * - fila 3, en gris: la obra; fila 4, gris chico: la fórmula · 📋 (observaciones, con tooltip) y ⋮ (menú);
+ * - tarjeta gris clara con borde fino y barra violeta a la derecha; atrasado = todo el borde en rojo, sin texto.
+ * Sin botón Despachar: se despacha arrastrando la tarjeta al camión, tocando la tarjeta y después el camión, o desde
+ * ⋮ › Despachar. Con el mouse se arrastra apretada; con el dedo, dejándola apretada un momento.
  */
 import { useState } from "react"
-import { atraso, atrasoCorto, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
+import { ClipboardList, ThumbsUp, Truck } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { atraso, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { cn } from "@/lib/utils"
+import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 
 export function MarcaTipo({ tipo, className }: { tipo: TipoRemito | null | undefined; className?: string }) {
@@ -28,7 +28,7 @@ export function MarcaTipo({ tipo, className }: { tipo: TipoRemito | null | undef
 }
 
 export function ColumnaViajes({
-  viajes, pedidos, totalPorPedido, tipos, empresas, enPausa, ahora, esHoy, puedeDespachar, elegido, patentes,
+  viajes, pedidos, totalPorPedido, tipos, empresas, enPausa, ahora, esHoy, puedeDespachar, elegido, patentes, numeroPedido,
   onDespachar, onTocar, onPointerDown, recienSoltado, onSoltar, plantaNombre,
 }: {
   viajes: ViajeT[]
@@ -42,6 +42,8 @@ export function ColumnaViajes({
   puedeDespachar: boolean
   elegido: string | null
   patentes: Record<string, string>
+  /** número del pedido en el día (como el número de pedido de Loop) */
+  numeroPedido: Record<string, number>
   onDespachar: (clave: string) => void
   onTocar: (clave: string) => void
   onPointerDown: (e: React.PointerEvent, clave: string, manija?: boolean) => void
@@ -49,9 +51,13 @@ export function ColumnaViajes({
   onSoltar: () => void
   plantaNombre: string
 }) {
-  const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
+  const [buscar, setBuscar] = useState("")
   const atrasados = esHoy ? viajes.filter((v) => atraso(v.hora_carga, ahora).tipo === "atrasado").length : 0
   const sel = elegido ? viajes.find((v) => v.clave === elegido) : null
+  const lista = viajes.filter((v) => {
+    const p = pedidos[v.pedido_id]
+    return !!p && coincide(buscar, numeroPedido[p.id], p.clients?.name, p.construction_sites?.name, p.formulas?.code, p.finalidad, hhmm(v.hora_carga))
+  })
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
@@ -61,7 +67,8 @@ export function ColumnaViajes({
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">por hora de carga</span>
       </div>
-      <div className="flex flex-1 flex-col gap-[3px] overflow-auto p-1.5">
+      <Buscador valor={buscar} onCambio={setBuscar} />
+      <div className="flex flex-1 flex-col gap-1 overflow-auto p-1.5">
         {sel && (
           <div className="flex items-center gap-2 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] text-blue-900">
             <span className="min-w-0 flex-1 truncate">Elegido: {sel.n}/{totalPorPedido[sel.pedido_id] || "?"} · {pedidos[sel.pedido_id]?.construction_sites?.name}. Tocá un camión.</span>
@@ -69,96 +76,78 @@ export function ColumnaViajes({
           </div>
         )}
         {!viajes.length && <div className="py-6 text-center text-xs text-muted-foreground">No quedan viajes por despachar en {plantaNombre}.</div>}
-        {viajes.map((v) => {
-          const p = pedidos[v.pedido_id]
-          if (!p) return null
+        {viajes.length > 0 && !lista.length && <div className="py-6 text-center text-xs text-muted-foreground">Nada coincide con «{buscar}».</div>}
+        {lista.map((v) => {
+          const p = pedidos[v.pedido_id]!
           const at = esHoy ? atraso(v.hora_carga, ahora) : { tipo: null, texto: null, min: 0 }
           const tipo = tipos[p.id]?.tipo ?? null
           const bomba = p.metodo_descarga === "bomba"
           const sug = v.mixer_id ? patentes[v.mixer_id] : null
-          const abierto = !!abiertos[v.clave]
+          const o = p.construction_sites
+          const mapa = o?.gps_lat != null && o?.gps_lng != null ? `https://www.google.com/maps?q=${o.gps_lat},${o.gps_lng}`
+            : o?.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.address, o.localidad].filter(Boolean).join(", "))}` : null
+          // Lo que no entra en la tarjeta va en el tooltip (como Loop): dirección, finalidad, bomba, fibra, R/X, contacto
+          const detalle = [
+            o?.address ? [o.address, o.localidad].filter(Boolean).join(", ") : null,
+            p.finalidad ? `Finalidad: ${p.finalidad}` : null,
+            bomba ? textoBomba(p, empresas, "Bomba") : "Directo",
+            Number(p.fiber_kg_per_m3) > 0 ? `Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : null,
+            tipo ? `Remito ${tipo} (${TIPO_TEXTO[tipo].toLowerCase()})` : "R/X: se pregunta al despachar",
+            [o?.site_contact, o?.site_phone].filter(Boolean).join(" · ") || null,
+            sug ? `Camión sugerido: ${sug}` : null,
+            at.texto,
+            v.calculado ? "Viajes calculados (el pedido no los tiene guardados)" : null,
+          ].filter(Boolean).join("\n")
           return (
             <div
               key={v.clave}
               data-viaje={v.clave}
+              title={detalle}
               onPointerDown={(e) => onPointerDown(e, v.clave)}
               onClick={(e) => {
                 if (recienSoltado.current) return
-                if ((e.target as HTMLElement).closest("button")) return
+                if ((e.target as HTMLElement).closest("button,a,[role=menuitem]")) return
                 onTocar(v.clave)
               }}
               onContextMenu={(e) => e.preventDefault()}
               style={{ touchAction: "pan-y", WebkitTouchCallout: "none" } as React.CSSProperties}
               className={cn(
-                "d3c-card relative select-none rounded-md border border-l-[2px] border-l-violet-300 bg-card",
+                "d3c-card relative select-none rounded-md border border-r-[3px] border-slate-200 border-r-violet-700 bg-slate-50 px-2 py-1 leading-tight",
                 puedeDespachar && "cursor-pointer",
-                at.tipo === "atrasado" && (at.min > 180 ? "border-l-slate-400" : at.min >= 60 ? "border-l-red-400" : "border-l-red-600"),
-                at.tipo === "ahora" && "border-l-amber-500",
+                at.tipo === "atrasado" && "border-red-400 border-r-red-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
             >
-              <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-1">
-                {/* 22/10: sin negritas (solo la obra en 500), 12 px y 11 px. Línea 1: hora · obra · m³. Línea 2, en gris:
-                    cliente · fórmula · finalidad · bomba/directo · R/X */}
-                <div className="min-w-0 flex-1 leading-tight">
-                  <div className="flex items-baseline gap-1.5 text-[12px]">
-                    <span className="w-[30px] shrink-0 text-[11px] tabular-nums text-muted-foreground" title={at.texto || `Carga ${hhmm(v.hora_carga)} · viaje ${v.n}/${totalPorPedido[v.pedido_id] || "?"}`}>{hhmm(v.hora_carga)}</span>
-                    {at.tipo === "atrasado" && (() => {
-                      const ac = atrasoCorto(at.min)
-                      return <span className={cn("inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums", ac.tono === "rojo" ? "text-red-700" : ac.tono === "suave" ? "text-red-600/80" : "text-muted-foreground")} title={at.texto || undefined}><i className={cn("inline-block h-[5px] w-[5px] rounded-full", ac.tono === "gris" ? "bg-slate-400" : ac.tono === "suave" ? "bg-red-400" : "bg-red-600")} />{ac.texto}</span>
-                    })()}
-                    {at.tipo === "ahora" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums text-amber-800" title={at.texto || undefined}><i className="inline-block h-[5px] w-[5px] rounded-full bg-amber-500" />{at.min > 0 ? `${at.min}'` : "ya"}</span>}
-                    <span className="min-w-0 truncate font-medium">{p.construction_sites?.name || "Obra"}</span>
-                    <span className="ml-auto shrink-0 tabular-nums">{m3txt(v.m3)} m³</span>
-                  </div>
-                  <div className="truncate pl-[36px] text-[11px] text-muted-foreground">
-                    {p.clients?.name}
-                    {` · ${p.formulas?.code || ""}`}
-                    {p.finalidad ? ` · ${p.finalidad}` : ""}
-                    {bomba ? " · bomba" : " · directo"}
-                    {` · ${tipo || "R/X?"}`}
-                    {Number(p.fiber_kg_per_m3) > 0 ? " · fibra" : ""}
-                    {p.confirmado_at ? " · 👍" : ""}
-                    {sug ? ` · sug. ${sug}` : ""}
-                    {` · ${v.n}/${totalPorPedido[v.pedido_id] || "?"}`}
-                  </div>
-                </div>
-                <button
-                  className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[11px] text-muted-foreground hover:bg-muted"
-                  title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
-                  aria-expanded={abierto}
-                  onClick={(e) => { e.stopPropagation(); setAbiertos((a) => ({ ...a, [v.clave]: !a[v.clave] })) }}
-                >
-                  {abierto ? "▴" : "▾"}
-                </button>
-                {puedeDespachar && (
-                  <button
-                    className="h-[22px] shrink-0 rounded border border-transparent bg-transparent px-1.5 text-[11.5px] text-blue-800 hover:border-blue-300 hover:bg-blue-50"
-                    onClick={(e) => { e.stopPropagation(); onDespachar(v.clave) }}
-                  >
-                    Despachar
-                  </button>
-                )}
+              {/* Fila 1: número de pedido (y bomba) · 👍 y n/N */}
+              <div className="flex items-center gap-1 border-b border-slate-200 pb-0.5 text-[11px] text-slate-500">
+                <span className="tabular-nums">{numeroPedido[p.id] ?? "—"}</span>
+                {bomba && <Truck className="h-3 w-3 text-blue-600" aria-label="bombeado" />}
+                <span className="flex-1" />
+                {p.confirmado_at && <ThumbsUp className="h-3 w-3 fill-blue-600 text-blue-600" aria-label="confirmado" />}
+                <span className="tabular-nums">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>
               </div>
-              {abierto && (() => {
-                // Solo lo útil para despachar: dirección (con el mapa), observaciones, bomba, contacto de obra y fibra
-                const o = p.construction_sites
-                const mapa = o?.gps_lat != null && o?.gps_lng != null ? `https://www.google.com/maps?q=${o.gps_lat},${o.gps_lng}`
-                  : o?.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.address, o.localidad].filter(Boolean).join(", "))}` : null
-                const contacto = [o?.site_contact, o?.site_phone].filter(Boolean).join(" · ")
-                return (
-                  <div className="space-y-0.5 border-t px-2 py-1 text-[11px] leading-snug text-muted-foreground">
-                    <div>
-                      {o?.address ? [o.address, o.localidad].filter(Boolean).join(", ") : "Sin dirección cargada"}
-                      {mapa && <> · <a href={mapa} target="_blank" rel="noreferrer" className="text-blue-800 underline" onClick={(e) => e.stopPropagation()}>mapa</a></>}
-                    </div>
-                    {p.observations && <div>Obs.: {p.observations}</div>}
-                    {bomba && <div>{textoBomba(p, empresas, "Bomba")}</div>}
-                    {contacto && <div>Contacto de obra: {contacto}</div>}
-                    {Number(p.fiber_kg_per_m3) > 0 && <div>Lleva fibra: {m3txt(p.fiber_kg_per_m3)} kg/m³</div>}
-                  </div>
-                )
-              })()}
+              {/* Fila 2: cliente · m³ › hora de carga */}
+              <div className="mt-0.5 flex items-baseline gap-2 text-[13px] font-medium">
+                <span className="min-w-0 flex-1 truncate">{p.clients?.name || "Cliente"}</span>
+                <span className="shrink-0 tabular-nums">{m3txt(v.m3)} m³ <span className="font-normal text-slate-400">›</span> {hhmm(v.hora_carga)}</span>
+              </div>
+              {/* Fila 3: obra */}
+              <div className="truncate text-[12px] text-slate-500">{o?.name || "Obra"}</div>
+              {/* Fila 4: fórmula · 📋 · ⋮ */}
+              <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                <span className="min-w-0 flex-1 truncate">{p.formulas?.code}</span>
+                {p.observations && <span title={p.observations} className="shrink-0"><ClipboardList className="h-3.5 w-3.5" aria-label="observaciones" /></span>}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="h-5 w-5 shrink-0 rounded text-[13px] leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[200px]">
+                    {puedeDespachar && <DropdownMenuItem className="min-h-[30px]" onClick={() => onDespachar(v.clave)}>Despachar</DropdownMenuItem>}
+                    {mapa && <DropdownMenuItem className="min-h-[30px]" onClick={() => window.open(mapa, "_blank")}>Ver la obra en el mapa</DropdownMenuItem>}
+                    {p.observations && <DropdownMenuItem disabled className="whitespace-normal text-[12px]">Obs.: {p.observations}</DropdownMenuItem>}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
           )
         })}

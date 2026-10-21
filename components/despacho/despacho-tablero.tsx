@@ -249,6 +249,11 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   // ── Derivados ──
   const prmDePlanta = useCallback((id: string) => (plantasFull[id] ? parametrosDePlanta(plantasFull[id]) : PARAMETROS_BASE), [plantasFull])
   const pedidosPorId = useMemo(() => Object.fromEntries(pedidos.map((p) => [p.id, p])), [pedidos])
+  // Número de pedido del día (como el de Loop): por hora pedida. Cuando esté Zomatik, la NP.
+  const numeroPedido = useMemo(() => {
+    const o = [...pedidos].sort((a, b) => new Date(a.scheduled_arrival_time).getTime() - new Date(b.scheduled_arrival_time).getTime() || String((a as any).created_at || "").localeCompare(String((b as any).created_at || "")))
+    return Object.fromEntries(o.map((p, i) => [p.id, i + 1])) as Record<string, number>
+  }, [pedidos])
   const viajes = useMemo(() => viajesDelDia(pedidos, viajesPorPedido, prmDePlanta, tiempos), [pedidos, viajesPorPedido, prmDePlanta, tiempos])
   const pendientes = useMemo(() => viajesPendientes(viajes, pedidos), [viajes, pedidos])
   const enPausa = useMemo(() => viajesEnPausa(viajes, pedidos), [viajes, pedidos])
@@ -260,6 +265,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const totalPorPedido = useMemo(() => Object.fromEntries(Object.entries(viajesDePedido).map(([k, vs]) => [k, vs.filter((v) => v.estado !== "cancelado").length])), [viajesDePedido])
   const despachosPlanta = useMemo(() => despachosDia.filter((d) => d.plant_id === planta), [despachosDia, planta])
   const contadores = useMemo(() => contadoresDia(pedidos, despachosPlanta, viajes), [pedidos, despachosPlanta, viajes])
+  // Adicional (como Loop): lo despachado sin pedido programado (despacho manual)
+  const adicional = useMemo(() => Math.round(despachosPlanta.filter((d) => !d.scheduled_dispatch_id && !d.is_test_dispatch).reduce((s, d) => s + Number(d.quantity_m3 || 0), 0) * 100) / 100, [despachosPlanta])
   const choferPorId = useMemo(() => Object.fromEntries(choferes.map((c) => [c.id, c.nombre])), [choferes])
   const patentes = useMemo(() => Object.fromEntries(mixers.map((m) => [m.id, m.license_plate])), [mixers])
 
@@ -588,7 +595,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     viajes: (
       <ColumnaViajes
         viajes={pendientes} pedidos={pedidosPorId} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} enPausa={enPausa}
-        ahora={ahora} esHoy={esHoy} puedeDespachar={puedeDespachar} elegido={selViaje} patentes={patentes}
+        ahora={ahora} esHoy={esHoy} puedeDespachar={puedeDespachar} elegido={selViaje} patentes={patentes} numeroPedido={numeroPedido}
         onDespachar={despacharViaje} onTocar={tocarViaje} onPointerDown={arrastre.empezar} recienSoltado={arrastre.recienSoltado}
         onSoltar={soltarSeleccion} plantaNombre={plantaObj.name}
       />
@@ -603,7 +610,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     ),
     pedidos: (
       <ColumnaPedidos
-        pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad}
+        pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad} numeroPedido={numeroPedido}
         permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}
@@ -620,6 +627,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background/95 px-3 py-1.5 backdrop-blur">
         <h1 className="text-base font-semibold">Despacho</h1>
         <NuevoBadge />
+        <ContadoresDia c={contadores} adicional={adicional} />
+        <span className="text-[11px] text-muted-foreground">{contadores.viajesDespachados} de {contadores.viajesTotal} viajes</span>
         <div className="inline-flex rounded-md border p-0.5">
           {plants.map((p) => (
             <button key={p.id} onClick={() => elegirPlanta(p.id)} className={cn("h-7 rounded px-2.5 text-[13px]", planta === p.id ? "bg-muted font-semibold text-foreground" : "text-muted-foreground")}>{p.name}</button>
@@ -644,7 +653,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         {onPantallaVieja && <Button variant="ghost" className="h-8 px-2.5 text-[13px] text-muted-foreground" onClick={onPantallaVieja}>Pantalla de siempre</Button>}
       </div>
 
-      <ContadoresDia c={contadores} extra={<span className="text-amber-800">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</span>} />
+      <div className="text-[11px] text-amber-800">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</div>
 
       {angosta && (
         <div className="flex gap-1">

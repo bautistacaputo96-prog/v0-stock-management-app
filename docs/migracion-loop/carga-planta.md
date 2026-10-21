@@ -993,6 +993,17 @@ Sigue abierta 19.12.4: ¿alcanza el indicador en la tarjeta del camión? La reco
 4. **El ▾ del viaje** muestra solo lo útil para despachar: dirección de la obra (con link al mapa si hay ubicación o dirección), observaciones del pedido, bomba (empresa y hora), contacto de obra (`site_contact`, `site_phone`) y si lleva fibra. Se sacaron los tiempos (carga, salida, llegada, vuelta) y lo demás. "Sacar muestra" no tiene dato en el pedido: se marca en la Entrega (punto 22).
 5. Camiones y Pedidos con el mismo criterio: botones de 24 px, 11–12 px, sin negrita.
 
+## 25. Respuestas de Bautista (22/10/2026, 2) — las tarjetas del despacho, copiadas de Loop
+
+Bautista pidió copiar exactamente cómo lo hace Loop (capturas `despacho_pantalla_principal.jpg`, `site_despacho_web.jpg` y `despacho_betoneiras_de_planta.jpg`). Reemplaza el punto 24 en lo que se contradiga.
+
+- **Viajes ("Tickets"):** fila 1 chica y gris con el número de pedido (y un ícono de bomba si es bombeado) y, a la derecha, 👍 si está confirmado y "n/N", con una línea finita abajo; fila 2 con el cliente y "8 m³ › 14:13" (m³ del viaje y hora de carga), 13 px y peso 500; fila 3 gris con la obra; fila 4 gris chica con la fórmula, 📋 (observaciones en tooltip) y ⋮. Tarjeta gris clara, borde fino y barra violeta a la derecha; **atrasado = todo el borde rojo**, sin texto. **Sin botón Despachar:** se arrastra al camión, se toca la tarjeta y después el camión, o ⋮ › Despachar. Lo que antes estaba en el ▾ (dirección, finalidad, bomba, fibra, R/X, contacto, camión sugerido) queda en el tooltip de la tarjeta, y ⋮ suma "Ver la obra en el mapa".
+- **Número de pedido:** el sistema no tiene un número de pedido como Loop. Por ahora es el **número del pedido en el día** (1, 2, 3… por hora pedida). Cuando esté Zomatik se puede usar la NP.
+- **Camiones ("Betoneiras"):** ícono del mixer con la patente en azul abajo; el punto de estado con el tiempo en ese estado ("03h42", "41min"); el chofer con su ícono; a la derecha y en chico, dónde está y la fuente (GPS, estimado o a mano). Siguen "¿Volvió?", ⋮ y el indicador de la carga de planta.
+- **Pedidos ("Programações"):** "número – hora pedida", el cliente en gris y "14 / 35 m³"; a la derecha ⓘ (el detalle) y ⋮ (el menú de siempre); barra violeta a la izquierda.
+- **Buscador** ("Buscar:") arriba de las tres columnas: filtra en la pantalla por número, cliente, obra, fórmula, patente o chofer.
+- **Contadores** como Loop: una caja chica con íconos (programado, despachado, %, pendiente, suspendido, cancelado y adicional = lo despachado sin pedido programado), al lado del título, en lugar de la franja de texto.
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)
