@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import * as fs from "fs"
 import * as path from "path"
+import { numeroImpreso, tipoPorNumero } from "@/lib/despacho"
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 function sb() {
@@ -74,6 +75,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const m3           = Number(row.quantity_m3 || 0).toLocaleString("es-AR", { maximumFractionDigits: 2 })
   const remito       = (!isScheduled && row.remito) ? row.remito : ""
   const productoCode = f.code || f.name || ""
+  // Fase 3: R (con factura) lleva "RM" y X (sin factura) "RM2", los dos con el número completado a 8 dígitos
+  // ("RM2: 0099-00003201"). Un despacho viejo sin tipo vale lo que dice su número.
+  const remitoTipo   = !isScheduled ? (row.remito_tipo === "R" || row.remito_tipo === "X" ? row.remito_tipo : tipoPorNumero(remito)) : null
+  const remitoImpreso = remito ? numeroImpreso(remitoTipo, remito) : `${remitoTipo === "R" ? "RM" : "RM2"}: `
 
   const data = {
     fecha,
@@ -88,6 +93,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     cuit:             c.cuit               || "",
     nPedido:          "",
     remito,
+    remitoImpreso,
     m3,
     productoCode,
     obraLocalidad:    s.localidad          || "",
@@ -322,7 +328,6 @@ async function fillRemitoX(data: Record<string, string>, withBackground: boolean
   // Datos del cliente (dos columnas, en el espacio en blanco entre el encabezado y la tabla).
   // Las etiquetas se imprimen siempre; el valor queda en blanco si el cliente no lo tiene cargado.
   const CS = 8
-  const rm2 = data.remito ? `0099-000${data.remito}` : ""
   // Columna izquierda
   w("R. Social: " + (data.razonSocial || ""), 16, 54, { size: CS })
   w("Dirección: " + (data.direccion || ""),   16, 58.6, { size: CS })
@@ -335,7 +340,7 @@ async function fillRemitoX(data: Record<string, string>, withBackground: boolean
   w("Localidad: " + (data.localidadCliente || ""),118, 58.6, { size: CS })
   w("Provincia: " + (data.provincia || ""),      118, 63.2, { size: CS })
   w("Cuit: " + (data.cuit || ""),                118, 67.8, { size: CS })
-  w("RM2: " + rm2,                               118, 77.0, { size: CS })
+  w(data.remitoImpreso || "RM2: ",               118, 77.0, { size: CS })
 
   // Tabla: CANTIDAD (m3 de este viaje) | DESCRIPCION (código de fórmula)
   w(data.m3 ? `${data.m3} m³` : "", 15, 93, { size: 12, bold: true })
@@ -347,8 +352,9 @@ async function fillRemitoX(data: Record<string, string>, withBackground: boolean
 // ══════════════════════════════════════════════════════════════════════════════
 // PÁGINA DE PREVIEW HTML
 // ══════════════════════════════════════════════════════════════════════════════
+// Fase 3: queda solo "pre-impresa (solo datos)". El camino fondo=1 (hoja en blanco con formulario) sigue en el
+// código, sin enlace.
 function buildPreviewPage(id: string) {
-  const remitoxUrl = `/api/remito/${id}?doc=remitox`
   const datosUrl   = `/api/remito/${id}?doc=remitox&fondo=0`
 
   return `<!DOCTYPE html>
@@ -377,10 +383,8 @@ iframe { flex: 1; width: 100%; border: none; }
 <div class="toolbar">
   <span class="title">Remito del Despacho</span>
   <a class="btn btn-amber" href="${datosUrl}"   target="_blank">🖨 Imprimir en hoja pre-impresa (solo datos)</a>
-  <a class="btn btn-green" href="${remitoxUrl}" target="_blank">🖨 Imprimir en hoja en blanco (con formulario)</a>
-  <a class="btn btn-blue"  href="${remitoxUrl}" download>📄 Descargar PDF</a>
 </div>
-<iframe src="${remitoxUrl}"></iframe>
+<iframe src="${datosUrl}"></iframe>
 </body>
 </html>`
 }

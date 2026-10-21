@@ -28,6 +28,8 @@ import { useFuncionesNuevas } from "@/lib/current-user"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { cargarViajes, pendientes, proximoViaje, regenerarViajesPedido, totalViajes, type ViajeRow } from "@/lib/viajes"
+// Fase 3: el distintivo "Suspendido" (se suspende desde la pantalla nueva; la base no deja despacharlo)
+import { textoMotivo } from "@/lib/despacho"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -45,6 +47,10 @@ type ScheduledDispatch = {
   // Fase 2 (nulos hasta aplicar la migración)
   confirmado_at?: string | null;
   confirmado_por?: string | null;
+  // Fase 3 (nulos hasta aplicar la migración): suspendido (lluvia, etc.) desde la pantalla nueva
+  suspendido_at?: string | null;
+  suspendido_motivo_tipo?: string | null;
+  suspendido_motivo?: string | null;
   plant_id?: string;
   clients?: { id: string; name: string };
   construction_sites?: { id: string; name: string; address: string | null; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean };
@@ -356,7 +362,10 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (!puedeDespachar) return
     const supabase = createClient()
     if (!supabase) return
-    await supabase.from("mixers").update({ status: "available" }).eq("id", mixerId)
+    // Fase 3: "Volvió a planta" en la base (lo mismo de siempre más la hora y la Actividad). Si la función todavía
+    // no existe (migración sin aplicar), como antes.
+    const { error } = await supabase.rpc("camion_volvio", { p_mixer_id: mixerId, p_fuente: "manual", p_usuario: currentUserName() })
+    if (error) await supabase.from("mixers").update({ status: "available" }).eq("id", mixerId)
     toast({ title: "Entrega confirmada", description: "Camion disponible nuevamente" })
     loadData()
   }
@@ -775,6 +784,11 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-semibold truncate">{pedido.clients?.name}</span>
                               {pedido.is_urgent && <Badge variant="destructive" className="shrink-0">URGENTE</Badge>}
+                              {pedido.suspendido_at && (
+                                <Badge variant="outline" className="shrink-0 border-slate-400 bg-slate-100 text-slate-700">
+                                  Suspendido · {textoMotivo(pedido.suspendido_motivo_tipo)}{pedido.suspendido_motivo ? ` — ${pedido.suspendido_motivo}` : ""}
+                                </Badge>
+                              )}
                               {pedido.metodo_descarga && (
                                 <Badge variant="outline" className={pedido.metodo_descarga === "bomba" ? "shrink-0 border-sky-400 text-sky-700 bg-sky-50" : "shrink-0"}>
                                   {pedido.metodo_descarga === "bomba" ? textoBomba(pedido, empresasBombeo) : "DIRECTO"}
@@ -850,7 +864,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                               </DropdownMenuContent>
                             </DropdownMenu>
                             )}
-                            {remaining > 0 && puedeDespachar && (
+                            {remaining > 0 && puedeDespachar && !pedido.suspendido_at && (
                               <Button size="sm" onClick={() => openDispatchDialog(pedido)} className="gap-1">
                                 <Truck className="h-3 w-3" />Despachar
                               </Button>

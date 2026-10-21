@@ -30,6 +30,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
     contact: "",
     phone: "",
     email: "",
+    remito_tipo: "", // fase 3
   })
 
   const supabase = createClient()
@@ -83,7 +84,9 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
           email: formData.email || null,
           plant_id: plantId,
           active: true,
-        })
+          // Fase 3: solo si se eligió (así anda igual sin la migración)
+          ...(formData.remito_tipo ? { remito_tipo: formData.remito_tipo } : {}),
+        } as any)
         .select()
         .single()
 
@@ -92,7 +95,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
 
       toast.success("Cliente agregado exitosamente")
       logActivity({ action: "crear", entity: "cliente", entityId: data?.id, reference: data?.name, plantId, details: { Cliente: formData.name, CUIT: formData.cuit.trim(), "Condición IVA": formData.cond_iva || "-" } })
-      setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "" })
+      setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "", remito_tipo: "" })
       setOpen(false)
 
       if (onClientAdded && data) {
@@ -152,6 +155,18 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          {/* Fase 3: remito R / X por defecto ("" = se decide en cada pedido) */}
+          <div className="space-y-2">
+            <Label>Remito</Label>
+            <Select value={formData.remito_tipo || "segun"} onValueChange={(v) => setFormData({ ...formData, remito_tipo: v === "segun" ? "" : v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="segun">Se decide en cada pedido</SelectItem>
+                <SelectItem value="R">Siempre con factura (R)</SelectItem>
+                <SelectItem value="X">Siempre sin factura (X)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="contact">Contacto</Label>
