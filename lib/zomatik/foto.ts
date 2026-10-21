@@ -14,6 +14,7 @@ import {
   type ProyectoListado,
   type RenglonRemito,
 } from "@/lib/zomatik/parseo"
+import { remitosPorDia } from "@/lib/zomatik/cruce"
 
 /** Lo que ya hay en la base antes de leer (para saber qué falta leer de a poco). */
 export type Previo = {
@@ -204,4 +205,10 @@ export function puedeBorrarViejos(nuevos: number, guardados: number): boolean {
   if (nuevos <= 0) return false
   if (guardados < 10) return true
   return nuevos >= guardados * 0.7
+}
+
+/** Resumen diario de los remitos del año por cliente y planta (para el cruce por fechas y m³). */
+export function filasRemitosDia(foto: Foto): Record<string, unknown>[] {
+  if (!foto.renglones12) return []
+  return remitosPorDia(foto.renglones12).map((r) => ({ ...r, leido_at: foto.inicio }))
 }

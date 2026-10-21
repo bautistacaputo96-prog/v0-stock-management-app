@@ -53,6 +53,7 @@ import {
   filasMovimientos,
   totalesPorProyecto,
   puedeBorrarViejos,
+  filasRemitosDia,
   type Foto,
   type Previo,
 } from "@/lib/zomatik/foto"
@@ -292,6 +293,23 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
     if (Number(p.remitido_m3) === m3 && (p.ultima_entrega || null) === ultima) continue
     const { error } = await sb.from("zomatik_proyectos").update({ remitido_m3: m3, ultima_entrega: ultima }).eq("codigo", p.codigo)
     if (error) throw error
+  }
+
+  // Resumen diario de remitos por cliente (cruce por fechas y m³). Si falta su migración, no corta el resto.
+  try {
+    const rd = filasRemitosDia(foto)
+    if (rd.length > 0) {
+      const { count: antes, error: eA } = await sb.from("zomatik_remitos_dia").select("cliente_norm", { count: "exact", head: true }).gte("fecha", foto.desde12)
+      if (eA) throw eA
+      await upsert("zomatik_remitos_dia", rd, "cliente_norm,fecha,planta")
+      if (puedeBorrarViejos(rd.length, antes || 0)) {
+        const { error } = await sb.from("zomatik_remitos_dia").delete().lt("leido_at", foto.inicio)
+        if (error) throw error
+      }
+    }
+    out.remitos_dia = rd.length
+  } catch (e: any) {
+    out.remitos_dia = /zomatik_remitos_dia/.test(e?.message || "") ? "falta la migración 202610212000" : `error: ${String(e?.message || e).slice(0, 120)}`
   }
 
   // NP pendientes: se reemplazan
