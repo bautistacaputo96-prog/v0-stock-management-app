@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { WIALON_LOGIN, WIALON_ACCESS, validarToken, sbAdmin } from "@/lib/wialon"
+import { exigirGerencial, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 
 /**
  * Conexión con B-Track (Wialon).
@@ -11,10 +12,20 @@ import { WIALON_LOGIN, WIALON_ACCESS, validarToken, sbAdmin } from "@/lib/wialon
 /**
  * Alternativa: el usuario pega un token que le generó el soporte de Bilderit.
  * Se valida contra Wialon antes de guardarlo.
+ * Las dos vías son solo para gerenciales (gps-vivo.md): reemplazar el token cambia el GPS de todo el sistema.
  */
 export async function POST(req: Request) {
+  let quien: string
   try {
-    const { token, usuario_app } = await req.json()
+    const r = await exigirGerencial()
+    if (r.respuesta) return r.respuesta
+    if (r.sesion.local) return respuestaModoLocal()
+    quien = r.sesion.usuario.name
+  } catch (e) {
+    return respuestaError(e)
+  }
+  try {
+    const { token } = await req.json()
     const t = String(token || "").trim()
     if (t.length < 20) return NextResponse.json({ error: "Ese token no parece válido" }, { status: 400 })
     const { usuario } = await validarToken(t)
@@ -22,7 +33,7 @@ export async function POST(req: Request) {
       clave: "wialon_token",
       valor: t,
       usuario,
-      conectado_por: usuario_app || usuario,
+      conectado_por: quien,
       actualizado: new Date().toISOString(),
     })
     if (error) throw error
@@ -36,6 +47,18 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const token = url.searchParams.get("access_token")
   const base = `${url.protocol}//${url.host}`
+  const volver = (error: string) => NextResponse.redirect(`${base}/logistica?error=${encodeURIComponent(error)}`)
+
+  // La ida y la vuelta de Wialon son navegaciones del navegador: llevan la cookie de sesión
+  let quien: string
+  try {
+    const r = await exigirGerencial()
+    if (r.respuesta) return volver(r.respuesta.status === 401 ? "Tu sesión se cerró. Entrá de nuevo." : "Solo un gerencial puede conectar el GPS.")
+    if (r.sesion.local) return volver("Modo prueba local: no se graba nada.")
+    quien = r.sesion.usuario.name
+  } catch {
+    return volver("No se pudo verificar la sesión.")
+  }
 
   if (!token) {
     const login = new URL(WIALON_LOGIN)
@@ -55,12 +78,12 @@ export async function GET(req: Request) {
       clave: "wialon_token",
       valor: token,
       usuario,
-      conectado_por: url.searchParams.get("user_name") || usuario,
+      conectado_por: url.searchParams.get("user_name") || quien,
       actualizado: new Date().toISOString(),
     })
     if (error) throw error
     return NextResponse.redirect(`${base}/logistica?conectado=1`)
   } catch (e: any) {
-    return NextResponse.redirect(`${base}/logistica?error=${encodeURIComponent(e?.message || "No se pudo conectar")}`)
+    return volver(e?.message || "No se pudo conectar")
   }
 }
