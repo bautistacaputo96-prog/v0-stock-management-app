@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maqueta Zomatik</title>
+<style>
+:root{
+  --bg:#f8fafc; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --soft:#f1f5f9; --pri:#18181b;
+  --blue:#2563eb; --blue-s:#eff6ff; --red:#dc2626; --red-s:#fef2f2; --amber:#b45309; --amber-s:#fffbeb;
+  --green:#15803d; --green-s:#f0fdf4; --violet:#6d28d9; --violet-s:#f5f3ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.muted{color:var(--muted)} .b{font-weight:600} .num{font-variant-numeric:tabular-nums} .xs{font-size:11.5px}
+
+/* Franja de la maqueta */
+.demo{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:6px 14px;background:#1e293b;color:#cbd5e1;font-size:12px}
+.demo b{color:#fff}
+.demo a{color:#93c5fd;cursor:pointer;text-decoration:none}
+.demo a.on{color:#fff;text-decoration:underline;text-underline-offset:3px}
+.demo select{background:#334155;color:#fff;border:1px solid #475569;border-radius:6px;padding:2px 6px;font-size:12px}
+.leyenda{display:inline-flex;gap:8px;align-items:center}
+
+/* App */
+.app{display:grid;grid-template-columns:170px minmax(0,1fr);min-height:calc(100vh - 30px)}
+.side{background:#fff;border-right:1px solid var(--line);padding:10px 8px}
+.side .marca{font-weight:700;font-size:14px;padding:4px 8px 10px}
+.side a{display:block;padding:5px 8px;border-radius:6px;color:var(--muted);cursor:pointer;text-decoration:none}
+.side a.on{background:var(--soft);color:var(--ink);font-weight:600}
+.main{padding:10px 16px 40px;min-width:0}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:2px 0 8px;margin-bottom:8px}
+.bar h1{font-size:16px;margin:0}
+.spacer{flex:1}
+.screen{display:none}.screen.on{display:block}
+
+.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 10px;min-height:28px;font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--soft)}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}.btn.pri:hover{background:#27272a}
+.btn.ok{background:var(--green);border-color:var(--green);color:#fff}
+.btn.amb{background:var(--amber);border-color:var(--amber);color:#fff}
+.btn.big{min-height:34px;padding:6px 14px;font-weight:600}
+.btn.sm{min-height:24px;padding:1px 7px;font-size:11.5px}
+.btn.link{border:0;background:none;color:var(--blue);padding:0;min-height:0}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:8px}
+.card-h{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.card-h h2{font-size:13px;margin:0}
+.card-b{padding:10px 12px}
+.grid2{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.kpi .v{font-size:17px;font-weight:700} .kpi .l{font-size:11.5px;color:var(--muted)}
+
+table{border-collapse:collapse;width:100%}
+th{font-weight:500;color:var(--muted);text-align:left;font-size:11.5px;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:5px 8px;border-bottom:1px solid var(--soft);vertical-align:middle}
+tr.click{cursor:pointer} tr.click:hover td{background:#fafcff}
+tr.sel td{background:var(--blue-s)}
+td.r,th.r{text-align:right}
+
+.tag{display:inline-block;border-radius:999px;padding:0 7px;font-size:11px;font-weight:600;line-height:18px;white-space:nowrap}
+.t-ok{background:var(--green-s);color:var(--green)} .t-err{background:var(--red-s);color:var(--red)}
+.t-warn{background:var(--amber-s);color:var(--amber)} .t-blue{background:var(--blue-s);color:var(--blue)}
+.t-gray{background:var(--soft);color:var(--muted)} .t-vio{background:var(--violet-s);color:var(--violet)}
+/* Marcas de la maqueta */
+.zk{display:inline-block;font-size:10px;font-weight:700;color:var(--violet);background:var(--violet-s);border-radius:999px;padding:0 6px;line-height:16px;vertical-align:middle;white-space:nowrap}
+.mp{display:inline-block;font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border:1px dashed #f59e0b;border-radius:999px;padding:0 6px;line-height:15px;vertical-align:middle;white-space:nowrap}
+.mp-box{outline:1px dashed #f59e0b;outline-offset:3px;border-radius:6px}
+.zk-box{border:1px solid #ddd6fe;background:#fbfaff;border-radius:8px;padding:10px}
+
+.aviso{border-radius:6px;padding:6px 10px;font-size:12.5px}
+.a-warn{background:var(--amber-s);border:1px solid #fde68a;color:#78350f}
+.a-err{background:var(--red-s);border:1px solid #fecaca;color:#7f1d1d}
+.a-info{background:var(--blue-s);border:1px solid #bfdbfe;color:#1e3a8a}
+.a-ok{background:var(--green-s);border:1px solid #bbf7d0;color:#14532d}
+
+.f{display:grid;grid-template-columns:130px minmax(0,1fr);gap:6px 10px;align-items:center}
+.f label{color:var(--muted)}
+label.lb{display:block;font-weight:500;margin-bottom:3px}
+input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{border:1px solid var(--line);border-radius:6px;padding:4px 7px;background:#fff;min-height:28px;width:100%}
+input[readonly]{background:var(--soft);color:var(--muted)}
+textarea{min-height:44px;resize:vertical}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.opts{display:grid;gap:6px}
+.opt{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:6px;padding:6px 9px;cursor:pointer;background:#fff}
+.opt.on{border-color:var(--blue);background:var(--blue-s)}
+.opt.dis{opacity:.55;cursor:not-allowed;background:var(--soft)}
+.opt input{margin-top:2px}
+.sub{margin:6px 0 0 0}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pick button{border:2px solid var(--line);background:#fff;border-radius:8px;padding:6px 8px;text-align:left}
+.pick button.on{border-color:var(--pri);background:#fafafa}
+.pick .t{font-weight:500}
+
+.bar-p{height:6px;background:var(--soft);border-radius:999px;overflow:hidden;min-width:90px}
+.bar-p i{display:block;height:100%;background:var(--blue)}
+.bar-p.w i{background:#f59e0b}.bar-p.e i{background:var(--red)}
+
+/* Pestañas Semana / Día (como shadcn Tabs) */
+.tabs{display:inline-flex;background:var(--soft);border-radius:8px;padding:3px;gap:2px}
+.tabs button{border:0;background:transparent;border-radius:6px;padding:4px 12px;color:var(--muted);font-weight:500}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.1)}
+
+/* Grilla semanal (como dispatch-scheduling) */
+.wk{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr))}
+.wk .hd{padding:5px;text-align:center;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0}
+.wk .hd .d{font-size:11.5px;font-weight:500;text-transform:lowercase}
+.wk .hd .n{font-size:16px}
+.wk .hd.today{background:#f4f4f5}.wk .hd.today .n{font-weight:700}
+.wk .hr{padding:6px 4px;text-align:center;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-size:12px}
+.wk .cell{border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-height:44px;padding:2px;cursor:pointer}
+.wk .cell:hover{background:#f8fafc}
+.wk .cell.today{background:#fafafa}
+.pc{font-size:10.5px;line-height:1.25;border:1px solid;border-radius:4px;padding:2px 4px;margin-bottom:2px;cursor:pointer}
+.pc .o{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc.scheduled{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+.pc.completed{background:#dcfce7;border-color:#4ade80;color:#166534}
+.pc.cancelled{background:#fee2e2;border-color:#fca5a5;color:#991b1b;text-decoration:line-through}
+.pc.in_transit{background:#f3e8ff;border-color:#d8b4fe;color:#6b21a8}
+.pc .z{margin-top:1px;font-weight:600}
+.pc .z.err{color:var(--red)} .pc .z.ok{color:var(--green)}
+
+/* Vista Día (como programacion-dia) */
+.dia-row{display:grid;grid-template-columns:auto minmax(0,1fr) 230px;gap:12px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line)}
+.dia-row:last-child{border-bottom:0}
+.dot{width:10px;height:10px;border-radius:2px;display:inline-block}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg span{padding:0 6px;font-size:11px}
+.seg span.on{background:var(--pri);color:#fff}
+.zcol{display:grid;gap:4px;justify-items:end;text-align:right}
+
+/* Acopios */
+.ac-row td{border-bottom:1px solid var(--soft)}
+.ac-det td{background:#fcfcfd}
+
+/* Modal */
+.ov{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:flex-start;justify-content:center;padding-top:5vh;z-index:50}
+.ov.on{display:flex}
+.modal{background:#fff;border-radius:10px;border:1px solid var(--line);width:min(520px,94vw);box-shadow:0 12px 32px rgba(0,0,0,.18);max-height:90vh;display:flex;flex-direction:column}
+.modal.w{width:min(620px,94vw)}
+.modal-h{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.modal-h h3{margin:0;font-size:15px}
+.modal-b{padding:12px 14px;overflow:auto}
+.modal-f{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.x{border:0;background:none;font-size:18px;color:var(--muted);margin-left:auto}
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.choice button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:14px;text-align:left}
+.choice button:hover{border-color:var(--blue);background:var(--blue-s)}
+.choice .t{font-weight:600;font-size:13.5px;display:block;margin-bottom:3px}
+.sec{margin:14px 0 6px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:flex;gap:6px;align-items:center}
+.sec:first-child{margin-top:0}
+.fld{margin-bottom:8px}
+.gps{border:1px solid #ddd6fe;background:#faf5ff;border-radius:8px;padding:8px 10px;font-size:12px}
+.resumen{background:var(--soft);border-radius:6px;padding:6px 10px;font-size:12px;width:100%}
+.steps{display:grid;gap:6px;margin-top:8px}
+.step{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+.step .ic{width:18px;text-align:center;font-weight:700}
+.step.ok .ic{color:var(--green)}.step.err .ic{color:var(--red)}.step.run .ic{color:var(--blue)}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:3px 10px;font-size:12.5px}
+.kv div:nth-child(odd){color:var(--muted)}
+.res{border:1px solid var(--line);border-radius:6px;margin-top:8px}
+.res h4{margin:0;padding:5px 9px;font-size:11.5px;color:var(--muted);font-weight:500;background:var(--soft);border-bottom:1px solid var(--line)}
+.res .it{display:flex;gap:10px;align-items:center;padding:6px 9px;border-bottom:1px solid var(--soft)}
+.res .it:last-child{border-bottom:0}
+.toast{position:fixed;right:16px;bottom:16px;background:#0f172a;color:#fff;border-radius:8px;padding:8px 12px;font-size:12.5px;display:none;z-index:60;max-width:420px}
+.note{font-size:11.5px;color:var(--muted);margin-top:6px}
+details>summary{cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="demo">
+  <b>Maqueta Zomatik</b>
+  <span>Ir a:</span>
+  <a data-go="dash" class="on">Dashboard</a>
+  <a data-go="prog">Programación</a>
+  <a data-go="proy">NP para un proyecto</a>
+  <a data-go="desp">Despacho con NP pendiente</a>
+  <a data-go="clientes">Alta de cliente</a>
+  <span class="spacer"></span>
+  <span class="leyenda"><span class="zk">Zomatik</span> lo nuevo por Zomatik · <span class="mp">mejora aprobada</span> cambio chico al formulario actual (aprobado 21/10)</span>
+  <span>Usuario: <select id="rol"><option value="op">Felipe Calvo (operario)</option><option value="ger">Juan Oreguy (gerencial)</option></select></span>
+</div>
+
+<div class="app">
+  <nav class="side">
+    <div class="marca">Rebucret</div>
+    <a data-go="dash" class="on">Dashboard</a>
+    <a data-go="prog">Programación</a>
+    <a data-go="desp">Despacho</a>
+    <a data-go="clientes">Clientes</a>
+    <a>Historial</a>
+    <a>Stock</a>
+  </nav>
+
+  <main class="main">
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="screen on" id="s-dash">
+    <div class="bar">
+      <h1>Dashboard</h1><span class="muted">martes 21/10</span>
+      <span class="spacer"></span>
+      <button class="btn pri big" onclick="abrir('ov-cargar')">+ Cargar pedido</button>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="v num">96 m³</div><div class="l">Programado hoy</div></div>
+      <div class="kpi"><div class="v num">58 m³</div><div class="l">Despachado</div></div>
+      <div class="kpi"><div class="v num">2 de 6</div><div class="l">Pedidos remitidos en Zomatik</div></div>
+      <div class="kpi"><div class="v num">33</div><div class="l">Acopios abiertos en Zomatik</div></div>
+      <div class="kpi"><div class="v num" style="color:var(--red)">1</div><div class="l">Pedidos con NP pendiente (no se pueden despachar)</div></div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-h"><h2>Avisos de acopios</h2><span class="spacer"></span><button class="btn link" onclick="ir('prog');irAcopios()">Ver acopios</button></div>
+        <div class="card-b opts">
+          <div class="aviso a-warn"><b>Saldo bajo</b> · Fideicomiso Los Álamos — Pavimento etapa 2: quedan <b>18 m³</b> y hay <b>24 m³</b> programados para el jueves.</div>
+          <div class="aviso a-err"><b>Agotado</b> · Constructora Del Sur — Nave 3: saldo <b>−4 m³</b>. No se puede generar NP contra ese proyecto.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>Zomatik</h2></div>
+        <div class="card-b opts">
+          <div class="aviso a-err">1 pedido con NP pendiente · Martín Ríos (hoy 10:00): Zomatik estaba caído al programarlo. Se reintenta cada 10 min; sin NP no se despacha. <button class="btn link" onclick="ir('prog');setTab('dia')">Generar NP</button></div>
+          <div class="aviso a-warn">1 despacho sin NP con autorización (ayer, Zomatik caído) · regularizado 08:40 con NP2 0001-00002077.</div>
+          <div class="muted xs">Última lectura de Zomatik: hoy 06:40 · pasada de control de anoche: 9 remitos, 0 pendientes.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROGRAMACIÓN ============ -->
+  <section class="screen" id="s-prog">
+    <div class="bar"><h1>Programación</h1></div>
+    <div class="row" style="margin-bottom:10px">
+      <div class="tabs"><button id="tab-semana" class="on" onclick="setTab('semana')">📅 Semana</button><button id="tab-dia" onclick="setTab('dia')">🕒 Día · ordenar camiones</button></div>
+    </div>
+
+    <!-- Semana -->
+    <div id="v-semana">
+      <div class="row" style="margin-bottom:8px">
+        <select style="width:200px"><option>Canning</option><option>Hudson</option><option>Todas las plantas</option></select>
+        <button class="btn" style="width:30px;padding:0">‹</button>
+        <span class="b" style="min-width:150px;text-align:center">20 oct - 26 oct 2026</span>
+        <button class="btn" style="width:30px;padding:0">›</button>
+        <button class="btn">Hoy</button>
+        <button class="btn">⟳ Actualizar</button>
+        <span class="spacer"></span>
+        <span class="muted xs">Tocá un horario para cargar un pedido</span>
+      </div>
+      <div class="card" style="overflow:hidden"><div class="wk" id="wk"></div></div>
+    </div>
+
+    <!-- Día -->
+    <div id="v-dia" style="display:none">
+      <div class="row" style="margin-bottom:8px">
+        <select style="width:200px"><option>Canning</option><option>Hudson</option></select>
+        <input type="date" value="2026-10-21" style="width:150px">
+        <button class="btn">Hoy</button><button class="btn">Mañana</button>
+        <button class="btn">⚙ Tiempos y camiones</button>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2 style="font-weight:500">Pedidos del día · ajustá la hora de llegada a obra y el día se reordena solo</h2><span class="spacer"></span><span class="zk">Zomatik</span><span class="muted xs">NP, remito y "Finalizar pedido" a la derecha</span></div>
+        <div id="dia-list"></div>
+      </div>
+    </div>
+
+    <!-- Acopios (abajo de la grilla, en las dos vistas) -->
+    <div class="card" style="margin-top:14px" id="acopios">
+      <div class="card-h">
+        <h2>Acopios</h2><span class="zk">Zomatik</span>
+        <span class="muted xs">Proyectos abiertos de Zomatik · leído hoy 06:40 · en m³</span>
+        <span class="spacer"></span>
+        <select style="width:auto"><option>Abiertos (4 de esta planta)</option><option>Todos</option></select>
+        <button class="btn" onclick="toast('Actualizado desde Zomatik')">⟳ Actualizar</button>
+        <button class="btn" disabled title="Por ahora los proyectos se cargan en Zomatik">+ Crear proyecto</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:18px"></th><th>Proyecto</th><th>Cliente · obra</th><th class="r">Remitido</th><th style="width:120px"></th><th class="r">Saldo</th><th class="r">Programado</th><th>Última entrega</th><th>Estado</th></tr></thead>
+        <tbody id="tb-ac"></tbody>
+      </table>
+      <div class="note" style="padding:0 12px 8px">Por ahora los proyectos se cargan en Zomatik (Clientes › Proyectos). Remitido y saldo salen de Zomatik; programado, de Rebucret. Saldo ≈: estimado, porque los proyectos están cargados por monto.</div>
+    </div>
+  </section>
+
+  <!-- ============ NP PARA UN PROYECTO ============ -->
+  <section class="screen" id="s-proy">
+    <div class="bar"><h1>Generar NP para un proyecto ya cargado</h1><span class="muted">la nota de pedido se genera contra un proyecto de Zomatik (como el botón MATERIAL)</span></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-h"><h2>1. Elegí el proyecto</h2><span class="spacer"></span><input type="text" placeholder="Buscar cliente u obra" style="width:200px"><button class="btn" disabled title="Por ahora los proyectos se cargan en Zomatik">+ Crear proyecto</button></div>
+        <table>
+          <thead><tr><th>Proyecto</th><th>Cliente · obra</th><th class="r">Saldo</th><th>Último pedido</th><th></th></tr></thead>
+          <tbody id="tb-proy"></tbody>
+        </table>
+        <div class="note" style="padding:0 12px 8px">Por ahora los proyectos se cargan en Zomatik (Clientes › Proyectos). Si no está el que buscás, cargalo allá y tocá "Actualizar".</div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>2. Pedido</h2><span class="spacer"></span><span class="muted xs" id="proy-sel">—</span></div>
+        <div class="card-b">
+          <div class="f">
+            <label>Fecha / llegada</label><div class="row"><input type="date" value="2026-10-23" style="width:150px"><input type="time" value="07:30" style="width:100px"></div>
+            <label>Planta</label><select><option>Canning</option><option>Hudson</option></select>
+            <label>Fórmula</label><select id="proy-form"><option>H30-620-10 C (CAN)</option></select>
+            <label>m³</label><div class="row"><input type="number" id="proy-m3" value="24" style="width:80px" oninput="chkProy()"><span class="muted xs" id="proy-saldo"></span></div>
+          </div>
+          <div id="proy-av" style="margin-top:8px"></div>
+          <div class="note">Al generarla se abre el pedido en la grilla de Programación para completar descarga, bomba y viajes.</div>
+          <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" data-go="dash">Cancelar</button><button class="btn pri" id="btn-proy" onclick="genProy()">Generar NP y programar</button></div>
+          <div id="proy-res"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DESPACHO SIN NP ============ -->
+  <section class="screen" id="s-desp">
+    <div class="bar"><h1>Despacho · Entrega</h1><span class="muted xs">(vista del plantista)</span><span class="tag t-gray">Canning</span><span class="muted">martes 21/10 · 10:05</span></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-h"><h2>Viaje 1/1 · Martín Ríos — Vivienda, losa</h2><span class="spacer"></span><span class="tag t-err" id="desp-chip">Sin nota de pedido</span></div>
+        <div class="card-b">
+          <div class="f">
+            <label>Camión / chofer</label><div class="row"><select style="width:140px"><option>AE987PQ</option></select><select style="width:160px"><option>Darío Gómez</option></select></div>
+            <label>Fórmula / m³</label><input type="text" value="H21-620-15 B (CAN) · 6 m³" readonly>
+            <label>Remito</label><div class="row"><select style="width:90px"><option>X</option></select><input type="text" value="3307" style="width:90px"></div>
+          </div>
+          <div id="desp-box" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h2>Cómo funciona</h2></div><div class="card-b xs" style="line-height:1.6">
+        • Sin nota de pedido en Zomatik no se despacha: lo controla la base, para todas las pantallas.<br>
+        • El plantista no genera NP: se genera al programar. Si quedó pendiente (Zomatik caído), se resuelve en Programación; desde acá se avisa.<br>
+        • Si Zomatik no responde, un gerencial (Bautista, Juan o Fernando) puede autorizar este pedido por hoy, con motivo. El sistema reintenta la NP cada 10 min y no deja remitir hasta tenerla.<br>
+        • Un error de datos (cliente sin código, proyecto sin saldo) no se saltea: hay que arreglarlo.
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ============ ALTA CLIENTE ============ -->
+  <section class="screen" id="s-clientes">
+    <div class="bar"><h1>Clientes · Agregar cliente</h1></div>
+    <div class="grid2">
+      <div class="card"><div class="card-b">
+        <div class="f"><label>Buscar</label><input type="text" id="q-cli" value="ribera" oninput="buscarCli()" placeholder="Nombre o CUIT"></div>
+        <div id="res-cli"></div>
+      </div></div>
+      <div class="card" id="nuevo-cli" style="display:none">
+        <div class="card-h"><h2>Cliente nuevo (se crea acá y en Zomatik)</h2></div>
+        <div class="card-b">
+          <div class="f">
+            <label>Razón social *</label><input type="text" value="">
+            <label>Documento *</label><div class="row"><select style="width:90px"><option>CUIT</option><option>DNI</option></select><input type="text" style="flex:1" placeholder="30-12345678-9"></div>
+            <label>IVA *</label><select><option>Responsable Inscripto</option><option>Monotributo</option><option>Consumidor Final</option><option>Exento</option></select>
+            <label>Provincia *</label><select><option>Buenos Aires</option><option>Capital Federal</option></select>
+            <label>Localidad / dirección</label><div class="row"><input type="text" style="flex:1" placeholder="Localidad"><input type="text" style="flex:2" placeholder="Dirección"></div>
+            <label>Condición de pago</label><select><option>Contado</option><option>Cuenta corriente</option><option>Anticipado</option></select>
+            <label>Remito</label><select><option>Se decide en cada pedido</option><option>Siempre con factura (R)</option><option>Siempre sin factura (X)</option></select>
+          </div>
+          <details style="margin-top:8px"><summary class="muted xs">Datos de Zomatik (por defecto: Casas · A · IIBB Buenos Aires · BS.AS. Sur)</summary>
+            <div class="f" style="margin-top:6px">
+              <label>Clasificación</label><select><option>Casas</option><option>Edificios</option><option>Constructora</option></select>
+              <label>Categoría</label><select><option>A</option><option>B</option></select>
+              <label>Condición IIBB</label><select><option>IIBB Buenos Aires</option><option>Convenio Multilateral</option><option>Exento / Excluido</option></select>
+            </div></details>
+          <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn pri" onclick="toast('Cliente creado acá y en Zomatik (código 25012)')">Crear acá y en Zomatik</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<!-- Modal: Cargar pedido -->
+<div class="ov" id="ov-cargar"><div class="modal">
+  <div class="modal-h"><h3>Cargar pedido</h3><button class="x" onclick="cerrar()">×</button></div>
+  <div class="modal-b">
+    <div class="choice">
+      <button onclick="cerrar();ir('proy')"><span class="t">Generar NP para un proyecto ya cargado</span><span class="muted xs">Elegís un proyecto abierto de Zomatik y se genera la nota de pedido contra su saldo (como MATERIAL).</span></button>
+      <button onclick="cerrar();ir('prog');setTab('semana');nuevoPedido(2,8)"><span class="t">Generar NP nueva</span><span class="muted xs">Un pedido para un día, con su nota de pedido. Va a Programación con el formulario abierto.</span></button>
+    </div>
+  </div>
+</div></div>
+
+<!-- Modal: Nuevo pedido (formulario actual de Programación + Zomatik + mejoras) -->
+<div class="ov" id="ov-ped"><div class="modal w">
+  <div class="modal-h"><h3 id="ped-tit">Nuevo pedido</h3> <span class="mp" style="margin-left:6px">mejora aprobada: antes "Nuevo Despacho Programado"</span><button class="x" onclick="cerrar()">×</button></div>
+  <div class="modal-b">
+
+    <div class="sec">Cliente y obra <span class="mp">mejora aprobada: va primero</span></div>
+    <div class="mp-box" style="padding:2px">
+      <div class="fld"><div class="row" style="justify-content:space-between"><label class="lb">Cliente *</label><button class="btn link xs">+ Agregar</button></div>
+        <select id="ped-cli" onchange="chkPed()"><option value="">Buscar cliente...</option><option value="alamos" selected>Fideicomiso Los Álamos</option><option value="garcia">García Hnos</option><option value="rios">Martín Ríos</option></select></div>
+      <div class="fld"><div class="row" style="justify-content:space-between"><label class="lb">Obra *</label><button class="btn link xs">+ Agregar</button></div>
+        <select id="ped-obra" onchange="chkPed()"><option value="">Buscar obra...</option><option value="pav" selected>Pavimento etapa 2 · 34 min</option><option value="cord">Cordones · 28 min</option></select></div>
+      <button class="btn sm" onclick="repetir()">↻ Repetir el último pedido de esta obra</button> <span class="mp">mejora aprobada</span>
+    </div>
+    <div class="gps" style="margin-top:8px">📍 Viaje estimado desde Canning: <b>21 km · 34 min</b> · real GPS: 31 min (12 viajes), se usa ese · Descarga por camión de 8 m³: 22 min (real de la obra)</div>
+
+    <div class="sec">Cuándo</div>
+    <div class="fld"><label class="lb">Planta *</label><select><option>Canning</option><option>Hudson</option></select></div>
+    <div class="g2">
+      <div class="fld"><label class="lb">Fecha de llegada *</label><input type="date" id="ped-fecha" value="2026-10-22"></div>
+      <div class="fld"><label class="lb">Hora de llegada *</label><input type="time" id="ped-hora" value="08:00"></div>
+    </div>
+    <div class="aviso" style="background:var(--soft);border:1px solid var(--line)">Empieza a cargar a las <b>07:21</b> · 3 viajes</div>
+
+    <div class="sec">Hormigón</div>
+    <div class="fld"><label class="lb">Descarga *</label>
+      <div class="pick" id="ped-desc"><button data-v="bomba" onclick="pickDesc(this)"><div class="t">Con bomba</div><div class="muted xs">Más rápido: ~15 min por camión</div></button><button data-v="directo" onclick="pickDesc(this)"><div class="t">Directo / canaleta</div><div class="muted xs">~25 min por camión</div></button></div>
+    </div>
+    <div class="g2">
+      <div class="fld"><label class="lb">Fórmula * <span class="mp">mejora: con tilde</span></label><select><option>H30-620-10 C (CAN)</option><option>H25-620-15 B (CAN)</option></select></div>
+      <div class="fld"><label class="lb">Finalidad</label><select><option>Pavimento</option><option>Sin especificar</option><option>Platea / Fundación</option></select></div>
+    </div>
+    <div class="g2">
+      <div class="fld"><label class="lb">m³ del pedido * <span class="mp">mejora: antes "Cantidad Total (m3)"</span></label><input type="number" step="0.5" id="m3-ped" value="24" oninput="chkSaldo()"></div>
+      <div class="fld"><label class="lb">Remito * <span class="mp">mejora: se ve al programar</span></label><div class="pick"><button class="on" onclick="pickRx(this)"><div class="t">Sin factura (X)</div><div class="muted xs">la obra va siempre así</div></button><button onclick="pickRx(this)"><div class="t">Con factura (R)</div><div class="muted xs">&nbsp;</div></button></div></div>
+    </div>
+    <div class="gps"><b>Viajes</b> · m³ por camión <input type="number" value="8" style="width:60px;min-height:24px"> · minutos entre camiones <input type="number" value="22" style="width:60px;min-height:24px"><div class="muted xs" style="margin-top:3px">Al guardar se arman los viajes. El último camión lleva el resto. Los viajes no tocan stock.</div></div>
+
+    <div class="sec">Nota de pedido (Zomatik) <span class="zk">Zomatik</span></div>
+    <div class="zk-box">
+      <div class="opts" id="opts-z">
+        <label class="opt" data-o="np"><input type="radio" name="oz" value="np"><div><b>Generar NP nueva</b><div class="muted xs">NP2 por los m³ del pedido, con lo que Zomatik pone por defecto.</div></div></label>
+        <label class="opt on" data-o="pr"><input type="radio" name="oz" value="pr" checked><div style="flex:1"><b>NP para un proyecto ya cargado</b><div class="muted xs">Como el botón MATERIAL del proyecto. Queda recordado para esta obra.</div>
+          <div class="sub" id="sub-pr">
+            <select style="margin-top:6px" id="sel-pr" onchange="chkSaldo()">
+              <option value="18">PRO2 0001-00000014 · Pavimento etapa 2 · quedan ≈ 18 m³</option>
+              <option value="120">PRO2 0001-00000013 · Cordones · quedan ≈ 120 m³</option>
+            </select>
+            <div id="av-saldo" style="margin-top:6px"></div>
+          </div></div></label>
+        <label class="opt" data-o="ex"><input type="radio" name="oz" value="ex"><div style="flex:1"><b>Usar NP pendiente</b><div class="muted xs">NP del cliente que todavía tienen m³ sin remitir.</div>
+          <div class="sub" id="sub-ex" style="display:none"><select style="margin-top:6px"><option>NP2 0001-00002061 · pendiente 6 m³</option></select></div></div></label>
+        <label class="opt dis" title="Por ahora los proyectos se cargan en Zomatik"><input type="radio" disabled><div><b>Crear proyecto en Zomatik</b><div class="muted xs">Por ahora los proyectos se cargan en Zomatik.</div></div></label>
+      </div>
+    </div>
+
+    <div class="sec">Más datos <span class="mp">mejora aprobada: plegado</span></div>
+    <details class="mp-box" style="padding:4px 6px"><summary class="muted">Fibra, camión y observaciones</summary>
+      <div class="fld" style="margin-top:6px"><label class="lb">Fibra (kg por m³)</label><input type="number" placeholder="Dejar vacío si no lleva"></div>
+      <div class="fld"><label class="lb">Camión (opcional)</label><select><option>Sin asignar</option><option>AF123KD (8m3)</option></select></div>
+      <div class="fld"><label class="lb">Observaciones</label><textarea></textarea></div>
+    </details>
+    <p class="muted xs" style="margin:8px 0 0">Programado por: <b style="color:var(--ink)" id="ped-por">Felipe Calvo</b></p>
+  </div>
+  <div class="modal-f" style="justify-content:space-between">
+    <div class="resumen mp-box" id="ped-resumen"></div>
+    <span class="xs" id="ped-falta" style="color:var(--red)"></span>
+    <span class="spacer"></span>
+    <button class="btn" onclick="cerrar()">Cerrar</button>
+    <button class="btn pri" id="btn-guardar" onclick="guardarPed()">Programar y generar NP</button>
+  </div>
+  <div id="res-guardar" style="padding:0 14px 10px"></div>
+</div></div>
+
+<!-- Modal: Finalizar pedido -->
+<div class="ov" id="ov-fin"><div class="modal w">
+  <div class="modal-h"><h3>Finalizar pedido</h3><button class="x" onclick="cerrar()">×</button></div>
+  <div class="modal-b">
+    <div class="kv" id="fin-kv"></div>
+    <div class="res"><h4>Se va a crear en Zomatik <span class="zk">Zomatik</span></h4><div id="fin-docs"></div></div>
+    <div class="steps" id="fin-steps"></div>
+  </div>
+  <div class="modal-f" id="fin-f"></div>
+</div></div>
+
+<!-- Modal: Cancelar pedido -->
+<div class="ov" id="ov-canc"><div class="modal">
+  <div class="modal-h"><h3>Cancelar pedido</h3> <span class="tag t-warn" style="margin-left:6px">a confirmar el jueves en planta</span><button class="x" onclick="cerrar()">×</button></div>
+  <div class="modal-b">
+    <div class="kv" id="canc-kv"></div>
+    <div class="res"><h4>En Zomatik <span class="zk">Zomatik</span></h4><div id="canc-z"></div></div>
+    <div class="note">Solo se cancelan NP creadas por el sistema. El método (devolución de pedido u otro) se confirma con Bautista el jueves; hasta entonces se avisa "cancelala a mano".</div>
+    <div id="canc-res" style="margin-top:8px"></div>
+  </div>
+  <div class="modal-f" id="canc-f"></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+function ir(id){$$('.screen').forEach(s=>s.classList.toggle('on',s.id==='s-'+id));$$('[data-go]').forEach(a=>a.classList.toggle('on',a.dataset.go===id));window.scrollTo(0,0)}
+$$('[data-go]').forEach(a=>a.addEventListener('click',()=>ir(a.dataset.go)));
+function abrir(id){$('#'+id).classList.add('on')} function cerrar(){$$('.ov').forEach(o=>o.classList.remove('on'))}
+$$('.ov').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)cerrar()}));
+function toast(t){const el=$('#toast');el.textContent=t;el.style.display='block';clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',3400)}
+const fmt=n=>n.toLocaleString('es-AR');
+const DIAS=['lun','mar','mié','jue','vie','sáb','dom'], NUMS=[20,21,22,23,24,25,26], HOY=1;
+function setTab(t){$('#tab-semana').classList.toggle('on',t==='semana');$('#tab-dia').classList.toggle('on',t==='dia');$('#v-semana').style.display=t==='semana'?'':'none';$('#v-dia').style.display=t==='dia'?'':'none'}
+function irAcopios(){setTimeout(()=>$('#acopios').scrollIntoView({behavior:'smooth'}),50)}
+
+/* ---------- Pedidos de la semana ---------- */
+const PED=[
+ {id:1,dia:1,h:'07:30',cli:'Fideicomiso Los Álamos',obra:'Pavimento etapa 2',f:'H30-620-10 C (CAN)',m3:32,desp:32,t:'X',np:'NP2 0001-00002071',rem:'RM2 0099-00002744',ac:'PRO2 0001-00000014',met:'bomba',est:'completed',cam:[['AF123KD','3301'],['AG456LM','3302'],['AF123KD','3305'],['AG456LM','3306']],color:'#8b5cf6'},
+ {id:2,dia:1,h:'08:00',cli:'García Hnos',obra:'Casa lote 214',f:'H21-620-15 B (CAN)',m3:8,desp:8,t:'R',np:'NP 0001-00001172',rem:null,met:'directo',est:'in_transit',cam:[['AE987PQ','887']],color:'#0ea5e9'},
+ {id:3,dia:1,h:'09:00',cli:'Constructora Del Sur',obra:'Nave 3 — platea',f:'H25-620-15 B (CAN)',m3:24,desp:18,t:'R',np:'NP 0001-00001171',rem:null,ac:'PRO 0001-00000029',met:'bomba',est:'in_transit',cam:[['AF123KD','888'],['AE987PQ','889'],['AG456LM','890']],err:true,color:'#f59e0b'},
+ {id:4,dia:1,h:'10:00',cli:'Martín Ríos',obra:'Vivienda — losa',f:'H21-620-15 B (CAN)',m3:6,desp:0,t:'X',np:null,rem:null,met:'directo',est:'scheduled',cam:[],color:'#ef4444'},
+ {id:5,dia:1,h:'11:00',cli:'Inversiones Delta SA',obra:'Edificio Mitre — columnas',f:'H30-620-10 C (CAN)',m3:16,desp:0,t:'R',np:'NP 0001-00001173',rem:null,ac:'PRO 0001-00000031',met:'bomba',est:'scheduled',cam:[],color:'#10b981'},
+ {id:6,dia:1,h:'13:00',cli:'Aldo Pisos',obra:'Galpón — contrapiso',f:'H17-620-10 C (CAN)',m3:10,desp:10,t:'X',np:'NP2 0001-00002074',rem:'RM2 0099-00002745',met:'directo',est:'completed',cam:[['AE987PQ','3303'],['AF123KD','3304']],color:'#64748b'},
+ {id:7,dia:0,h:'08:00',cli:'Fideicomiso Los Álamos',obra:'Pavimento etapa 2',f:'H30-620-10 C (CAN)',m3:40,desp:40,t:'X',np:'NP2 0001-00002068',rem:'RM2 0099-00002739',met:'bomba',est:'completed',cam:[]},
+ {id:8,dia:0,h:'10:00',cli:'García Hnos',obra:'Casa lote 210',f:'H21-620-15 B (CAN)',m3:6,desp:6,t:'R',np:'NP 0001-00001169',rem:'RM 0001-00002336',met:'directo',est:'completed',cam:[]},
+ {id:9,dia:3,h:'07:30',cli:'Fideicomiso Los Álamos',obra:'Pavimento etapa 2',f:'H30-620-10 C (CAN)',m3:24,desp:0,t:'X',np:'NP2 0001-00002079',rem:null,ac:'PRO2 0001-00000014',met:'bomba',est:'scheduled',cam:[]},
+ {id:10,dia:2,h:'09:00',cli:'Inversiones Delta SA',obra:'Edificio Mitre — vigas',f:'H30-620-10 C (CAN)',m3:12,desp:0,t:'R',np:'NP 0001-00001174',rem:null,met:'bomba',est:'scheduled',cam:[]},
+ {id:11,dia:2,h:'12:00',cli:'Laura Benítez',obra:'Pileta',f:'H21-620-15 B (CAN)',m3:5,desp:0,t:'X',np:null,rem:null,met:'directo',est:'scheduled',cam:[]},
+];
+const corto=n=>n?n.replace(/ 0001-0000| 0099-0000/,' …'):'';
+function zLinea(p){
+  if(!p.np)return `<div class="z err">NP pendiente</div>`;
+  if(p.rem==='error')return `<div class="z err">${corto(p.np)} · remito con error</div>`;
+  return `<div class="z ok">${corto(p.np)} ✓${p.rem?' · '+corto(p.rem):''}</div>`}
+function pintarSemana(){
+  let h='<div class="hd"><div class="d">Hora</div></div>'+DIAS.map((d,i)=>`<div class="hd ${i===HOY?'today':''}"><div class="d">${d}</div><div class="n">${NUMS[i]}</div></div>`).join('');
+  for(let hr=6;hr<=19;hr++){
+    h+=`<div class="hr">${String(hr).padStart(2,'0')}:00</div>`;
+    for(let d=0;d<7;d++){
+      const ps=PED.filter(p=>p.dia===d&&+p.h.slice(0,2)===hr);
+      h+=`<div class="cell ${d===HOY?'today':''}" onclick="nuevoPedido(${d},${hr})">`+ps.map(p=>`<div class="pc ${p.est}" onclick="event.stopPropagation();abrirPedido(${p.id})" title="${p.cli} · ${p.obra}"><div class="o">${p.obra.slice(0,18)}</div><div>${p.h} · ${p.m3} m³ · ${p.met}</div>${zLinea(p)}</div>`).join('')+`</div>`;
+    }
+  }
+  $('#wk').innerHTML=h;
+}
+function npChip(p){if(p.np==='…')return '<span class="tag t-blue">Generando NP…</span>';return p.np?`<span class="tag t-ok">✓ ${p.np}</span>`:`<span class="tag t-err">NP pendiente</span> <button class="btn sm" onclick="genNP(${p.id})">Generar NP ahora</button><div class="muted xs">Zomatik no respondió al programar · reintento 10:10</div>`}
+function remChip(p){if(p.rem==='error')return `<span class="tag t-err">Remito con error</span> <button class="btn sm" onclick="finalizar(${p.id})">Reintentar</button>`;if(p.rem)return `<span class="tag t-ok">✓ ${p.rem}</span>`;return '<span class="muted xs">Remito: —</span>'}
+function pintarDia(){
+  $('#dia-list').innerHTML=PED.filter(p=>p.dia===HOY).map(p=>{const comp=p.est==='completed';return `<div class="dia-row" style="${comp?'opacity:.75':''}">
+    <div class="row" style="gap:6px"><span class="dot" style="background:${p.color}"></span><input type="time" value="${p.h}" style="width:96px" ${comp?'disabled':''}></div>
+    <div style="min-width:0"><div class="b">${p.cli} · ${p.obra}</div>
+      <div class="muted xs row" style="gap:6px"><span>${p.m3} m³${p.desp?` (${p.desp} ya enviados)`:''}</span><span>· ${p.f}</span><span>· viaje 31 min (GPS)</span><span class="seg"><span class="${p.met==='bomba'?'on':''}">bomba</span><span class="${p.met==='directo'?'on':''}">directo</span></span><span>· Remito ${p.t}</span>${p.ac?`<span>· proyecto ${p.ac}</span>`:''}</div>
+      ${comp?'':`<div class="row" style="margin-top:4px;gap:6px"><button class="btn sm">🚚 Viajes (${Math.ceil(p.m3/8)})</button><span class="xs" style="color:var(--green)">👍 Confirmado · Juan</span></div>`}</div>
+    <div class="zcol">${npChip(p)}${remChip(p)}${!comp&&p.est!=='cancelled'&&p.np&&p.desp>0&&p.rem!=='error'?`<button class="btn sm pri" onclick="finalizar(${p.id})">Finalizar pedido</button>`:''}${comp?'<span class="tag t-gray">Completado</span>':''}${p.est==='cancelled'?'<span class="tag t-err">Cancelado</span>':''}${!comp&&p.est!=='cancelled'?`<button class="btn sm" style="color:var(--red)" onclick="cancelar(${p.id})">Cancelar pedido</button>`:''}</div>
+  </div>`}).join('');
+}
+function pintar(){pintarSemana();pintarDia()}
+function genNP(id){const p=PED.find(x=>x.id===id);p.np='…';pintar();setTimeout(()=>{p.np='NP2 0001-00002080';pintar();toast('NP2 0001-00002080 creada · ya se puede despachar')},900)}
+function abrirPedido(id){const p=PED.find(x=>x.id===id);if(p.dia===HOY&&!p.rem&&p.np&&p.desp>0){setTab('dia');finalizar(id);return}toast(`${p.cli} · ${p.obra} · ${p.np||'sin NP'}${p.rem&&p.rem!=='error'?' · '+p.rem:''} (en la app abre el pedido; en el menú ⋯: Generar NP ahora / Finalizar pedido)`)}
+pintar();
+
+/* ---------- Formulario de pedido ---------- */
+function nuevoPedido(d,hr){$('#ped-fecha').value='2026-10-'+NUMS[d];$('#ped-hora').value=String(hr).padStart(2,'0')+':00';$('#ped-por').textContent=$('#rol').selectedOptions[0].text.split(' (')[0];$('#res-guardar').innerHTML='';abrir('ov-ped');chkPed()}
+function pickDesc(b){$$('#ped-desc button').forEach(x=>x.classList.toggle('on',x===b));chkPed()}
+function pickRx(b){[...b.parentNode.children].forEach(x=>x.classList.toggle('on',x===b))}
+function repetir(){pickDesc($('#ped-desc button[data-v=bomba]'));$('#m3-ped').value=24;chkSaldo();toast('Copiado del último pedido de la obra (20/10): H30-620-10 C · 24 m³ · bomba · 8 m³ por camión')}
+$$('#opts-z .opt:not(.dis)').forEach(o=>o.addEventListener('click',()=>{$$('#opts-z .opt').forEach(x=>x.classList.toggle('on',x===o));o.querySelector('input').checked=true;$('#sub-ex').style.display=o.dataset.o==='ex'?'':'none';$('#sub-pr').style.display=o.dataset.o==='pr'?'':'none';chkSaldo()}));
+function avisoSaldo(m3,saldo,nom,pactado){
+  if(m3>saldo)return `<div class="aviso a-err"><b>No alcanza el saldo.</b> Al proyecto ${nom} le quedan <b>≈ ${saldo} m³</b> y estás programando <b>${m3} m³</b>. Zomatik no va a dejar fabricar ni remitir los ${m3-saldo} m³ que sobran.
+    <div class="row" style="margin-top:6px"><button class="btn sm" onclick="ajustar(${saldo})">Programar solo ${saldo} m³</button><button class="btn sm" onclick="toast('Se generan 2 NP: ${saldo} m³ contra el proyecto y ${m3-saldo} m³ en una NP nueva común')">${saldo} contra el proyecto + ${m3-saldo} en NP nueva común</button><button class="btn sm" onclick="toast('Guardado sin NP · aviso a Fernando para ampliar el proyecto. No se puede despachar hasta tener NP.')">Guardar sin NP (no se puede despachar)</button></div></div>`;
+  if(saldo-m3<0.15*pactado)return `<div class="aviso a-warn">Saldo bajo: después de este pedido le quedan ≈ ${saldo-m3} m³ al proyecto.</div>`;
+  return ''}
+function zOpcion(){return document.querySelector('#opts-z .opt.on').dataset.o}
+function chkSaldo(){const on=zOpcion(),m3=+$('#m3-ped').value||0,s=+$('#sel-pr').value,nom=$('#sel-pr').selectedOptions[0].text.split(' ·')[0];$('#av-saldo').innerHTML=on==='pr'?avisoSaldo(m3,s,nom,700):'';$('#res-guardar').innerHTML='';chkPed()}
+function ajustar(n){$('#m3-ped').value=n;chkSaldo()}
+function chkPed(){
+  const falta=[];if(!$('#ped-cli').value)falta.push('cliente');if(!$('#ped-obra').value)falta.push('obra');if(!$('#ped-desc button.on'))falta.push('descarga');
+  const on=zOpcion(),m3=+$('#m3-ped').value||0,s=+$('#sel-pr').value;if(on==='pr'&&m3>s)falta.push('saldo del proyecto');
+  $('#ped-falta').innerHTML=falta.length?'Falta: '+falta.join(', ')+' <span class="mp">mejora aprobada</span>':'';
+  $('#btn-guardar').disabled=falta.length>0;
+  const np=on==='pr'?'NP2 contra '+$('#sel-pr').selectedOptions[0].text.split(' ·')[0]:on==='ex'?'usa NP2 0001-00002061':'NP2 nueva (lista)';
+  $('#ped-resumen').innerHTML=`<b>${m3} m³</b> · H30-620-10 C · ${Math.ceil(m3/8)} viajes · carga 07:21 · llega ${$('#ped-hora').value} · ${np} <span class="mp">mejora aprobada: resumen fijo</span>`;
+}
+function guardarPed(){const r=$('#res-guardar');r.innerHTML='<div class="steps"><div class="step run"><span class="ic">…</span>Programando y generando la nota de pedido en Zomatik…</div></div>';setTimeout(()=>{r.innerHTML='<div class="aviso a-ok">✓ Pedido programado con <b>NP2 0001-00002082</b>. Ya se puede despachar.</div>'},900)}
+
+/* ---------- Finalizar pedido ---------- */
+let actual=null;
+function finalizar(id){
+  const p=PED.find(x=>x.id===id);actual=p;
+  const pats=[...new Set(p.cam.map(c=>c[0]))];
+  $('#fin-kv').innerHTML=`<div>Pedido</div><div><b>${p.cli}</b> · ${p.obra}</div><div>Despachado</div><div>${p.desp} de ${p.m3} m³ · ${p.cam.length} camiones · ${p.f}</div><div>Remitos de papel</div><div>${p.t} ${p.cam.map(c=>c[1]).join(', ')}</div><div>Patentes</div><div>${pats.join(', ')}</div><div>Nota de pedido</div><div>${p.np}${p.ac?' (proyecto '+p.ac+')':''}</div>${p.desp<p.m3?`<div>Motivo</div><div><select style="width:auto"><option>El cliente no necesitó más</option><option>Lluvia</option><option>Otro…</option></select></div>`:''}`;
+  $('#fin-docs').innerHTML=`<div class="it"><span class="tag t-vio">OF</span><div>Orden de fabricación · Canning · ${p.f} · <b>${p.desp} m³</b></div></div><div class="it"><span class="tag t-vio">${p.t==='R'?'RM':'RM2'}</span><div>Remito ${p.t==='R'?'(con factura)':'(sin factura)'} contra ${p.np} · <b>${p.desp} m³</b> · patente ${p.cam[0]?p.cam[0][0]:'—'}<div class="muted xs">Observaciones: "Camiones ${pats.join(', ')} · Remitos ${p.cam.map(c=>c[1]).join(', ')} · Obra ${p.obra} · Cargado desde Rebucret por ${$('#rol').selectedOptions[0].text.split(' (')[0]}"</div></div></div>`;
+  $('#fin-steps').innerHTML='';
+  $('#fin-f').innerHTML=p.rem==='error'?`<button class="btn" onclick="cerrar()">Cerrar</button><button class="btn pri" onclick="correr(true)">Reintentar remito</button>`:`<button class="btn" onclick="cerrar()">Cancelar</button><button class="btn pri" onclick="correr()">Finalizar pedido</button>`;
+  abrir('ov-fin');
+}
+function paso(txt,cls,ic){return `<div class="step ${cls}"><span class="ic">${ic}</span><span>${txt}</span></div>`}
+function correr(reintento){
+  const p=actual,st=$('#fin-steps');$('#fin-f').innerHTML='<span class="muted xs">Trabajando con Zomatik…</span>';
+  const base0=paso('Pedido finalizado en Rebucret','ok','✓'), of=paso('OF 0001-00003393 creada · '+p.desp+' m³ en Canning','ok','✓');
+  st.innerHTML=base0+(reintento?of:paso('Creando la OF…','run','…'));
+  setTimeout(()=>{
+    st.innerHTML=base0+of+paso('Creando el remito…','run','…');
+    setTimeout(()=>{
+      if(p.err&&!reintento){
+        p.rem='error';pintar();
+        st.innerHTML=base0+of+paso('<b>Zomatik no respondió</b> al grabar el remito (se cortó a los 30 s). Se buscó la marca y el remito <b>no está</b> en Zomatik, así que se puede reintentar sin duplicar.','err','!');
+        $('#fin-f').innerHTML=`<span class="muted xs" style="margin-right:auto">El pedido ya quedó finalizado. Si no se reintenta, lo remite la pasada de la noche.</span><button class="btn" onclick="cerrar()">Cerrar</button><button class="btn pri" onclick="correr(true)">Reintentar remito</button>`;
+      }else{
+        const n=p.t==='R'?'RM 0001-00002338':'RM2 0099-00002746';p.rem=n;p.est='completed';pintar();
+        st.innerHTML=base0+of+paso(`Remito <b>${n}</b> creado · ${p.desp} m³${p.ac?' · proyecto '+p.ac+': quedan 182 m³':''}`,'ok','✓');
+        $('#fin-f').innerHTML=`<button class="btn">Ver en Zomatik</button><button class="btn ok" onclick="cerrar()">Listo</button>`;
+      }
+    },900)
+  },reintento?300:800)
+}
+
+/* ---------- Acopios (abajo de la grilla) — solo m³ ---------- */
+// rm: remitido m³ (exacto) · sp: saldo % según Zomatik (el proyecto está cargado por monto; no se muestran pesos)
+const AC=[
+ {n:'PRO2 0001-00000014',cli:'Fideicomiso Los Álamos',obra:'Pavimento etapa 2',rm:682,sp:2.6,prog:24,ult:'21/10',est:'bajo'},
+ {n:'PRO 0001-00000029',cli:'Constructora Del Sur',obra:'Nave 3 — platea',rm:404,sp:-1,prog:6,ult:'21/10',est:'agotado'},
+ {n:'PRO 0001-00000031',cli:'Inversiones Delta SA',obra:'Edificio Mitre',rm:96,sp:78.7,prog:16,ult:'20/10',est:'abierto'},
+ {n:'PRO2 0001-00000013',cli:'Fideicomiso Los Álamos',obra:'Cordones',rm:180,sp:40,prog:0,ult:'15/10',est:'abierto'},
+];
+const ESTA={bajo:'<span class="tag t-warn">Saldo bajo</span>',agotado:'<span class="tag t-err">Agotado</span>',abierto:'<span class="tag t-ok">Abierto</span>'};
+const aprox=a=>Math.round(a.rm*a.sp/(100-a.sp));
+let abierto=0;
+function pintarAc(){
+  $('#tb-ac').innerHTML=AC.map((a,i)=>{const cons=Math.min(100,Math.max(0,Math.round(100-a.sp))),s=aprox(a);
+    let fila=`<tr class="click ac-row ${i===abierto?'sel':''}" onclick="abierto=(abierto===${i}?-1:${i});pintarAc()"><td class="muted">${i===abierto?'▾':'▸'}</td><td class="xs b">${a.n}</td><td><div class="b">${a.cli}</div><div class="muted xs">${a.obra}</div></td><td class="r num">${fmt(a.rm)} m³</td><td><div class="bar-p ${a.est==='bajo'?'w':a.est==='agotado'?'e':''}"><i style="width:${cons}%"></i></div><div class="muted xs">${cons} % usado</div></td><td class="r num b" style="color:${s<0?'var(--red)':a.est==='bajo'?'var(--amber)':'inherit'}">≈ ${fmt(s)} m³<div class="muted xs" style="font-weight:400">${a.sp<0?0:a.sp.toString().replace('.',',')} %</div></td><td class="r num">${a.prog?a.prog+' m³':'—'}</td><td class="num">${a.ult}</td><td>${ESTA[a.est]}</td></tr>`;
+    if(i===abierto){
+      const movs=[['21/10','RM2 0099-00002744',32],['17/10','RM2 0099-00002731',40],['14/10','RM2 0099-00002719',36.5],['10/10','RM2 0099-00002702',47]];let acum=a.rm;
+      const filas=movs.map(m=>{const r=`<tr><td class="num">${m[0]}</td><td class="xs">${m[1]}</td><td class="xs">H30-620-10 C (CAN)</td><td class="r num">${String(m[2]).replace('.',',')}</td><td class="r num">${fmt(acum)}</td></tr>`;acum-=m[2];return r}).join('');
+      const av=a.est==='bajo'?`<div class="aviso a-warn">Quedan ≈ ${s} m³ y hay ${a.prog} m³ programados el jueves: faltan ≈ ${a.prog-s} m³. Zomatik no va a dejar fabricar ni remitir lo que pase el saldo. Avisarle al vendedor (Fernando) para ampliar el proyecto.</div>`:a.est==='agotado'?`<div class="aviso a-err">Acopio agotado según Zomatik. No se pueden generar más NP contra este proyecto: lo que se programe va en una NP nueva común.</div>`:'';
+      fila+=`<tr class="ac-det"><td></td><td colspan="8" style="padding:8px 8px 12px"><div class="grid2" style="grid-template-columns:minmax(0,1fr) 280px"><div><table><thead><tr><th>Fecha</th><th>Remito</th><th>Fórmula</th><th class="r">m³</th><th class="r">Remitido acumulado</th></tr></thead><tbody>${filas}<tr><td colspan="5" class="muted xs">… 14 entregas más desde el 03/09 · <button class="btn link">ver todas</button></td></tr></tbody></table></div>
+        <div class="opts"><div class="kv"><div>Remitido</div><div class="num">${fmt(a.rm)} m³</div><div>Saldo</div><div class="num b">≈ ${fmt(s)} m³ (${a.sp<0?0:a.sp.toString().replace('.',',')} %)</div><div>Programado</div><div class="num">${a.prog?a.prog+' m³':'—'}</div></div><div class="note" style="margin-top:0">≈ estimado: el proyecto está cargado por monto en Zomatik. Si se carga por m³, el saldo es exacto.</div>${av}<div class="row"><button class="btn sm" onclick="ir('proy')">Generar NP contra este proyecto</button><button class="btn sm">Ver en Zomatik</button></div></div></div></td></tr>`;
+    }
+    return fila}).join('');
+}
+pintarAc();
+
+/* ---------- Cancelar pedido (cancela la NP en Zomatik) ---------- */
+function cancelar(id){
+  const p=PED.find(x=>x.id===id);actual=p;const conRem=p.desp>0;
+  $('#canc-kv').innerHTML=`<div>Pedido</div><div><b>${p.cli}</b> · ${p.obra}</div><div>Nota de pedido</div><div>${p.np||'—'}${p.ac?' (proyecto '+p.ac+')':''}</div><div>Despachado</div><div>${p.desp} de ${p.m3} m³</div><div>Motivo</div><div><select style="width:auto"><option>El cliente suspendió la obra</option><option>Lluvia</option><option>Otro…</option></select></div>`;
+  $('#canc-z').innerHTML=!p.np?'<div class="it muted">El pedido no tiene NP: no hay nada que cancelar en Zomatik.</div>':conRem?`<div class="it"><span class="tag t-warn">No se cancela</span><div>La ${p.np} ya tiene despachos (${p.desp} m³). Se cancela solo lo pendiente (<b>${p.m3-p.desp} m³</b>) con una devolución de pedido; si Zomatik no lo deja, queda avisado para hacerlo a mano.</div></div>`:`<div class="it"><span class="tag t-vio">DP2</span><div>Devolución de pedido por todo lo pendiente (<b>${p.m3} m³</b>): la ${p.np} queda sin pendiente${p.ac?' y el saldo vuelve al proyecto':''}.</div></div>`;
+  $('#canc-f').innerHTML=`<button class="btn" onclick="cerrar()">Volver</button><button class="btn" style="border-color:#fecaca;color:var(--red)" onclick="cancelarOk()">Cancelar pedido</button>`;
+  $('#canc-res').innerHTML='';abrir('ov-canc');
+}
+function cancelarOk(){const p=actual;$('#canc-f').innerHTML='<span class="muted xs">Trabajando con Zomatik…</span>';
+  setTimeout(()=>{p.est='cancelled';p.cancel=true;pintar();
+    $('#canc-res').innerHTML=!p.np?'<div class="aviso a-ok">✓ Pedido cancelado.</div>':p.desp>0?`<div class="aviso a-warn">Pedido cancelado en Rebucret. La ${p.np} tiene despachos: se canceló lo pendiente (DP2 0001-00000005 por ${p.m3-p.desp} m³). Aviso a Fernando (vendedor).</div>`:`<div class="aviso a-ok">✓ Pedido cancelado y ${p.np} cancelada en Zomatik (DP2 0001-00000005).</div>`;
+    $('#canc-f').innerHTML='<button class="btn ok" onclick="cerrar()">Listo</button>'},900)}
+
+/* ---------- Generar NP para un proyecto ya cargado ---------- */
+const PROY=[
+ {n:'PRO2 0001-00000014',cli:'Fideicomiso Los Álamos',obra:'Pavimento etapa 2',s:18,pm:700,u:'21/10',f:'H30-620-10 C (CAN)'},
+ {n:'PRO 0001-00000031',cli:'Inversiones Delta SA',obra:'Edificio Mitre',s:354,pm:450,u:'20/10',f:'H30-620-10 C (CAN)'},
+ {n:'PRO2 0001-00000013',cli:'Fideicomiso Los Álamos',obra:'Cordones',s:120,pm:300,u:'15/10',f:'H25-620-15 B (CAN)'},
+ {n:'PRO 0001-00000029',cli:'Constructora Del Sur',obra:'Nave 3 — platea',s:-4,pm:400,u:'21/10',f:'H25-620-15 B (CAN)'},
+];
+let pSel=0;
+function pintarProy(){$('#tb-proy').innerHTML=PROY.map((p,i)=>`<tr class="click ${i===pSel?'sel':''}" onclick="pSel=${i};pintarProy()"><td class="xs b">${p.n}</td><td><div class="b">${p.cli}</div><div class="muted xs">${p.obra}</div></td><td class="r num b" style="color:${p.s<=0?'var(--red)':p.s<0.15*p.pm?'var(--amber)':'inherit'}">≈ ${p.s} m³</td><td class="num">${p.u}</td><td>${p.s<=0?'<span class="tag t-err">Agotado</span>':p.s<0.15*p.pm?'<span class="tag t-warn">Saldo bajo</span>':''}</td></tr>`).join('');
+  const p=PROY[pSel];$('#proy-sel').textContent=p.n+' · '+p.obra;$('#proy-form').innerHTML='<option>'+p.f+'</option>';$('#proy-res').innerHTML='';chkProy()}
+function chkProy(){const p=PROY[pSel],m3=+$('#proy-m3').value||0;$('#proy-saldo').textContent='saldo del proyecto: ≈ '+p.s+' m³ (estimado, proyecto por monto)';
+  $('#proy-av').innerHTML=p.s<=0?`<div class="aviso a-err"><b>Proyecto agotado.</b> No se puede generar la NP contra este proyecto: Zomatik no va a dejar fabricar ni remitir. Avisale al vendedor para que lo amplíe, o generá una NP nueva desde Programación.</div>`:avisoSaldo(m3,p.s,p.n,p.pm);
+  $('#btn-proy').disabled=m3>p.s||p.s<=0}
+function genProy(){const p=PROY[pSel],r=$('#proy-res');r.innerHTML='<div class="steps"><div class="step run"><span class="ic">…</span>Generando la nota de pedido contra '+p.n+'…</div></div>';setTimeout(()=>{r.innerHTML=`<div class="aviso a-ok" style="margin-top:8px">✓ <b>NP2 0001-00002081</b> generada contra ${p.n} · ${$('#proy-m3').value} m³ · jueves 23/10. <button class="btn link" onclick="ir('prog');setTab('semana');nuevoPedido(3,7)">Completar el pedido en la grilla</button></div>`},900)}
+pintarProy();
+
+/* ---------- Despacho sin NP ---------- */
+function despInicio(){$('#desp-chip').className='tag t-err';$('#desp-chip').textContent='NP pendiente';
+  $('#desp-box').innerHTML=`<div class="aviso a-err"><b>No se puede despachar:</b> el pedido tiene la <b>NP pendiente</b> (al programarlo Zomatik estaba caído). Se genera desde Programación; el sistema la reintenta cada 10 min.</div><div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" disabled>Despachar</button><button class="btn" onclick="toast('Aviso por WhatsApp a Felipe Calvo (programó el pedido): NP pendiente de Martín Ríos')">Avisar a Programación</button><button class="btn" style="border-color:#fde68a;color:var(--amber)" onclick="despExc()">Despachar sin NP (autoriza un gerencial)</button></div>`}
+function despExc(){const ger=$('#rol').value==='ger';
+  $('#desp-box').innerHTML=`<div class="card" style="border-color:#fde68a"><div class="card-b"><div class="b" style="margin-bottom:6px">Autorizar despacho sin nota de pedido</div>
+   <div class="f">${ger?'<label>Autoriza</label><input type="text" value="Juan Oreguy (vos)" readonly>':'<label>Gerencial</label><select><option>Juan Oreguy</option><option>Fernando Maldonado</option><option>Bautista Caputo</option></select><label>Clave</label><input type="text" value="••••••" readonly>'}
+   <label>Motivo</label><select><option>Zomatik caído</option><option>Cliente sin alta en Zomatik todavía</option><option>Otro…</option></select>
+   <label>Detalle</label><input type="text" value="No responde desde las 09:58"></div>
+   <div class="note">Vale para este pedido y hoy. El sistema reintenta la NP cada 10 min; sin NP no se puede finalizar ni remitir. Queda en Actividad.</div>
+   ${ger?'':'<div class="note">O mandale el pedido de autorización por WhatsApp: <button class="btn link">Enviar a Juan</button></div>'}
+   <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="despInicio()">Cancelar</button><button class="btn amb" onclick="despOk()">Autorizar y despachar</button></div></div></div>`}
+function despOk(){$('#desp-chip').className='tag t-warn';$('#desp-chip').textContent='Sin NP · autorizado';
+  $('#desp-box').innerHTML=`<div class="aviso a-ok">✓ Despachado · remito X 3307 · autorizó Juan Oreguy (Zomatik caído).</div><div class="note">NP pendiente: se reintenta sola cada 10 min. Próximo intento 10:15.</div>`}
+$('#rol').addEventListener('change',()=>{if($('#desp-box').innerHTML.includes('Autorizar despacho'))despExc()});
+despInicio();
+
+/* ---------- Alta de cliente: buscar en Rebucret y Zomatik ---------- */
+const ZCLI=[{n:'CONSTRUCTORA RIBERA SRL',c:24990,doc:'CUIT 30-7…-4',iva:'Responsable Inscripto',v:'Fernando Maldonado',loc:'San Vicente'},{n:'RIBERA MARCOS (OBRA LOTE 12)',c:23188,doc:'DNI 28.…',iva:'Consumidor Final',v:'Juan Oreguy',loc:'Canning'}];
+function buscarCli(){
+  const q=$('#q-cli').value.trim().toLowerCase(),r=$('#res-cli');$('#nuevo-cli').style.display='none';
+  if(q.length<3){r.innerHTML='<div class="note">Escribí al menos 3 letras.</div>';return}
+  const z=ZCLI.filter(x=>x.n.toLowerCase().includes(q));
+  r.innerHTML=`<div class="res"><h4>En Rebucret</h4><div class="it muted">No hay clientes con "${q}".</div></div>`+
+   (z.length?`<div class="res"><h4>En Zomatik (no está en Rebucret) <span class="zk">Zomatik</span></h4>${z.map(x=>`<div class="it"><div style="flex:1"><div class="b">${x.n}</div><div class="muted xs">Código ${x.c} · ${x.doc} · ${x.iva} · ${x.loc} · vendedor ${x.v}</div></div><button class="btn pri" onclick="traer(${x.c})">Traer de Zomatik</button></div>`).join('')}</div>`:`<div class="res"><h4>En Zomatik</h4><div class="it muted">Tampoco está en Zomatik.</div></div>`)+
+   `<div class="row" style="margin-top:8px"><span class="muted xs">${z.length?'¿No es ninguno de estos?':''}</span><button class="btn" onclick="nuevoCli(${z.length})">Es un cliente nuevo</button></div>`;
+}
+function traer(c){const x=ZCLI.find(y=>y.c===c);$('#res-cli').innerHTML=`<div class="aviso a-ok" style="margin-top:8px">✓ <b>${x.n}</b> agregado a Rebucret, vinculado al cliente ${x.c} de Zomatik. No se creó nada en Zomatik.</div><div class="note">Se trajeron razón social, documento, IVA, localidad y vendedor. Ya se puede programar.</div>`}
+function nuevoCli(hay){if(hay&&!confirm('Hay clientes parecidos en Zomatik. Para crear uno nuevo hace falta un CUIT o DNI distinto y válido. ¿Seguir?'))return;$('#nuevo-cli').style.display='';}
+buscarCli();
+chkSaldo();
+</script>
+</body>
+</html>
