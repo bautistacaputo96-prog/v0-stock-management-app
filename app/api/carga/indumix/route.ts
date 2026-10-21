@@ -18,7 +18,8 @@ export const dynamic = "force-dynamic"
  */
 export async function POST(req: Request) {
   try {
-    const r = await exigirCarga("carga", "ver")
+    // Lo sube el puente: pide carga.cargar mientras no exista la credencial del puesto
+    const r = await exigirCarga("carga", "cargar")
     if (r.respuesta) return r.respuesta
     const body = await req.json().catch(() => ({}))
     const sb = sbServicio()
@@ -34,8 +35,8 @@ export async function POST(req: Request) {
     const desde = new Date(finMs - 12 * 3600_000).toISOString()
 
     // 1. Órdenes de la cola
-    const { data: cola } = await sb.from("cargas").select("id, remito, patente_planta, created_at, dispatch_id, m3").eq("puesto_id", puesto.id).in("estado", ["pendiente", "bloqueada", "lista"]).gte("created_at", desde)
-    const candCola: Candidato[] = ((cola || []) as any[]).map((c) => ({ id: c.id, remito: c.remito, patente: c.patente_planta, at: new Date(c.created_at).getTime() }))
+    const { data: cola } = await sb.from("cargas").select("id, remito, remito_tipo, patente_planta, created_at, dispatch_id, m3").eq("puesto_id", puesto.id).in("estado", ["pendiente", "bloqueada", "lista"]).gte("created_at", desde)
+    const candCola: Candidato[] = ((cola || []) as any[]).map((c) => ({ id: c.id, remito: c.remito, tipo: c.remito_tipo, patente: c.patente_planta, at: new Date(c.created_at).getTime() }))
     const enCola = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, candCola)
     // 2. Despachos de la planta sin carga
     let enDesp: ReturnType<typeof emparejar> = null
@@ -46,7 +47,7 @@ export async function POST(req: Request) {
       const { data: conCarga } = ids.length ? await sb.from("cargas").select("dispatch_id").in("dispatch_id", ids) : { data: [] }
       const usados = new Set(((conCarga || []) as any[]).map((x) => x.dispatch_id))
       const libres = ((ds || []) as any[]).filter((d) => !usados.has(d.id))
-      enDesp = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, libres.map((d) => ({ id: d.id, remito: d.remito, patente: d.mixers?.license_plate || null, at: new Date(d.created_at).getTime() })))
+      enDesp = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, libres.map((d) => ({ id: d.id, remito: d.remito, tipo: d.remito_tipo, patente: d.mixers?.license_plate || null, at: new Date(d.created_at).getTime() })))
       desp = enDesp ? libres.find((d) => d.id === enDesp!.id) : null
     }
 

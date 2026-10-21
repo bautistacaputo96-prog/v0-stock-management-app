@@ -3,7 +3,7 @@ import { registrarActividad, respuestaError, sbServicio } from "@/lib/auth/servi
 import { ajusteStockHabilitado, efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
 import { desvio } from "@/lib/carga/auditoria"
 import { bloqueoDe, cargarFormulas, cargarPuestoPorId, controlDeFormula } from "@/lib/carga/datos"
-import { contextoServidor, error, exigirCarga, horaPuente, registrarEvento } from "@/lib/carga/servidor"
+import { contextoServidor, error, exigirCarga, horaPuente, registrarEvento, yaProcesado } from "@/lib/carga/servidor"
 import { SALIDAS, grupoDeSalida, type Salida } from "@/lib/carga/tipos"
 import type { Accion } from "@/lib/permisos"
 
@@ -30,10 +30,17 @@ export const dynamic = "force-dynamic"
  * MODO SIMULADO: nunca se toca el despacho real ni el stock (lib/carga/cierre.ts). Queda escrito qué se haría.
  */
 const PERMISO: Record<string, Accion> = {
-  bajada: "ver", evento: "ver", parar: "ver", terminar: "ver", no_arranco: "ver",
+  // PARAR no pide permiso (alcanza con ver la pantalla). Lo que sube el puente (terminar) pide cargar mientras no
+  // exista la credencial del puesto.
+  bajada: "ver", evento: "ver", parar: "ver", no_arranco: "ver", terminar: "cargar",
   arrancar: "cargar", agua_extra: "cargar", resolver_parada: "cargar", cancelar: "cargar",
   revisar: "editar",
 }
+/** Los botones de la planta (suspender, reanudar, bocina) piden cargar; el resto de los eventos los sube el puente. */
+const permisoDe = (accion: string, tipo: unknown): Accion =>
+  accion === "evento" && ["suspender", "reanudar", "bocina"].includes(String(tipo)) ? "cargar" : PERMISO[accion]
+/** Lo que el puente sube con la etiqueta "sin internet" y que se guarda aunque la orden se haya cancelado mientras */
+const DEL_PUENTE = ["arrancar", "evento", "parar", "terminar", "agua_extra"]
 const EN_COLA = ["pendiente", "bloqueada", "lista", "preparada"]
 const num = (x: unknown) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x))
 
@@ -41,21 +48,32 @@ type MaterialBody = { salida: Salida; material_id: string | null; receta_por_m3?
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await params
+    const { id: idPedido } = await params
     const body = await req.json().catch(() => ({}))
     const accion = String(body?.accion || "")
     if (!PERMISO[accion]) return error("Acción desconocida.")
-    const r = await exigirCarga("carga", PERMISO[accion])
+    const r = await exigirCarga("carga", permisoDe(accion, body?.tipo))
     if (r.respuesta) return r.respuesta
     const sb = sbServicio()
-    const { data: c, error: e0 } = await sb.from("cargas").select("*").eq("id", id).maybeSingle()
+    const { data: c, error: e0 } = await sb.from("cargas").select("*").eq("id", idPedido).maybeSingle()
     if (e0) throw e0
     if (!c) return error("La carga no existe.", 404)
-    const carga = c as any
+    let carga = c as any
     const puesto = await cargarPuestoPorId(sb, carga.puesto_id)
     if (!puesto) return error("El puesto de carga no existe.", 404)
     const at = horaPuente(body?.at)
     const pedido = typeof body?.pedido === "string" && body.pedido.length <= 80 ? body.pedido : null
+    const sinInternet = body?.sin_internet === true
+    if (await yaProcesado(pedido)) return NextResponse.json({ ok: true, duplicado: true })
+
+    // Sin internet la planta cargó una orden que mientras tanto se canceló en la nube: lo que pasó en la planta se
+    // guarda igual, en otra carga unida al mismo despacho, con su alerta (no se pierde ni se pisa la cancelación).
+    if (sinInternet && ["cancelada", "anulada"].includes(carga.estado) && DEL_PUENTE.includes(accion)) {
+      const otra = await cargaDeOrdenCancelada(carga, ["arrancar", "parar", "terminar"].includes(accion), r.usuario, at)
+      if (!otra) return NextResponse.json({ ok: true, ignorado: true })
+      carga = otra
+    }
+    const id: string = carga.id
     const upd = (cambios: Record<string, unknown>) => sb.from("cargas").update(cambios).eq("id", id)
     const evento = (tipo: string, detalle?: Record<string, unknown> | null) =>
       registrarEvento({ carga_id: id, puesto_id: puesto.id, tipo, at, detalle: detalle ?? null, usuario: r.usuario, pedido })
@@ -69,7 +87,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       case "arrancar": {
         if (!EN_COLA.includes(carga.estado)) return error(carga.estado === "en_curso" ? "Esa carga ya está cargando." : "Esa carga ya no está en la cola.", 409)
-        const sinInternet = body?.sin_internet === true
         let bloqueo = carga.bloqueo
         if (!sinInternet) {
           const { data: otra } = await sb.from("cargas").select("id").eq("puesto_id", puesto.id).in("estado", ["en_curso", "suspendida"]).neq("id", id).limit(1)
@@ -83,13 +100,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             return error(`No se puede cargar: ${ctl.motivo}`, 409)
           }
         }
-        if (!(await evento("arranque", { sin_internet: sinInternet, contador: num(body?.contador), receta: num(body?.receta), camion_abajo_at: body?.camion_abajo_at || null }))) return listo({ duplicado: true })
-        await upd({
+        // Condicional: solo si sigue en la cola (dos CARGAR a la vez, o CARGAR contra un Cancelar, no pasan los dos)
+        const { data: act, error: eu } = await sb.from("cargas").update({
           estado: "en_curso", inicio_at: at, arrancada_por: r.usuario, camion_abajo_por: r.usuario, camion_abajo_at: horaPuente(body?.camion_abajo_at || at),
           contador_planta: num(body?.contador), inicio_plc: body?.inicio_plc ? String(body.inicio_plc).slice(0, 40) : null, dia_planta: body?.dia_planta || null,
           ciclo_actual: 1, ciclos: num(body?.ciclos) ?? carga.ciclos, m3_ciclo: num(body?.m3_ciclo) ?? carga.m3_ciclo, receta_numero: num(body?.receta) ?? carga.receta_numero,
           sin_internet: sinInternet, bloqueo, bajada_at: carga.bajada_at || at,
-        })
+        }).eq("id", id).in("estado", EN_COLA).select("id")
+        if (eu) {
+          if ((eu as { code?: string }).code === "23505") return error("La planta está con otra carga.", 409)
+          throw eu
+        }
+        if (!act?.length) return error("Esa carga ya no está en la cola (la arrancaron o la cancelaron).", 409)
+        await evento("arranque", { sin_internet: sinInternet, contador: num(body?.contador), receta: num(body?.receta), camion_abajo_at: body?.camion_abajo_at || null })
         return listo()
       }
 
@@ -190,11 +213,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const motivo = String(body?.motivo || "").trim()
         if (motivo.length < 3) return error("Escribí el motivo.")
         if (!EN_COLA.includes(carga.estado)) return error("Solo se cancela una carga que todavía no arrancó. Si está cargando, primero PARAR.", 409)
-        if (!(await evento("cancelar", { motivo }))) return listo({ duplicado: true })
         const texto = carga.simulada
           ? "Planta simulada: se cancela solo la orden de carga. El despacho real no se toca (si hay que anularlo o cambiar el camión, se hace desde Historial, como siempre)."
           : "Se cancela la orden de carga."
-        await upd({ estado: "cancelada", resolucion: { modo: "cancelada", motivo, por: r.usuario, at, efecto: { texto } } })
+        const { data: act } = await sb.from("cargas").update({ estado: "cancelada", resolucion: { modo: "cancelada", motivo, por: r.usuario, at, efecto: { texto } } })
+          .eq("id", id).in("estado", EN_COLA).select("id")
+        if (!act?.length) return error("Esa carga ya arrancó: primero PARAR.", 409)
+        await evento("cancelar", { motivo })
         await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: id, reference: carga.remito, details: { "Carga cancelada": motivo, Simulada: carga.simulada ? "sí" : "no" } })
         return listo({ texto })
       }
@@ -209,4 +234,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (e) {
     return respuestaError(e)
   }
+}
+
+/**
+ * La carga donde se guarda lo que la planta hizo sin internet con una orden que se canceló en la nube: la que ya se
+ * creó para eso (resolucion.cargada_sin_internet) o una nueva unida al mismo despacho, con su alerta. Para eventos
+ * sueltos (sin arranque ni fin) no se crea nada.
+ */
+async function cargaDeOrdenCancelada(cancelada: any, crear: boolean, usuario: string, at: string): Promise<any | null> {
+  const sb = sbServicio()
+  const ya = cancelada.resolucion?.cargada_sin_internet
+  if (ya) {
+    const { data } = await sb.from("cargas").select("*").eq("id", ya).maybeSingle()
+    if (data) return data
+  }
+  if (!crear) return null
+  const base = {
+    puesto_id: cancelada.puesto_id, plant_id: cancelada.plant_id, estado: "pendiente", origen: cancelada.origen, dispatch_id: cancelada.dispatch_id,
+    pedido_id: cancelada.pedido_id, remito: cancelada.remito, remito_tipo: cancelada.remito_tipo, mixer_id: cancelada.mixer_id, patente_planta: cancelada.patente_planta,
+    cliente_planta: cancelada.cliente_planta, observacion_planta: cancelada.observacion_planta, formula_id: cancelada.formula_id, receta_numero: cancelada.receta_numero,
+    m3: cancelada.m3, ciclos: cancelada.ciclos, m3_ciclo: cancelada.m3_ciclo, bloqueo: cancelada.bloqueo, agua_distinta: cancelada.agua_distinta, autorizacion: cancelada.autorizacion,
+    bajada_at: cancelada.bajada_at || at, sin_internet: true, union_remito: cancelada.dispatch_id ? "por id" : null, created_by: usuario,
+    nota: `Se cargó sin internet una orden que se había cancelado (${cancelada.resolucion?.motivo || "sin motivo"}).`,
+  }
+  let ins = await sb.from("cargas").insert(base).select("*").single()
+  // Si el despacho ya tiene otra carga viva, esta queda como la que "completa" a la cancelada (sigue unida al despacho)
+  if (ins.error && (ins.error as { code?: string }).code === "23505") ins = await sb.from("cargas").insert({ ...base, completa_carga_id: cancelada.id }).select("*").single()
+  if (ins.error) throw ins.error
+  await sb.from("cargas").update({ resolucion: { ...(cancelada.resolucion || {}), cargada_sin_internet: ins.data.id } }).eq("id", cancelada.id)
+  await sb.from("alertas_carga").insert({
+    puesto_id: cancelada.puesto_id, tipo: "orden_cancelada_cargada", carga_id: ins.data.id, formula_id: cancelada.formula_id, receta_numero: cancelada.receta_numero,
+    titulo: `Se cargó sin internet una orden cancelada · remito ${cancelada.remito || "s/n"}`,
+    detalle: { cancelada_id: cancelada.id, motivo_cancelacion: cancelada.resolucion?.motivo || null, simulada: cancelada.simulada, nota: "Quedó registrada igual, unida al mismo despacho. Revisá qué pasó con el camión." },
+  })
+  await registrarEvento({ carga_id: ins.data.id, puesto_id: cancelada.puesto_id, tipo: "orden_cancelada_cargada", at, detalle: { cancelada_id: cancelada.id }, usuario })
+  return ins.data
 }

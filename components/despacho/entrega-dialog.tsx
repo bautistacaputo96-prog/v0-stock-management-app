@@ -96,6 +96,9 @@ export function EntregaDialog({
   // Carga de planta (en prueba): control de receta "En la planta" y la orden a la cola de carga (carga-planta.md 19.2)
   const [enPlanta, setEnPlanta] = useState<{ simulada: boolean; ctl: ControlReceta } | null>(null)
   const [frenadaOk, setFrenadaOk] = useState(false)
+  const [cargandoPlanta, setCargandoPlanta] = useState(false)
+  // Cada apertura tiene su número: si se cambia de pedido, la respuesta vieja se descarta
+  const vueltaPlanta = useRef(0)
 
   const pend = useMemo(() => (p ? pendientes(viajes.filter((v) => v.pedido_id === p.id)) as ViajeT[] : []), [p, viajes])
   const camion = (id: string) => camiones.find((c) => c.id === id) || null
@@ -129,13 +132,16 @@ export function EntregaDialog({
     setResuelto({ tipo: null, origen: null })
     setCargando(true)
     const sb = createClient()
-    setEnPlanta(null); setFrenadaOk(false)
+    setEnPlanta(null); setFrenadaOk(false); setCargandoPlanta(true)
+    const vuelta = ++vueltaPlanta.current
     // Sin puesto de carga en etapa B o C (o sin la migración), no aparece nada y el despacho es el de siempre
     cargarPuesto(sb, planta.id).then(async (pu) => {
       if (!mandaOrdenes(pu)) return
       const [ctx, fs] = await Promise.all([cargarContexto(sb, pu!), cargarFormulas(sb, ped.formula_id ? [ped.formula_id] : [])])
+      if (vuelta !== vueltaPlanta.current) return
       setEnPlanta({ simulada: pu!.sistema === "simulador", ctl: controlDeFormula(ctx, fs[0] || null) })
-    }).catch(() => setEnPlanta(null))
+    }).catch(() => { if (vuelta === vueltaPlanta.current) setEnPlanta(null) })
+      .finally(() => { if (vuelta === vueltaPlanta.current) setCargandoPlanta(false) })
     const desde = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString()
     Promise.all([
       sb.rpc("remito_tipo_para", { p_pedido_id: ped.id }).then((r: any) => (r.error ? null : r.data)),
@@ -443,8 +449,8 @@ export function EntregaDialog({
         </div>
         <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" className="h-11" onClick={onClose} disabled={enviando}>Cancelar</Button>
-          <Button variant="outline" className="h-11" onClick={() => despachar(true)} disabled={enviando || cargando || frenadaFalta}>🖨 Despachar e imprimir</Button>
-          <Button className="h-11 bg-green-600 hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || frenadaFalta}>
+          <Button variant="outline" className="h-11" onClick={() => despachar(true)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>🖨 Despachar e imprimir</Button>
+          <Button className="h-11 bg-green-600 hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Despachar"}
           </Button>
         </DialogFooter>

@@ -27,11 +27,14 @@ export async function POST(req: Request) {
     if (!dispatchId) return error("Falta el despacho.")
     const sb = sbServicio()
     const { data: d, error: e1 } = await sb.from("dispatches")
-      .select("id, plant_id, remito, remito_tipo, quantity_m3, mixer_id, formula_id, scheduled_dispatch_id, is_test_dispatch, mixers(license_plate), clients(name), construction_sites(name), formulas(code), plants(name)")
+      .select("id, plant_id, remito, remito_tipo, quantity_m3, mixer_id, formula_id, scheduled_dispatch_id, is_test_dispatch, created_at, mixers(license_plate), clients(name), construction_sites(name), formulas(code), plants(name)")
       .eq("id", dispatchId).maybeSingle()
     if (e1) throw e1
-    if (!d) return error("El despacho no existe.", 404)
+    // Anular un despacho lo borra (anular_despacho): si no está, no hay nada que mandar
+    if (!d) return error("El despacho no existe (¿se anuló?).", 404)
     const desp = d as any
+    if (desp.is_test_dispatch) return NextResponse.json({ ok: true, enviada: false, motivo: "Es un despacho de prueba: no va a la cola de carga." })
+    if (Date.now() - new Date(desp.created_at).getTime() > 12 * 3600_000) return NextResponse.json({ ok: true, enviada: false, motivo: "Es un despacho de hace más de 12 horas: no va a la cola de carga." })
     const puesto = await cargarPuesto(sb, desp.plant_id)
     if (!mandaOrdenes(puesto)) return NextResponse.json({ ok: true, enviada: false, motivo: "La planta no tiene un puesto de carga que reciba órdenes." })
     const { data: ya } = await sb.from("cargas").select("id").eq("dispatch_id", dispatchId).is("completa_carga_id", null).not("estado", "in", "(cancelada,anulada)").limit(1)
@@ -62,11 +65,14 @@ export async function POST(req: Request) {
     await registrarEvento({ carga_id: carga.id, puesto_id: puesto!.id, tipo: "orden_creada", detalle: { remito: desp.remito, m3, frena: ctl.frena, agua: ctl.aguaDistinta }, usuario: r.usuario })
 
     let mail: Awaited<ReturnType<typeof mailDespachoFrenado>> | null = null
-    if (ctl.frena) {
-      mail = await mailDespachoFrenado({
+    // Con la planta simulada, "no tiene receta" es normal (no están armadas todas): no se le manda el mail a Juan
+    const sinReceta = ctl.numero == null || !ctl.cmp
+    if (ctl.frena && carga.simulada && sinReceta) mail = { enviado: false, a: [], motivo: "planta simulada sin receta para esa fórmula: no se manda" }
+    else if (ctl.frena) mail = await mailDespachoFrenado({
         simulada: carga.simulada, planta: desp.plants?.name || "", remito: `${desp.remito_tipo || ""} ${desp.remito || "s/n"}`.trim(), camion: patente || "-",
         formula: desp.formulas?.code || formula?.code || "-", receta: ctl.numero, motivo: ctl.motivo || "", items: ctl.items, por: r.usuario,
       })
+    if (ctl.frena && mail) {
       await registrarEvento({ carga_id: carga.id, puesto_id: puesto!.id, tipo: "frenada_confirmada", detalle: { motivo: ctl.motivo, mail }, usuario: r.usuario })
       // Queda en la alerta de la receta (la abre si no estaba) y en Actividad
       if (ctl.numero != null && formula) {

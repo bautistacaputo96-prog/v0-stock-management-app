@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { crearPuente, pasosArranque, type PuenteConAdaptador } from "@/lib/carga/puente"
+import { ArranqueCanceladoError, crearPuente, pasosArranque, type PuenteConAdaptador } from "@/lib/carga/puente"
 import { SimuladorIndumix, detectarEventos, type Falla } from "@/lib/carga/simulador"
 import { huellaReceta } from "@/lib/carga/receta"
 import { materialesDeReporte, type Contexto } from "@/lib/carga/datos"
@@ -22,6 +22,8 @@ import { PlantaRechazoError, SinConexionError, type EstadoPlanta, type FormulaSi
 
 const CLAVE_SIM = "rebucret_carga_simulador"
 const CLAVE_COLA = "rebucret_carga_por_subir"
+/** Lo que el sistema rechazó al subir (4xx que no es de sesión): no se reintenta, pero queda guardado en el equipo */
+const CLAVE_RECHAZADOS = "rebucret_carga_rechazados"
 const leer = (k: string) => { try { return window.localStorage.getItem(k) } catch { return null } }
 const guardar = (k: string, v: string) => { try { window.localStorage.setItem(k, v) } catch { /* sin almacenamiento */ } }
 const nuevoId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -93,6 +95,10 @@ export function usarPuenteSimulado(o: {
   const [orden, setOrden] = useState<{ cargaId: string; contador: number } | null>(null)
   const [ultima, setUltima] = useState<{ cargaId: string; contador: number; fin: number } | null>(null)
   const [listo, setListo] = useState(false)
+  // PARAR mientras arranca: la carga que se está arrancando queda cancelada y `cargar` lo mira antes de cada paso
+  const cancelarRef = useRef<string | null>(null)
+  const prepRef = useRef<Prep | null>(null)
+  useEffect(() => { prepRef.current = prep }, [prep])
 
   // ── Subir a la nube (o encolar sin internet) ──
   const cola = useCallback((): Envio[] => { try { return JSON.parse(leer(CLAVE_COLA) || "[]") } catch { return [] } }, [])
@@ -100,7 +106,7 @@ export function usarPuenteSimulado(o: {
   const subir = useCallback(async (ruta: string, body: Record<string, unknown>, opts: { encolar?: boolean } = { encolar: true }): Promise<{ ok: boolean; json?: any; encolado?: boolean; error?: string }> => {
     const b = { pedido: nuevoId(), at: new Date().toISOString(), ...body }
     if (!internetRef.current) {
-      if (opts.encolar) { guardarCola([...cola(), { ruta, body: b }]); return { ok: true, encolado: true } }
+      if (opts.encolar) { guardarCola([...cola(), { ruta, body: { ...b, sin_internet: true } }]); return { ok: true, encolado: true } }
       return { ok: false, error: "Sin internet" }
     }
     try {
@@ -109,33 +115,51 @@ export function usarPuenteSimulado(o: {
       if (!r.ok) return { ok: false, json, error: json?.error || `Error ${r.status}` }
       return { ok: true, json }
     } catch {
-      if (opts.encolar) { guardarCola([...cola(), { ruta, body: b }]); return { ok: true, encolado: true } }
+      if (opts.encolar) { guardarCola([...cola(), { ruta, body: { ...b, sin_internet: true } }]); return { ok: true, encolado: true } }
       return { ok: false, error: "No hay conexión con el sistema" }
     }
   }, [cola, guardarCola])
 
   const vaciando = useRef(false)
+  const avisoSesion = useRef(0)
   const vaciarCola = useCallback(async () => {
     const c = cola()
     if (!c.length || !internetRef.current || vaciando.current) return
     vaciando.current = true
-    // En orden (arrancar antes que terminar). Lo que se sube se saca de la cola por su número de pedido: lo que se
-    // encoló mientras tanto queda.
+    // En orden (arrancar antes que terminar). Sale de la cola solo lo que el sistema aceptó (2xx, o "ya estaba":
+    // duplicado). Sin sesión (401/403) se conserva todo y se pide entrar de nuevo. Otro rechazo (4xx) se aparta a
+    // "rechazados" del equipo para no trabar la cola. Lo que se encoló mientras tanto queda.
     const subidos = new Set<unknown>()
+    const rechazados: (Envio & { status: number; error: string })[] = []
+    let sinSesion = false
     try {
       for (const x of c) {
-        try {
-          const r = await fetch(x.ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(x.body) })
-          if (r.status >= 500) break
-          subidos.add(x.body.pedido)
-        } catch { break }
+        let r: Response
+        try { r = await fetch(x.ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(x.body) }) } catch { break }
+        if (r.status === 401 || r.status === 403) { sinSesion = true; break }
+        if (r.status >= 500) break
+        const j = await r.json().catch(() => ({}))
+        if (r.ok || j?.duplicado) { subidos.add(x.body.pedido); continue }
+        rechazados.push({ ...x, status: r.status, error: String(j?.error || "") })
       }
     } finally {
-      guardarCola(cola().filter((x) => !subidos.has(x.body.pedido)))
+      const fuera = new Set([...subidos, ...rechazados.map((x) => x.body.pedido)])
+      guardarCola(cola().filter((x) => !fuera.has(x.body.pedido)))
+      if (rechazados.length) {
+        let prev: unknown[] = []
+        try { prev = JSON.parse(leer(CLAVE_RECHAZADOS) || "[]") } catch { /* nada */ }
+        guardar(CLAVE_RECHAZADOS, JSON.stringify([...prev, ...rechazados].slice(-200)))
+      }
       vaciando.current = false
     }
     const n = subidos.size
     if (n) { onAviso(`Se subieron ${n} registro${n > 1 ? "s" : ""} guardados en la PC de la planta`, "Sin duplicar: cada uno lleva su número de pedido."); onCambio() }
+    if (rechazados.length) onAviso(`El sistema rechazó ${rechazados.length} registro${rechazados.length > 1 ? "s" : ""} guardado${rechazados.length > 1 ? "s" : ""}`, `${rechazados[0].error || `Error ${rechazados[0].status}`}. Quedan apartados en este equipo; avisale a Bautista.`)
+    if (sinSesion && Date.now() - avisoSesion.current > 60_000) {
+      avisoSesion.current = Date.now()
+      const q = cola().length
+      onAviso(`Entrá de nuevo para subir ${q} registro${q === 1 ? "" : "s"}`, "Se cerró la sesión. Lo guardado en esta PC no se pierde: se sube cuando vuelvas a entrar.")
+    }
   }, [cola, guardarCola, onAviso, onCambio])
 
   // ── Guardar / recuperar la planta simulada ──
@@ -292,19 +316,21 @@ export function usarPuenteSimulado(o: {
       sinInternet ? "Sin internet: la orden ya bajó y la validó la nube; el puente la acepta igual (no se pide nada extra)" : "El sistema controla el permiso, la cola y la receta",
       ...pasosArranque(ordenPlanta),
     ]
+    cancelarRef.current = null
+    const cancelada = () => cancelarRef.current === k.id
     setPrep({ cargaId: k.id, pasos, i: 0 })
     const contadorEsperado = s.contador + 1
     const r = await subir(`/api/carga/${k.id}`, {
       accion: "arrancar", sin_internet: sinInternet, contador: contadorEsperado, receta: k.receta_numero, inicio_plc: s.estado().reloj_plc, dia_planta: diaRef.current,
       camion_abajo_at: new Date().toISOString(), ciclos: Math.max(1, Math.ceil(Number(k.m3) / s.m3MaxCiclo - 1e-9)), m3_ciclo: Number(k.m3) / Math.max(1, Math.ceil(Number(k.m3) / s.m3MaxCiclo - 1e-9)),
     }, { encolar: sinInternet })
-    if (!r.ok) { setPrep(null); onAviso("No arrancó", r.error); onCambio(); return false }
+    if (!r.ok) { setPrep(null); onAviso(cancelada() ? "PARAR: no se arrancó nada" : "No arrancó", cancelada() ? undefined : r.error); onCambio(); return false }
     ordenRef.current = { cargaId: k.id, contador: contadorEsperado }
     setOrden(ordenRef.current)
     setPrep((x) => (x ? { ...x, i: 1 } : x))
     await espera(450)
     try {
-      await p.cargarYArrancar(ordenPlanta, receta ? huellaReceta(receta) : null, (i) => { setPrep((x) => (x ? { ...x, i: i + 1 } : x)) })
+      await p.cargarYArrancar(ordenPlanta, receta ? huellaReceta(receta) : null, (i) => { setPrep((x) => (x ? { ...x, i: i + 1 } : x)) }, cancelada)
       await espera(450)
       setPrep(null)
       ultimaRef.current = null
@@ -315,6 +341,12 @@ export function usarPuenteSimulado(o: {
       ordenRef.current = null
       setOrden(null)
       setPrep(null)
+      if (e instanceof ArranqueCanceladoError) {
+        await subir(`/api/carga/${k.id}`, { accion: "no_arranco", motivo: "PARAR" })
+        onAviso("PARAR: se cortó el arranque", "No se arrancó nada. La orden vuelve a la cola.")
+        onCambio()
+        return false
+      }
       const txt = e instanceof PlantaRechazoError || e instanceof SinConexionError ? e.message : (e as Error)?.message || "Error"
       await subir(`/api/carga/${k.id}`, { accion: "no_arranco", motivo: txt })
       onAviso("La planta no arrancó", `${txt} No se reintenta solo ni se saltea ninguna seguridad.`)
@@ -329,10 +361,11 @@ export function usarPuenteSimulado(o: {
     }
   }, [onAviso]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** PARAR: siempre a la planta. Si estaba arrancando, además corta el arranque antes del paso que sigue. */
   const parar = useCallback(async () => {
-    if (prep) { setPrep(null); onAviso("PARAR: se cortó la preparación", "No se arrancó nada."); return }
+    if (prepRef.current) cancelarRef.current = prepRef.current.cargaId
     await conPlanta((p) => p.parar())
-  }, [prep, conPlanta, onAviso])
+  }, [conPlanta])
 
   const extraAgua = useCallback(async (litros: number, cargaId: string, despues: boolean) => {
     try { const { p } = exigir(); await p.extraAgua(litros) } catch (e) { onAviso(e instanceof SinConexionError ? "No hay conexión con la planta" : "No se agregó", (e as Error).message); return false }

@@ -31,25 +31,8 @@ export async function POST(req: Request) {
     const recetas = (Array.isArray(body?.recetas) ? body.recetas : []) as RecetaPlanta[]
     if (recetas.length > puesto.max_recetas) return error(`La planta guarda ${puesto.max_recetas} recetas como máximo.`)
 
-    let mapeoGuardado = false
-    if (Array.isArray(body?.mapeo)) {
-      if (!puedeCon(r.sesion.usuario, "carga", "editar")) return error("Asignar fórmulas a las recetas pide Carga · editar.", 403)
-      const filas = (body.mapeo as { numero: number; formula_id: string | null; tipo: string }[])
-        .filter((m) => Number(m.numero) >= 1 && Number(m.numero) <= puesto.max_recetas)
-        .map((m) => ({ puesto_id: puesto.id, numero: Number(m.numero), formula_id: m.formula_id || null, tipo: m.tipo === "rotativa" ? "rotativa" : "fija", asignada_por: r.usuario, asignada_at: leida }))
-      const vistos = new Set<string>()
-      for (const f of filas) if (f.formula_id) { if (vistos.has(f.formula_id)) return error("Una fórmula va en un solo número."); vistos.add(f.formula_id) }
-      const { error: e1 } = await sb.from("puesto_recetas").delete().eq("puesto_id", puesto.id)
-      if (e1) throw e1
-      if (filas.length) { const { error: e2 } = await sb.from("puesto_recetas").insert(filas); if (e2) throw e2 }
-      mapeoGuardado = true
-      await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: puesto.id, reference: puesto.nombre, details: { "Recetas de la planta": `${filas.filter((f) => f.formula_id).length} fórmulas asignadas a números` } })
-    }
-
-    // Recetas leídas: versiones nuevas y avisos de cambio
-    const { data: act } = await sb.from("recetas_planta_actual").select("*").eq("puesto_id", puesto.id)
-    const actuales = new Map(((act || []) as Record<string, unknown>[]).map((x) => { const rl = aRecetaLeida(x); return [rl.numero, rl] as const }))
-    let nuevas = 0, cambios = 0
+    // Lo que llega se limpia (solo salidas conocidas, valores ≥ 0, textos cortos)
+    const limpias: RecetaPlanta[] = []
     for (const raw of recetas) {
       const numero = Number(raw?.numero)
       if (!(numero >= 1 && numero <= puesto.max_recetas)) continue
@@ -60,6 +43,34 @@ export async function POST(req: Request) {
           unidad: INFO_SALIDA[s.salida].unidad, ...(s.orden != null && Number.isFinite(Number(s.orden)) ? { orden: Number(s.orden) } : {}),
         })),
       }
+      limpias.push(rec)
+    }
+
+    // "Armar las 20 recetas" (con mapeo): todo junto en una función de la base, o todo o nada
+    if (Array.isArray(body?.mapeo)) {
+      if (!puedeCon(r.sesion.usuario, "carga", "editar")) return error("Asignar fórmulas a las recetas pide Carga · editar.", 403)
+      const filas = (body.mapeo as { numero: number; formula_id: string | null; tipo: string }[])
+        .filter((m) => Number(m.numero) >= 1 && Number(m.numero) <= puesto.max_recetas)
+        .map((m) => ({ numero: Number(m.numero), formula_id: m.formula_id || null, tipo: m.tipo === "rotativa" ? "rotativa" : "fija" }))
+      const vistos = new Set<string>()
+      for (const f of filas) if (f.formula_id) { if (vistos.has(f.formula_id)) return error("Una fórmula va en un solo número."); vistos.add(f.formula_id) }
+      const { data: res, error: ea } = await sb.rpc("armar_recetas_puesto", {
+        p_puesto: puesto.id, p_mapeo: filas, p_recetas: limpias.map((x) => ({ ...x, huella: huellaReceta(x) })), p_usuario: r.usuario, p_leida: leida,
+      })
+      if (ea) throw ea
+      await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: puesto.id, reference: puesto.nombre, details: { "Recetas de la planta": `${filas.filter((f) => f.formula_id).length} fórmulas asignadas a números`, Recetas: String((res as any)?.recetas ?? "") } })
+      const ctx = await contextoServidor(puesto)
+      const al = await sincronizarAlertasReceta(ctx, leida)
+      const recalculadas = await recalcularBloqueos(ctx)
+      return NextResponse.json({ ok: true, nuevas: (res as any)?.recetas ?? 0, cambios: 0, mapeo: true, alertas: al, recalculadas })
+    }
+
+    // Recetas leídas: versiones nuevas y avisos de cambio
+    const { data: act } = await sb.from("recetas_planta_actual").select("*").eq("puesto_id", puesto.id)
+    const actuales = new Map(((act || []) as Record<string, unknown>[]).map((x) => { const rl = aRecetaLeida(x); return [rl.numero, rl] as const }))
+    let nuevas = 0, cambios = 0
+    for (const rec of limpias) {
+      const numero = rec.numero
       const huella = huellaReceta(rec)
       const ant = actuales.get(numero) || null
       const { data: ya } = await sb.from("recetas_planta").select("id").eq("puesto_id", puesto.id).eq("numero", numero).eq("huella", huella).limit(1)
@@ -95,7 +106,7 @@ export async function POST(req: Request) {
     const ctx = await contextoServidor(puesto)
     const al = await sincronizarAlertasReceta(ctx, leida)
     const recalculadas = await recalcularBloqueos(ctx)
-    return NextResponse.json({ ok: true, nuevas, cambios, mapeo: mapeoGuardado, alertas: al, recalculadas })
+    return NextResponse.json({ ok: true, nuevas, cambios, mapeo: false, alertas: al, recalculadas })
   } catch (e) {
     return respuestaError(e)
   }

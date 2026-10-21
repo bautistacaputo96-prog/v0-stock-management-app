@@ -124,11 +124,19 @@ export function tiempos(f: Pick<FilaAuditoria, "cargas" | "salida_gps">): { carg
   }
 }
 
-export type Candidato = { id: string; remito: string | null; patente: string | null; at: number }
+export type Candidato = { id: string; remito: string | null; patente: string | null; at: number; tipo?: string | null }
+
+/** "R 886", "X0886", "886" → tipo R/X si lo dice (null si no). */
+export function tipoDeObservacion(t: string | null | undefined): "R" | "X" | null {
+  const m = String(t ?? "").toUpperCase().match(/(?:^|[^A-Z])([RX])\s*-?\s*\d/)
+  return m ? (m[1] as "R" | "X") : null
+}
 
 /**
  * Emparejador: une una carga hecha en Indumix (sin orden nuestra) con un despacho o una orden de la cola.
- * 1. por el remito escrito en "Observación" (solo dígitos: "0886" = "886");
+ * 1. por el remito escrito en "Observación" (solo dígitos: "0886" = "886"). Si hay más de uno con esos dígitos (la
+ *    serie R y la X se pisan), prefiere el del mismo tipo (si la Observación dice "R" o "X"), después el del mismo
+ *    camión y después el más cercano en la hora;
  * 2. si no, por camión (patente normalizada, "AG 083 GT" = "AG083GT") y hora: la carga terminó entre 30 min antes y
  *    2 h después del despacho (con la secuencia A el despacho va primero). Se queda con el más cercano.
  */
@@ -137,11 +145,15 @@ export function emparejar(
   candidatos: Candidato[],
 ): { id: string; union: "por remito (Observación)" | "por camión y hora" } | null {
   const obs = digitos(carga.observacion)
+  const pat = normalizarPatente(carga.patente)
   if (obs) {
-    const c = candidatos.find((x) => x.remito && digitos(x.remito) === obs)
+    const tipo = tipoDeObservacion(carga.observacion)
+    const cand = candidatos.filter((x) => x.remito && digitos(x.remito) === obs)
+    const puntos = (x: Candidato) => (tipo && (x.tipo || tipoDeObservacion(x.remito)) === tipo ? 2 : 0) + (pat && normalizarPatente(x.patente) === pat ? 1 : 0)
+    const dist = (x: Candidato) => (carga.fin != null ? Math.abs(carga.fin - x.at) : 0)
+    const c = [...cand].sort((a, b) => puntos(b) - puntos(a) || dist(a) - dist(b))[0]
     if (c) return { id: c.id, union: "por remito (Observación)" }
   }
-  const pat = normalizarPatente(carga.patente)
   if (pat && carga.fin != null) {
     const enVentana = candidatos
       .filter((x) => normalizarPatente(x.patente) === pat && carga.fin! >= x.at - 30 * MIN && carga.fin! <= x.at + 120 * MIN)

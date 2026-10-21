@@ -3,7 +3,9 @@
 -- Especificación: docs/migracion-loop/carga-planta.md (puntos 8, 18.6, 19.9; los puntos 18 a 21 mandan).
 --
 -- Qué agrega (todo nuevo; ninguna tabla existente cambia de columnas):
---   puestos_carga        una fila por dosificadora. Se crea UNA: "Canning · simulador" (sistema = 'simulador').
+--   puestos_carga        una fila por dosificadora. Se crea UNA: "Canning · simulador" (sistema = 'simulador'),
+--                        APAGADA (etapa 'apagado'): Despachar no manda órdenes hasta que Bautista la prenda desde
+--                        Carga de planta › Recetas de la planta › Etapa.
 --                        Las columnas del puente real (credencial, secreto de arranque, latido, versión, deriva del
 --                        reloj) quedan para después del jueves 23/10: no sirven para el simulador.
 --   puesto_salidas       qué material hay en cada tolva, rosca, aditivo y agua, con historia (la Tolva 1 cambia
@@ -17,6 +19,8 @@
 --   cargas_agua_extra    el agua extra de Indumix (19.5).
 --   alertas_carga        receta que no coincide, receta cambiada, Tolva 1, carga desde Indumix, etc.
 --   cargas_tiempos       vista: inicio, fin, tiempo de carga, salida de planta por GPS y esperas (19.6).
+--   armar_recetas_puesto "Armar las 20 recetas del simulador": qué fórmula va en cada número y las recetas, todo junto
+--                        (o nada).
 --   ajustar_stock_carga  el ajuste de stock con los kilos reales (18.5), PROGRAMADO Y APAGADO: no hace nada con
 --                        una carga simulada (da error), ni con un puesto con usa_kilos_reales = false (el único
 --                        puesto es el simulador, que no lo puede prender: lo impide un CHECK). Lo prende Bautista
@@ -40,8 +44,9 @@
 -- Compatible con main: main no lee nada de esto. Se puede aplicar antes de publicar el front.
 -- Se puede correr más de una vez (IF NOT EXISTS, CREATE OR REPLACE, ON CONFLICT, WHERE NOT EXISTS).
 --
--- Permisos de la base: el navegador (anon) solo LEE estas tablas; se escriben desde las rutas /api/carga/* con la
--- sesión de la persona (fase 0c-1) y la clave de servicio, que controlan los permisos.
+-- Permisos de la base: el navegador (anon) solo LEE estas tablas (RLS prendido, con una política de SELECT); se
+-- escriben desde las rutas /api/carga/* con la sesión de la persona (fase 0c-1) y la clave de servicio, que controlan
+-- los permisos. Las vistas leen con los permisos de quien consulta (security_invoker).
 
 -- ---------------------------------------------------------------------------
 -- Puestos de carga
@@ -103,7 +108,7 @@ CREATE TABLE IF NOT EXISTS public.recetas_planta (
 );
 CREATE INDEX IF NOT EXISTS recetas_planta_actual_idx ON public.recetas_planta (puesto_id, numero, ultima_lectura_at DESC);
 
-CREATE OR REPLACE VIEW public.recetas_planta_actual AS
+CREATE OR REPLACE VIEW public.recetas_planta_actual WITH (security_invoker = true) AS
   SELECT DISTINCT ON (puesto_id, numero) *
     FROM public.recetas_planta
    ORDER BY puesto_id, numero, ultima_lectura_at DESC, primera_lectura_at DESC;
@@ -197,6 +202,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS cargas_despacho_principal_key ON public.cargas
 -- El mismo reporte de Indumix leído dos veces no duplica la carga (punto 10)
 CREATE UNIQUE INDEX IF NOT EXISTS cargas_reporte_planta_key ON public.cargas (puesto_id, dia_planta, contador_planta, inicio_plc)
   WHERE contador_planta IS NOT NULL;
+-- Una sola carga en la planta a la vez por puesto (dos CARGAR al mismo tiempo no pasan los dos)
+CREATE UNIQUE INDEX IF NOT EXISTS cargas_una_en_planta_key ON public.cargas (puesto_id) WHERE estado IN ('en_curso', 'suspendida');
 CREATE INDEX IF NOT EXISTS cargas_puesto_estado_idx ON public.cargas (puesto_id, estado, created_at);
 CREATE INDEX IF NOT EXISTS cargas_plant_created_idx ON public.cargas (plant_id, created_at);
 CREATE INDEX IF NOT EXISTS cargas_mixer_idx ON public.cargas (mixer_id, created_at);
@@ -275,7 +282,8 @@ CREATE TABLE IF NOT EXISTS public.alertas_carga (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   puesto_id           uuid NOT NULL REFERENCES public.puestos_carga(id) ON DELETE CASCADE,
   tipo                text NOT NULL CHECK (tipo IN ('receta_no_coincide', 'receta_cambiada', 'receta_nueva', 'receta_faltante',
-                        'tolva_material', 'humedad', 'carga_desde_indumix', 'puente_caido', 'reloj', 'despacho_frenado')),
+                        'tolva_material', 'humedad', 'carga_desde_indumix', 'puente_caido', 'reloj', 'despacho_frenado',
+                        'orden_cancelada_cargada')),
   carga_id            uuid REFERENCES public.cargas(id) ON DELETE SET NULL,
   formula_id          uuid REFERENCES public.formulas(id) ON DELETE SET NULL,
   receta_numero       int,
@@ -300,7 +308,7 @@ CREATE INDEX IF NOT EXISTS alertas_carga_puesto_idx ON public.alertas_carga (pue
 -- ---------------------------------------------------------------------------
 -- Tiempos de planta (19.6): une cargas, despachos y GPS por dispatch_id. Solo lectura.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.cargas_tiempos AS
+CREATE OR REPLACE VIEW public.cargas_tiempos WITH (security_invoker = true) AS
   SELECT c.id AS carga_id,
          c.dispatch_id,
          c.puesto_id,
@@ -325,8 +333,10 @@ CREATE OR REPLACE VIEW public.cargas_tiempos AS
 -- ---------------------------------------------------------------------------
 -- Stock con kilos reales (18.5): PROGRAMADO Y APAGADO
 -- ---------------------------------------------------------------------------
--- Un ajuste por material = real − teórico del despacho (áridos en seco con la humedad de Indumix; el agua no
--- descuenta). Respeta el ancla de recuento como _aplicar_neto. Se graba una sola vez por carga.
+-- Un movimiento por material = real − teórico del despacho (áridos en seco con la humedad de Indumix; el agua no
+-- descuenta), con la misma convención que _aplicar_neto: movement_type 'consumo', positivo = se consumió más (baja el
+-- stock), negativo = se devuelve. Respeta el ancla de recuento como _aplicar_neto. Se graba una sola vez por carga.
+-- ANTES DE PRENDERLO: definir con Bautista si se compara húmedo o seco (spec, "Hecho").
 CREATE OR REPLACE FUNCTION public.ajustar_stock_carga(p_carga_id uuid, p_usuario text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -385,11 +395,11 @@ BEGIN
     v_ancla := public._ancla_stock(r.mid, coalesce(v_d.created_at, v_c.created_at));
     IF v_ancla IS NOT NULL THEN
       INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-      VALUES (r.mid, 'ajuste', 0, 'carga', p_carga_id, v_dia,
+      VALUES (r.mid, 'consumo', 0, 'carga', p_carga_id, v_dia,
               'Kilos reales de la carga · ' || abs(r.aj) || ' kg sin mover: recuento posterior');
     ELSE
       INSERT INTO stock_movements (material_id, movement_type, quantity_kg, reference_type, reference_id, movement_date, notes)
-      VALUES (r.mid, 'ajuste', r.aj, 'carga', p_carga_id, v_dia,
+      VALUES (r.mid, 'consumo', r.aj, 'carga', p_carga_id, v_dia,
               'Kilos reales de la carga (real − teórico) · remito ' || coalesce(v_c.remito, 's/n'));
       IF r.descuenta_stock THEN v_mover := v_mover || jsonb_build_object(r.mid::text, r.aj); END IF;
     END IF;
@@ -405,6 +415,41 @@ END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.ajustar_stock_carga(uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ajustar_stock_carga(uuid, text) TO service_role;
+
+-- "Armar las 20 recetas" (o reasignar fórmulas a números): el mapeo y las recetas en una sola transacción.
+-- p_mapeo: [{numero, formula_id, tipo}] · p_recetas: [{numero, nombre, habilitada, salidas, huella}]
+CREATE OR REPLACE FUNCTION public.armar_recetas_puesto(p_puesto uuid, p_mapeo jsonb, p_recetas jsonb, p_usuario text, p_leida timestamptz DEFAULT now())
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_max int;
+  v_n   int := 0;
+  v_r   int := 0;
+BEGIN
+  SELECT max_recetas INTO v_max FROM puestos_carga WHERE id = p_puesto FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'El puesto de carga no existe.'; END IF;
+  DELETE FROM puesto_recetas WHERE puesto_id = p_puesto;
+  INSERT INTO puesto_recetas (puesto_id, numero, formula_id, tipo, asignada_por, asignada_at)
+  SELECT p_puesto, (m->>'numero')::int, nullif(m->>'formula_id', '')::uuid,
+         CASE WHEN m->>'tipo' = 'rotativa' THEN 'rotativa' ELSE 'fija' END, p_usuario, coalesce(p_leida, now())
+    FROM jsonb_array_elements(coalesce(p_mapeo, '[]'::jsonb)) m
+   WHERE (m->>'numero')::int BETWEEN 1 AND v_max;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO recetas_planta (puesto_id, numero, nombre, habilitada, valores, huella, primera_lectura_at, ultima_lectura_at)
+  SELECT p_puesto, (x->>'numero')::int, coalesce(x->>'nombre', ''), coalesce((x->>'habilitada')::boolean, true),
+         coalesce(x->'salidas', '[]'::jsonb), x->>'huella', coalesce(p_leida, now()), coalesce(p_leida, now())
+    FROM jsonb_array_elements(coalesce(p_recetas, '[]'::jsonb)) x
+   WHERE (x->>'numero')::int BETWEEN 1 AND v_max AND nullif(x->>'huella', '') IS NOT NULL
+  ON CONFLICT (puesto_id, numero, huella) DO UPDATE SET ultima_lectura_at = EXCLUDED.ultima_lectura_at;
+  GET DIAGNOSTICS v_r = ROW_COUNT;
+  RETURN jsonb_build_object('asignadas', v_n, 'recetas', v_r);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.armar_recetas_puesto(uuid, jsonb, jsonb, text, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.armar_recetas_puesto(uuid, jsonb, jsonb, text, timestamptz) TO service_role;
 
 -- Red de seguridad: ningún movimiento de stock apunta a una carga simulada
 CREATE OR REPLACE FUNCTION public._stock_movements_carga_simulada()
@@ -432,6 +477,17 @@ GRANT SELECT ON TABLE public.puestos_carga, public.puesto_salidas, public.receta
   public.cargas_materiales, public.cargas_eventos, public.cargas_agua_extra, public.alertas_carga TO anon, authenticated;
 GRANT ALL ON TABLE public.puestos_carga, public.puesto_salidas, public.recetas_planta, public.puesto_recetas, public.cargas,
   public.cargas_materiales, public.cargas_eventos, public.cargas_agua_extra, public.alertas_carga TO service_role;
+-- RLS prendido (como alertas_stock), con una política que deja LEER al navegador. Nadie más que el servidor escribe.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['puestos_carga', 'puesto_salidas', 'recetas_planta', 'puesto_recetas', 'cargas', 'cargas_materiales',
+                           'cargas_eventos', 'cargas_agua_extra', 'alertas_carga'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_leer', t);
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO anon, authenticated USING (true)', t || '_leer', t);
+  END LOOP;
+END $$;
 REVOKE ALL ON TABLE public.recetas_planta_actual, public.cargas_tiempos FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON TABLE public.recetas_planta_actual, public.cargas_tiempos TO anon, authenticated, service_role;
 
@@ -439,7 +495,7 @@ GRANT SELECT ON TABLE public.recetas_planta_actual, public.cargas_tiempos TO ano
 -- Datos iniciales: el puesto simulado de Canning y su mapa de salidas (6.3)
 -- ---------------------------------------------------------------------------
 INSERT INTO public.puestos_carga (plant_id, nombre, sistema, etapa)
-SELECT p.id, 'Canning · simulador', 'simulador', 'arranque'
+SELECT p.id, 'Canning · simulador', 'simulador', 'apagado'
   FROM public.plants p WHERE p.name = 'Canning'
 ON CONFLICT (plant_id, sistema) DO NOTHING;
 

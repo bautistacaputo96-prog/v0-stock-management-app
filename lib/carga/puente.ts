@@ -32,14 +32,24 @@ export interface Puente {
   /**
    * Prepara y arranca una carga (5.4, pasos 2 a 5): escribe la selección, la verifica, vuelve a leer la receta y aprieta
    * CARGAR. `huellaEsperada` es la de la receta que se controló contra la fórmula: si la receta cambió en el medio, no
-   * arranca. `alPaso` va contando los pasos para la pantalla.
+   * arranca. `alPaso` va contando los pasos para la pantalla. `cancelado` se mira antes de cada paso (sobre todo antes
+   * de CARGAR): si se tocó PARAR mientras arrancaba, corta con ArranqueCanceladoError y no arranca nada.
    */
-  cargarYArrancar(o: OrdenPlanta, huellaEsperada: string | null, alPaso?: (i: number) => void): Promise<void>
+  cargarYArrancar(o: OrdenPlanta, huellaEsperada: string | null, alPaso?: (i: number) => void, cancelado?: () => boolean): Promise<void>
   parar(): Promise<void>
   suspender(): Promise<void>
   reanudar(): Promise<void>
   bocina(ms?: number): Promise<void>
   extraAgua(litros: number): Promise<void>
+}
+
+/** Se tocó PARAR mientras arrancaba: no se arrancó nada. */
+export class ArranqueCanceladoError extends Error {
+  codigo = "parar"
+  constructor() {
+    super("PARAR")
+    this.name = "ArranqueCanceladoError"
+  }
 }
 
 /** Los pasos que se muestran mientras arranca (la pantalla agrega el primero: el permiso o "sin internet"). */
@@ -66,18 +76,23 @@ export class PuenteConAdaptador implements Puente {
   leerRecetas() { return this.adaptador.leerRecetas() }
   leerEstado() { return this.adaptador.leerEstado() }
   leerReportes() { return this.adaptador.leerReportes() }
-  async cargarYArrancar(o: OrdenPlanta, huellaEsperada: string | null, alPaso?: (i: number) => void) {
+  async cargarYArrancar(o: OrdenPlanta, huellaEsperada: string | null, alPaso?: (i: number) => void, cancelado?: () => boolean) {
+    const seguir = () => { if (cancelado?.()) throw new ArranqueCanceladoError() }
+    seguir()
     await this.adaptador.escribirOrden(o)
     alPaso?.(1)
+    seguir()
     const escrita = await this.adaptador.leerOrden()
     if (!mismaOrden(escrita, o)) throw new PlantaRechazoError("Lo que quedó escrito en Indumix no coincide con la orden: no se arrancó.")
     alPaso?.(2)
+    seguir()
     if (huellaEsperada) {
       const r = (await this.adaptador.leerRecetas()).find((x) => x.numero === o.receta)
       if (!r || huellaReceta(r) !== huellaEsperada)
         throw new PlantaRechazoError(`La receta ${o.receta} cambió en Indumix desde que se controló: no se arrancó. Volvé a mirar el control.`)
     }
     alPaso?.(3)
+    seguir() // el último control antes de CARGAR
     await this.adaptador.arrancar()
     alPaso?.(4)
   }
