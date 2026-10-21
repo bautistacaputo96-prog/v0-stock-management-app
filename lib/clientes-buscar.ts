@@ -323,3 +323,41 @@ export function detectarDuplicados(clientes: NuestroB[]): ParDuplicado[] {
     }
   return out
 }
+
+// ---------------------------------------------------------------------------
+// CUIT de un cliente existente (Respuestas de Bautista 21/10/2026, 7: el CUIT es obligatorio)
+// ---------------------------------------------------------------------------
+
+/** "20123456786" → "20-12345678-6". */
+export function formatearCuit(s: unknown): string {
+  const d = soloDigitos(s)
+  return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : String(s ?? "").trim()
+}
+
+export type ControlCuit = { ok: true; cuit: string } | { ok: false; error: string; conflicto?: { tipo: "rebucret" | "zomatik"; id: string; nombre: string } }
+
+/**
+ * ¿Se le puede poner este CUIT al cliente? Tiene que ser un CUIT válido (11 dígitos con el dígito verificador; no
+ * DNI) y no tenerlo otro cliente de Rebucret ni otro cliente de la copia de Zomatik (el suyo vinculado, sí).
+ */
+export function controlarCuit(cuit: unknown, clienteId: string, nuestros: NuestroB[], zomatik: ZomatikB[]): ControlCuit {
+  const d = soloDigitos(cuit)
+  if (d.length !== 11) return { ok: false, error: d.length >= 7 && d.length <= 8 ? "Tiene que ser CUIT, no DNI (11 dígitos)." : "El CUIT tiene que tener 11 dígitos." }
+  if (!cuitValido(d)) return { ok: false, error: "El CUIT no es válido: revisá el dígito verificador." }
+  const yo = nuestros.find((c) => c.id === clienteId)
+  const otro = nuestros.find((c) => c.id !== clienteId && !c.unificado_en && soloDigitos(c.cuit) === d)
+  if (otro) return { ok: false, error: `Ese CUIT ya es de «${otro.name}»${otro.active === false ? " (dado de baja)" : ""} en Rebucret.`, conflicto: { tipo: "rebucret", id: otro.id, nombre: otro.name } }
+  const vinculadoA = new Map(nuestros.filter((c) => c.zomatik_codigo != null).map((c) => [c.zomatik_codigo as number, c]))
+  for (const z of zomatik) {
+    if (soloDigitos(z.cuit) !== d || (yo?.zomatik_codigo != null && z.codigo === yo.zomatik_codigo)) continue
+    const c = vinculadoA.get(z.codigo)
+    if (c && c.id !== clienteId) return { ok: false, error: `Ese CUIT es de «${z.razon_social}» en Zomatik, que está vinculado a «${c.name}».`, conflicto: { tipo: "rebucret", id: c.id, nombre: c.name } }
+    if (!c)
+      return {
+        ok: false,
+        error: `Ese CUIT es de «${z.razon_social}» en Zomatik${yo?.zomatik_codigo != null ? ", y este cliente está vinculado a otro" : ""}. Si es el mismo cliente, vinculalo en Vínculos con Zomatik.`,
+        conflicto: { tipo: "zomatik", id: String(z.codigo), nombre: z.razon_social },
+      }
+  }
+  return { ok: true, cuit: formatearCuit(d) }
+}

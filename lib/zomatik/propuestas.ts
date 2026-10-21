@@ -287,7 +287,28 @@ export function armarPropuestas(d: DatosCruce) {
     const p = xs.filter((x) => !x.vinculo)
     return { faltan: p.length, alta: p.filter((x) => x.propuesta?.confianza === "alta").length, media: p.filter((x) => x.propuesta?.confianza === "media").length, baja: p.filter((x) => x.propuesta?.confianza === "baja").length, sin: p.filter((x) => !x.propuesta).length }
   }
+  // ── Clientes sin CUIT válido (regla del 21/10/2026, 7: el CUIT es obligatorio), por m³ de los últimos 12 meses ──
+  const hace12 = sumarDias(new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10), -365)
+  const m3De = new Map<string, number>()
+  for (const x of d.despachos) if (x.client_id && x.fecha >= hace12) m3De.set(x.client_id, (m3De.get(x.client_id) || 0) + x.m3)
+  const sinCuit = ctx.activos
+    .filter((c) => !cuitValido(soloDigitos(c.cuit)))
+    .map((c) => {
+      const z = c.zomatik_codigo != null ? ctx.zPorCod.get(c.zomatik_codigo) : null
+      return {
+        id: c.id,
+        name: c.name,
+        cuit: c.cuit || null,
+        m3_12m: Math.round((m3De.get(c.id) || 0) * 10) / 10,
+        zomatik_codigo: c.zomatik_codigo ?? null,
+        zomatik_nombre: z?.razon_social || null,
+        cuit_zomatik: z && cuitValido(soloDigitos(z.cuit)) ? z.cuit || null : null,
+      }
+    })
+    .sort((a, b) => b.m3_12m - a.m3_12m || a.name.localeCompare(b.name))
+
   return {
+    sinCuit,
     clientes: filasC,
     formulas: filasF,
     proyectos: filasP,

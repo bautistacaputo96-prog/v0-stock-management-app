@@ -517,18 +517,17 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     try {
       const supabase = createClient()
 
-      // Si el cliente seleccionado no tiene CUIT y se ingresó uno en el aviso, lo asociamos ahora (con anti-duplicado)
+      // Si el cliente seleccionado no tiene CUIT y se ingresó uno en el aviso, se graba por el servidor: valida el
+      // dígito verificador y que no lo tenga otro cliente de Rebucret ni de Zomatik (regla del 21/10/2026, 7)
       if (selectedClient && !selectedClient.cuit && cuitPrompt.trim()) {
-        const { data: dup } = await supabase
-          .from("clients").select("id, name").eq("cuit", cuitPrompt.trim()).neq("active", false).limit(1)
-        if (dup && dup.length > 0 && dup[0].id !== selectedClient.id) {
-          toast({ title: "CUIT duplicado", description: `Ese CUIT ya es de ${dup[0].name}.`, variant: "destructive" })
+        const r = await fetch("/api/clientes/cuit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: selectedClient.id, cuit: cuitPrompt.trim() }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          toast({ title: "CUIT no válido o repetido", description: j?.error || "No se pudo guardar el CUIT", variant: "destructive" })
           setSaving(false)
           return
         }
-        await supabase.from("clients").update({ cuit: cuitPrompt.trim() }).eq("id", selectedClient.id)
-        setClients(clients.map((c) => (c.id === selectedClient.id ? { ...c, cuit: cuitPrompt.trim() } : c)))
-        logActivity({ action: "editar", entity: "cliente", entityId: selectedClient.id, reference: selectedClient.name, details: { CUIT: `- → ${cuitPrompt.trim()}` } })
+        setClients(clients.map((c) => (c.id === selectedClient.id ? { ...c, cuit: j.cuit } : c)))
       }
 
       // La planta a usar viene del formulario (preseleccionada con la planta real del despacho al editar,

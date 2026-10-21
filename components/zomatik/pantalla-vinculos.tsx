@@ -37,12 +37,13 @@ type ZAnio = {
 }
 type ResDup = { id: string; name: string; cuit: string | null; despachos: number; ultimo_despacho: string | null; obras: string[]; zomatik_codigo: number | null }
 type Dup = { a: ResDup; b: ResDup; motivos: string[] }
+type SinCuit = { id: string; name: string; cuit: string | null; m3_12m: number; zomatik_codigo: number | null; zomatik_nombre: string | null; cuit_zomatik: string | null }
 type Conteo = { faltan: number; alta: number; media: number; baja: number; sin: number }
-type Datos = { clientes: FilaC[]; formulas: FilaF[]; proyectos: FilaP[]; zomatik: ZCli[]; zomatikAnio: ZAnio[]; articulos: { codigo: number; nombre: string; linea: string | null }[]; sinCruce: boolean; leido: string | null; duplicados: Dup[]; conteos: { clientes: Conteo; formulas: Conteo; proyectos: Conteo } }
+type Datos = { clientes: FilaC[]; formulas: FilaF[]; proyectos: FilaP[]; zomatik: ZCli[]; zomatikAnio: ZAnio[]; articulos: { codigo: number; nombre: string; linea: string | null }[]; sinCruce: boolean; leido: string | null; duplicados: Dup[]; sinCuit: SinCuit[]; conteos: { clientes: Conteo; formulas: Conteo; proyectos: Conteo } }
 type Dias = { evidencia: string; nuestros: { fecha: string; m3: number; obra: string | null; formula: string | null; planta: string; cliente?: string | null; coincide: boolean }[]; zomatik: { fecha: string; m3: number; articulo: string; deposito: string; cliente?: string | null; remito?: string | null; coincide: boolean }[] }
 type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null; etiqueta?: string; soloSiLibre?: boolean }
 
-type Pestaña = "clientes" | "formulas" | "proyectos" | "traer" | "duplicados"
+type Pestaña = "clientes" | "formulas" | "proyectos" | "traer" | "duplicados" | "sincuit"
 type Filtro = "revisar" | "alta" | "vinculados" | "todos"
 
 const fechaCorta = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(2, 4)}` : "")
@@ -194,6 +195,25 @@ export function PantallaVinculos() {
   /** Duplicados: cuál queda (por par) y el motivo */
   const [queda, setQueda] = useState<Record<string, string>>({})
   const [motivoUnif, setMotivoUnif] = useState<Record<string, string>>({})
+  /** CUIT escrito a mano por cliente (pestaña "Clientes sin CUIT") */
+  const [cuitMano, setCuitMano] = useState<Record<string, string>>({})
+  const [errCuit, setErrCuit] = useState<Record<string, string>>({})
+  async function guardarCuit(id: string, cuit: string) {
+    setTrabajando(true)
+    try {
+      const r = await fetch("/api/clientes/cuit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: id, cuit }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setErrCuit({ ...errCuit, [id]: j?.error || "No se pudo guardar" })
+        return
+      }
+      setErrCuit({ ...errCuit, [id]: "" })
+      toast.success(`CUIT ${j.cuit} guardado`)
+      await cargar()
+    } finally {
+      setTrabajando(false)
+    }
+  }
   async function unificar(par: Dup) {
     const k = `${par.a.id}|${par.b.id}`
     const q = queda[k] || (par.b.despachos > par.a.despachos ? par.b.id : par.a.id)
@@ -327,6 +347,7 @@ export function PantallaVinculos() {
     proyectos: d.proyectos.filter((p) => !p.vinculo).length,
     traer: d.zomatikAnio.filter((z) => !z.vinculado_a && !z.generico).length,
     duplicados: d.duplicados.length,
+    sincuit: d.sinCuit.length,
   }
   const Tab = ({ k, t }: { k: Pestaña; t: string }) => (
     <button onClick={() => setPestaña(k)} className={cn("rounded-md px-3 py-1.5 text-sm", pestaña === k ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
@@ -383,6 +404,7 @@ export function PantallaVinculos() {
         <Tab k="proyectos" t="Proyectos" />
         <Tab k="traer" t="Zomatik → Rebucret" />
         <Tab k="duplicados" t="Duplicados" />
+        <Tab k="sincuit" t="Clientes sin CUIT" />
         <span className="flex-1" />
         {pestaña !== "traer" && (
           <select className="h-8 rounded border bg-background px-2 text-xs" value={filtro} onChange={(e) => setFiltro(e.target.value as Filtro)}>
@@ -456,6 +478,11 @@ export function PantallaVinculos() {
                         tieneVinculo: c.zomatik_codigo != null,
                         sinPar: "Sin par",
                       })}
+                      {c.zomatik_codigo == null && (
+                        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" disabled title="Se habilita después de la prueba con Bautista">
+                          Dar de alta en Zomatik
+                        </Button>
+                      )}
                       {(c.zomatik_codigo ?? c.propuesta?.codigo) != null && botonDias("cliente", c.id, (c.zomatik_codigo ?? c.propuesta?.codigo)!)}
                     </td>
                   </tr>
@@ -713,6 +740,64 @@ export function PantallaVinculos() {
                 </div>
               )
             })}
+        </div>
+      )}
+
+      {pestaña === "sincuit" && (
+        <div className="rounded-lg border bg-card">
+          <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+            Desde el 21/10 el CUIT es obligatorio. Clientes activos sin CUIT válido, de más a menos m³ en los últimos 12 meses. Si el cliente de Zomatik vinculado tiene CUIT, "Usar este". Si no, cargalo a mano: se
+            controla el dígito verificador y que no lo tenga otro cliente de Rebucret ni de Zomatik.
+          </div>
+          <table className="w-full text-xs">
+            <thead className="text-muted-foreground">
+              <tr className="border-b text-left">
+                <th className="px-3 py-1.5 font-medium">Cliente</th>
+                <th className="px-3 py-1.5 text-right font-medium">m³ 12 meses</th>
+                <th className="px-3 py-1.5 font-medium">CUIT que tiene</th>
+                <th className="px-3 py-1.5 font-medium">En Zomatik</th>
+                <th className="px-3 py-1.5 font-medium">Cargar CUIT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.sinCuit
+                .filter((c) => coincide(c.name))
+                .map((c) => (
+                  <tr key={c.id} className="border-b align-top last:border-0">
+                    <td className="px-3 py-1.5 font-medium">{c.name}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{m3(c.m3_12m)}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{c.cuit || "—"}</td>
+                    <td className="px-3 py-1.5">
+                      {c.zomatik_codigo == null ? (
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground">sin vincular</span>
+                          <div>
+                            <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" disabled title="Se habilita después de la prueba con Bautista">
+                              Dar de alta en Zomatik
+                            </Button>
+                            <span className="text-[10px] text-muted-foreground">Se habilita después de la prueba con Bautista</span>
+                          </div>
+                        </div>
+                      ) : c.cuit_zomatik ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span>{c.zomatik_nombre}: <span className="font-medium">CUIT {c.cuit_zomatik}</span></span>
+                          <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={trabajando} onClick={() => guardarCuit(c.id, c.cuit_zomatik!)}>Usar este</Button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">{c.zomatik_nombre} (sin CUIT válido en Zomatik)</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <Input className="h-7 w-40 text-xs" placeholder="XX-XXXXXXXX-X" value={cuitMano[c.id] || ""} onChange={(e) => setCuitMano({ ...cuitMano, [c.id]: e.target.value })} />
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={trabajando || !(cuitMano[c.id] || "").trim()} onClick={() => guardarCuit(c.id, cuitMano[c.id])}>Guardar</Button>
+                      </div>
+                      {errCuit[c.id] && <div className="mt-0.5 text-[11px] text-red-700">{errCuit[c.id]}</div>}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         </div>
       )}
 

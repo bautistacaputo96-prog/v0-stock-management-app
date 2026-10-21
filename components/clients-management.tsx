@@ -200,11 +200,26 @@ export function ClientsManagement() {
 
     const supabase = createClient()
 
+    // Editar: el CUIT se controla en el servidor (dígito verificador y que no lo tenga otro cliente, acá o en
+    // Zomatik). Si no cambió y era inválido de antes, se deja guardar con aviso (regla del 21/10/2026, 7).
+    let cuitFinal = clientForm.cuit.trim()
+    if (editingClient) {
+      const cambio = clientForm.cuit.trim() !== String(editingClient.cuit || "").trim()
+      const r = await fetch("/api/clientes/cuit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: editingClient.id, cuit: clientForm.cuit.trim(), soloControlar: true }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok && (cambio || r.status !== 409 || j?.conflicto)) {
+        toast({ title: "CUIT no válido o repetido", description: j?.error || "No se pudo controlar el CUIT", variant: "destructive" })
+        return
+      }
+      if (!r.ok) toast({ title: "Ojo: el CUIT no es válido", description: "Corregilo cuando lo tengas (desde ahora el CUIT es obligatorio)." })
+      else cuitFinal = j.cuit
+    }
+
     // Anti-duplicado por CUIT (excluyendo el propio cliente al editar)
     const { data: dupCuit } = await supabase
       .from("clients")
       .select("id, name")
-      .eq("cuit", clientForm.cuit.trim())
+      .eq("cuit", cuitFinal)
       .neq("active", false)
       .limit(5)
     const conflict = (dupCuit || []).find((c: any) => c.id !== editingClient?.id)
@@ -215,7 +230,7 @@ export function ClientsManagement() {
     const payload = {
       name:              clientForm.name.trim(),
       razon_social:      clientForm.razon_social.trim() || clientForm.name.trim(),
-      cuit:              clientForm.cuit.trim(),
+      cuit:              cuitFinal,
       cond_iva:          clientForm.cond_iva || null,
       direccion_fiscal:  clientForm.direccion_fiscal.trim() || null,
       cp:                clientForm.cp.trim() || null,

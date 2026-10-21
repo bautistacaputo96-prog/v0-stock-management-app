@@ -1296,6 +1296,20 @@ Después de la prueba se anula todo lo de prueba **a mano**, por Bautista.
    - **Duplicados nuestros:** la pantalla Vínculos lista los que parecen el mismo (mismo CUIT, nombre muy parecido, o mismas obras: 2 o más, o 1 con nombres parecidos), y un gerencial los **unifica**: obras, pedidos, despachos y respuestas R/X del día pasan al que queda, el código de Zomatik también (si el que queda no tiene), y el otro queda dado de baja apuntando al que quedó. Todo en una transacción (`unificar_clientes`, migración `202610212100`). La lista se calcula al abrir la pantalla con los datos del momento (en vez de una foto de la noche: siempre está al día).
 
 
+
+---
+
+## Respuestas de Bautista (21/10/2026, 7) — clientes, mandan sobre lo anterior
+
+1. Se busca con el **buscador unificado** (21.6).
+2. Si está en Rebucret **y** en Zomatik, se **vincula**.
+3. Si está en Rebucret pero **no** en Zomatik, se **da de alta en Zomatik** con CUIT válido. Es etapa de escritura: la primera alta se hace **con Bautista el jueves 23/10 en la planta**, mirando qué graba Zomatik. Hasta entonces el botón "Dar de alta en Zomatik" está a la vista pero deshabilitado ("Se habilita después de la prueba con Bautista").
+4. Si no está en ninguno, se da de alta **en los dos** con CUIT válido (el alta en Zomatik, también después del jueves).
+5. **Desde ahora el CUIT es obligatorio.**
+   - Pestaña **"Clientes sin CUIT"** en Vínculos: los activos sin CUIT válido, por m³ de los últimos 12 meses, con el CUIT del cliente de Zomatik vinculado ("Usar este") o un campo para cargarlo a mano.
+   - Al cargar o cambiar un CUIT (esa pestaña, Editar cliente y el aviso del formulario de pedido) el servidor (`/api/clientes/cuit`) valida el dígito verificador (CUIT, no DNI) y que no lo tenga otro cliente de Rebucret ni otro de la copia de Zomatik (el suyo vinculado, sí).
+   - Editar un cliente con un CUIT inválido de antes que no se cambia deja guardar los otros datos, con aviso.
+
 ---
 
 ## Hecho
@@ -1391,3 +1405,4 @@ Después de la prueba se anula todo lo de prueba **a mano**, por Bautista.
 - Verificación: tsc sin errores nuevos (17) · build bien · `test:zomatik` 43/43, despacho 27, gps 44, sesión 21.
 - Pendiente para la 0c-2: `clients` sigue escribible con la clave anon.
 - Segunda revisión (`f3c8ca6`, aprobada con cambios menores): al juntar obras repetidas, a la obra que queda se le copia de la repetida lo que tenga vacío (dirección, localidad, ubicación GPS con su fuente y fecha, km, tiempos, bomba, horario, contacto, teléfono, estado, remito R/X; las observaciones se suman) y en Actividad quedan las obras juntadas con los campos copiados. El buscador del alta y "Traer de Zomatik" piden solo las columnas necesarias más `unificado_en`, con respaldo si la columna todavía no existe. Prueba en ROLLBACK (0,8 s y 0,7 s, una sola ida, `lock_timeout` 2s): par real La Tercera, 2 obras juntadas (CANCHA PADEL y La tercera), 15 pedidos y 43 despachos movidos, 0 campos copiados (la obra que queda ya los tenía); caso de prueba con la obra que queda vacía: se copiaron dirección, ubicación GPS, teléfono y remito R/X, y se sumaron las observaciones.
+- Respuestas 7 (21/10): pestaña "Clientes sin CUIT", `/api/clientes/cuit` (dígito verificador + no repetido acá ni en Zomatik) en Editar cliente y en el aviso del pedido, y "Dar de alta en Zomatik" a la vista pero deshabilitado hasta la prueba del jueves. `test:zomatik` 45/45.
