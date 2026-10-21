@@ -985,6 +985,14 @@ Sigue abierta 19.12.4: ¿alcanza el indicador en la tarjeta del camión? La reco
    - **Seguridad:** la pantalla tiene que "mantener" la válvula cada 250 ms; si deja de hacerlo (se soltó, se colgó o se cortó la comunicación con el puente), la planta la cierra sola en 1 s (`VIGIA_AGUA_EXTRA_S`). Si se corta la comunicación, se cierra en el momento.
 4. **"Ya salió" pasa a "Terminar carga".** Cuando la planta termina de pesar, la carga sigue abierta (el camión sigue abajo y se le puede agregar agua). **"Terminar carga"** la cierra: registra el fin y el agua extra total, aparece "¿Se sacó muestra?" y el camión queda "Cargado · esperando salir" hasta que el GPS lo ve salir. La planta no queda libre para la próxima orden hasta terminar la carga. El despacho ya estaba grabado antes (secuencia A).
 
+## 24. Respuestas de Bautista (22/10/2026) — columna Viajes y tarjetas del despacho
+
+1. **Sin negritas:** en Viajes solo la obra va en peso 500; el resto, normal. Lo mismo en Camiones (la patente en 500) y Pedidos (el cliente en 500): fuera `font-semibold`/`font-bold`, también en las etiquetas R/X.
+2. **Letra más chica:** 12 px base y 11 px lo secundario. Viajes: línea 1 = hora chica · **obra** · m³ a la derecha; línea 2, en gris = cliente · fórmula · finalidad · bomba/directo · R/X (y fibra, 👍, camión sugerido, n/N). Sin etiquetas grandes ni colores fuertes; el atraso es un punto y "+15'" chicos, más la franja.
+3. **Despachar** chico: 24 px de alto, 11–12 px, con borde y sin relleno, a la derecha.
+4. **El ▾ del viaje** muestra solo lo útil para despachar: dirección de la obra (con link al mapa si hay ubicación o dirección), observaciones del pedido, bomba (empresa y hora), contacto de obra (`site_contact`, `site_phone`) y si lleva fibra. Se sacaron los tiempos (carga, salida, llegada, vuelta) y lo demás. "Sacar muestra" no tiene dato en el pedido: se marca en la Entrega (punto 22).
+5. Camiones y Pedidos con el mismo criterio: botones de 24 px, 11–12 px, sin negrita.
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)

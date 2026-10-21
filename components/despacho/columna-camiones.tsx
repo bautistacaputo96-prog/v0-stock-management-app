@@ -56,12 +56,12 @@ export function ColumnaCamiones({
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 border-b px-2.5 py-1">
-        <h2 className="text-sm font-semibold">Camiones</h2>
+        <h2 className="text-[13px] font-medium">Camiones</h2>
         <span className="text-xs text-muted-foreground">{libresAca} libre{libresAca === 1 ? "" : "s"} en {nombre(planta)}</span>
         <span className="flex-1" />
         <div className="flex">
           {filtros.map(([k, l]) => (
-            <button key={k} onClick={() => setFiltro(k)} className={cn("h-7 rounded px-1.5 text-xs", filtro === k ? "font-semibold text-foreground underline underline-offset-4" : "text-muted-foreground")}>{l}</button>
+            <button key={k} onClick={() => setFiltro(k)} className={cn("h-7 rounded px-1.5 text-xs", filtro === k ? "text-foreground underline underline-offset-4" : "text-muted-foreground")}>{l}</button>
           ))}
         </div>
       </div>
@@ -83,7 +83,7 @@ export function ColumnaCamiones({
               data-camion={c.id}
               onClick={(ev) => { if ((ev.target as HTMLElement).closest("button,[role=menuitem]")) return; onTocar(c.id) }}
               className={cn(
-                "d3c-card relative rounded-md border border-l-[3px] bg-card",
+                "d3c-card relative rounded-md border border-l-[2px] bg-card",
                 BORDE[e.clave],
                 puedeDespachar && "cursor-pointer",
                 hayViajeElegido && libreAca && "ring-2 ring-emerald-500",
@@ -94,9 +94,9 @@ export function ColumnaCamiones({
               <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-0.5">
                 <div className="min-w-0 flex-1 leading-tight">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[13px] font-semibold tracking-wide">{c.patente}</span>
-                    <span className={cn("d3c-tag truncate rounded px-1 text-[11px] font-medium leading-4", ETIQUETA[e.clave])}>{e.etiqueta}</span>
-                    {e.desde != null && <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">{duracion((ahora - e.desde) / 60000)}</span>}
+                    <span className="text-[12px] font-medium tracking-wide">{c.patente}</span>
+                    <span className={cn("d3c-tag truncate rounded px-1 text-[10.5px] leading-4", ETIQUETA[e.clave])}>{e.etiqueta}</span>
+                    {e.desde != null && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{duracion((ahora - e.desde) / 60000)}</span>}
                   </div>
                   <div className="truncate text-[11px] text-muted-foreground">
                     {donde}
@@ -109,21 +109,21 @@ export function ColumnaCamiones({
                   </div>
                   {cargas?.[c.id] && (
                     <div className="mt-px flex items-center gap-1.5 text-[11px]">
-                      <span className={cn("d3c-tag truncate rounded px-1 text-[10.5px] font-semibold leading-4", TONO_CARGA[cargas[c.id].tono])}>{cargas[c.id].texto}{cargas[c.id].simulada ? " · simulada" : ""}</span>
+                      <span className={cn("d3c-tag truncate rounded px-1 text-[10.5px] leading-4", TONO_CARGA[cargas[c.id].tono])}>{cargas[c.id].texto}{cargas[c.id].simulada ? " · simulada" : ""}</span>
                       <a href={`/carga?carga=${cargas[c.id].cargaId}`} className="shrink-0 text-[11px] text-blue-800 underline">Ver carga</a>
                     </div>
                   )}
                 </div>
                 {puedeDespachar && e.preguntarVolvio && (
-                  <button className="h-8 shrink-0 rounded-md border border-amber-400 bg-amber-50 px-2 text-xs font-medium text-amber-900" onClick={() => onVolvio(c.id)} title="Ya debería estar en planta">¿Volvió?</button>
+                  <button className="h-6 shrink-0 rounded border border-amber-400 bg-transparent px-2 text-[11px] text-amber-900" onClick={() => onVolvio(c.id)} title="Ya debería estar en planta">¿Volvió?</button>
                 )}
                 {puedeDespachar && !e.preguntarVolvio && e.fuente === "estimado" && enViaje && (
-                  <button className="h-8 shrink-0 rounded-md border px-2 text-xs" onClick={() => onVolvio(c.id)} title="Volvió a planta · disponible">Volvió</button>
+                  <button className="h-6 shrink-0 rounded border px-2 text-[11px]" onClick={() => onVolvio(c.id)} title="Volvió a planta · disponible">Volvió</button>
                 )}
                 {puedeDespachar && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+                      <button className="h-6 w-6 shrink-0 rounded text-base leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-[220px]">
                       {e.clave === "taller"

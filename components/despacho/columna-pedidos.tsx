@@ -64,21 +64,21 @@ export function ColumnaPedidos({
     return (
       <div key={p.id} className={cn("d3c-card relative rounded-md border bg-card", susp && "border-dashed", cerr && "opacity-70")}>
         <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-0.5">
-          <div className="w-[38px] shrink-0 text-[12.5px] font-semibold tabular-nums leading-tight" title="Llegada pedida">{hhmm(p.scheduled_arrival_time)}</div>
+          <div className="w-[32px] shrink-0 text-[11px] tabular-nums leading-tight text-muted-foreground" title="Llegada pedida">{hhmm(p.scheduled_arrival_time)}</div>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="flex items-center gap-1">
-              <span className="min-w-0 truncate text-[13px] font-medium">{p.clients?.name || "Cliente"}</span>
-              <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground"><b className="font-semibold text-foreground">{m3txt(desp)}</b>/{m3txt(p.quantity_m3)} m³</span>
+              <span className="min-w-0 truncate text-[12px] font-medium">{p.clients?.name || "Cliente"}</span>
+              <span className="ml-auto shrink-0 text-[12px] tabular-nums text-muted-foreground"><span className="text-foreground">{m3txt(desp)}</span>/{m3txt(p.quantity_m3)} m³</span>
             </div>
             <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
               {est !== "cancelado" && <MarcaTipo tipo={tipo} />}
               {p.confirmado_at && <span title="Confirmado">👍</span>}
               {pt && est !== "cancelado" && <span className={cn("shrink-0", pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")} title={pt.texto}>●</span>}
-              <span className="min-w-0 truncate">{p.construction_sites?.name} · <span className="text-foreground/80">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""}{bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}</span>
+              <span className="min-w-0 truncate">{p.construction_sites?.name} · {p.formulas?.code}{p.finalidad ? ` · ${p.finalidad}` : ""}{bomba ? " · bomba" : " · directo"}</span>
             </div>
           </div>
           <button
-            className="flex h-8 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+            className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[11px] text-muted-foreground hover:bg-muted"
             title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
             aria-expanded={abierto}
             onClick={() => setAbiertos((a) => ({ ...a, [p.id]: !a[p.id] }))}
@@ -87,7 +87,7 @@ export function ColumnaPedidos({
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+              <button className="h-6 w-6 shrink-0 rounded text-base leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[230px]">
               {ajusta && (act || susp) && (
@@ -107,9 +107,9 @@ export function ColumnaPedidos({
         {/* Barra de lo entregado */}
         <div className="mx-2 mb-1 h-[3px] overflow-hidden rounded-full bg-muted"><i className="block h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
         {susp && (
-          <div className="flex items-center gap-2 border-t px-2 py-0.5 text-[11.5px]">
-            <span className="min-w-0 flex-1 truncate">⏸ <b className="font-semibold">Suspendido</b> · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
-            {permisos.despachar && <button className="h-8 shrink-0 rounded-md border px-2.5 text-xs font-medium" onClick={() => onReabrir(p)}>Reabrir</button>}
+          <div className="flex items-center gap-2 border-t px-2 py-0.5 text-[11px]">
+            <span className="min-w-0 flex-1 truncate">⏸ Suspendido · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
+            {permisos.despachar && <button className="h-6 shrink-0 rounded border px-2 text-[11px]" onClick={() => onReabrir(p)}>Reabrir</button>}
           </div>
         )}
         {(est === "completo" || est === "cancelado") && (
@@ -120,9 +120,9 @@ export function ColumnaPedidos({
           </div>
         )}
         {abierto && (
-          <div className="space-y-0.5 border-t px-2 py-1.5 text-[11.5px] leading-snug text-muted-foreground">
+          <div className="space-y-0.5 border-t px-2 py-1 text-[11px] leading-snug text-muted-foreground">
             <div className="text-foreground">{p.construction_sites?.name}</div>
-            <div><b className="font-medium text-foreground">{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+            <div><span className="text-foreground">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
             <div>Entregado {m3txt(desp)} de {m3txt(p.quantity_m3)} m³{!cerr && falta > 0 ? ` · falta ${m3txt(falta)}` : ""}</div>
             <div>{tipo ? `Remito ${tipo} · ${TIPO_TEXTO[tipo]}` : "Factura: se pregunta al despachar"} · {p.confirmado_at ? "👍 Confirmado" : "Sin confirmar"}</div>
             {pt && est !== "cancelado" && <div className={cn(pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")}>{pt.texto}</div>}
@@ -136,7 +136,7 @@ export function ColumnaPedidos({
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-sm font-semibold">Pedidos</h2>
+        <h2 className="text-[13px] font-medium">Pedidos</h2>
         <span className="text-xs text-muted-foreground">{activos.length}</span>
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>
@@ -145,7 +145,7 @@ export function ColumnaPedidos({
         {activos.map(tarjeta)}
         {cerrados.length > 0 && (
           <details>
-            <summary className="flex min-h-[28px] cursor-pointer list-none items-center px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <summary className="flex min-h-[28px] cursor-pointer list-none items-center px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
               ▸ Completos y finalizados ({cerrados.length})
             </summary>
             <div className="flex flex-col gap-[3px]">{cerrados.map(tarjeta)}</div>

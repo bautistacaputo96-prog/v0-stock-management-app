@@ -1,8 +1,10 @@
 "use client"
 
 /**
- * 21/10 · 6: el atraso y la hora pasan a un indicador chico (franja y punto rojos y "+15'"); lo que destaca es obra,
- * cliente, fórmula y m³. Finalidad y bomba siguen a la vista, en chico.
+ * 22/10: sin negritas (solo la obra en peso 500), 12 px y 11 px. Línea 1: hora chica · obra · m³ a la derecha; línea 2,
+ * en gris: cliente · fórmula · finalidad · bomba/directo · R/X. El atraso, un punto y "+15'" chicos (y la franja roja).
+ * Despachar, chico y con borde. El ▾ muestra solo lo útil para despachar (dirección y mapa, observaciones, bomba,
+ * contacto de obra y fibra).
  * Columna Viajes, compacta (21/10, Bautista: "que entre mucha más información sin scrollear", pensada para PC): una
  * fila de dos líneas por viaje con todo lo que importa a la vista (hora, obra, cliente, m³, R/X, estado / fórmula,
  * finalidad, bomba o directo). Lo que se achicó es el espacio, no los datos. El resto (dirección, horarios, camión
@@ -17,9 +19,9 @@ import { cn } from "@/lib/utils"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 
 export function MarcaTipo({ tipo, className }: { tipo: TipoRemito | null | undefined; className?: string }) {
-  if (!tipo) return <span className={cn("d3c-tag rounded border border-dashed border-border px-1 text-[10.5px] font-bold leading-4 text-muted-foreground", className)} title="Se pregunta al despachar">R/X?</span>
+  if (!tipo) return <span className={cn("d3c-tag rounded border border-dashed border-border px-1 text-[10.5px] leading-4 text-muted-foreground", className)} title="Se pregunta al despachar">R/X?</span>
   return (
-    <span title={TIPO_TEXTO[tipo]} className={cn("d3c-tag rounded px-1 text-[10.5px] font-bold leading-4", tipo === "R" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800", className)}>
+    <span title={TIPO_TEXTO[tipo]} className={cn("d3c-tag rounded px-1 text-[10.5px] leading-4", tipo === "R" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800", className)}>
       {tipo}
     </span>
   )
@@ -53,17 +55,17 @@ export function ColumnaViajes({
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-sm font-semibold">Viajes</h2>
+        <h2 className="text-[13px] font-medium">Viajes</h2>
         <span className="text-xs text-muted-foreground">{viajes.length}</span>
-        {atrasados > 0 && <span className="text-xs font-semibold text-red-700">· {atrasados} atrasado{atrasados > 1 ? "s" : ""}</span>}
+        {atrasados > 0 && <span className="text-xs text-red-700">· {atrasados} atrasado{atrasados > 1 ? "s" : ""}</span>}
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">por hora de carga</span>
       </div>
       <div className="flex flex-1 flex-col gap-[3px] overflow-auto p-1.5">
         {sel && (
-          <div className="flex items-center gap-2 rounded-md bg-blue-50 px-2 py-1 text-xs text-blue-900">
+          <div className="flex items-center gap-2 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] text-blue-900">
             <span className="min-w-0 flex-1 truncate">Elegido: {sel.n}/{totalPorPedido[sel.pedido_id] || "?"} · {pedidos[sel.pedido_id]?.construction_sites?.name}. Tocá un camión.</span>
-            <button className="h-7 px-2 underline" onClick={onSoltar}>Soltar</button>
+            <button className="h-6 px-2 underline" onClick={onSoltar}>Soltar</button>
           </div>
         )}
         {!viajes.length && <div className="py-6 text-center text-xs text-muted-foreground">No quedan viajes por despachar en {plantaNombre}.</div>}
@@ -88,48 +90,38 @@ export function ColumnaViajes({
               onContextMenu={(e) => e.preventDefault()}
               style={{ touchAction: "pan-y", WebkitTouchCallout: "none" } as React.CSSProperties}
               className={cn(
-                "d3c-card relative select-none rounded-md border border-l-[3px] border-l-violet-400 bg-card",
+                "d3c-card relative select-none rounded-md border border-l-[2px] border-l-violet-300 bg-card",
                 puedeDespachar && "cursor-pointer",
                 at.tipo === "atrasado" && "border-l-red-600",
                 at.tipo === "ahora" && "border-l-amber-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
             >
-              <div className="flex items-center gap-2 py-[3px] pl-2 pr-1">
-                {/* Hora de carga y n/N */}
-                <div className="w-[34px] shrink-0 leading-tight text-muted-foreground" title={at.texto || undefined}>
-                  <div className="text-[11px] tabular-nums">{hhmm(v.hora_carga)}</div>
-                  <div className="flex items-center gap-0.5 text-[10px] tabular-nums">
-                    {at.tipo === "atrasado" ? <><i className="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-red-600" /><span className="font-semibold text-red-700">+{at.min}&apos;</span></>
-                      : at.tipo === "ahora" ? <><i className="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-amber-500" /><span className="text-amber-800">{at.min > 0 ? `${at.min}'` : "ya"}</span></>
-                      : <span>{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>}
-                  </div>
-                </div>
-                {/* Línea 1: obra · cliente · m³ · R/X · estado. Línea 2: fórmula · finalidad · bomba/directo · sugerido */}
+              <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-1">
+                {/* 22/10: sin negritas (solo la obra en 500), 12 px y 11 px. Línea 1: hora · obra · m³. Línea 2, en gris:
+                    cliente · fórmula · finalidad · bomba/directo · R/X */}
                 <div className="min-w-0 flex-1 leading-tight">
-                  <div className="flex items-center gap-1.5">
-                    <span className="min-w-0 truncate text-[13px]">
-                      <span className="font-semibold">{p.construction_sites?.name || "Obra"}</span>
-                      <span className="font-medium"> · {p.clients?.name}</span>
-                    </span>
-                    <span className="ml-auto shrink-0 text-[14px] font-bold tabular-nums">{m3txt(v.m3)} m³</span>
-                    <MarcaTipo tipo={tipo} />
+                  <div className="flex items-baseline gap-1.5 text-[12px]">
+                    <span className="w-[30px] shrink-0 text-[11px] tabular-nums text-muted-foreground" title={at.texto || `Carga ${hhmm(v.hora_carga)} · viaje ${v.n}/${totalPorPedido[v.pedido_id] || "?"}`}>{hhmm(v.hora_carga)}</span>
+                    {at.tipo === "atrasado" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums text-red-700" title={at.texto || undefined}><i className="inline-block h-[5px] w-[5px] rounded-full bg-red-600" />+{at.min}&apos;</span>}
+                    {at.tipo === "ahora" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] tabular-nums text-amber-800" title={at.texto || undefined}><i className="inline-block h-[5px] w-[5px] rounded-full bg-amber-500" />{at.min > 0 ? `${at.min}'` : "ya"}</span>}
+                    <span className="min-w-0 truncate font-medium">{p.construction_sites?.name || "Obra"}</span>
+                    <span className="ml-auto shrink-0 tabular-nums">{m3txt(v.m3)} m³</span>
                   </div>
-                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <span className="min-w-0 truncate">
-                      <span className="text-[12px] font-semibold text-foreground">{p.formulas?.code}</span>
-                      {at.tipo ? <span className="ml-1">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span> : null}
-                      {p.finalidad ? ` · ${p.finalidad}` : ""}
-                      {bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}
-                      {Number(p.fiber_kg_per_m3) > 0 ? " · fibra" : ""}
-                      {p.confirmado_at ? " · 👍" : ""}
-                      {sug ? ` · sug. ${sug}` : ""}
-                      {v.calculado ? " · calculado" : ""}
-                    </span>
+                  <div className="truncate pl-[36px] text-[11px] text-muted-foreground">
+                    {p.clients?.name}
+                    {` · ${p.formulas?.code || ""}`}
+                    {p.finalidad ? ` · ${p.finalidad}` : ""}
+                    {bomba ? " · bomba" : " · directo"}
+                    {` · ${tipo || "R/X?"}`}
+                    {Number(p.fiber_kg_per_m3) > 0 ? " · fibra" : ""}
+                    {p.confirmado_at ? " · 👍" : ""}
+                    {sug ? ` · sug. ${sug}` : ""}
+                    {` · ${v.n}/${totalPorPedido[v.pedido_id] || "?"}`}
                   </div>
                 </div>
                 <button
-                  className="flex h-8 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                  className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[11px] text-muted-foreground hover:bg-muted"
                   title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
                   aria-expanded={abierto}
                   onClick={(e) => { e.stopPropagation(); setAbiertos((a) => ({ ...a, [v.clave]: !a[v.clave] })) }}
@@ -138,34 +130,37 @@ export function ColumnaViajes({
                 </button>
                 {puedeDespachar && (
                   <button
-                    className="h-8 shrink-0 rounded-md bg-blue-600 px-2.5 text-[12.5px] font-medium text-white hover:bg-blue-700"
+                    className="h-6 shrink-0 rounded border border-blue-300 bg-transparent px-2 text-[11.5px] text-blue-800 hover:bg-blue-50"
                     onClick={(e) => { e.stopPropagation(); onDespachar(v.clave) }}
                   >
                     Despachar
                   </button>
                 )}
               </div>
-              {abierto && (
-                <div className="space-y-0.5 border-t px-2 py-1.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <div className="text-foreground">{p.construction_sites?.name}{p.construction_sites?.address ? ` · ${p.construction_sites.address}` : ""}</div>
-                  <div>{p.clients?.name} · <b className="font-medium text-foreground">{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""}</div>
-                  <div>
-                    Carga {hhmm(v.hora_carga)} · sale {hhmm(v.hora_salida)} · llega {hhmm(v.hora_llegada)} · vuelve {hhmm(v.hora_vuelta)}
+              {abierto && (() => {
+                // Solo lo útil para despachar: dirección (con el mapa), observaciones, bomba, contacto de obra y fibra
+                const o = p.construction_sites
+                const mapa = o?.gps_lat != null && o?.gps_lng != null ? `https://www.google.com/maps?q=${o.gps_lat},${o.gps_lng}`
+                  : o?.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.address, o.localidad].filter(Boolean).join(", "))}` : null
+                const contacto = [o?.site_contact, o?.site_phone].filter(Boolean).join(" · ")
+                return (
+                  <div className="space-y-0.5 border-t px-2 py-1 text-[11px] leading-snug text-muted-foreground">
+                    <div>
+                      {o?.address ? [o.address, o.localidad].filter(Boolean).join(", ") : "Sin dirección cargada"}
+                      {mapa && <> · <a href={mapa} target="_blank" rel="noreferrer" className="text-blue-800 underline" onClick={(e) => e.stopPropagation()}>mapa</a></>}
+                    </div>
+                    {p.observations && <div>Obs.: {p.observations}</div>}
+                    {bomba && <div>{textoBomba(p, empresas, "Bomba")}</div>}
+                    {contacto && <div>Contacto de obra: {contacto}</div>}
+                    {Number(p.fiber_kg_per_m3) > 0 && <div>Lleva fibra: {m3txt(p.fiber_kg_per_m3)} kg/m³</div>}
                   </div>
-                  <div>
-                    {bomba ? textoBomba(p, empresas, "Bomba") : "Directo"}
-                    {Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}
-                    {` · ${tipo ? `Remito ${tipo} (${TIPO_TEXTO[tipo].toLowerCase()})` : "Factura: se pregunta al despachar"}`}
-                    {p.confirmado_at ? " · 👍 confirmado" : " · sin confirmar"}
-                  </div>
-                  <div>{sug ? <>Camión sugerido: <b className="font-medium text-foreground">{sug}</b></> : "Sin camión sugerido"}{v.calculado ? " · viajes calculados (el pedido no los tiene guardados)" : ""}</div>
-                </div>
-              )}
+                )
+              })()}
             </div>
           )
         })}
         {enPausa > 0 && (
-          <div className="rounded-md border border-dashed px-2 py-1 text-[11.5px] text-muted-foreground">
+          <div className="rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
             ⏸ {enPausa} viaje{enPausa > 1 ? "s" : ""} en pausa (pedido suspendido). Se ven de nuevo al reabrir el pedido.
           </div>
         )}
