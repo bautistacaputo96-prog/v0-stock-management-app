@@ -16,6 +16,7 @@ export type Accion = "ver" | "cargar" | "editar" | "borrar"
 export type SeccionClave =
   | "programacion"
   | "despacho"
+  | "carga"
   | "historial"
   | "materia_prima"
   | "recuentos"
@@ -77,6 +78,17 @@ export const SECCIONES: Seccion[] = [
     acciones: ["ver", "cargar"],
     rutas: ["/plantista"],
     descripcion: { cargar: "Despachar (desde pedido y manual), finalizar pedido, camión entregado" },
+  },
+  {
+    clave: "carga",
+    nombre: "Carga de planta",
+    acciones: ["ver", "cargar", "editar"],
+    rutas: ["/carga"],
+    descripcion: {
+      ver: "La pantalla de carga, la cola, las recetas leídas de la planta, la auditoría y las alertas",
+      cargar: "En la PC de la planta: Cargar, Suspender, Bocina, Extra agua, cambiar la Tolva 1, qué pasó con una carga parada",
+      editar: "Configurar el puesto (etapa, recetas de la planta), marcar la auditoría revisada",
+    },
   },
   {
     clave: "historial",
