@@ -144,6 +144,14 @@
   font-weight: 800 !important;
 }
 
+/* Fase 3 · Despacho en tres columnas en alto contraste (planta con mucho sol): bordes y textos secundarios más
+   fuertes, etiquetas con borde */
+.high-contrast .d3c .d3c-card,
+.high-contrast .d3c .d3c-col { border-color: #555555 !important; }
+.high-contrast .d3c .text-muted-foreground { color: #111111 !important; }
+.high-contrast .d3c .d3c-tag { border: 1px solid #333333; }
+.high-contrast .d3c [class*="bg-red-50"] { background-color: #ffd6d6 !important; }
+
 .dark {
   --background: #0a0a0a;
   --foreground: #fafafa;

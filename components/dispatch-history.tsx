@@ -44,6 +44,11 @@ type ScheduledDispatch = {
   /** Fase 1: chofer del despacho y finalidad del pedido de origen */
   chofer_id?: string | null;
   finalidad?: string | null;
+  /** Fase 3: tipo de remito (R con factura / X sin factura; null = sin tipo) y hora real de carga */
+  remito_tipo?: "R" | "X" | null;
+  created_at?: string | null;
+  is_test_dispatch?: boolean | null;
+  scheduled_dispatch_id?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -70,6 +75,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"))
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  // Fase 3: filtro por tipo de remito (all · R · X · sin)
+  const [tipoFilter, setTipoFilter] = useState("all")
   const [columnFilters, setColumnFilters] = useState<{
     remito: string[]
     cliente: string[]
@@ -99,6 +106,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     observations: "",
     extra_water_liters: "",
     dispatch_date: "",
+    remito_tipo: "" as "" | "R" | "X", // fase 3
   })
   const [formulaSearch, setFormulaSearch] = useState("")
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
@@ -281,6 +289,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         mixer_id: d.mixer_id,
         chofer_id: d.chofer_id ?? null,
         finalidad: d.pedido?.finalidad ?? null,
+        remito_tipo: d.remito_tipo ?? null,
+        created_at: d.created_at ?? null,
+        is_test_dispatch: d.is_test_dispatch ?? null,
+        scheduled_dispatch_id: d.scheduled_dispatch_id ?? null,
       }))
 
       const combined = [...transformedManual].sort((a, b) =>
@@ -314,6 +326,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(term))
     const matchesStatus = statusFilter === "all" || d.status === statusFilter
+    const matchesTipo = tipoFilter === "all" || (tipoFilter === "sin" ? !d.remito_tipo && !d.is_test_dispatch : d.remito_tipo === tipoFilter)
     
     // Column filters (arrays)
     const matchesRemito = columnFilters.remito.length === 0 || columnFilters.remito.includes(d.remito || "-")
@@ -324,7 +337,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const matchesResponsable = columnFilters.responsable.length === 0 || columnFilters.responsable.includes(d.created_by || "-")
     const matchesChofer = columnFilters.chofer.length === 0 || columnFilters.chofer.includes(nombreChofer(d.chofer_id))
     
-    return matchesSearch && matchesStatus && matchesRemito && matchesCliente && matchesObra && matchesFormula && matchesCamion && matchesChofer && matchesResponsable
+    return matchesSearch && matchesStatus && matchesTipo && matchesRemito && matchesCliente && matchesObra && matchesFormula && matchesCamion && matchesChofer && matchesResponsable
   })
 
   // Calculate metrics
@@ -468,6 +481,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       Fecha: d.scheduled_arrival_time ? format(parseISO(d.scheduled_arrival_time), "dd/MM/yyyy HH:mm") : "-",
       Planta: plantName(d.plant_id),
       Remito: d.remito || "-",
+      Tipo: d.remito_tipo || "",
       Cliente: d.clients?.name || "-",
       Obra: d.construction_sites?.name || "-",
       "Fórmula": d.formulas?.code || "-",
@@ -487,7 +501,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
     const ws = XLSX.utils.json_to_sheet(rows)
     ws["!cols"] = [
-      { wch: 17 }, { wch: 12 }, { wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 20 },
+      { wch: 17 }, { wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 28 }, { wch: 26 }, { wch: 20 },
       { wch: 8 }, { wch: 12 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 20 },
       { wch: 12 }, { wch: 40 }, { wch: 20 }, { wch: 20 },
     ]
@@ -577,6 +591,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       dispatch_date: dispatch.scheduled_arrival_time
         ? format(parseISO(dispatch.scheduled_arrival_time), "yyyy-MM-dd")
         : "",
+      remito_tipo: dispatch.remito_tipo || "",
     })
     setFormulaSearch("")
     
@@ -635,6 +650,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           ...(editForm.formula_id ? { formula_id: editForm.formula_id } : {}),
           mixer_id: editForm.mixer_id || null,
           chofer_id: editForm.chofer_id || null,
+          // Fase 3: el tipo de remito solo se manda si cambió (la base vuelve a controlar el repetido)
+          ...((editingDispatch.remito_tipo || "") !== editForm.remito_tipo ? { remito_tipo: editForm.remito_tipo || null } : {}),
           usuario: currentUserName(),
           motivo: motivo.trim(), // fase 0c-1: la base lo deja en Actividad y en la nota del stock
         },
@@ -919,6 +936,18 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           </SelectContent>
         </Select>
 
+        <Select value={tipoFilter} onValueChange={setTipoFilter}>
+          <SelectTrigger className="w-[190px]">
+            <SelectValue placeholder="Tipo de remito" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tipo de remito: todos</SelectItem>
+            <SelectItem value="R">R (con factura)</SelectItem>
+            <SelectItem value="X">X (sin factura)</SelectItem>
+            <SelectItem value="sin">Sin tipo</SelectItem>
+          </SelectContent>
+        </Select>
+
         <Button variant="outline" onClick={exportToExcel} disabled={filteredDispatches.length === 0} className="gap-2">
           <Download className="h-4 w-4" />
           Exportar a Excel
@@ -1047,6 +1076,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                       <ColumnFilter column="remito" label="Remito" />
                     </div>
                   </TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead>Fecha</TableHead>
                   {selectedPlant === ALL_PLANTS && <TableHead>Planta</TableHead>}
                   <TableHead>
@@ -1094,7 +1124,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
               <TableBody>
                 {filteredDispatches.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={selectedPlant === ALL_PLANTS ? 13 : 12} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={selectedPlant === ALL_PLANTS ? 14 : 13} className="text-center text-muted-foreground py-8">
                       No hay despachos en el periodo seleccionado
                     </TableCell>
                   </TableRow>
@@ -1120,7 +1150,18 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                           </span>
                         </TableCell>
                         <TableCell>
+                          {dispatch.remito_tipo ? (
+                            <span title={dispatch.remito_tipo === "R" ? "Con factura" : "Sin factura"} className={dispatch.remito_tipo === "R" ? "rounded px-1.5 py-0.5 text-[11px] font-extrabold bg-green-100 text-green-800" : "rounded px-1.5 py-0.5 text-[11px] font-extrabold bg-amber-100 text-amber-800"}>{dispatch.remito_tipo}</span>
+                          ) : <span className="text-muted-foreground text-xs">{dispatch.is_test_dispatch ? "" : "sin tipo"}</span>}
+                        </TableCell>
+                        <TableCell>
                           {format(parseISO(dispatch.scheduled_arrival_time), "dd/MM/yyyy")}
+                          {/* Fase 3: "Salió a las" corregida: la hora real de carga queda aparte (solo despachos de pedido:
+                              el manual se carga con las 12:00 del día elegido) */}
+                          {dispatch.scheduled_dispatch_id && dispatch.created_at && Math.abs(new Date(dispatch.created_at).getTime() - new Date(dispatch.scheduled_arrival_time).getTime()) > 10 * 60_000
+                            && format(parseISO(dispatch.created_at), "yyyy-MM-dd") === format(parseISO(dispatch.scheduled_arrival_time), "yyyy-MM-dd") && (
+                            <div className="text-[11px] text-muted-foreground">Salió {format(parseISO(dispatch.scheduled_arrival_time), "HH:mm")} · cargado {format(parseISO(dispatch.created_at), "HH:mm")}</div>
+                          )}
                         </TableCell>
                         {selectedPlant === ALL_PLANTS && (
                           <TableCell className="text-muted-foreground">
@@ -1224,6 +1265,17 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                     onChange={(e) => setEditForm({ ...editForm, remito: e.target.value })}
                     placeholder="Numero de remito"
                   />
+                  {/* Fase 3: tipo de remito (se corrige acá, con motivo) */}
+                  {editingDispatch?.source === "manual" && !editingDispatch?.is_test_dispatch && (
+                    <Select value={editForm.remito_tipo || "sin"} onValueChange={(v) => setEditForm({ ...editForm, remito_tipo: v === "sin" ? "" : (v as "R" | "X") })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="R">R · Con factura</SelectItem>
+                        <SelectItem value="X">X · Sin factura</SelectItem>
+                        <SelectItem value="sin">Sin tipo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Cantidad (m3)</Label>

@@ -154,6 +154,11 @@ export function AddDispatchDialog({
   const [choferes, setChoferes] = useState<Chofer[]>([])
   const [choferPorCamion, setChoferPorCamion] = useState<Record<string, string>>({})
   const [choferTocado, setChoferTocado] = useState(false)
+  // Fase 3: tipo de remito R (con factura) / X (sin factura). Lo resuelve la base (obra > cliente > respuesta del
+  // día); si nadie lo definió, se pregunta. disponible = false si la migración todavía no está aplicada.
+  const [tipoRes, setTipoRes] = useState<{ disponible: boolean; tipo: "R" | "X" | null; origen: string | null }>({ disponible: false, tipo: null, origen: null })
+  const [remitoTipo, setRemitoTipo] = useState<{ tipo: "R" | "X" | null; origen: string | null }>({ tipo: null, origen: null })
+  const [cambiandoTipo, setCambiandoTipo] = useState(false)
 
   const [formData, setFormData] = useState({
     formula_id: "",
@@ -200,6 +205,23 @@ export function AddDispatchDialog({
     }
     load()
   }, [open, dispatchPlantId])
+
+  // Fase 3: tipo de remito para el cliente y la obra elegidos (obra > cliente > respuesta del día de ese cliente)
+  useEffect(() => {
+    if (!open || isTestDispatch || !formData.client_id || !formData.construction_site_id) return
+    let vivo = true
+    createClient()
+      .rpc("remito_tipo_para", { p_client_id: formData.client_id, p_site_id: formData.construction_site_id, p_fecha: formData.dispatch_date || null })
+      .then(({ data, error }: any) => {
+        if (!vivo) return
+        if (error) { setTipoRes({ disponible: false, tipo: null, origen: null }); return }
+        const tipo = data?.tipo === "R" || data?.tipo === "X" ? data.tipo : null
+        setTipoRes({ disponible: true, tipo, origen: tipo ? data.origen : null })
+        setRemitoTipo({ tipo, origen: tipo ? data.origen : null })
+        setCambiandoTipo(false)
+      })
+    return () => { vivo = false }
+  }, [open, isTestDispatch, formData.client_id, formData.construction_site_id, formData.dispatch_date])
 
   useEffect(() => {
     if (formData.client_id) {
@@ -355,6 +377,13 @@ export function AddDispatchDialog({
         return
       }
 
+      // Fase 3: si nadie definió el tipo de remito, hay que contestar la pregunta
+      if (!isTestDispatch && tipoRes.disponible && !remitoTipo.tipo) {
+        toast.error("Contestá si el remito va con o sin factura")
+        setLoading(false)
+        return
+      }
+
       // Todo el despacho en una sola transacción de la base (fase 0b): remito no repetido,
       // materiales de la fórmula en el stock de la planta elegida (con la humedad de la
       // Arena Fina), fibra, probetas (las crea el trigger de la base) y actividad.
@@ -384,6 +413,8 @@ export function AddDispatchDialog({
           is_test_dispatch: isTestDispatch,
           created_by: formData.created_by || currentUserName(),
           usuario: currentUserName(),
+          // Fase 3: tipo de remito (si no va, la base lo resuelve o lo deduce del número)
+          ...(!isTestDispatch && remitoTipo.tipo ? { remito_tipo: remitoTipo.tipo, remito_tipo_origen: remitoTipo.origen } : {}),
         },
       })
 
@@ -417,6 +448,8 @@ export function AddDispatchDialog({
   }
 
   const resetForm = () => {
+    setRemitoTipo({ tipo: null, origen: null })
+    setCambiandoTipo(false)
     setIsTestDispatch(false)
     setIsManualEntry(false)
     setManualMaterials([])
@@ -608,6 +641,40 @@ export function AddDispatchDialog({
                     />
                   </div>
                 </div>
+                {/* Fase 3: tipo de remito, con la misma resolución y la misma pregunta que el despacho diario */}
+                {!isTestDispatch && tipoRes.disponible && formData.client_id && formData.construction_site_id && (
+                  tipoRes.tipo && !cambiandoTipo && remitoTipo.origen !== "pregunta" ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
+                      <span>
+                        Remito <b>{remitoTipo.tipo}</b> · {remitoTipo.tipo === "R" ? "Con factura" : "Sin factura"}{" "}
+                        <span className="text-muted-foreground">
+                          — {remitoTipo.origen === "manual" ? "cambiado solo en este remito" : tipoRes.origen === "obra" ? "lo dice la obra" : tipoRes.origen === "cliente" ? "lo dice el cliente" : "se respondió hoy para este cliente"}
+                        </span>
+                      </span>
+                      {puede("programacion", "editar") && remitoTipo.origen !== "manual" && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => setCambiandoTipo(true)}>Cambiar solo en este remito</Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border-2 border-amber-500 bg-amber-50 px-3 py-2">
+                      <p className="text-sm font-bold">¿Este remito va con o sin factura?</p>
+                      <p className="text-xs text-muted-foreground">
+                        {tipoRes.tipo ? "Cambia solo este remito. Queda en Actividad." : "No lo dice la obra ni el cliente. Lo que elijas vale para todos los despachos de hoy de este cliente."}
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {(["R", "X"] as const).map((t) => (
+                          <Button key={t} type="button" variant={remitoTipo.tipo === t && remitoTipo.origen !== tipoRes.origen ? "default" : "outline"} className="h-11 font-bold"
+                            onClick={() => setRemitoTipo({ tipo: t, origen: tipoRes.tipo ? "manual" : "pregunta" })}>
+                            {t === "R" ? "Con factura · R" : "Sin factura · X"}
+                          </Button>
+                        ))}
+                      </div>
+                      {cambiandoTipo && (
+                        <button type="button" className="mt-1 text-xs underline" onClick={() => { setCambiandoTipo(false); setRemitoTipo({ tipo: tipoRes.tipo, origen: tipoRes.origen }) }}>No cambiar</button>
+                      )}
+                    </div>
+                  )
+                )}
               </>
             )}
 

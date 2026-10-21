@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Despacho en tres columnas</title>
+<style>
+:root{
+  --bg:#f1f5f9; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --soft:#f8fafc;
+  --blue:#2563eb; --blue-s:#dbeafe; --red:#dc2626; --red-s:#fee2e2; --amber:#d97706; --amber-s:#fef3c7;
+  --green:#16a34a; --green-s:#dcfce7; --sky:#0891b2; --sky-s:#cffafe; --slate:#475569; --slate-s:#e2e8f0;
+  --violet:#7c3aed; --violet-s:#ede9fe;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+button{font:inherit;cursor:pointer}
+input,select,textarea{font:inherit}
+.muted{color:var(--muted)}
+.b{font-weight:700}
+
+/* Barra de arriba */
+.top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:30}
+.top h1{font-size:20px;margin:0 4px 0 0}
+.nuevo{font-size:11px;font-weight:700;color:var(--violet);background:var(--violet-s);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.seg{display:inline-flex;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:3px}
+.seg button{border:0;background:transparent;padding:7px 12px;border-radius:7px;min-height:36px;color:var(--muted);font-weight:600}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.day{display:inline-flex;align-items:center;gap:4px}
+.day .pill{background:var(--ink);color:#fff;border-radius:8px;padding:8px 12px;font-weight:600}
+.clock{font-variant-numeric:tabular-nums;font-weight:700;font-size:18px}
+.spacer{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;min-height:40px;font-weight:600;color:var(--ink)}
+.btn:hover{background:var(--soft)}
+.btn.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.pri:hover{background:#1d4ed8}
+.btn.ok{background:var(--green);border-color:var(--green);color:#fff}
+.btn.ok:hover{background:#15803d}
+.btn.warn{background:var(--amber);border-color:var(--amber);color:#fff}
+.btn.danger{background:#fff;border-color:#fecaca;color:var(--red)}
+.btn.sm{min-height:34px;padding:5px 10px;font-size:14px}
+.btn.ghost{border-color:transparent;background:transparent}
+.icon-btn{border:0;background:transparent;width:36px;height:36px;border-radius:8px;font-size:20px;line-height:1;color:var(--muted)}
+.icon-btn:hover{background:var(--soft)}
+
+/* Franja de la maqueta */
+.demo{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:7px 16px;background:#1e293b;color:#e2e8f0;font-size:13px}
+.demo b{color:#fff}
+.demo .btn{min-height:32px;padding:4px 10px;font-size:13px;background:#334155;border-color:#475569;color:#fff}
+.demo select{background:#334155;color:#fff;border:1px solid #475569;border-radius:8px;padding:5px 8px}
+.demo a{color:#93c5fd;cursor:pointer;text-decoration:underline}
+
+.wrap{padding:12px 16px 0}
+.aviso{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:8px 12px;font-size:14px;font-weight:600}
+.guia{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:10px;padding:10px 14px;font-size:14px;margin-top:10px}
+.guia summary{cursor:pointer}
+.guia ol{margin:6px 0 0;padding-left:20px}
+.guia li{margin:2px 0}
+
+/* Contadores */
+.cont{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:10px 0 12px}
+.cont div{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.cont .v{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums}
+.cont .l{font-size:12px;color:var(--muted);font-weight:600}
+.cont .susp .v{color:var(--slate)}
+.cont .canc .v{color:var(--red)}
+.cont .desp .v{color:var(--green)}
+
+/* Pestañas (pantallas angostas) */
+.tabs{display:none;gap:6px;padding:0 16px 10px}
+.tabs button{flex:1;border:1px solid var(--line);background:#fff;border-radius:10px;min-height:44px;font-weight:700;color:var(--muted)}
+.tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* Columnas */
+.cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:0 16px}
+.col{background:#fff;border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;height:calc(100vh - 262px);min-height:440px}
+.col-h{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.col-h h2{margin:0;font-size:17px}
+.col-h .n{background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:12px;font-weight:700;color:var(--muted)}
+.col-b{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;-webkit-overflow-scrolling:touch}
+.hint{font-size:13px;color:var(--blue);background:var(--blue-s);border-radius:8px;padding:6px 10px;font-weight:600}
+.empty{color:var(--muted);text-align:center;padding:26px 8px;font-size:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:13px;font-weight:600;color:var(--muted);min-height:30px}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* Tarjeta de viaje */
+.vc{border:1px solid var(--line);border-left:5px solid var(--violet);border-radius:10px;padding:9px 10px;background:#fff;user-select:none;-webkit-user-select:none;position:relative;touch-action:pan-y;-webkit-touch-callout:none}
+.vc.late{border-color:var(--red);border-left-color:var(--red);background:#fffafa;box-shadow:0 0 0 1px var(--red) inset}
+.vc.soon{border-left-color:var(--amber)}
+.vc.sel{box-shadow:0 0 0 3px var(--blue);border-color:var(--blue)}
+.vc .r1{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);font-weight:700}
+.vc .obra{font-weight:700;font-size:16px;margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vc .cli{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc .r3{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+.vc .m3h{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
+.vc .flag{font-size:12px;font-weight:800;border-radius:6px;padding:2px 7px}
+.vc.late .flag{background:var(--red);color:#fff}
+.vc.soon .flag{background:var(--amber-s);color:#92400e}
+.vc .r4{display:flex;align-items:center;gap:8px;margin-top:8px}
+.vc .sug{font-size:13px;color:var(--muted);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.handle{margin-left:auto;font-size:18px;color:#94a3b8;touch-action:none;cursor:grab;padding:0 4px;line-height:1}
+.tag{font-size:11px;font-weight:800;border-radius:5px;padding:1px 6px;letter-spacing:.02em}
+.tag.bomba{background:var(--sky-s);color:#155e75}
+.tag.dir{background:var(--slate-s);color:var(--slate)}
+.tag.calc{background:#f1f5f9;color:#64748b;border:1px dashed #94a3b8}
+.tag.fibra{background:var(--violet-s);color:#5b21b6}
+.tag.R{background:var(--green-s);color:#166534}
+.tag.X{background:var(--amber-s);color:#92400e}
+.tipo-q{border:2px solid var(--amber);background:#fffbeb;border-radius:10px;padding:10px 12px}
+.tipo-q .opc{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.tipo-q .opc button{min-height:52px;border-radius:10px;border:2px solid var(--line);background:#fff;font-weight:800;font-size:16px}
+.tipo-q .opc button.on{border-color:var(--ink);background:var(--ink);color:#fff}
+.pausa{font-size:13px;color:var(--slate);background:var(--soft);border:1px dashed #cbd5e1;border-radius:8px;padding:7px 10px}
+
+/* Tarjeta de camión */
+.cc{border:1px solid var(--line);border-left:6px solid var(--slate);border-radius:10px;padding:9px 10px;background:#fff;position:relative}
+.cc.k-planta{border-left-color:var(--green)}
+.cc.k-yendo{border-left-color:var(--blue)}
+.cc.k-obra{border-left-color:var(--amber)}
+.cc.k-volviendo{border-left-color:var(--sky)}
+.cc.k-taller{border-left-color:#334155;background:#f8fafc}
+.cc.lit{box-shadow:0 0 0 3px var(--green);cursor:pointer}
+.cc.lit:hover{background:#f0fdf4}
+.cc.drop{box-shadow:0 0 0 4px var(--blue);background:var(--blue-s)}
+.cc.dim{opacity:.55}
+.cc .r1{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}
+.pat{font-size:18px;font-weight:800;letter-spacing:.03em}
+.est{font-size:13px;font-weight:800;border-radius:6px;padding:3px 8px}
+.k-planta .est{background:var(--green-s);color:#166534}
+.k-yendo .est{background:var(--blue-s);color:#1e40af}
+.k-obra .est{background:var(--amber-s);color:#92400e}
+.k-volviendo .est{background:var(--sky-s);color:#155e75}
+.k-taller .est{background:#334155;color:#fff}
+.cc .t{font-variant-numeric:tabular-nums;font-weight:700}
+.cc .r2{font-size:14px;margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.cc .r3{font-size:13px;color:var(--muted);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.src{font-size:11px;font-weight:700;border-radius:5px;padding:1px 6px;border:1px solid var(--line);color:var(--muted)}
+.src.gps{color:#166534;border-color:#bbf7d0;background:#f0fdf4}
+.src.est{color:#92400e;border-color:#fde68a;background:#fffbeb}
+.ask{margin-top:7px;background:var(--amber-s);color:#78350f;border-radius:8px;padding:6px 8px;font-size:13px;font-weight:700;display:flex;gap:8px;align-items:center;justify-content:space-between}
+
+/* Tarjeta de pedido */
+.pc{border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#fff;position:relative}
+.pc.susp{background:#f8fafc;border-style:dashed}
+.pc.cerr{opacity:.75}
+.pc .r1{display:flex;align-items:flex-start;gap:6px}
+.pc .cli{font-weight:700;font-size:15px;flex:1;min-width:0}
+.pc .obra{font-size:14px}
+.pc .f{font-size:13px;color:var(--muted);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.bar{height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--green);border-radius:99px}
+.pc .m3{display:flex;justify-content:space-between;font-size:13px;margin-top:6px}
+.pc .m3 b{font-size:15px}
+.pc .r5{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.pt{font-size:12px;font-weight:700;border-radius:6px;padding:3px 7px}
+.pt.ok{background:var(--green-s);color:#166534}
+.pt.bad{background:var(--red-s);color:#991b1b}
+.pt.na{background:var(--soft);color:var(--muted);border:1px solid var(--line)}
+.pt.conf{background:#ecfdf5;color:#047857}
+.pt.noconf{background:var(--soft);color:var(--muted);border:1px dashed #cbd5e1}
+.suspbox{margin-top:8px;background:var(--slate-s);color:#1e293b;border-radius:8px;padding:7px 9px;font-size:13px;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.sub{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:8px 2px 0}
+
+/* Menú ⋮ */
+.menu{position:absolute;right:8px;top:40px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);z-index:25;min-width:230px;padding:5px}
+.menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:10px 12px;border-radius:7px;font-size:15px;min-height:42px}
+.menu button:hover{background:var(--soft)}
+.menu button.red{color:var(--red)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:4px 0}
+
+/* Leyenda */
+.ley{margin:12px 16px 0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:13px}
+.ley summary{font-weight:700;cursor:pointer;font-size:14px}
+.ley table{border-collapse:collapse;width:100%;margin-top:8px}
+.ley td{padding:5px 6px;border-top:1px solid var(--line);vertical-align:top}
+.dot{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+
+/* Entregas */
+.ent{margin:12px 16px 24px;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.ent-h{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ent-h h2{margin:0;font-size:17px}
+.tbl-w{overflow-x:auto}
+table.t{border-collapse:collapse;width:100%;font-size:14px;min-width:900px}
+table.t th{text-align:left;font-size:12px;color:var(--muted);font-weight:700;padding:8px 10px;background:var(--soft);border-bottom:1px solid var(--line);white-space:nowrap}
+table.t td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.t tr.new td{background:#f0fdf4}
+.num{font-variant-numeric:tabular-nums}
+
+/* Modales */
+.mbg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:24px 12px;overflow:auto}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:640px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.modal.sm{max-width:460px}
+.mh{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.mh h3{margin:0;font-size:18px;flex:1}
+.mb{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.mf{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.head{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
+.head .big{font-weight:800;font-size:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fld label{display:block;font-size:13px;font-weight:700;margin-bottom:4px}
+.fld input,.fld select,.fld textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:9px 10px;min-height:44px;background:#fff;color:var(--ink)}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:2px solid var(--blue);outline-offset:0;border-color:var(--blue)}
+.fld .help{font-size:12px;color:var(--muted);margin-top:4px}
+.fld.big input{font-size:20px;font-weight:800}
+.box{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sw .tt{font-weight:700}
+.sw .ds{font-size:12px;color:var(--muted)}
+.toggle{position:relative;width:52px;height:30px;border-radius:99px;border:0;background:#cbd5e1;flex:none}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .15s}
+.toggle.on{background:var(--green)}
+.toggle.on::after{left:25px}
+.err{background:var(--red-s);color:#991b1b;border-radius:9px;padding:9px 12px;font-size:14px;font-weight:600}
+.okbox{background:var(--green-s);color:#14532d;border-radius:10px;padding:12px;font-size:14px}
+.last{display:inline-block;background:var(--blue-s);color:#1e40af;border-radius:6px;padding:3px 8px;font-size:13px;font-weight:700}
+
+/* Arrastre y aviso */
+.ghost{position:fixed;z-index:60;pointer-events:none;width:260px;opacity:.92;transform:rotate(-2deg);box-shadow:0 14px 30px rgba(0,0,0,.25)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0f172a;color:#fff;border-radius:12px;padding:12px 16px;font-size:15px;z-index:70;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:min(560px,92vw);display:none}
+.toast small{display:block;color:#cbd5e1;font-size:13px;margin-top:2px}
+
+@media (max-width:760px){ .cont{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:899px){
+  .tabs{display:flex}
+  .cols{grid-template-columns:1fr}
+  .col{display:none;height:auto;min-height:0}
+  .col.on{display:flex}
+  .col-b{overflow:visible}
+  .grid2{grid-template-columns:1fr}
+}
+@media (max-width:520px){ .cont{grid-template-columns:repeat(2,minmax(0,1fr))} .top h1{font-size:18px} }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>Despacho</h1><span class="nuevo">Nuevo · en prueba</span>
+  <div class="seg" id="segPlanta"></div>
+  <div class="day"><button class="icon-btn" title="Día anterior" onclick="toast('En el sistema cambia de día','La maqueta tiene solo el día de hoy')">‹</button><span class="pill">Hoy · jue 8/10</span><button class="icon-btn" title="Día siguiente" onclick="toast('En el sistema cambia de día','La maqueta tiene solo el día de hoy')">›</button></div>
+  <span class="clock" id="clock"></span>
+  <span class="spacer"></span>
+  <button class="btn sm" id="btnManual" onclick="toast('Abre «Carga despacho manual», el mismo de hoy','Incluye el despacho por árido / de prueba y la humedad del acopio')">+ Carga despacho manual</button>
+  <button class="btn sm" onclick="toast('Actualizado','En el sistema se refresca solo: la base cada 30 s y el GPS cada 60 s')">↻</button>
+  <button class="btn sm ghost" onclick="toast('Vuelve a la pantalla de siempre','Mismo motor y mismos datos: se puede ir y volver en medio del día')">Pantalla de siempre</button>
+</div>
+
+<div class="demo">
+  <b>MAQUETA</b> · datos de ejemplo, no se graba nada.
+  <button class="btn" onclick="avanzar(10)">⏩ +10 min</button>
+  <span>Ver como:</span>
+  <select id="rol" onchange="S.rol=this.value;cerrarMenus();render()">
+    <option value="titan">Titan (despacha)</option>
+    <option value="felipe">Felipe (despacha)</option>
+    <option value="bautista">Bautista (gerencial)</option>
+    <option value="joaquin">Joaquín (consulta)</option>
+  </select>
+  <a onclick="reiniciar()">Empezar de nuevo</a>
+  <a onclick="const g=document.getElementById('guia');g.open=!g.open">Qué probar</a>
+</div>
+
+<div class="wrap">
+  <div class="aviso">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</div>
+  <details class="guia" id="guia" open>
+    <summary><b>Qué probar en la maqueta</b></summary>
+    <ol>
+      <li>En <b>Viajes</b>, el de borde rojo está atrasado: apretá <b>Despachar</b>, completá el remito y despachá. Fijate cómo cambian el camión, el pedido, los contadores y la tabla de abajo.</li>
+      <li>Otra forma: <b>tocá un viaje</b> y después <b>tocá un camión verde</b>. O <b>arrastrá</b> el viaje (desde ⠿, o con el dedo apretado un momento) hasta el camión.</li>
+      <li>En <b>Pedidos</b>, tocá ⋮ en «Familia Benítez» › <b>Suspender</b> › Lluvia. Sus viajes quedan en pausa. Después probá <b>Reabrir</b>.</li>
+      <li>Apretá <b>+10 min</b> (arriba) unas veces: CRN449 vuelve solo por GPS y AG083GT, que no tiene GPS, pregunta «¿Volvió?».</li>
+      <li>En <b>Entrega</b> está el <b>tipo de remito</b>: R (con factura) o X (sin factura). Si el pedido, la obra o el cliente lo dicen, viene puesto. Si no (por ejemplo «Club Social Plátanos» o «Familia Benítez»), pregunta <b>«¿Este remito va con o sin factura?»</b>, y la respuesta vale para ese cliente todo el día. El número sugerido es el siguiente de ese tipo en la planta. Probá escribir <b>780781</b>, <b>3260</b> (con R) o <b>775</b> para ver los avisos.</li>
+      <li>Cambiá «Ver como» a <b>Joaquín (consulta)</b>: ve todo y no tiene botones.</li>
+    </ol>
+  </details>
+  <div class="cont" id="cont"></div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button data-tab="viajes" onclick="setTab('viajes')">Viajes</button>
+  <button data-tab="camiones" onclick="setTab('camiones')">Camiones</button>
+  <button data-tab="pedidos" onclick="setTab('pedidos')">Pedidos</button>
+</div>
+
+<div class="cols">
+  <section class="col" id="colViajes"></section>
+  <section class="col" id="colCamiones"></section>
+  <section class="col" id="colPedidos"></section>
+</div>
+
+<details class="ley">
+  <summary>¿Qué quiere decir cada color del camión y de dónde sale?</summary>
+  <table>
+    <tr><td><span class="dot" style="background:var(--green)"></span><b>En planta · libre</b></td><td>GPS: dentro de la planta (250 m). Si vuelve después de un viaje, <b>queda libre solo</b>. Sin GPS: cuando el plantista toca «Volvió a planta».</td></tr>
+    <tr><td><span class="dot" style="background:var(--blue)"></span><b>Yendo a obra</b></td><td>GPS: salió de planta con remito y anda. Sin GPS: desde la hora de salida del remito hasta la llegada estimada.</td></tr>
+    <tr><td><span class="dot" style="background:var(--amber)"></span><b>En obra</b></td><td>GPS: a menos de 400 m de la obra. Si la obra no está ubicada: «parado fuera de planta (probable obra)». Sin GPS: estimado.</td></tr>
+    <tr><td><span class="dot" style="background:var(--sky)"></span><b>Volviendo</b></td><td>GPS: anda de vuelta. Sin GPS: estimado, y pasada media hora de la vuelta estimada pregunta «¿Volvió?».</td></tr>
+    <tr><td><span class="dot" style="background:#334155"></span><b>Taller</b></td><td>A mano, desde ⋮ del camión (o desde Camiones). No se puede despachar hasta tocar «Disponible».</td></tr>
+    <tr><td><b>Tiempo</b></td><td>En viaje: desde la salida del remito (⏱ = ciclo hasta ahora). En planta o taller: desde que cambió el estado.</td></tr>
+  </table>
+</details>
+
+<section class="ent">
+  <div class="ent-h"><h2>Entregas del día</h2><span class="muted" id="entSub"></span><span class="spacer"></span><span id="entFiltro"></span></div>
+  <div class="tbl-w"><table class="t"><thead><tr>
+    <th>Salió</th><th>Remito</th><th>Camión</th><th>Chofer</th><th>Cliente · obra</th><th>Fórmula</th><th>m³</th><th>Viaje</th><th>Muestra</th><th>Ahora</th><th></th>
+  </tr></thead><tbody id="entBody"></tbody></table></div>
+</section>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ───────────────────────── Datos de ejemplo ─────────────────────────
+const PLANTAS = { hud: "Hudson", can: "Canning" };
+const CHOFERES = ["Marcelo Ríos", "Darío Benítez", "Claudio Ferreyra", "Walter Gómez", "Javier Acosta", "Hernán Sosa"];
+const MOTIVOS_SUSP = [["lluvia","Lluvia"],["obra_no_lista","Obra no está lista"],["falla_bomba","Falla de bomba"],["falla_camion","Falla de camión"],["falta_material","Falta material"],["pedido_cliente","Pedido del cliente"],["otro","Otro"]];
+const MOTIVOS_FIN = [["obra_pidio_menos","La obra pidió menos"],["lluvia","Lluvia"],["falla_bomba","Falla"],["otro","Otro"]];
+const TOL = 15; // tolerancia de puntualidad de la planta (min)
+const T = (h, m) => h * 60 + m;
+
+let S;
+function datosIniciales() {
+  return {
+    now: T(9, 5), planta: "hud", rol: "titan", tab: "viajes",
+    selViaje: null, filtroCam: "todos", menu: null, verCancelados: false, filtroPedido: null,
+    ultimaMuestra: "M-0412", nuevaEntrega: null,
+    // Respuesta del día «con o sin factura» por cliente (tabla remito_tipo_dia): se pregunta una sola vez por cliente y por día
+    respDia: {},
+    // Remitos de días anteriores (últimos 30 días). R (con factura) va por el 700/800; X (sin factura) por el 3100-3300.
+    histRemitos: {
+      hud: ["755 HUDSON", "760", "761", "763", "762", "764", "765", "767", "766", "768", "769", "770", "771", "772", "773", "774", "3188", "3189", "3191", "3190", "3192", "3193", "3194", "3195", "3196", "3197", "3198", "3199", "3200"],
+      can: ["826", "827", "828", "830", "829", "831", "832", "833", "834", "835", "836", "837", "838", "839", "840", "3297", "3298", "3299", "3300", "3301", "3302", "3303", "3304"],
+    },
+    pedidos: [
+      { id:"p1", planta:"hud", cliente:"Constructora Del Plata SRL", obra:"Pueblos del Plata · Lote 214", dir:"Ruta 2 km 37,5, Hudson", formula:"H30-620-10 C", finalidad:"Platea", m3:32, entregado:16, llegada:T(7,30), bomba:"Bombeos Sur · 07:15", fibra:null, confirmado:true, viajeMin:28, ubicada:true, estado:"activo", tipo:"R" },
+      { id:"p2", planta:"hud", cliente:"Grupo Quilmes Desarrollos", obra:"Edificio Calle 14 n.º 1520 · Losa 3.er piso", dir:"Calle 14 1520, Berazategui", formula:"H25-620-12 C", finalidad:"Losa", m3:24, entregado:0, llegada:T(9,45), bomba:"Hormibomba · 09:30", fibra:null, confirmado:true, viajeMin:18, ubicada:true, estado:"activo", clienteTipo:"R" },
+      { id:"p3", planta:"hud", cliente:"Municipalidad de Berazategui", obra:"Pavimento calle Los Aromos", dir:"Los Aromos e/ 5 y 7, Hudson", formula:"H30-620-10 C", finalidad:"Pavimento", m3:16, entregado:0, llegada:T(11,0), bomba:null, fibra:null, confirmado:false, viajeMin:15, ubicada:false, estado:"activo", clienteTipo:"R" },
+      { id:"p4", planta:"hud", cliente:"Club Social Plátanos", obra:"Cancha de pádel", dir:"Av. Mitre 4100, Plátanos", formula:"H21-620-10 B", finalidad:"Contrapiso", m3:6, entregado:0, llegada:T(12,30), bomba:null, fibra:0.5, confirmado:true, viajeMin:20, ubicada:true, estado:"activo" },
+      { id:"p5", planta:"hud", cliente:"Familia Benítez", obra:"Calle 148 n.º 2230 · Contrapiso", dir:"Calle 148 2230, Hudson", formula:"H17-6/20 B", finalidad:"Contrapiso", m3:4.5, entregado:0, llegada:T(14,0), bomba:null, fibra:null, confirmado:false, viajeMin:12, ubicada:false, estado:"activo" },
+      { id:"p6", planta:"can", cliente:"Arq. Laura Méndez", obra:"Canning Village · Casa lote 87", dir:"Ruta 52 km 3, Canning", formula:"H21-620-10 B", finalidad:"Platea", m3:12, entregado:8, llegada:T(8,0), bomba:null, fibra:null, confirmado:true, viajeMin:22, ubicada:false, estado:"activo", obraTipo:"X" },
+      { id:"p7", planta:"can", cliente:"Agroindustrias del Sur SA", obra:"Galpón Tristán Suárez · Ruta 205 km 41", dir:"Ruta 205 km 41, Tristán Suárez", formula:"H25-620-12 B", finalidad:"Piso industrial", m3:24, entregado:8, llegada:T(9,0), bomba:"Bombeos Sur · 08:45", fibra:0.6, confirmado:true, viajeMin:30, ubicada:true, estado:"activo", tipo:"R" },
+    ],
+    viajes: [
+      { id:"v11", pedido:"p1", n:1, m3:8, carga:T(6,45), sug:"AE402HE", estado:"desp" },
+      { id:"v12", pedido:"p1", n:2, m3:8, carga:T(7,2), sug:"AF431GU", estado:"desp" },
+      { id:"v13", pedido:"p1", n:3, m3:8, carga:T(8,50), sug:"AE402HE", estado:"pend" },
+      { id:"v14", pedido:"p1", n:4, m3:8, carga:T(9,20), sug:"LES431", estado:"pend" },
+      { id:"v21", pedido:"p2", n:1, m3:8, carga:T(9,17), sug:"LES431", estado:"pend" },
+      { id:"v22", pedido:"p2", n:2, m3:8, carga:T(9,37), sug:null, estado:"pend" },
+      { id:"v23", pedido:"p2", n:3, m3:8, carga:T(9,57), sug:null, estado:"pend" },
+      { id:"v31", pedido:"p3", n:1, m3:8, carga:T(10,35), sug:null, estado:"pend", calc:true },
+      { id:"v32", pedido:"p3", n:2, m3:8, carga:T(11,0), sug:null, estado:"pend", calc:true },
+      { id:"v41", pedido:"p4", n:1, m3:6, carga:T(12,0), sug:"AE402HE", estado:"pend" },
+      { id:"v51", pedido:"p5", n:1, m3:4.5, carga:T(13,38), sug:null, estado:"pend" },
+      { id:"v61", pedido:"p6", n:1, m3:8, carga:T(7,28), sug:"CRN449", estado:"desp" },
+      { id:"v62", pedido:"p6", n:2, m3:4, carga:T(9,20), sug:"CRN449", estado:"pend" },
+      { id:"v71", pedido:"p7", n:1, m3:8, carga:T(8,15), sug:"AG083GT", estado:"desp" },
+      { id:"v72", pedido:"p7", n:2, m3:8, carga:T(9,0), sug:null, estado:"pend" },
+      { id:"v73", pedido:"p7", n:3, m3:8, carga:T(9,25), sug:null, estado:"pend" },
+    ],
+    camiones: [
+      { id:"AE402HE", gps:true, chofer:"Marcelo Ríos", planta:"hud", libreDesde:T(8,41), trip:null, manual:null },
+      { id:"AF431GU", gps:true, chofer:"Darío Benítez", planta:"hud", libreDesde:null, trip:{ pedido:"p1", salida:T(7,12), ida:28, desc:90, vuelta:28, plantaVuelta:"hud" }, manual:null },
+      { id:"AG083GT", gps:false, sinSenal:"sin señal desde ayer 18:40", chofer:"Walter Gómez", planta:"can", libreDesde:null, trip:{ pedido:"p7", salida:T(8,20), ida:30, desc:25, vuelta:30, plantaVuelta:"can" }, manual:null },
+      { id:"CRN449", gps:true, chofer:"Claudio Ferreyra", planta:"can", libreDesde:null, trip:{ pedido:"p6", salida:T(7,55), ida:22, desc:35, vuelta:22, plantaVuelta:"can" }, manual:null },
+      { id:"LES431", gps:true, chofer:null, planta:"hud", libreDesde:T(7,50), trip:null, manual:null },
+    ],
+    entregas: [
+      { id:"e1", planta:"hud", hora:T(6,55), remito:"775", tipo:"R", cargado:T(6,58), camion:"AE402HE", chofer:"Marcelo Ríos", pedido:"p1", m3:8, n:1, muestra:"M-0411", llego:T(7,24) },
+      { id:"e2", planta:"hud", hora:T(7,12), remito:"776", tipo:"R", cargado:T(7,41), camion:"AF431GU", chofer:"Darío Benítez", pedido:"p1", m3:8, n:2, muestra:null },
+      { id:"e3", planta:"can", hora:T(7,55), remito:"3305", tipo:"X", cargado:T(7,58), camion:"CRN449", chofer:"Claudio Ferreyra", pedido:"p6", m3:8, n:1, muestra:"M-0412" },
+      { id:"e4", planta:"can", hora:T(8,20), remito:"841", tipo:"R", cargado:T(8,24), camion:"AG083GT", chofer:"Walter Gómez", pedido:"p7", m3:8, n:1, muestra:null },
+    ],
+  };
+}
+
+// ───────────────────────── Utilidades ─────────────────────────
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const hm = (min) => { min = Math.round(min); const h = Math.floor(min / 60), m = ((min % 60) + 60) % 60; return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0"); };
+const dur = (min) => { min = Math.max(0, Math.round(min)); if (min < 60) return min + " min"; return Math.floor(min / 60) + " h " + String(min % 60).padStart(2, "0"); };
+const n1 = (x) => Number(x).toLocaleString("es-AR", { maximumFractionDigits: 1 });
+const ped = (id) => S.pedidos.find((p) => p.id === id);
+const cam = (id) => S.camiones.find((c) => c.id === id);
+const viajesDe = (pid) => S.viajes.filter((v) => v.pedido === pid && v.estado !== "canc");
+const totalViajes = (pid) => viajesDe(pid).length;
+const falta = (p) => Math.max(0, Math.round((p.m3 - p.entregado) * 10) / 10);
+const puede = {
+  despachar: () => S.rol !== "joaquin",
+  editarProg: () => S.rol === "titan" || S.rol === "bautista",
+  cancelar: () => S.rol === "bautista",
+};
+
+// ───────────────────────── Estado del camión (lib/despacho.ts → estadoCamion) ─────────────────────────
+function estadoCamion(c) {
+  const now = S.now;
+  if (c.manual === "taller") return { k: "taller", label: "En taller", desde: c.manualDesde, fuente: "a mano", nota: c.manualNota };
+  if (c.trip) {
+    const t = c.trip, s = t.salida, a = s + t.ida, d = a + t.desc, v = d + t.vuelta;
+    const p = ped(t.pedido);
+    let k, desde, label;
+    if (now < a) { k = "yendo"; desde = s; label = "Yendo a obra"; }
+    else if (now < d) { k = "obra"; desde = a; label = (p.ubicada || !c.gps) ? "En obra" : "Parado fuera de planta"; }
+    else { k = "volviendo"; desde = d; label = "Volviendo"; }
+    return {
+      k, label, desde, ciclo: now - s, pedido: p, gps: c.gps,
+      fuente: c.gps ? "GPS" : "sin GPS · estimado",
+      probable: k === "obra" && c.gps && !p.ubicada,
+      eta: v, preguntar: !c.gps && now > v + 30, llegando: !c.gps && now > v && now <= v + 30,
+    };
+  }
+  return { k: "planta", label: "En planta · libre", desde: c.libreDesde, fuente: c.gps ? "GPS" : "a mano", planta: c.planta };
+}
+const libreAca = (c) => { const e = estadoCamion(c); return e.k === "planta" && c.planta === S.planta; };
+
+// ───────────────────────── Pasar el tiempo (simulado) ─────────────────────────
+function avanzar(min) {
+  S.now += min;
+  const volvieron = [];
+  for (const c of S.camiones) {
+    if (c.trip && c.gps) {
+      const t = c.trip, fin = t.salida + t.ida + t.desc + t.vuelta;
+      if (S.now >= fin) { c.libreDesde = fin; c.planta = t.plantaVuelta; c.trip = null; volvieron.push(c.id + " volvió a " + PLANTAS[c.planta]); }
+    }
+  }
+  render();
+  if (volvieron.length) toast(volvieron.join(" · ") + " (GPS)", "Quedó libre solo. En Actividad: «Volvió a planta · fuente GPS»");
+  else toast("Son las " + hm(S.now), "Los tiempos y los atrasos se actualizan solos");
+}
+
+// ───────────────────────── Render ─────────────────────────
+function render() {
+  $("#clock").textContent = hm(S.now);
+  $("#segPlanta").innerHTML = Object.entries(PLANTAS).map(([k, v]) => `<button class="${S.planta === k ? "on" : ""}" onclick="setPlanta('${k}')">${v}</button>`).join("");
+  document.getElementById("btnManual").style.display = puede.despachar() ? "" : "none";
+  renderContadores(); renderViajes(); renderCamiones(); renderPedidos(); renderEntregas(); renderTabs();
+}
+function setPlanta(k) { S.planta = k; S.selViaje = null; S.filtroPedido = null; render(); }
+function setTab(t) { S.tab = t; renderTabs(); window.scrollTo({ top: document.querySelector(".tabs").offsetTop - 70, behavior: "smooth" }); }
+function renderTabs() {
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
+  $("#colViajes").classList.toggle("on", S.tab === "viajes");
+  $("#colCamiones").classList.toggle("on", S.tab === "camiones");
+  $("#colPedidos").classList.toggle("on", S.tab === "pedidos");
+}
+const angosta = () => window.matchMedia("(max-width: 899px)").matches;
+
+function renderContadores() {
+  const ps = S.pedidos.filter((p) => p.planta === S.planta);
+  const noCanc = ps.filter((p) => p.estado !== "cancelado");
+  const prog = noCanc.reduce((a, p) => a + p.m3, 0);
+  const desp = S.entregas.filter((e) => e.planta === S.planta).reduce((a, e) => a + e.m3, 0);
+  const pend = ps.filter((p) => p.estado === "activo").reduce((a, p) => a + falta(p), 0);
+  const susp = ps.filter((p) => p.estado === "suspendido").reduce((a, p) => a + falta(p), 0);
+  const canc = ps.filter((p) => p.estado === "cancelado").reduce((a, p) => a + (p.faltaAlCancelar || 0), 0);
+  const vs = S.viajes.filter((v) => ped(v.pedido).planta === S.planta && v.estado !== "canc" && ped(v.pedido).estado !== "cancelado");
+  const vd = vs.filter((v) => v.estado === "desp").length;
+  $("#cont").innerHTML = `
+    <div><div class="v">${n1(prog)} m³</div><div class="l">Programado</div></div>
+    <div class="desp"><div class="v">${n1(desp)} m³</div><div class="l">Despachado</div></div>
+    <div><div class="v">${n1(pend)} m³</div><div class="l">Falta</div></div>
+    <div class="susp"><div class="v">${n1(susp)} m³</div><div class="l">Suspendido</div></div>
+    <div class="canc"><div class="v">${n1(canc)} m³</div><div class="l">Cancelado</div></div>
+    <div><div class="v">${vd} de ${vs.length}</div><div class="l">Viajes despachados</div></div>`;
+}
+
+function viajesPendientes() {
+  return S.viajes
+    .filter((v) => v.estado === "pend" && ped(v.pedido).planta === S.planta && ped(v.pedido).estado === "activo")
+    .sort((a, b) => a.carga - b.carga);
+}
+
+function renderViajes() {
+  const vs = viajesPendientes();
+  const enPausa = S.viajes.filter((v) => v.estado === "pend" && ped(v.pedido).planta === S.planta && ped(v.pedido).estado === "suspendido").length;
+  const atr = vs.filter((v) => S.now > v.carga).length;
+  let h = `<div class="col-h"><h2>Viajes</h2><span class="n">${vs.length}</span>${atr ? `<span class="n" style="color:var(--red);border-color:#fecaca;background:#fef2f2">${atr} atrasado${atr > 1 ? "s" : ""}</span>` : ""}<span class="spacer"></span><span class="muted" style="font-size:13px">por hora de carga</span></div><div class="col-b">`;
+  if (S.selViaje) {
+    const v = S.viajes.find((x) => x.id === S.selViaje);
+    if (v) h += `<div class="hint">Elegido: viaje ${v.n}/${totalViajes(v.pedido)} · ${esc(ped(v.pedido).obra)}. Ahora tocá un camión. <a style="cursor:pointer;text-decoration:underline" onclick="soltar()">Soltar</a></div>`;
+  }
+  if (!vs.length) h += `<div class="empty">No quedan viajes por despachar hoy en ${PLANTAS[S.planta]}.</div>`;
+  for (const v of vs) {
+    const p = ped(v.pedido), late = S.now > v.carga, soon = !late && v.carga - S.now <= 15;
+    const flag = late ? `<span class="flag">Atrasado ${dur(S.now - v.carga)}</span>` : soon ? `<span class="flag">Ahora · en ${dur(v.carga - S.now)}</span>` : "";
+    h += `<div class="vc ${late ? "late" : soon ? "soon" : ""} ${S.selViaje === v.id ? "sel" : ""}" data-viaje="${v.id}">
+      <div class="r1"><span>${v.n}/${totalViajes(v.pedido)}</span>${p.bomba ? `<span class="tag bomba">BOMBA</span>` : `<span class="tag dir">DIRECTO</span>`}${p.fibra ? `<span class="tag fibra">FIBRA</span>` : ""}${p.confirmado ? `<span title="Confirmado">👍</span>` : ""}${(() => { const r = resolverTipo(p); return r ? `<span class="tag ${r.tipo}" title="${TIPOS[r.tipo]}">${r.tipo}</span>` : `<span class="tag calc" title="Se pregunta al despachar">R/X ?</span>`; })()}${v.calc ? `<span class="tag calc" title="El pedido no tiene viajes guardados: se calculan en el momento">calculado</span>` : ""}<span class="handle" data-handle="1" title="Arrastrar hasta un camión">⠿</span></div>
+      <div class="obra">${esc(p.obra)}</div>
+      <div class="cli">${esc(p.cliente)} · ${esc(p.formula)}</div>
+      <div class="r3"><span class="m3h">${n1(v.m3)} m³ › ${hm(v.carga)}</span>${flag}</div>
+      <div class="r4"><span class="sug">${v.sug ? "Sugerido: <b>" + v.sug + "</b>" : "Sin camión sugerido"}</span>${puede.despachar() ? `<button class="btn pri sm" data-desp="${v.id}">Despachar</button>` : ""}</div>
+    </div>`;
+  }
+  if (enPausa) h += `<div class="pausa">⏸ ${enPausa} viaje${enPausa > 1 ? "s" : ""} en pausa (pedido suspendido). Se ven de nuevo al reabrir el pedido.</div>`;
+  h += `</div>`;
+  $("#colViajes").innerHTML = h;
+}
+
+function ordenCamion(c) {
+  const e = estadoCamion(c);
+  if (e.k === "planta") return c.planta === S.planta ? 0 : 1;
+  if (e.k === "taller") return 9;
+  return 2 + (e.eta || 0) / 10000;
+}
+function renderCamiones() {
+  const filtros = [["todos","Todos"],["libres","Libres"],["viaje","En viaje"],["taller","Taller"]];
+  let cs = [...S.camiones].sort((a, b) => ordenCamion(a) - ordenCamion(b));
+  cs = cs.filter((c) => {
+    const k = estadoCamion(c).k;
+    if (S.filtroCam === "libres") return k === "planta";
+    if (S.filtroCam === "viaje") return ["yendo","obra","volviendo"].includes(k);
+    if (S.filtroCam === "taller") return k === "taller";
+    return true;
+  });
+  const libres = S.camiones.filter(libreAca).length;
+  let h = `<div class="col-h"><h2>Camiones</h2><span class="n">${libres} libre${libres === 1 ? "" : "s"} en ${PLANTAS[S.planta]}</span><span class="spacer"></span>
+    <div class="chips">${filtros.map(([k, l]) => `<button class="chip ${S.filtroCam === k ? "on" : ""}" onclick="S.filtroCam='${k}';renderCamiones()">${l}</button>`).join("")}</div></div><div class="col-b">`;
+  if (S.selViaje && puede.despachar()) h += `<div class="hint">Tocá el camión que sale. Los de marco verde están libres en ${PLANTAS[S.planta]}.</div>`;
+  for (const c of cs) {
+    const e = estadoCamion(c);
+    const lit = S.selViaje && libreAca(c);
+    const dim = S.selViaje && e.k === "taller";
+    let r2 = "", r3 = "";
+    if (e.k === "planta") {
+      r2 = `<span>${c.planta === S.planta ? "En " + PLANTAS[c.planta] : "<b>En " + PLANTAS[c.planta] + "</b> (la otra planta)"}</span>`;
+    } else if (e.k === "taller") {
+      r2 = `<span>${esc(e.nota || "Sin nota")}</span>`;
+    } else {
+      r2 = `<span>→ <b>${esc(e.pedido.obra)}</b></span>`;
+      r3 += `<span>⏱ ${dur(e.ciclo)} desde la salida</span>`;
+      if (!c.gps) r3 += `<span>vuelve ~${hm(e.eta)}</span>`;
+    }
+    r3 = `<span>👤 ${c.chofer ? esc(c.chofer) : "<i>chofer: sin asignar hoy</i>"}</span>` + r3;
+    const src = e.fuente === "GPS" ? `<span class="src gps">GPS</span>` : e.fuente === "a mano" ? `<span class="src">a mano</span>` : `<span class="src est">${esc(e.fuente)}</span>`;
+    const menu = S.menu === "c:" + c.id ? menuCamion(c, e) : "";
+    h += `<div class="cc k-${e.k} ${lit ? "lit" : ""} ${dim ? "dim" : ""}" data-camion="${c.id}">
+      <div class="r1"><span class="pat">${c.id}</span><span class="est">${e.label}</span><span class="t">${dur(S.now - e.desde)}</span><span class="spacer" style="flex:1"></span>${puede.despachar() ? `<button class="icon-btn" data-menu="c:${c.id}" title="Más opciones">⋮</button>` : ""}</div>
+      ${e.probable ? `<div class="muted" style="font-size:12px">probable obra (la obra no está ubicada)</div>` : ""}
+      <div class="r2">${r2}</div>
+      <div class="r3">${r3} ${src}${!c.gps && c.sinSenal ? `<span class="muted">· ${esc(c.sinSenal)}</span>` : ""}</div>
+      ${e.preguntar && puede.despachar() ? `<div class="ask">¿Volvió? Ya debería estar en planta. <button class="btn sm ok" data-volvio="${c.id}">Volvió a planta</button></div>` : ""}
+      ${!e.preguntar && !c.gps && c.trip && puede.despachar() ? `<div style="margin-top:7px"><button class="btn sm" data-volvio="${c.id}">Volvió a planta</button>${e.llegando ? ` <span class="muted" style="font-size:13px">debería estar llegando</span>` : ""}</div>` : ""}
+      ${menu}
+    </div>`;
+  }
+  if (!cs.length) h += `<div class="empty">No hay camiones con ese filtro.</div>`;
+  h += `</div>`;
+  $("#colCamiones").innerHTML = h;
+}
+function menuCamion(c, e) {
+  let b = "";
+  if (e.k === "taller") b += `<button onclick="disponible('${c.id}')">✅ Disponible (salió del taller)</button>`;
+  else b += `<button onclick="abrirTaller('${c.id}')">🔧 Mandar a taller</button>`;
+  if (c.trip) b += `<button onclick="volvio('${c.id}')">🏁 Volvió a planta</button>`;
+  b += `<hr><button onclick="toast('Abre la ficha del camión en Logística','Mapa en vivo y tiempos reales (fase 4a)')">📍 Ver en el mapa</button>`;
+  return `<div class="menu">${b}</div>`;
+}
+
+function puntualidad(p) {
+  const es = S.entregas.filter((e) => e.pedido === p.id).sort((a, b) => a.hora - b.hora);
+  if (!es.length) {
+    const v = S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").sort((a, b) => a.carga - b.carga)[0];
+    return v ? `<span class="pt na">1.er camión carga ${hm(v.carga)}</span>` : "";
+  }
+  const e = es[0], c = cam(e.camion);
+  const llegada = e.llego != null ? e.llego : e.hora + p.viajeMin;
+  const diff = llegada - p.llegada;
+  const cls = diff <= TOL ? "ok" : "bad";
+  const txtDiff = diff > 0 ? `+${diff} min` : diff === 0 ? "justo" : `${diff} min`;
+  if (S.now < llegada) return `<span class="pt na">1.er camión llega ~${hm(llegada)} (estimado) · pedido ${hm(p.llegada)}</span>`;
+  if (e.llego != null || (c && c.gps)) return `<span class="pt ${cls}">1.er camión llegó ${hm(llegada)} (GPS) · ${txtDiff}${diff <= TOL ? " · a tiempo" : ""}</span>`;
+  return `<span class="pt ${cls}">1.er camión ~${hm(llegada)} (estimado) · ${txtDiff}</span>`;
+}
+
+function renderPedidos() {
+  const ps = S.pedidos.filter((p) => p.planta === S.planta).sort((a, b) => a.llegada - b.llegada);
+  const activos = ps.filter((p) => p.estado === "activo" || p.estado === "suspendido");
+  const cerrados = ps.filter((p) => p.estado === "completo" || p.estado === "finalizado");
+  const canc = ps.filter((p) => p.estado === "cancelado");
+  const conf = ps.filter((p) => p.confirmado && p.estado !== "cancelado").length;
+  let h = `<div class="col-h"><h2>Pedidos</h2><span class="n">${activos.length}</span><span class="spacer"></span><span class="muted" style="font-size:13px">👍 ${conf} de ${ps.filter((p) => p.estado !== "cancelado").length} confirmados</span></div><div class="col-b">`;
+  for (const p of activos) h += tarjetaPedido(p);
+  if (cerrados.length) { h += `<div class="sub">Completos y finalizados</div>`; for (const p of cerrados) h += tarjetaPedido(p); }
+  if (canc.length) {
+    h += `<button class="chip" style="align-self:flex-start" onclick="S.verCancelados=!S.verCancelados;renderPedidos()">⊘ ${S.verCancelados ? "Ocultar" : "Ver"} cancelados (${canc.length})</button>`;
+    if (S.verCancelados) for (const p of canc) h += tarjetaPedido(p);
+  }
+  if (!ps.length) h += `<div class="empty">No hay pedidos para hoy.</div>`;
+  h += `</div>`;
+  $("#colPedidos").innerHTML = h;
+}
+function tarjetaPedido(p) {
+  const pct = Math.min(100, (p.entregado / p.m3) * 100);
+  const cerr = ["completo","finalizado","cancelado"].includes(p.estado);
+  const prox = S.viajes.filter((v) => v.pedido === p.id && v.estado === "pend").sort((a, b) => a.carga - b.carga)[0];
+  const menu = S.menu === "p:" + p.id ? menuPedido(p) : "";
+  let estado = "";
+  if (p.estado === "suspendido") estado = `<div class="suspbox"><span>⏸ <b>Suspendido</b> · ${esc(p.susp.tipoTxt)}${p.susp.motivo ? " — " + esc(p.susp.motivo) : ""} · ${hm(p.susp.hora)} · ${esc(p.susp.por)}</span>${puede.despachar() ? `<button class="btn sm pri" onclick="abrirReabrir('${p.id}')">Reabrir</button>` : ""}</div>`;
+  if (p.estado === "completo") estado = `<div class="pt ok" style="margin-top:7px;display:inline-block">✓ Completo</div>`;
+  if (p.estado === "finalizado") estado = `<div class="pt na" style="margin-top:7px;display:inline-block">Finalizado con ${n1(p.entregado)} de ${n1(p.m3)} m³ · ${esc(p.cierre.tipoTxt)}</div>`;
+  if (p.estado === "cancelado") estado = `<div class="pt bad" style="margin-top:7px;display:inline-block">Cancelado · ${esc(p.cierre.tipoTxt)}${p.cierre.motivo ? " — " + esc(p.cierre.motivo) : ""}</div>`;
+  return `<div class="pc ${p.estado === "suspendido" ? "susp" : ""} ${cerr ? "cerr" : ""}">
+    <div class="r1"><div class="cli">${esc(p.cliente)}</div>${!cerr || puede.despachar() ? `<button class="icon-btn" data-menu="p:${p.id}" title="Más opciones">⋮</button>` : ""}</div>
+    <div class="obra">${esc(p.obra)}</div>
+    <div class="f"><b style="color:var(--ink)">${esc(p.formula)}</b> · ${esc(p.finalidad)} · llegada ${hm(p.llegada)} ${p.bomba ? `<span class="tag bomba">BOMBA ${esc(p.bomba)}</span>` : `<span class="tag dir">DIRECTO</span>`}${p.fibra ? `<span class="tag fibra">FIBRA ${n1(p.fibra)} kg/m³</span>` : ""}</div>
+    <div class="m3"><span>Entregado <b>${n1(p.entregado)}</b> / ${n1(p.m3)} m³</span><span>${!cerr && falta(p) > 0 ? `falta <b style="color:var(--amber)">${n1(falta(p))}</b>` : ""}</span></div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="r5">${(() => { const r = resolverTipo(p); return r ? `<span class="pt na"><span class="tag ${r.tipo}">${r.tipo}</span> ${TIPOS[r.tipo]}</span>` : `<span class="pt noconf">Factura: se pregunta al despachar</span>`; })()}${p.confirmado ? `<span class="pt conf">👍 Confirmado</span>` : `<span class="pt noconf">Sin confirmar</span>`}${p.estado !== "cancelado" ? puntualidad(p) : ""}${prox && p.estado === "activo" ? `<span class="pt na">Próximo: ${prox.n}/${totalViajes(p.id)} · ${hm(prox.carga)}</span>` : ""}</div>
+    ${estado}
+    ${menu}
+  </div>`;
+}
+function menuPedido(p) {
+  let b = "";
+  const act = p.estado === "activo", susp = p.estado === "suspendido";
+  if (puede.editarProg() && (act || susp)) b += `<button onclick="confirmar('${p.id}')">${p.confirmado ? "Quitar 👍 confirmación" : "👍 Confirmar"}</button>`;
+  if (puede.editarProg() && act) b += `<button onclick="toast('Abre el gerenciador de viajes (fase 2)','Gantt, ±5 min, Ajustar a la hora actual, agregar o quitar viajes')">🚚 Viajes (gerenciador)</button>`;
+  if (puede.editarProg() && act) b += `<button onclick="toast('Abre «Editar total», como hoy','Pide motivo y rearma los viajes pendientes')">✏️ Editar total</button>`;
+  b += `<button onclick="verEntregas('${p.id}')">📋 Ver entregas</button>`;
+  if (puede.despachar() && act) b += `<hr><button onclick="abrirSuspender('${p.id}')">⏸ Suspender (lluvia, obra…)</button>`;
+  if (puede.despachar() && susp) b += `<hr><button onclick="abrirReabrir('${p.id}')">▶ Reabrir</button>`;
+  if (puede.despachar() && (act || susp) && p.entregado > 0) b += `<button onclick="abrirFinalizar('${p.id}')">✓ Finalizar con lo enviado</button>`;
+  if (puede.cancelar() && (act || susp)) b += `<button class="red" onclick="abrirCancelar('${p.id}')">⊘ Cancelar pedido</button>`;
+  if (!puede.cancelar() && (act || susp) && puede.despachar()) b += `<button disabled style="color:#94a3b8;font-size:13px">Cancelar: solo gerenciales</button>`;
+  return `<div class="menu">${b}</div>`;
+}
+
+function renderEntregas() {
+  let es = S.entregas.filter((e) => e.planta === S.planta);
+  if (S.filtroPedido) es = es.filter((e) => e.pedido === S.filtroPedido);
+  es.sort((a, b) => b.hora - a.hora);
+  const tot = es.reduce((a, e) => a + e.m3, 0);
+  const conF = es.filter((e) => e.tipo === "R").reduce((a, e) => a + e.m3, 0);
+  $("#entSub").textContent = `${es.length} remito${es.length === 1 ? "" : "s"} · ${n1(tot)} m³ · ${PLANTAS[S.planta]} · con factura (R) ${n1(conF)} m³ · sin factura (X) ${n1(tot - conF)} m³`;
+  $("#entFiltro").innerHTML = S.filtroPedido ? `<button class="chip on" onclick="S.filtroPedido=null;renderEntregas()">Solo ${esc(ped(S.filtroPedido).obra)} ✕</button>` : "";
+  $("#entBody").innerHTML = es.map((e) => {
+    const p = ped(e.pedido), c = cam(e.camion);
+    let ahora = `<span class="muted">volvió</span>`;
+    if (c && c.trip && c.trip.pedido === e.pedido && c.trip.salida === e.hora) { const st = estadoCamion(c); ahora = `<span class="est" style="font-size:12px;border-radius:5px;padding:2px 6px;${st.k === "yendo" ? "background:var(--blue-s);color:#1e40af" : st.k === "obra" ? "background:var(--amber-s);color:#92400e" : "background:var(--sky-s);color:#155e75"}">${st.label}${c.gps ? "" : " (est.)"}</span>`; }
+    return `<tr class="${S.nuevaEntrega === e.id ? "new" : ""}"><td class="num b">${hm(e.hora)}${e.cargado != null && e.cargado - e.hora > 10 ? `<div class="muted" style="font-size:12px;font-weight:600">cargado ${hm(e.cargado)}</div>` : ""}</td><td class="num b"><span class="tag ${e.tipo}" title="${TIPOS[e.tipo]}">${e.tipo}</span> ${esc(e.remito)}</td><td>${e.camion}</td><td>${esc(e.chofer || "—")}</td><td>${esc(p.cliente)} · <span class="muted">${esc(p.obra)}</span></td><td>${esc(p.formula)}</td><td class="num b">${n1(e.m3)}</td><td>${e.n}/${totalViajes(e.pedido)}</td><td>${e.muestra ? esc(e.muestra) : "<span class='muted'>—</span>"}</td><td>${ahora}</td><td><button class="btn sm" onclick="toast('Abre el remito ${esc(e.remito)} (PDF)','El mismo de hoy: /api/remito/[id]')">🖨</button></td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="muted" style="text-align:center;padding:18px">Todavía no salió ningún camión.</td></tr>`;
+}
+
+// ───────────────────────── Clics (delegados) ─────────────────────────
+document.addEventListener("click", (ev) => {
+  const t = ev.target;
+  const m = t.closest("[data-menu]");
+  if (m) { ev.stopPropagation(); S.menu = S.menu === m.dataset.menu ? null : m.dataset.menu; renderCamiones(); renderPedidos(); return; }
+  if (S.menu && !t.closest(".menu")) { S.menu = null; renderCamiones(); renderPedidos(); }
+  const d = t.closest("[data-desp]");
+  if (d) { despacharViaje(d.dataset.desp); return; }
+  const vol = t.closest("[data-volvio]");
+  if (vol) { volvio(vol.dataset.volvio); return; }
+  if (drag.justDropped) return;
+  const vc = t.closest("[data-viaje]");
+  if (vc && !t.closest("button")) { tocarViaje(vc.dataset.viaje); return; }
+  const cc = t.closest("[data-camion]");
+  if (cc && !t.closest("button") && !t.closest(".menu")) { tocarCamion(cc.dataset.camion); return; }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if ($("#modalRoot").innerHTML) cerrarModal(); else soltar(); } });
+function cerrarMenus() { S.menu = null; }
+
+function tocarViaje(id) {
+  if (!puede.despachar()) { toast("Modo consulta", "Joaquín ve todo, pero no puede despachar"); return; }
+  if (S.selCamion) { const c = S.selCamion; S.selCamion = null; abrirEntrega(id, c); return; }
+  S.selViaje = S.selViaje === id ? null : id;
+  render();
+  if (S.selViaje && angosta()) setTab("camiones");
+}
+function tocarCamion(id) {
+  if (!puede.despachar()) { toast("Modo consulta", "Joaquín ve todo, pero no puede despachar"); return; }
+  if (S.selViaje) { const v = S.selViaje; S.selViaje = null; intentarCamion(v, id); return; }
+  const c = cam(id), e = estadoCamion(c);
+  if (e.k === "planta") { S.selCamion = id; toast(`${id} elegido`, "Ahora tocá el viaje que lleva (o tocá «Despachar» en un viaje)"); if (angosta()) setTab("viajes"); }
+  else toast(`${id} figura ${e.label.toLowerCase()}`, "Para despacharlo, primero tocá un viaje");
+}
+function soltar() { S.selViaje = null; S.selCamion = null; render(); }
+function despacharViaje(vid) {
+  const v = S.viajes.find((x) => x.id === vid);
+  let c = v.sug && libreAca(cam(v.sug)) ? v.sug : null;
+  if (!c) { const l = S.camiones.find(libreAca); c = l ? l.id : null; }
+  S.selViaje = null;
+  if (c) abrirEntrega(vid, c);
+  else intentarCamion(vid, v.sug || S.camiones.find((x) => estadoCamion(x).k !== "taller").id);
+}
+function intentarCamion(vid, cid) {
+  const c = cam(cid), e = estadoCamion(c);
+  if (e.k === "taller") { render(); modal(`<div class="modal sm"><div class="mh"><h3>${cid} está en taller</h3></div><div class="mb">No se puede despachar un camión en taller. Si ya está bien, tocá ⋮ › <b>Disponible</b> en su tarjeta.</div><div class="mf"><button class="btn" onclick="cerrarModal()">Entendido</button></div></div>`); return; }
+  if (e.k !== "planta") {
+    render();
+    modal(`<div class="modal sm"><div class="mh"><h3>${cid} no figura libre</h3></div><div class="mb"><div>${cid} figura <b>${e.label.toLowerCase()}</b> (${esc(e.fuente)}, hace ${dur(S.now - e.desde)}).</div><div class="muted">Puede ser que haya vuelto sin señal. Si lo tenés en la planta, despachalo igual.</div></div><div class="mf"><button class="btn" onclick="cerrarModal()">Elegir otro</button><button class="btn pri" onclick="cerrarModal();abrirEntrega('${vid}','${cid}')">Despachar igual</button></div></div>`);
+    return;
+  }
+  if (c.planta !== S.planta) toast(`${cid} está en ${PLANTAS[c.planta]}`, "Se puede despachar igual: los camiones se comparten");
+  abrirEntrega(vid, cid);
+}
+
+// ───────────────────────── Arrastrar (pointer events: dedo y mouse) ─────────────────────────
+const drag = { active: false, vid: null, ghost: null, x0: 0, y0: 0, timer: null, over: null, justDropped: false, pid: null };
+document.addEventListener("pointerdown", (ev) => {
+  const vc = ev.target.closest("[data-viaje]");
+  if (!vc || ev.target.closest("button") || !puede.despachar()) return;
+  drag.vid = vc.dataset.viaje; drag.x0 = ev.clientX; drag.y0 = ev.clientY; drag.pid = ev.pointerId; drag.src = vc;
+  if (ev.target.closest("[data-handle]")) { empezarArrastre(ev); return; }
+  if (ev.pointerType !== "mouse") drag.timer = setTimeout(() => empezarArrastre(ev), 280);
+});
+document.addEventListener("pointermove", (ev) => {
+  if (!drag.vid || ev.pointerId !== drag.pid) return;
+  const dx = ev.clientX - drag.x0, dy = ev.clientY - drag.y0, dist = Math.hypot(dx, dy);
+  if (!drag.active) {
+    if (ev.pointerType === "mouse" && dist > 8 && ev.buttons === 1) empezarArrastre(ev);
+    else if (ev.pointerType !== "mouse" && dist > 10) { clearTimeout(drag.timer); drag.vid = null; }
+    return;
+  }
+  moverFantasma(ev.clientX, ev.clientY);
+});
+document.addEventListener("pointerup", (ev) => terminarArrastre(ev));
+document.addEventListener("pointercancel", () => { limpiarArrastre(); });
+document.addEventListener("touchmove", (e) => { if (drag.active) e.preventDefault(); }, { passive: false });
+function empezarArrastre(ev) {
+  if (!drag.vid || drag.active) return;
+  clearTimeout(drag.timer);
+  drag.active = true;
+  const g = drag.src.cloneNode(true); g.classList.add("ghost"); g.classList.remove("sel");
+  document.body.appendChild(g); drag.ghost = g;
+  drag.src.style.opacity = ".4";
+  document.querySelectorAll("[data-camion]").forEach((el) => { const c = cam(el.dataset.camion); if (libreAca(c)) el.classList.add("lit"); });
+  if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) {}
+  moverFantasma(ev.clientX, ev.clientY);
+}
+function moverFantasma(x, y) {
+  if (!drag.ghost) return;
+  drag.ghost.style.left = (x - 40) + "px"; drag.ghost.style.top = (y - 24) + "px";
+  const el = document.elementFromPoint(x, y);
+  const cc = el && el.closest("[data-camion]");
+  if (drag.over && drag.over !== cc) drag.over.classList.remove("drop");
+  if (cc) cc.classList.add("drop");
+  drag.over = cc;
+}
+function terminarArrastre(ev) {
+  clearTimeout(drag.timer);
+  if (!drag.active) { drag.vid = null; return; }
+  const el = document.elementFromPoint(ev.clientX, ev.clientY);
+  const cc = el && el.closest("[data-camion]");
+  const vid = drag.vid;
+  const quieto = Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 10;
+  limpiarArrastre();
+  if (quieto && !cc) { drag.justDropped = true; setTimeout(() => (drag.justDropped = false), 60); tocarViaje(vid); return; }
+  drag.justDropped = true; setTimeout(() => (drag.justDropped = false), 60);
+  if (cc) intentarCamion(vid, cc.dataset.camion);
+  else render();
+}
+function limpiarArrastre() {
+  if (drag.ghost) drag.ghost.remove();
+  if (drag.src) drag.src.style.opacity = "";
+  document.querySelectorAll(".drop").forEach((e) => e.classList.remove("drop"));
+  drag.active = false; drag.vid = null; drag.ghost = null; drag.over = null;
+}
+
+// ───────────────────────── Modales ─────────────────────────
+function modal(html) { $("#modalRoot").innerHTML = `<div class="mbg" onclick="if(event.target===this)cerrarModal()">${html}</div>`; }
+function cerrarModal() { $("#modalRoot").innerHTML = ""; }
+
+// Formulario Entrega
+let E = null;
+// ── Remito (lib/despacho.ts): tipo R (con factura) / X (sin factura), talonario tipeado por planta y tipo ──
+const TIPOS = { R: "Con factura", X: "Sin factura" };
+const dig = (r) => String(r || "").replace(/\D/g, "");
+// Datos viejos: los del 3100 en adelante son X; el resto, R (script de clasificación, punto 14.5)
+const tipoPorNumero = (r) => (Number(dig(r)) >= 3100 ? "X" : "R");
+function numerosTipo(pl, tipo) {
+  return [...S.histRemitos[pl].filter((r) => tipoPorNumero(r) === tipo), ...S.entregas.filter((e) => e.planta === pl && e.tipo === tipo).map((e) => e.remito)]
+    .map(dig).filter((d) => d && d.length <= 5).map(Number);
+}
+const maxTipo = (pl, tipo) => Math.max(...numerosTipo(pl, tipo));
+function siguienteTipo(pl, tipo) { const usados = new Set(numerosTipo(pl, tipo)); let x = maxTipo(pl, tipo) + 1; while (usados.has(x)) x++; return x; }
+// Prioridad: pedido > obra > cliente > respuesta del día para ese cliente > preguntar
+function resolverTipo(p) {
+  if (p.tipo) return { tipo: p.tipo, origen: "pedido", txt: "lo dice el pedido" };
+  if (p.obraTipo) return { tipo: p.obraTipo, origen: "obra", txt: "la obra va siempre " + TIPOS[p.obraTipo].toLowerCase() };
+  if (p.clienteTipo) return { tipo: p.clienteTipo, origen: "cliente", txt: "el cliente va siempre " + TIPOS[p.clienteTipo].toLowerCase() };
+  if (S.respDia[p.cliente]) return { tipo: S.respDia[p.cliente], origen: "dia", txt: "se respondió hoy para este cliente" };
+  return null;
+}
+function remitoRepetido(texto, pl, tipo) {
+  const d = dig(texto);
+  const hist = S.histRemitos[pl].filter((r) => tipoPorNumero(r) === tipo);
+  const hoy = S.entregas.filter((e) => e.planta === pl && e.tipo === tipo).map((e) => e.remito);
+  return [...hist, ...hoy].some((r) => (d ? dig(r) === d : String(r).trim().toLowerCase() === texto.trim().toLowerCase()));
+}
+function avisosRemito(texto, pl, tipo) {
+  const d = dig(texto); if (!d) return null;
+  if (d.length > 5) return { tipo: "dígitos de más", txt: `¿No juntaste dos números? ${d} tiene ${d.length} dígitos. Los R de ${PLANTAS[pl]} tienen 3 y los X, 4.` };
+  const n = Number(d), max = maxTipo(pl, tipo);
+  if (tipo === "R" && n >= 3100) return { tipo: "parece X", txt: `${d} parece un remito X (sin factura). Los R de ${PLANTAS[pl]} van por el ${maxTipo(pl, "R")}.` };
+  if (tipo === "X" && n < 3100) return { tipo: "parece R", txt: `${d} parece un remito R (con factura). Los X de ${PLANTAS[pl]} van por el ${maxTipo(pl, "X")}.` };
+  if (n > max + 20) return { tipo: "salta mucho", txt: `Salta mucho: el último ${tipo} de ${PLANTAS[pl]} es ${max}.` };
+  if (n < max - 50) return { tipo: "salta mucho", txt: `Es mucho más bajo que los últimos: el mayor ${tipo} de ${PLANTAS[pl]} es ${max}.` };
+  const otra = pl === "hud" ? "can" : "hud";
+  if (tipo === "X" && numerosTipo(otra, "X").includes(n)) return { tipo: "X usado en la otra planta", txt: `El X ${d} ya se usó en ${PLANTAS[otra]}. ¿No agarraste el talonario de la otra planta?` };
+  return null;
+}
+const nroImpreso = (tipo, r) => (tipo === "X" ? "RM2: 0099-" : "RM: ????-") + dig(r).padStart(8, "0");
+function setTipo(t, pregunta) {
+  E.tipo = t; E.origen = pregunta ? "pregunta" : "manual";
+  if (!E.remitoTocado) E.remito = String(siguienteTipo(S.planta, t));
+  E.aviso = null; E.avisoOk = false; E.err = null;
+  dibujarEntrega();
+}
+function abrirEntrega(vid, cid) {
+  const v = S.viajes.find((x) => x.id === vid), p = ped(v.pedido), c = cam(cid);
+  E = {
+    vid, pid: p.id, cid, chofer: c.chofer || "", choferTocado: false,
+    m3: String(Math.min(v.m3, falta(p))), hora: hm(S.now), agua: "0",
+    fibraOn: !!p.fibra, fibra: p.fibra ? String(p.fibra) : "", muestraOn: false, muestraNum: "", asent: "", err: null, aviso: null, avisoOk: false,
+    tipo: null, origen: null, cambiando: false, remitoTocado: false,
+  };
+  const res = resolverTipo(p);
+  if (res) { E.tipo = res.tipo; E.origen = res.origen; E.remito = String(siguienteTipo(S.planta, res.tipo)); } else E.remito = "";
+  render();
+  dibujarEntrega();
+}
+function dibujarEntrega() {
+  const p = ped(E.pid);
+  const pend = S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").sort((a, b) => a.n - b.n);
+  const opcCam = S.camiones.map((c) => { const e = estadoCamion(c); const txt = e.k === "planta" ? (c.planta === S.planta ? "libre" : "libre en " + PLANTAS[c.planta]) : e.label.toLowerCase(); return `<option value="${c.id}" ${c.id === E.cid ? "selected" : ""}>${c.id} · ${txt}</option>`; }).join("");
+  const opcCho = `<option value="">Elegí el chofer</option>` + CHOFERES.map((n) => `<option ${n === E.chofer ? "selected" : ""}>${n}</option>`).join("");
+  modal(`<div class="modal">
+    <div class="mh"><h3>Entrega</h3><button class="icon-btn" onclick="cerrarModal()" title="Cerrar">✕</button></div>
+    <div class="mb">
+      <div class="head"><div class="big">${esc(p.cliente)} · ${esc(p.obra)}</div>
+        <div class="muted">${esc(p.dir)}</div>
+        <div style="margin-top:4px"><b>${esc(p.formula)}</b> · ${esc(p.finalidad)} · ${p.bomba ? "Bomba " + esc(p.bomba) : "Directo"}${p.fibra ? " · Fibra " + n1(p.fibra) + " kg/m³" : ""}</div>
+        <div style="margin-top:4px">Total <b>${n1(p.m3)} m³</b> · enviado <b>${n1(p.entregado)}</b> · falta <b style="color:var(--amber)">${n1(falta(p))}</b></div></div>
+      ${bloqueTipo(p)}
+      <div class="grid2">
+        <div class="fld"><label>Viaje</label><select onchange="E.vid=this.value;const v=S.viajes.find(x=>x.id===this.value);E.m3=String(Math.min(v.m3,falta(ped(E.pid))));dibujarEntrega()">${pend.map((x) => `<option value="${x.id}" ${x.id === E.vid ? "selected" : ""}>Viaje ${x.n}/${totalViajes(p.id)} · ${n1(x.m3)} m³ · cargar ${hm(x.carga)}</option>`).join("")}</select></div>
+        <div class="fld"><label>Camión *</label><select onchange="cambiarCamion(this.value)">${opcCam}</select></div>
+        <div class="fld"><label>Chofer *</label><select id="fCho" onchange="E.chofer=this.value;E.choferTocado=true">${opcCho}</select><div class="help">Rotan: viene el último que manejó este camión hoy.</div></div>
+        <div class="fld big"><label>m³ en este camión *</label><input inputmode="decimal" value="${esc(E.m3)}" oninput="E.m3=this.value;totalFibra()"></div>
+        <div class="fld big"><label>Remito *</label><input id="fRemito" inputmode="numeric" value="${esc(E.remito)}" oninput="E.remito=this.value;E.remitoTocado=true;E.avisoOk=false;E.aviso=null"><div class="help">${E.tipo ? `Sugerido: el siguiente <b>${E.tipo}</b> de ${PLANTAS[S.planta]} (el último fue ${maxTipo(S.planta, E.tipo)}). Controlalo con el papel.` : "Primero contestá si va con o sin factura: el número depende del talonario."}</div></div>
+        <div class="fld"><label>Salió a las</label><input type="time" value="${E.hora}" oninput="E.hora=this.value"><div class="help">Si lo cargás más tarde, poné la hora real de salida. La hora en que lo cargás (${hm(S.now)}) se guarda aparte y no se cambia.</div></div>
+        <div class="fld"><label>Agua extra en planta (litros)</label><input inputmode="numeric" value="${esc(E.agua)}" oninput="E.agua=this.value"></div>
+      </div>
+      <div class="box"><div class="sw"><div><div class="tt">Fibra</div><div class="ds">Se agrega al camión en el despacho</div></div><button class="toggle ${E.fibraOn ? "on" : ""}" onclick="E.fibraOn=!E.fibraOn;dibujarEntrega()" aria-label="Fibra"></button></div>
+        ${E.fibraOn ? `<div class="grid2" style="margin-top:10px"><div class="fld"><label>Dosificación (kg por m³)</label><input inputmode="decimal" value="${esc(E.fibra)}" oninput="E.fibra=this.value;totalFibra()"></div><div style="align-self:end;padding-bottom:10px" id="totFibra"></div></div>` : ""}</div>
+      <div class="box"><div class="sw"><div><div class="tt">Muestra de probeta</div><div class="ds">Se extrajo muestra para ensayo de compresión</div></div><button class="toggle ${E.muestraOn ? "on" : ""}" onclick="E.muestraOn=!E.muestraOn;dibujarEntrega()" aria-label="Muestra"></button></div>
+        ${E.muestraOn ? `<div style="margin-top:10px"><span class="last">Última muestra: ${esc(S.ultimaMuestra)}</span></div><div class="grid2" style="margin-top:8px"><div class="fld"><label>Número de muestra *</label><input value="${esc(E.muestraNum)}" placeholder="Ej: M-0413" oninput="E.muestraNum=this.value"></div><div class="fld"><label>Asentamiento real (cm) *</label><input inputmode="decimal" value="${esc(E.asent)}" placeholder="Ej: 12,5" oninput="E.asent=this.value"></div></div><div class="help" style="font-size:12px;color:var(--muted);margin-top:6px">Se crean 3 probetas: 1 para 7 días y 2 para 28 días.</div>` : ""}</div>
+      ${E.err ? `<div class="err">${esc(E.err)}</div>` : ""}
+      ${E.aviso ? `<div class="ask" style="flex-wrap:wrap"><span>⚠ ${esc(E.aviso.txt)}</span><button class="btn sm warn" onclick="E.avisoOk=true;despachar(E.imprimirPend)">Sí, el número está bien</button></div>` : ""}
+    </div>
+    <div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn" onclick="despachar(true)">🖨 Despachar e imprimir</button><button class="btn ok" onclick="despachar(false)">Despachar</button></div>
+  </div>`);
+  totalFibra();
+}
+function bloqueTipo(p) {
+  const pregunta = !E.tipo || E.origen === "pregunta" || E.cambiando;
+  if (!pregunta) {
+    const res = resolverTipo(p);
+    return `<div class="box sw"><div><div class="tt">Remito <span class="tag ${E.tipo}" style="font-size:13px">${E.tipo}</span> ${TIPOS[E.tipo]}</div><div class="ds">${E.origen === "manual" ? "cambiado solo en este remito (queda en Actividad)" : esc(res ? res.txt : "")}</div></div>${puede.editarProg() && E.origen !== "manual" ? `<button class="btn sm" onclick="E.cambiando=true;dibujarEntrega()">Cambiar solo en este remito</button>` : ""}</div>`;
+  }
+  const sinDefinir = !resolverTipo(p);
+  return `<div class="tipo-q"><div class="tt b">¿Este remito va con o sin factura?</div>
+    <div class="ds muted" style="font-size:13px">${sinDefinir ? `No lo dice el pedido, ni la obra, ni el cliente. Lo que elijas vale para <b>todos los despachos de hoy de ${esc(p.cliente)}</b>.` : "Cambia solo este remito. Queda en Actividad."}</div>
+    <div class="opc"><button class="${E.tipo === "R" ? "on" : ""}" onclick="setTipo('R',${sinDefinir})">Con factura · R</button><button class="${E.tipo === "X" ? "on" : ""}" onclick="setTipo('X',${sinDefinir})">Sin factura · X</button></div>
+    ${E.cambiando ? `<div style="margin-top:6px"><a style="cursor:pointer;text-decoration:underline;font-size:13px" onclick="const r=resolverTipo(ped(E.pid));E.cambiando=false;E.tipo=r.tipo;E.origen=r.origen;if(!E.remitoTocado)E.remito=String(siguienteTipo(S.planta,r.tipo));dibujarEntrega()">No cambiar</a></div>` : ""}</div>`;
+}
+function cambiarCamion(id) { E.cid = id; if (!E.choferTocado) E.chofer = cam(id).chofer || ""; dibujarEntrega(); }
+function totalFibra() {
+  const el = document.getElementById("totFibra"); if (!el) return;
+  const kg = parseFloat(String(E.fibra).replace(",", ".")) || 0, m3 = parseFloat(String(E.m3).replace(",", ".")) || 0;
+  el.innerHTML = kg * m3 > 0 ? `Total en el camión: <b>${n1(kg * m3)} kg</b><br><span class="muted" style="font-size:12px">${n1(kg)} kg/m³ × ${n1(m3)} m³</span>` : `<span class="muted" style="font-size:13px">Poné los kg por m³ para ver el total.</span>`;
+}
+function despachar(imprimir) {
+  const p = ped(E.pid), v = S.viajes.find((x) => x.id === E.vid), c = cam(E.cid);
+  const m3 = parseFloat(String(E.m3).replace(",", "."));
+  const [hh, mm] = String(E.hora || "").split(":").map(Number);
+  const hora = hh * 60 + mm;
+  const err = (t) => { E.err = t; dibujarEntrega(); };
+  if (!(m3 > 0)) return err("Poné los m³ de este camión.");
+  if (m3 > falta(p) + 0.5) return err(`Supera lo que falta del pedido (${n1(falta(p))} m³).`);
+  if (!E.tipo) return err("Contestá si el remito va con o sin factura.");
+  if (!E.remito.trim()) return err("El número de remito es obligatorio.");
+  if (remitoRepetido(E.remito, S.planta, E.tipo)) return err(`Ya hay un remito ${E.tipo} ${dig(E.remito) || E.remito.trim()} en ${PLANTAS[S.planta]}. No se puede cargar dos veces.`);
+  if (!E.chofer) return err("Elegí el chofer.");
+  if (isNaN(hora)) return err("Poné la hora de salida.");
+  if (hora > S.now) return err("La hora de salida no puede ser más tarde que ahora.");
+  if (S.now - hora > 720) return err("La hora de salida tiene que ser de hoy (hasta 12 h para atrás).");
+  if (E.fibraOn && !(parseFloat(String(E.fibra).replace(",", ".")) > 0)) return err("Poné los kg de fibra por m³ (o apagá Fibra).");
+  if (E.muestraOn && (!E.muestraNum.trim() || !E.asent.trim())) return err("Completá el número de muestra y el asentamiento.");
+  if (estadoCamion(c).k === "taller") return err(`${c.id} está en taller.`);
+  const aviso = avisosRemito(E.remito, S.planta, E.tipo);
+  if (aviso && !E.avisoOk) { E.err = null; E.aviso = aviso; E.imprimirPend = imprimir; dibujarEntrega(); return; }
+
+  // Lo que hace registrar_despacho (todo junto) + lo que se ve en pantalla
+  const m3Plan = v.m3;
+  v.estado = "desp"; v.m3 = m3;
+  p.entregado = Math.round((p.entregado + m3) * 10) / 10;
+  const completo = p.entregado >= p.m3 - 0.01;
+  let rearmado = false;
+  if (completo) { p.estado = "completo"; S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").forEach((x) => (x.estado = "canc")); }
+  else if (Math.abs(m3Plan - m3) > 0.01) rearmado = rearmar(p);
+  c.trip = { pedido: p.id, salida: hora, ida: p.viajeMin, desc: p.bomba ? 30 : 25, vuelta: p.viajeMin, plantaVuelta: S.planta };
+  c.chofer = E.chofer; c.libreDesde = null;
+  const id = "e" + Date.now();
+  if (E.origen === "pregunta") S.respDia[p.cliente] = E.tipo;
+  S.entregas.push({ id, planta: S.planta, hora, cargado: S.now, tipo: E.tipo, origen: E.origen, remito: E.remito.trim(), camion: c.id, chofer: E.chofer, pedido: p.id, m3, n: v.n, muestra: E.muestraOn ? E.muestraNum.trim() : null });
+  if (E.muestraOn) S.ultimaMuestra = E.muestraNum.trim();
+  S.nuevaEntrega = id;
+  const remito = E.remito.trim(), patente = c.id, chofer = E.chofer, avisoAcept = aviso ? aviso.tipo : null, tipo = E.tipo, respondio = E.origen === "pregunta";
+  E = null; cerrarModal(); render();
+  setTimeout(() => { S.nuevaEntrega = null; renderEntregas(); }, 4000);
+  const resto = completo ? "Pedido completo" : `Falta ${n1(falta(p))} m³`;
+  if (imprimir) {
+    modal(`<div class="modal sm"><div class="mh"><h3>✅ Camión despachado</h3></div><div class="mb"><div class="okbox"><div>Remito <span class="tag ${tipo}">${tipo}</span> <b style="font-size:18px">${esc(remito)}</b> · ${TIPOS[tipo]}</div><div>${patente} · <b>${n1(m3)} m³</b> · ${esc(chofer)}</div><div>${esc(p.cliente)} · ${esc(p.obra)}</div></div><div class="muted">En el sistema se abre directo el PDF para la <b>hoja pre-impresa (solo datos)</b>: <code>/api/remito/[id]?doc=remitox&amp;fondo=0</code>. Va a imprimir <b>${esc(nroImpreso(tipo, remito))}</b>${tipo === "R" ? " (la letra y el prefijo de los R están en la pregunta 14.9)" : ""}.</div>${respondio ? `<div class="muted">«${TIPOS[tipo]}» queda para todos los despachos de hoy de ${esc(p.cliente)}.</div>` : ""}${avisoAcept ? `<div class="muted">Aviso de remito aceptado («${esc(avisoAcept)}»): queda en Actividad.</div>` : ""}</div><div class="mf"><button class="btn pri" onclick="cerrarModal()">Listo</button></div></div>`);
+  } else toast(`Camión despachado · Remito ${tipo} ${remito}`, `${respondio ? TIPOS[tipo] + " queda para todo el día de " + p.cliente + " · " : ""}${patente} sale con ${n1(m3)} m³ · ${resto}${rearmado ? " · se recalcularon los viajes que faltan" : ""}${avisoAcept ? " · aviso de remito aceptado (queda en Actividad)" : ""}`);
+}
+// Rearmar los viajes pendientes cuando el camión salió con otros m³ (como regenerarViajesPedido de la fase 2)
+function rearmar(p) {
+  const pend = S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").sort((a, b) => a.n - b.n);
+  let resto = falta(p); const partes = [];
+  while (resto > 0.01) { const q = Math.min(8, resto); partes.push(Math.round(q * 10) / 10); resto = Math.round((resto - q) * 10) / 10; }
+  const esp = p.bomba ? 20 : 25;
+  partes.forEach((q, i) => {
+    if (pend[i]) pend[i].m3 = q;
+    else { const ult = S.viajes.filter((x) => x.pedido === p.id && x.estado !== "canc").sort((a, b) => b.n - a.n)[0]; S.viajes.push({ id: "v" + Date.now() + i, pedido: p.id, n: ult.n + 1, m3: q, carga: (pend[pend.length - 1] || ult).carga + esp * (i - pend.length + 1), sug: null, estado: "pend" }); }
+  });
+  pend.slice(partes.length).forEach((x) => (S.viajes = S.viajes.filter((y) => y !== x)));
+  return true;
+}
+
+// Camión: volvió, taller, disponible
+function volvio(id) {
+  const c = cam(id); if (!c.trip) return;
+  c.planta = c.trip.plantaVuelta; c.trip = null; c.libreDesde = S.now; S.menu = null;
+  render(); toast(`${id} volvió a ${PLANTAS[c.planta]}`, "Marcado a mano. Queda libre para el próximo viaje");
+}
+function abrirTaller(id) {
+  S.menu = null; render();
+  modal(`<div class="modal sm"><div class="mh"><h3>Mandar ${id} a taller</h3></div><div class="mb"><div class="fld"><label>Nota (opcional)</label><input id="notaTaller" placeholder="Ej: pinchó una goma"></div><div class="muted" style="font-size:13px">No se va a poder despachar hasta que lo pongas «Disponible». Queda en Actividad.</div></div><div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn warn" onclick="mandarTaller('${id}')">Mandar a taller</button></div></div>`);
+}
+function mandarTaller(id) {
+  const c = cam(id); c.manual = "taller"; c.manualDesde = S.now; c.manualNota = ($("#notaTaller").value || "").trim();
+  if (c.trip) { c.planta = c.trip.plantaVuelta; c.trip = null; }
+  cerrarModal(); render(); toast(`${id} en taller`, "No aparece como libre para despachar");
+}
+function disponible(id) { const c = cam(id); c.manual = null; c.libreDesde = S.now; S.menu = null; render(); toast(`${id} disponible`, "Libre en " + PLANTAS[c.planta]); }
+
+// Pedido: confirmar, ver entregas, suspender, reabrir, finalizar, cancelar
+function confirmar(id) { const p = ped(id); p.confirmado = !p.confirmado; S.menu = null; render(); toast(p.confirmado ? "👍 Pedido confirmado" : "Se quitó la confirmación", p.cliente); }
+function verEntregas(id) { S.filtroPedido = id; S.menu = null; render(); document.querySelector(".ent").scrollIntoView({ behavior: "smooth" }); }
+let M = null;
+function chipsMotivo(lista) { return `<div class="chips">${lista.map(([k, l]) => `<button class="chip ${M.tipo === k ? "on" : ""}" style="min-height:40px;font-size:14px" onclick="M.tipo='${k}';M.redibujar()">${l}</button>`).join("")}</div>`; }
+function abrirSuspender(id) {
+  S.menu = null; render();
+  const p = ped(id);
+  M = { id, tipo: "lluvia", motivo: "", err: null, redibujar: () => dibujarSusp() };
+  dibujarSusp();
+  function dibujarSusp() {
+    modal(`<div class="modal sm"><div class="mh"><h3>Suspender pedido</h3><button class="icon-btn" onclick="cerrarModal()">✕</button></div><div class="mb">
+      <div class="head"><div class="big">${esc(p.cliente)}</div><div>${esc(p.obra)} · ${esc(p.formula)} · falta ${n1(falta(p))} m³</div></div>
+      <div class="fld"><label>¿Por qué se suspende? *</label>${chipsMotivo(MOTIVOS_SUSP)}</div>
+      <div class="fld"><label>Detalle ${M.tipo === "otro" ? "*" : "(opcional)"}</label><input id="mDet" value="${esc(M.motivo)}" placeholder="Ej: llueve desde las 7, la obra avisa a las 11" oninput="M.motivo=this.value"></div>
+      <div class="muted" style="font-size:13px">Los viajes que faltan quedan en pausa y no se puede despachar hasta reabrirlo. No se borra nada.</div>
+      ${M.err ? `<div class="err">${esc(M.err)}</div>` : ""}
+    </div><div class="mf"><button class="btn" onclick="cerrarModal()">Volver</button><button class="btn warn" onclick="suspender()">⏸ Suspender</button></div></div>`);
+  }
+}
+function suspender() {
+  if (M.tipo === "otro" && M.motivo.trim().length < 5) { M.err = "Contá brevemente el motivo."; M.redibujar(); return; }
+  const p = ped(M.id);
+  p.estado = "suspendido";
+  p.susp = { tipo: M.tipo, tipoTxt: MOTIVOS_SUSP.find((x) => x[0] === M.tipo)[1], motivo: M.motivo.trim(), hora: S.now, por: nombreRol() };
+  cerrarModal(); render(); toast(`Pedido suspendido · ${p.susp.tipoTxt}`, `${p.cliente}: ${n1(falta(p))} m³ en pausa`);
+}
+function abrirReabrir(id) {
+  S.menu = null; render();
+  const p = ped(id);
+  const pend = S.viajes.filter((x) => x.pedido === id && x.estado === "pend").sort((a, b) => a.carga - b.carga);
+  const nueva = Math.ceil((S.now + 10) / 5) * 5;
+  modal(`<div class="modal sm"><div class="mh"><h3>Reabrir pedido</h3><button class="icon-btn" onclick="cerrarModal()">✕</button></div><div class="mb">
+    <div class="head"><div class="big">${esc(p.cliente)}</div><div>${esc(p.obra)} · falta ${n1(falta(p))} m³ · ${pend.length} viaje${pend.length === 1 ? "" : "s"}</div></div>
+    ${pend.length ? `<div>¿Qué hacemos con los horarios de los viajes?</div>
+    <button class="btn pri" style="text-align:left" onclick="reabrir('${id}',${nueva})">Correr los viajes: el próximo carga a las <b>${hm(nueva)}</b></button>
+    <button class="btn" style="text-align:left" onclick="reabrir('${id}',null)">Dejar los horarios como estaban (el próximo era ${hm(pend[0].carga)})</button>` : `<button class="btn pri" onclick="reabrir('${id}',null)">Reabrir</button>`}
+  </div></div>`);
+}
+function reabrir(id, nuevaCarga) {
+  const p = ped(id); p.estado = "activo"; p.susp = null;
+  if (nuevaCarga != null) {
+    const pend = S.viajes.filter((x) => x.pedido === id && x.estado === "pend").sort((a, b) => a.carga - b.carga);
+    const delta = nuevaCarga - pend[0].carga; pend.forEach((x) => (x.carga += delta));
+  }
+  cerrarModal(); render(); toast("Pedido reabierto", nuevaCarga != null ? `Los viajes se corrieron: el próximo carga a las ${hm(nuevaCarga)}` : "Con los horarios de antes");
+}
+function abrirFinalizar(id) {
+  S.menu = null; render();
+  const p = ped(id);
+  M = { id, tipo: "obra_pidio_menos", motivo: "", err: null, redibujar: () => dib() };
+  dib();
+  function dib() {
+    modal(`<div class="modal sm"><div class="mh"><h3>Finalizar pedido</h3><button class="icon-btn" onclick="cerrarModal()">✕</button></div><div class="mb">
+      <div class="muted">El pedido se cierra con lo que ya salió. No se puede despachar más.</div>
+      <div class="cont" style="grid-template-columns:repeat(3,1fr);margin:0"><div><div class="v">${n1(p.m3)}</div><div class="l">Programado</div></div><div class="desp"><div class="v">${n1(p.entregado)}</div><div class="l">Despachado</div></div><div><div class="v" style="color:var(--amber)">${n1(falta(p))}</div><div class="l">Sin enviar</div></div></div>
+      <div class="fld"><label>¿Por qué se cierra antes? *</label>${chipsMotivo(MOTIVOS_FIN)}</div>
+      <div class="fld"><label>Detalle ${M.tipo === "otro" ? "*" : "(opcional)"}</label><input value="${esc(M.motivo)}" oninput="M.motivo=this.value" placeholder="Ej: con 30 m³ llenaron la platea"></div>
+      ${M.err ? `<div class="err">${esc(M.err)}</div>` : ""}
+    </div><div class="mf"><button class="btn" onclick="cerrarModal()">Volver</button><button class="btn ok" onclick="finalizar()">Finalizar pedido</button></div></div>`);
+  }
+}
+function finalizar() {
+  if (M.tipo === "otro" && M.motivo.trim().length < 5) { M.err = "Contá brevemente el motivo."; M.redibujar(); return; }
+  const p = ped(M.id);
+  p.estado = "finalizado"; p.cierre = { tipoTxt: MOTIVOS_FIN.find((x) => x[0] === M.tipo)[1], motivo: M.motivo.trim() };
+  S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").forEach((x) => (x.estado = "canc"));
+  cerrarModal(); render(); toast("Pedido finalizado", `Con ${n1(p.entregado)} de ${n1(p.m3)} m³ · ${p.cierre.tipoTxt}`);
+}
+function abrirCancelar(id) {
+  S.menu = null; render();
+  const p = ped(id);
+  M = { id, tipo: "lluvia", motivo: "", err: null, redibujar: () => dib() };
+  dib();
+  function dib() {
+    modal(`<div class="modal sm"><div class="mh"><h3>Cancelar pedido</h3><button class="icon-btn" onclick="cerrarModal()">✕</button></div><div class="mb">
+      <div class="head"><div class="big">${esc(p.cliente)}</div><div>${esc(p.obra)} · ${n1(p.m3)} m³</div></div>
+      <div class="muted">El pedido no se borra: queda cancelado. Solo gerenciales.</div>
+      <div class="fld"><label>Motivo *</label>${chipsMotivo(MOTIVOS_SUSP)}</div>
+      <div class="fld"><label>Detalle (obligatorio)</label><input value="${esc(M.motivo)}" oninput="M.motivo=this.value" placeholder="Ej: el cliente pasó la obra para la semana que viene"></div>
+      ${M.err ? `<div class="err">${esc(M.err)}</div>` : ""}
+    </div><div class="mf"><button class="btn" onclick="cerrarModal()">Volver</button><button class="btn danger" onclick="cancelar()">Cancelar pedido</button></div></div>`);
+  }
+}
+function cancelar() {
+  if (M.motivo.trim().length < 5) { M.err = "El motivo es obligatorio (al menos 5 letras)."; M.redibujar(); return; }
+  const p = ped(M.id);
+  p.faltaAlCancelar = falta(p); p.estado = "cancelado";
+  p.cierre = { tipoTxt: MOTIVOS_SUSP.find((x) => x[0] === M.tipo)[1], motivo: M.motivo.trim() };
+  S.viajes.filter((x) => x.pedido === p.id && x.estado === "pend").forEach((x) => (x.estado = "canc"));
+  cerrarModal(); render(); toast("Pedido cancelado", `${p.cliente} · ${n1(p.faltaAlCancelar)} m³ al contador «Cancelado»`);
+}
+const nombreRol = () => ({ titan: "Titan", felipe: "Felipe", bautista: "Bautista", joaquin: "Joaquín" }[S.rol]);
+
+// Aviso
+let toastT = null;
+function toast(t, sub) {
+  const el = $("#toast"); el.innerHTML = esc(t) + (sub ? `<small>${esc(sub)}</small>` : ""); el.style.display = "block";
+  clearTimeout(toastT); toastT = setTimeout(() => (el.style.display = "none"), 4200);
+}
+function reiniciar() { S = datosIniciales(); document.getElementById("rol").value = "titan"; cerrarModal(); render(); toast("Maqueta reiniciada", "Son las 09:05 otra vez"); }
+
+S = datosIniciales();
+render();
+window.addEventListener("resize", renderTabs);
+</script>
+</body>
+</html>

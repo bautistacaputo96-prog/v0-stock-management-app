@@ -29,6 +29,9 @@ import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/moti
 import { FINALIDADES, cargarEmpresasBombeo, textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 // Fase 2 (solo con el interruptor de funciones nuevas)
 import { NuevoBadge } from "@/components/nuevo-badge"
+// Fase 3: distintivo "Suspendido" y tipo de remito del pedido
+import { textoMotivo } from "@/lib/despacho"
+const textoRemitoTipo = (t: "R" | "X" | null | undefined) => (t === "R" ? "Con factura · R" : t === "X" ? "Sin factura · X" : "Según obra o cliente")
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
 import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, descarga8De, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
@@ -38,12 +41,13 @@ import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 
 type Plant = { id: string; name: string }
-type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[] }
+type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
 type ConstructionSite = {
   id: string; name: string; address: string | null; client_id: string;
   localidad?: string | null; gps_lat?: number | null; gps_lng?: number | null;
   travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean;
   reception_hours_start: string | null; reception_hours_end: string | null;
+  remito_tipo?: "R" | "X" | null; // fase 3
 }
 type Mixer = { id: string; license_plate: string; capacity_m3: number; status: string }
 type Formula = { id: string; name: string; code: string; useful_life_minutes: number; plant_id: string }
@@ -59,6 +63,8 @@ type ScheduledDispatch = {
   m3_por_viaje?: number | null; espaciado_min?: number | null; confirmado_at?: string | null; confirmado_por?: string | null;
   viaje_min?: number | null; descarga_min?: number | null; // fase 2b
   dispatched_m3?: number | null;
+  // Fase 3 (nulos hasta aplicar la migración): tipo de remito y suspendido
+  remito_tipo?: "R" | "X" | null; suspendido_at?: string | null; suspendido_motivo_tipo?: string | null;
   clients?: Client; construction_sites?: ConstructionSite; formulas?: Formula; mixers?: Mixer;
 }
 
@@ -265,6 +271,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // Fase 2b
     viaje_min: "",
     descarga_min: "",
+    // Fase 3: "" = según obra o cliente
+    remito_tipo: "" as "" | "R" | "X",
   })
 
   // Mapa de id de planta -> nombre, para mostrar referencia de planta en cada despacho
@@ -447,6 +455,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       espaciado_min: "",
       viaje_min: "",
       descarga_min: "",
+      remito_tipo: "",
     })
     setViajeTocado(false)
     setViajeOrigen(null)
@@ -481,6 +490,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       espaciado_min: dispatch.espaciado_min != null ? String(dispatch.espaciado_min) : "",
       viaje_min: dispatch.viaje_min != null ? String(dispatch.viaje_min) : "",
       descarga_min: dispatch.descarga_min != null ? String(dispatch.descarga_min) : "",
+      remito_tipo: dispatch.remito_tipo || "",
     })
     // Si el pedido ya tenía un viaje cargado, la ruta no lo pisa
     setViajeTocado(dispatch.viaje_min != null)
@@ -556,6 +566,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             descarga_min: parseInt(form.descarga_min) > 0 ? parseInt(form.descarga_min) : null,
           }
         : {}
+      // Fase 3: tipo de remito del pedido. Solo se manda si cambió (así anda igual si la migración no está aplicada)
+      const remitoTipo = form.remito_tipo || null
+      const datosFase3 = (editingDispatch ? (editingDispatch.remito_tipo || null) !== remitoTipo : remitoTipo != null) ? { remito_tipo: remitoTipo } : {}
       let pedidoId: string | null = editingDispatch?.id || null
 
       if (editingDispatch) {
@@ -575,7 +588,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           metodo_descarga: form.metodo_descarga,
           ...datosFase1,
           ...datosFase2,
-        }).eq("id", editingDispatch.id)
+          ...datosFase3,
+        } as any).eq("id", editingDispatch.id)
         if (error) {
           toast({ title: "Error", description: "No se pudo actualizar", variant: "destructive" })
           setSaving(false)
@@ -598,16 +612,19 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             formula: codigoForm(editingDispatch.formula_id), camion: patente(editingDispatch.mixer_id), m3: Number(editingDispatch.quantity_m3),
             llegada: hora(editingDispatch.scheduled_arrival_time), descarga: editingDispatch.metodo_descarga || "", fibra: editingDispatch.fiber_kg_per_m3 ?? "",
             urgente: editingDispatch.is_urgent, observaciones: editingDispatch.observations || "", finalidad: editingDispatch.finalidad || "",
+            remito: textoRemitoTipo(editingDispatch.remito_tipo || null),
           },
           despues: {
             planta: plantNameById[plantToUse] || "-", cliente: nombreCli(form.client_id), obra: nombreObra(form.construction_site_id),
             formula: codigoForm(form.formula_id), camion: patente(form.mixer_id || null), m3: parseFloat(form.quantity_m3),
             llegada: hora(arrivalTime), descarga: form.metodo_descarga, fibra: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : "",
             urgente: form.is_urgent, observaciones: form.observations || "", finalidad: form.finalidad || "",
+            remito: textoRemitoTipo(remitoTipo),
           },
           etiquetas: {
             planta: "Planta", cliente: "Cliente", obra: "Obra", formula: "Fórmula", camion: "Camión", m3: "m³", llegada: "Llegada",
             descarga: "Descarga", fibra: "Fibra (kg/m³)", urgente: "Urgente", observaciones: "Observaciones", finalidad: "Finalidad",
+            remito: "Remito",
           },
           motivo: motivo.trim(),
         })
@@ -630,6 +647,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           metodo_descarga: form.metodo_descarga,
           ...datosFase1,
           ...datosFase2,
+          ...datosFase3,
         }
         // Se pide el id para Actividad (fase 0c-1) y para armar los viajes (fase 2)
         const { data: creado, error } = await supabase.from("scheduled_dispatches").insert(fila as any).select("id").single()
@@ -653,6 +671,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             "m³": parseFloat(form.quantity_m3),
             Llegada: format(parseISO(arrivalTime), "dd/MM HH:mm"),
             Planta: plantNameById[plantToUse] || "-",
+            ...(remitoTipo ? { Remito: textoRemitoTipo(remitoTipo) } : {}),
           },
         })
       }
@@ -936,6 +955,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 </span>
                               )}
                               <div className="font-medium truncate">{d.clients?.name}</div>
+                              {d.suspendido_at && !["cancelled", "completed"].includes(d.status) && (
+                                <div className="text-[10px] font-semibold text-slate-700 truncate" title="Suspendido desde Despacho diario">⏸ Suspendido · {textoMotivo(d.suspendido_motivo_tipo)}</div>
+                              )}
                               <div className="flex items-center gap-1 text-[10px]">
                                 <span>{d.quantity_m3}m3</span>
                                 {d.metodo_descarga && <span>· {d.metodo_descarga === "bomba" ? "bomba" : "directo"}</span>}
@@ -1279,6 +1301,23 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   {form.finalidad && !(FINALIDADES as readonly string[]).includes(form.finalidad) && <SelectItem value={form.finalidad}>{form.finalidad}</SelectItem>}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* Fase 3: remito con factura (R) o sin factura (X). Por defecto, lo que diga la obra o el cliente */}
+            <div className="space-y-2">
+              <Label>Remito</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {([
+                  ["", `Según obra o cliente (${(selectedSite?.remito_tipo || selectedClient?.remito_tipo) === "R" ? "Con factura" : (selectedSite?.remito_tipo || selectedClient?.remito_tipo) === "X" ? "Sin factura" : "se pregunta al despachar"})`],
+                  ["R", "Con factura · R"],
+                  ["X", "Sin factura · X"],
+                ] as const).map(([k, l]) => (
+                  <Button key={k || "segun"} type="button" variant={form.remito_tipo === k ? "default" : "outline"} className="h-auto min-h-10 whitespace-normal text-xs"
+                    disabled={soloLectura} onClick={() => setForm({ ...form, remito_tipo: k })}>
+                    {l}
+                  </Button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-2">
