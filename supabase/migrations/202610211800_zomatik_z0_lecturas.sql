@@ -28,9 +28,10 @@
 --     Los vínculos de la primera carga los pone scripts/zomatik-primera-carga.mjs (con el OK de Bautista).
 --   - Las tablas nuevas arrancan vacías; las llena la primera lectura (/api/zomatik/leer).
 --
--- Permisos: las copias de proyectos, movimientos, artículos, NP pendientes y lecturas se leen desde el
--- navegador (como el resto de las tablas) pero solo las escribe el servidor (service role). La copia de clientes
--- de Zomatik (CUIT, teléfonos, mails) NO la lee el navegador: se consulta con /api/zomatik/clientes, con sesión.
+-- Permisos: todo lo escribe solo el servidor (service role). El navegador (anon) solo puede LEER los artículos
+-- (nombres de productos) y el registro de lecturas (fecha y conteos, sin claves ni cookies). Clientes de Zomatik
+-- (CUIT, teléfonos, mails), proyectos, movimientos y NP pendientes NO los lee el navegador: van por rutas del
+-- servidor con sesión (/api/zomatik/clientes y /api/zomatik/acopios).
 
 -- ---------------------------------------------------------------------------
 -- Vínculos en nuestras tablas
@@ -162,7 +163,6 @@ COMMENT ON TABLE public.zomatik_proyectos IS 'Zomatik Z0: proyectos (acopios) le
 COMMENT ON COLUMN public.zomatik_proyectos.saldo_pct IS 'Restan material ÷ material pactado × 100, calculado con los montos de Zomatik (que no se guardan).';
 
 REVOKE ALL ON TABLE public.zomatik_proyectos FROM anon, authenticated;
-GRANT SELECT ON TABLE public.zomatik_proyectos TO anon, authenticated;
 GRANT ALL ON TABLE public.zomatik_proyectos TO service_role;
 
 CREATE TABLE IF NOT EXISTS public.zomatik_proyecto_movimientos (
@@ -183,7 +183,6 @@ CREATE INDEX IF NOT EXISTS zomatik_proyecto_movimientos_fecha_idx ON public.zoma
 COMMENT ON TABLE public.zomatik_proyecto_movimientos IS 'Zomatik Z0: renglones de remito de cada proyecto (reporte_remitosventa.php, columna Proyecto). Sin precios.';
 
 REVOKE ALL ON TABLE public.zomatik_proyecto_movimientos FROM anon, authenticated;
-GRANT SELECT ON TABLE public.zomatik_proyecto_movimientos TO anon, authenticated;
 GRANT ALL ON TABLE public.zomatik_proyecto_movimientos TO service_role;
 
 -- ---------------------------------------------------------------------------
@@ -203,7 +202,6 @@ CREATE TABLE IF NOT EXISTS public.zomatik_np_pendientes (
 COMMENT ON TABLE public.zomatik_np_pendientes IS 'Zomatik Z0: notas de pedido pendientes de remitir según Zomatik (sin el total en pesos). Se reemplaza en cada lectura.';
 
 REVOKE ALL ON TABLE public.zomatik_np_pendientes FROM anon, authenticated;
-GRANT SELECT ON TABLE public.zomatik_np_pendientes TO anon, authenticated;
 GRANT ALL ON TABLE public.zomatik_np_pendientes TO service_role;
 
 -- ---------------------------------------------------------------------------

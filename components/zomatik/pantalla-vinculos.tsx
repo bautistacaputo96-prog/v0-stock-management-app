@@ -105,10 +105,10 @@ export function PantallaVinculos() {
       sb.from("formulas").select("id, name, code, plant_id, zomatik_articulo_codigo, zomatik_articulo_nombre, zomatik_vinculo").order("name"),
       sb.from("plants").select("id, name"),
       sb.from("zomatik_articulos" as any).select("codigo, nombre, linea").order("nombre"),
-      sb.from("zomatik_proyectos" as any).select("codigo, numero, cliente_codigo, cliente_nombre, obra, construction_site_id, vinculo, ultima_entrega").eq("estado", "abierto").order("numero"),
+      fetch("/api/zomatik/acopios", { cache: "no-store" }).then((r) => r.json()).catch(() => ({})),
       sb.from("construction_sites").select("id, name, client_id").order("name"),
     ])
-    if (cs.error || as.error || pr.error) {
+    if (cs.error || as.error || !pr?.proyectos) {
       setError("Falta aplicar la migración de Zomatik (202610211800_zomatik_z0_lecturas.sql).")
       return
     }
@@ -119,7 +119,7 @@ export function PantallaVinculos() {
     const plantas = new Map(((ps.data as any[]) || []).map((p) => [p.id, p.name]))
     setFormulas((((fs.data as any[]) || []) as any[]).map((f) => ({ ...f, planta: plantas.get(f.plant_id) || "" })))
     setArts((as.data as any[]) || [])
-    setProys((pr.data as any[]) || [])
+    setProys(((pr.proyectos as Proy[]) || []).sort((a, b) => a.numero.localeCompare(b.numero)))
     setObras((os.data as any[]) || [])
   }, [])
 

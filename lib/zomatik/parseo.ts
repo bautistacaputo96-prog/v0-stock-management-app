@@ -527,10 +527,13 @@ export function clienteYObraDeCelda(htmlCelda: string): { cliente: string; codig
   return { cliente, codigo, obra: resto || null }
 }
 
-/** % del material que le queda al proyecto: "Restan Material" sobre "Material + Flete". Redondeado a 0,1. */
+/** % del material que le queda al proyecto: "Restan Material" sobre "Material + Flete". Redondeado a 0,1 y acotado a ±999. */
 export function saldoPorcentaje(materialTotal: number | null, restan: number | null): number | null {
   if (materialTotal === null || restan === null || !(materialTotal > 0)) return null
-  return Math.round((restan / materialTotal) * 1000) / 10
+  const pct = Math.round((restan / materialTotal) * 1000) / 10
+  if (!Number.isFinite(pct)) return null
+  // Acotado para que un dato raro de Zomatik no tire abajo el grabado (la columna es numeric(6,1))
+  return Math.max(-999, Math.min(999, pct))
 }
 
 export function parseProyectosHtml(html: string): ProyectoListado[] {

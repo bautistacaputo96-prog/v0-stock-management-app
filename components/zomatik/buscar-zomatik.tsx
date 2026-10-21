@@ -61,8 +61,8 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
     if (q.length < 3) return { enRebucret: [] as Nuestro[], enZomatik: [] as ZCliente[] }
     const tq = tokensNombre(q)
     const dig = soloDigitos(q)
-    const activos = nuestros.filter((c) => c.active !== false)
-    const enR = activos
+    // Contra todos, también los dados de baja (no se trae uno que ya está, aunque esté de baja)
+    const enR = nuestros
       .filter((c) => {
         if (dig.length >= 6 && soloDigitos(c.cuit).includes(dig)) return true
         if (tq.length === 0) return false
@@ -71,7 +71,7 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
       })
       .slice(0, 4)
     const enZ = buscarEnZomatik(q, (zomatik || []).filter((z) => z.activo), 12)
-      .filter((z) => !yaEstaEnRebucret(z, activos))
+      .filter((z) => !yaEstaEnRebucret(z, nuestros))
       .slice(0, 6)
     return { enRebucret: enR, enZomatik: enZ }
   }, [q, nuestros, zomatik])
@@ -107,6 +107,7 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
           {enRebucret.map((c) => (
             <div key={c.id} className="flex gap-2 truncate">
               <span className="font-medium truncate">{c.name}</span>
+              {c.active === false && <span className="text-red-700">dado de baja: reactivalo en Clientes</span>}
               {c.cuit && <span className="text-muted-foreground">CUIT {c.cuit}</span>}
             </div>
           ))}

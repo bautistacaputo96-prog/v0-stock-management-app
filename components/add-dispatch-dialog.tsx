@@ -805,7 +805,7 @@ export function AddDispatchDialog({
                         </Button>
                       }
                       onClientAdded={(client) => {
-                        setClients([...clients, client])
+                        if (!clients.some((c) => c.id === client.id)) setClients([...clients, client]) // "Traer de Zomatik" puede devolver uno que ya estaba
                         setFormData({ ...formData, client_id: client.id })
                       }}
                     />}

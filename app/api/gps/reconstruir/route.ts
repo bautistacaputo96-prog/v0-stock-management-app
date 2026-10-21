@@ -12,12 +12,14 @@
  * TODO(fase 0c): autenticación real. Mientras tanto, freno barato para no castigar a Wialon: una llamada manual
  * que repite (o se superpone con) un rango pedido hace menos de 5 min, o la 7.ª llamada manual en 5 min, recibe 429.
  * El control y el registro son atómicos (función gps_reconstruir_registrar, con candado en la base).
- * Las del cron de Vercel (header x-vercel-cron o user-agent vercel-cron) no se frenan. Los dos se pueden falsificar.
+ * Las del cron de Vercel no se frenan: con CRON_SECRET, las que traen el Bearer; sin él, header x-vercel-cron o
+ * user-agent vercel-cron (se pueden falsificar). Ver lib/cron.ts.
  */
 import { NextResponse } from "next/server"
 import { reconstruirRango } from "@/lib/gps-reconstruir"
 import { sbAdmin } from "@/lib/wialon"
 import { fechaAR, sumarDias } from "@/lib/gps-viajes"
+import { esLlamadaDeCron } from "@/lib/cron"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -31,7 +33,7 @@ export async function GET(req: Request) {
   let desde = q.get("fecha") || q.get("desde")
   let hasta = q.get("fecha") || q.get("hasta")
   const simular = q.get("simular") === "1"
-  const cron = req.headers.has("x-vercel-cron") || /vercel-cron/i.test(req.headers.get("user-agent") || "")
+  const cron = esLlamadaDeCron(req) // con CRON_SECRET en Vercel, solo con el Bearer (lib/cron.ts)
   if (!desde && !hasta) {
     // Cron (06:00 en Argentina): el día anterior y repaso de los 2 previos, por si llegaron mensajes atrasados
     desde = sumarDias(hoy, -3)

@@ -13,6 +13,7 @@ import { NextResponse } from "next/server"
 import { exigirGerencial, modoPruebaLocal, respuestaModoLocal, respuestaError, registrarActividad, sbServicio } from "@/lib/auth/servidor"
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null }
 type Res = { ok: boolean; error?: string }

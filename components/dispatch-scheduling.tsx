@@ -1055,7 +1055,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     </Button>
                   }
                   onClientAdded={(newClient) => {
-                    setClients([...clients, { ...newClient, construction_sites: [] }])
+                    // "Traer de Zomatik" puede devolver uno que ya estaba: no se repite en la lista
+                    if (!clients.some((c) => c.id === newClient.id)) setClients([...clients, { ...newClient, construction_sites: [] }])
                     setForm({ ...form, client_id: newClient.id, construction_site_id: "" })
                   }}
                 />}

@@ -62,20 +62,18 @@ export function AcopiosBloque() {
 
   const cargar = useCallback(async () => {
     const sb = createClient()
-    const { data: ps, error } = await sb
-      .from("zomatik_proyectos" as any)
-      .select("codigo, numero, comprobante, cliente_codigo, cliente_nombre, obra, fecha, tipo, pactado_m3, saldo_pct, remitido_m3, ultima_entrega, estado, construction_site_id")
-      .eq("estado", "abierto")
-      .order("ultima_entrega", { ascending: false, nullsFirst: false })
-    if (error) {
-      setProyectos(null) // sin la migración: el bloque no se muestra
+    // Proyectos y última lectura: por el servidor, con sesión (el navegador no lee la copia de proyectos)
+    const rp = await fetch("/api/zomatik/acopios", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    if (!rp?.proyectos) {
+      setProyectos(null) // sin la migración o sin permiso: el bloque no se muestra
       return
     }
+    const ps = rp.proyectos
     const lista = ((ps as any[]) || []).map((p) => ({ ...p, remitido_m3: Number(p.remitido_m3) || 0, saldo_pct: p.saldo_pct === null ? null : Number(p.saldo_pct), pactado_m3: p.pactado_m3 === null ? null : Number(p.pactado_m3) })) as Proyecto[]
     setProyectos(lista)
     const obraIds = [...new Set(lista.map((p) => p.construction_site_id).filter(Boolean))] as string[]
     const codigos = [...new Set(lista.map((p) => p.cliente_codigo).filter((c) => c != null))] as number[]
-    const [os, cs, sd, lec] = await Promise.all([
+    const [os, cs, sd] = await Promise.all([
       obraIds.length ? sb.from("construction_sites").select("id, name, clients(name)").in("id", obraIds) : Promise.resolve({ data: [] as any[] }),
       codigos.length ? (sb as any).from("clients").select("name, zomatik_codigo").in("zomatik_codigo", codigos) : Promise.resolve({ data: [] as any[] }),
       obraIds.length
@@ -85,8 +83,8 @@ export function AcopiosBloque() {
             .in("construction_site_id", obraIds)
             .gte("scheduled_arrival_time", `${hoyAR()}T03:00:00Z`)
             .not("status", "in", "(cancelled,completed)")
+            .is("suspendido_at", null) // los suspendidos (lluvia) no cuentan como programado
         : Promise.resolve({ data: [] as any[] }),
-      sb.from("zomatik_lecturas" as any).select("fin, ok, error").not("fin", "is", null).order("inicio", { ascending: false }).limit(1),
     ])
     setObras(new Map(((os.data as any[]) || []).map((o) => [o.id, { name: o.name, cliente: o.clients?.name || "" }])))
     setClientesZ(new Map(((cs.data as any[]) || []).map((c) => [Number(c.zomatik_codigo), c.name])))
@@ -98,7 +96,7 @@ export function AcopiosBloque() {
       prog.set(d.construction_site_id, [...(prog.get(d.construction_site_id) || []), { fecha, m3: resta }])
     }
     setProgramado(prog)
-    setLectura(((lec as any).data as any[])?.[0] || null)
+    setLectura(rp.lectura || null)
   }, [])
 
   useEffect(() => {
@@ -129,12 +127,8 @@ export function AcopiosBloque() {
     }
     setAbierto(p.codigo)
     if (!movs[p.numero]) {
-      const { data } = await createClient()
-        .from("zomatik_proyecto_movimientos" as any)
-        .select("fecha, remito, pedido, articulo, m3, deposito, es_hormigon")
-        .eq("proyecto_numero", p.numero)
-        .order("fecha", { ascending: false })
-        .limit(500)
+      const r = await fetch(`/api/zomatik/acopios?movimientos=${encodeURIComponent(p.numero)}`, { cache: "no-store" }).then((x) => (x.ok ? x.json() : null)).catch(() => null)
+      const data = r?.movimientos || []
       setMovs((m) => ({ ...m, [p.numero]: ((data as any[]) || []).map((x) => ({ ...x, m3: Number(x.m3) || 0 })) }))
     }
   }

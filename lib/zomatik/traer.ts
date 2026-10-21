@@ -5,6 +5,8 @@
  * Nunca duplica:
  *   - si ya hay un cliente nuestro con ese código, se devuelve ese;
  *   - si hay uno con el mismo nombre (normalizado) o el mismo CUIT válido, NO se crea: se avisa para vincularlo;
+ *   - se compara contra todos, también los dados de baja: si el que coincide está de baja, se avisa
+ *     "reactivalo" y no se crea ni se devuelve;
  *   - `clients.zomatik_codigo` es único en la base: dos "Traer" a la vez no pueden crear dos.
  */
 import { sbServicio } from "@/lib/auth/servidor"
@@ -26,15 +28,24 @@ export async function traerCliente(opts: { codigo: number; plantId?: string | nu
   const { data: nuestros, error: eN } = await sb.from("clients").select("id, name, razon_social, cuit, zomatik_codigo, active")
   if (eN) throw eN
   const lista = ((nuestros as any[]) || []) as { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null }[]
+  const deBaja = (c: { name: string }) => ({
+    ok: false as const,
+    status: 409,
+    error: `Ya está en Rebucret como «${c.name}», pero está dado de baja: reactivalo en Clientes en vez de crear otro.`,
+  })
   const vinculado = lista.find((c) => c.zomatik_codigo === codigo)
-  if (vinculado) return { ok: true, cliente: { id: vinculado.id, name: vinculado.name }, yaEstaba: true }
+  if (vinculado) {
+    if (vinculado.active === false) return deBaja(vinculado)
+    return { ok: true, cliente: { id: vinculado.id, name: vinculado.name }, yaEstaba: true }
+  }
 
   const { data: zc, error: eZ } = await sb.from("zomatik_clientes").select("*").eq("codigo", codigo).maybeSingle()
   if (eZ) throw eZ
   if (!zc) return { ok: false, status: 404, error: "Ese cliente no está en la copia de Zomatik. Probá de nuevo después de la próxima lectura." }
 
-  const activos = lista.filter((c) => c.active !== false)
-  const igual = yaEstaEnRebucret({ codigo, razon_social: (zc as any).razon_social }, activos)
+  // Se compara contra TODOS los clientes, también los dados de baja (para no crear uno repetido)
+  const igual = yaEstaEnRebucret({ codigo, razon_social: (zc as any).razon_social }, lista)
+  if (igual && igual.active === false) return deBaja(igual)
   if (igual)
     return {
       ok: false,
@@ -80,7 +91,8 @@ export async function traerCliente(opts: { codigo: number; plantId?: string | nu
   const cuit = soloDigitos(f.cuit)
   const cuitOk = cuitValido(cuit)
   if (cuitOk) {
-    const mismo = activos.find((c) => soloDigitos(c.cuit) === cuit)
+    const mismo = lista.find((c) => soloDigitos(c.cuit) === cuit)
+    if (mismo && mismo.active === false) return deBaja(mismo)
     if (mismo)
       return {
         ok: false,

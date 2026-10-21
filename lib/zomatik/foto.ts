@@ -180,14 +180,28 @@ export function filasMovimientos(foto: Foto, numerosConocidos: Iterable<string>,
   }
 }
 
-/** Remitido (solo hormigón) y última entrega por proyecto, a partir de todos los movimientos guardados. */
+/** Remitido y última entrega (las dos solo con hormigón) por proyecto, a partir de todos los movimientos guardados. */
 export function totalesPorProyecto(movs: { proyecto_numero: string; fecha: string; m3: number | string; es_hormigon: boolean }[]): Map<string, { m3: number; ultima: string | null }> {
   const tot = new Map<string, { m3: number; ultima: string | null }>()
   for (const m of movs) {
     const t = tot.get(m.proyecto_numero) || { m3: 0, ultima: null }
-    if (m.es_hormigon) t.m3 = Math.round((t.m3 + (Number(m.m3) || 0)) * 1000) / 1000
-    if (!t.ultima || m.fecha > t.ultima) t.ultima = m.fecha
+    // Solo hormigón: un renglón de bombeo o servicio no es una entrega de material
+    if (m.es_hormigon) {
+      t.m3 = Math.round((t.m3 + (Number(m.m3) || 0)) * 1000) / 1000
+      if (!t.ultima || m.fecha > t.ultima) t.ultima = m.fecha
+    }
     tot.set(m.proyecto_numero, t)
   }
   return tot
+}
+
+/**
+ * ¿Se pueden sacar los movimientos del año que esta lectura ya no trajo (remitos anulados)? Solo si la lectura
+ * no cayó mucho respecto de lo guardado: con 10 o más guardados, hace falta al menos el 70 %. Si no, puede ser un
+ * export cortado o un cambio de formato, y es mejor no borrar nada.
+ */
+export function puedeBorrarViejos(nuevos: number, guardados: number): boolean {
+  if (nuevos <= 0) return false
+  if (guardados < 10) return true
+  return nuevos >= guardados * 0.7
 }

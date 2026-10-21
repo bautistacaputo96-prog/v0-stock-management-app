@@ -30,6 +30,8 @@ const PAUSA_MS = 300
 const VIDA_COOKIE_MS = 20 * 60 * 1000
 /** Después de un rechazo de usuario o clave, nadie vuelve a intentar por este tiempo. */
 const BLOQUEO_LOGIN_MS = 30 * 60 * 1000
+/** Después de cualquier otra falla del login (sin cookie, red, la sesión se cae al elegir la sucursal). */
+const BLOQUEO_FALLA_MS = 10 * 60 * 1000
 const TIMEOUT_MS = 25_000
 
 const CLAVE_SESION = "zomatik_sesion"
@@ -59,18 +61,26 @@ export type FormInfo = {
 
 const PROHIBIDO = /(^|\/)(manage_|grabar_|generar_|set_|_get|_validar|_traer|eliminar|borrar|anular|modificar_(?!clientes\.php\?codigo=\d+$))/i
 
+/** Los únicos listados que lee Z0 (buscador por GET y búsqueda/export por POST `?enviado=1`). */
+export const LISTADOS = ["listado_clientes.php", "listado_articulos.php", "reporte_remitosventa.php", "listado_proyectos.php", "listado_pedidos.php"] as const
+
 /** ¿Se puede pedir esta ruta? `metodo` POST solo para login, sucursal y buscadores (`?enviado=1`). */
 export function rutaPermitida(path: string, metodo: "GET" | "POST"): boolean {
   const p = path.replace(/^\/+/, "")
   if (PROHIBIDO.test(p)) return false
+  const listados = LISTADOS as readonly string[]
   if (metodo === "POST") {
     if (p === "index.php?a=1" || p === "home.php") return true
-    return /^(listado|reporte)_[a-z_]+\.php\?enviado=1$/i.test(p)
+    const m = p.match(/^([a-z_]+\.php)\?enviado=1$/i)
+    return !!m && listados.includes(m[1].toLowerCase())
   }
   if (p === "home.php") return true
-  if (/^(listado|reporte)_[a-z_]+\.php$/i.test(p)) return true
+  if (listados.includes(p.toLowerCase())) return true
   if (/^modificar_clientes\.php\?codigo=\d+$/i.test(p)) return true
   if (/^exportar_acopio\.php\?acopio=\d+$/i.test(p)) return true
+  // Los export redirigen al archivo generado (output/<listado>.xlsx): solo el de los listados de arriba
+  const salida = p.match(/^output\/([a-z_]+)\.xlsx$/i)
+  if (salida) return [...listados, "exportar_acopio.php"].includes(`${salida[1].toLowerCase()}.php`)
   return false
 }
 
@@ -85,24 +95,56 @@ async function pausa() {
   ultimoRequest = Date.now()
 }
 
-async function pedir(cookie: string | null, path: string, init: RequestInit & { method?: "GET" | "POST" } = {}): Promise<Response> {
-  const metodo = (init.method || "GET") as "GET" | "POST"
-  if (!rutaPermitida(path, metodo)) throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida en solo lectura: ${metodo} ${path.split("?")[0]}`)
-  await pausa()
-  const ctrl = new AbortController()
-  const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+const MAX_REDIRECCIONES = 3
+
+/** Pasa un `Location` de Zomatik a ruta relativa (o null si va a otro sitio). */
+export function rutaDeLocation(location: string, desde: string): string | null {
   try {
-    return await fetch(`${ZOMATIK_BASE}/${path.replace(/^\/+/, "")}`, {
-      ...init,
-      headers: { ...(cookie ? { Cookie: cookie } : {}), ...(init.headers || {}) },
-      redirect: init.redirect || "follow",
-      cache: "no-store",
-      signal: ctrl.signal,
-    })
-  } catch (e: any) {
-    throw new ZomatikError("sin_respuesta", e?.name === "AbortError" ? "Zomatik no respondió a tiempo" : "No se pudo conectar con Zomatik")
-  } finally {
-    clearTimeout(corte)
+    const u = new URL(location, `${ZOMATIK_BASE}/${desde.replace(/^\/+/, "")}`)
+    if (u.origin !== new URL(ZOMATIK_BASE).origin) return null
+    return `${u.pathname.replace(/^\/+/, "")}${u.search}`
+  } catch {
+    return null
+  }
+}
+
+async function pedir(cookie: string | null, path: string, init: RequestInit & { method?: "GET" | "POST" } = {}): Promise<Response> {
+  let metodo = (init.method || "GET") as "GET" | "POST"
+  let ruta = path.replace(/^\/+/, "")
+  let cuerpo = init.body
+  const seguir = init.redirect !== "manual" // el login lee la cookie de la respuesta, sin seguir
+  for (let salto = 0; ; salto++) {
+    if (!rutaPermitida(ruta, metodo)) throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida en solo lectura: ${metodo} ${ruta.split("?")[0]}`)
+    await pausa()
+    const ctrl = new AbortController()
+    const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+    let r: Response
+    try {
+      r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
+        ...init,
+        method: metodo,
+        body: metodo === "GET" ? undefined : cuerpo,
+        headers: { ...(cookie ? { Cookie: cookie } : {}), ...(metodo === "GET" ? {} : init.headers || {}) },
+        redirect: "manual",
+        cache: "no-store",
+        signal: ctrl.signal,
+      })
+    } catch (e: any) {
+      throw new ZomatikError("sin_respuesta", e?.name === "AbortError" ? "Zomatik no respondió a tiempo" : "No se pudo conectar con Zomatik")
+    } finally {
+      clearTimeout(corte)
+    }
+    if (!seguir || r.status < 300 || r.status >= 400) return r
+    // Redirección: se valida con la lista cerrada ANTES de seguirla (después de un POST pasa a GET)
+    const destino = rutaDeLocation(r.headers.get("location") || "", ruta)
+    if (!destino) throw new ZomatikError("ruta_no_permitida", "Zomatik redirigió a otro sitio: no se sigue")
+    if (/^index\.php/i.test(destino)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    if (salto + 1 >= MAX_REDIRECCIONES) throw new ZomatikError("formato", "Zomatik redirigió demasiadas veces")
+    if (r.status !== 307 && r.status !== 308) {
+      metodo = "GET"
+      cuerpo = undefined
+    }
+    ruta = destino
   }
 }
 
@@ -160,6 +202,10 @@ async function borrarIntegracion(clave: string) {
   }
 }
 
+/**
+ * Login + sucursal REBUCRET. Ante CUALQUIER falla queda un bloqueo en `integraciones` para todos los procesos:
+ * 30 min si Zomatik rechazó el usuario, 10 min si fue otra cosa (sin cookie, red, sesión caída).
+ */
 async function login(): Promise<string> {
   const user = process.env.ZOMATIK_USER
   const pass = process.env.ZOMATIK_PASS
@@ -167,27 +213,37 @@ async function login(): Promise<string> {
   const bloqueo = await leerIntegracion(CLAVE_BLOQUEO)
   if (bloqueo && Date.parse(bloqueo.valor) > Date.now()) {
     const hasta = new Date(bloqueo.valor).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" })
-    throw new ZomatikError("login_bloqueado", `Zomatik rechazó el usuario hace poco. No se reintenta hasta las ${hasta} para no bloquearlo. Revisar ZOMATIK_USER / ZOMATIK_PASS en Vercel.`)
+    throw new ZomatikError("login_bloqueado", `Hace poco falló la entrada a Zomatik. No se reintenta hasta las ${hasta} para no bloquear el usuario. Si sigue, revisar ZOMATIK_USER / ZOMATIK_PASS en Vercel.`)
   }
   if (Date.now() - ultimoIntentoLogin < ENTRE_LOGINS_MS)
     throw new ZomatikError("login_bloqueado", "Ya se intentó entrar a Zomatik hace menos de 10 min: no se reintenta")
   ultimoIntentoLogin = Date.now()
-  const r = await pedir(null, "index.php?a=1", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ usuario: user, clave: pass, aceptar: "Aceptar" }).toString(),
-    redirect: "manual",
-  })
-  const cookie = (r.headers.get("set-cookie") || "").match(/PHPSESSID=[^;]+/)?.[0]
-  if (!cookie) throw new ZomatikError("sin_respuesta", "Zomatik no devolvió la sesión al entrar")
-  const home = (await (await pedir(cookie, "home.php")).arrayBuffer().then((b) => Buffer.from(b))).toString("latin1")
-  if (sesionCaida(home)) {
-    await guardarIntegracion(CLAVE_BLOQUEO, new Date(Date.now() + BLOQUEO_LOGIN_MS).toISOString())
-    throw new ZomatikError("login_rechazado", "Zomatik rechazó el usuario: actualizar la clave en Vercel (ZOMATIK_USER / ZOMATIK_PASS)")
+  try {
+    const r = await pedir(null, "index.php?a=1", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ usuario: user, clave: pass, aceptar: "Aceptar" }).toString(),
+      redirect: "manual",
+    })
+    const cookie = (r.headers.get("set-cookie") || "").match(/PHPSESSID=[^;]+/)?.[0]
+    if (!cookie) throw new ZomatikError("sin_respuesta", "Zomatik no devolvió la sesión al entrar")
+    let home = ""
+    try {
+      home = Buffer.from(await (await pedir(cookie, "home.php")).arrayBuffer()).toString("latin1")
+    } catch (e) {
+      if (!(e instanceof ZomatikError && e.codigo === "sesion_caida")) throw e
+      home = 'name="usuario" name="clave"' // redirigió al login: usuario o clave rechazados
+    }
+    if (sesionCaida(home)) throw new ZomatikError("login_rechazado", "Zomatik rechazó el usuario: actualizar la clave en Vercel (ZOMATIK_USER / ZOMATIK_PASS)")
+    if (!(await elegirSucursal(cookie, SUCURSAL_REBUCRET))) throw new ZomatikError("sesion_caida", "Zomatik cerró la sesión recién abierta")
+    await borrarIntegracion(CLAVE_BLOQUEO)
+    await guardarIntegracion(CLAVE_SESION, cookie)
+    return cookie
+  } catch (e) {
+    const rechazo = e instanceof ZomatikError && e.codigo === "login_rechazado"
+    await guardarIntegracion(CLAVE_BLOQUEO, new Date(Date.now() + (rechazo ? BLOQUEO_LOGIN_MS : BLOQUEO_FALLA_MS)).toISOString())
+    throw e instanceof ZomatikError ? e : new ZomatikError("sin_respuesta", "No se pudo entrar a Zomatik")
   }
-  await borrarIntegracion(CLAVE_BLOQUEO)
-  await guardarIntegracion(CLAVE_SESION, cookie)
-  return cookie
 }
 
 /** Cambia la sucursal activa de la sesión. Devuelve false si la sesión ya no sirve. */
@@ -216,8 +272,7 @@ export async function obtenerSesion(): Promise<ZomatikSesion> {
       return { cookie: guardada.valor }
     }
   }
-  const cookie = await login()
-  if (!(await elegirSucursal(cookie, SUCURSAL_REBUCRET))) throw new ZomatikError("sesion_caida", "Zomatik cerró la sesión recién abierta")
+  const cookie = await login() // ya deja la sesión en la sucursal REBUCRET
   sesionProceso = { cookie, desde: Date.now() }
   return { cookie }
 }

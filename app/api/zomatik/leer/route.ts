@@ -4,8 +4,9 @@
  *   GET  /api/zomatik/leer   cron diario de Vercel (03:30 en Argentina), o un gerencial con sesión
  *   POST /api/zomatik/leer   botón "Actualizar" (solo gerenciales)
  *
- * Mismo esquema que /api/gps/reconstruir: las llamadas del cron (header x-vercel-cron o user-agent vercel-cron)
- * pasan sin sesión; el resto pide sesión de gerencial. Además, freno en la base (zomatik_lectura_registrar,
+ * Las llamadas del cron pasan sin sesión: con CRON_SECRET en Vercel, solo con `Authorization: Bearer …`; sin él,
+ * por el header x-vercel-cron como /api/gps/reconstruir (lib/cron.ts). El resto pide sesión de gerencial.
+ * Además, freno en la base (zomatik_lectura_registrar,
  * con candado): una lectura a la vez, "Actualizar" como mucho cada 5 min y el cron una vez por hora (el header
  * del cron se puede falsificar). Cada lectura queda en zomatik_lecturas con su resultado.
  *
@@ -14,6 +15,7 @@
 import { NextResponse } from "next/server"
 import { exigirGerencial, modoPruebaLocal, respuestaModoLocal, respuestaError, sbServicio } from "@/lib/auth/servidor"
 import { leerZomatik } from "@/lib/zomatik/lectura"
+import { esLlamadaDeCron } from "@/lib/cron"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -45,8 +47,7 @@ async function correr(origen: "cron" | "manual", usuario: string | null) {
 export async function GET(req: Request) {
   if (modoPruebaLocal()) return respuestaModoLocal()
   try {
-    const cron = req.headers.has("x-vercel-cron") || /vercel-cron/i.test(req.headers.get("user-agent") || "")
-    if (cron) return await correr("cron", null)
+    if (esLlamadaDeCron(req)) return await correr("cron", null)
     const r = await exigirGerencial()
     if (r.respuesta) return r.respuesta
     return await correr("manual", r.sesion.usuario.name)

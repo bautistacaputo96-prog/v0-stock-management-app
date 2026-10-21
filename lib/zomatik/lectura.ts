@@ -52,6 +52,7 @@ import {
   filasProyectos,
   filasMovimientos,
   totalesPorProyecto,
+  puedeBorrarViejos,
   type Foto,
   type Previo,
 } from "@/lib/zomatik/foto"
@@ -250,12 +251,22 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
   const conocidos = [...previo.proyectos.map((p) => p.numero), ...proys.map((p) => String(p.numero))]
   const movs = filasMovimientos(foto, conocidos, (c) => lineas.get(c))
   const conLeido = (m: object) => ({ ...m, leido_at: foto.inicio })
+  const { count: guardadosAnio, error: eC } = await sb
+    .from("zomatik_proyecto_movimientos")
+    .select("id", { count: "exact", head: true })
+    .gte("fecha", foto.desde12)
+  if (eC) throw eC
   await upsert("zomatik_proyecto_movimientos", movs.delAnio.map(conLeido), "proyecto_numero,remito,articulo_codigo")
   await upsert("zomatik_proyecto_movimientos", movs.historia.map(conLeido), "proyecto_numero,remito,articulo_codigo")
   if (foto.renglones12 && foto.renglones12.length > 0) {
-    // Lo que estaba en la ventana del año y Zomatik ya no trae (remito anulado): se saca
-    const { error } = await sb.from("zomatik_proyecto_movimientos").delete().gte("fecha", foto.desde12).lt("leido_at", foto.inicio)
-    if (error) throw error
+    // Lo que estaba en la ventana del año y Zomatik ya no trae (remito anulado): se saca, salvo que la lectura
+    // haya caído mucho respecto de lo guardado (export cortado o formato cambiado: mejor no borrar)
+    if (puedeBorrarViejos(movs.delAnio.length, guardadosAnio || 0)) {
+      const { error } = await sb.from("zomatik_proyecto_movimientos").delete().gte("fecha", foto.desde12).lt("leido_at", foto.inicio)
+      if (error) throw error
+    } else {
+      out.movimientos_sin_borrar = `La lectura trajo ${movs.delAnio.length} renglones del año y había ${guardadosAnio}: no se borró nada`
+    }
   }
   if (foto.historia.completaPara.length > 0) {
     const { error } = await sb.from("zomatik_proyectos").update({ historia_leida_at: foto.inicio }).in("codigo", foto.historia.completaPara)
