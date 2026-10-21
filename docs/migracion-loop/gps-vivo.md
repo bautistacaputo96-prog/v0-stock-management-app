@@ -134,7 +134,11 @@ El rótulo "Actualizado HH:mm:ss" mostraba la hora de la consulta, no la del dat
 
 ## Pendientes y hallazgos
 
-- `/api/gps/posiciones` responde **sin sesión**: con la URL se ven las posiciones de los camiones. Además, escribe `mixers.gps_unit_id` la primera vez. Hay que protegerla junto con `/api/gps/conectar` (pendiente de la 0c).
+- **Hecho (21/10, después del merge de `origin/main`):**
+  - `/api/gps/posiciones` exige una sesión iniciada (`exigirSesion`) y sin sesión responde 401. Solo la usan Logística › En vivo y Despacho: ningún cron (`vercel.json`) ni Concretus la llama.
+  - El vínculo `mixers.gps_unit_id` se sigue guardando del lado del servidor (en el modo prueba local, no).
+  - `/api/gps/conectar` (GET de OAuth y POST con token) es solo para gerenciales (`exigirGerencial`). Si no lo es, vuelve a `/logistica?error=…`. `conectado_por` sale de la sesión, no del navegador.
+  - Si la sesión se cerró, las pantallas mantienen lo último que había: En vivo muestra el aviso y no la tarjeta de "Conectar el GPS".
 - Con las posiciones exactas, los camiones que están juntos en la planta superponen sus etiquetas. Se puede acercar el mapa (ahora hasta 21) o tocar el camión en la lista.
 
 ## Verificación

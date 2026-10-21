@@ -57,7 +57,9 @@ export function useGps(intervaloMs = REFRESCO_VIVO_MS) {
     try {
       const r = await fetch("/api/gps/posiciones", { cache: "no-store" })
       const j = await r.json()
-      setDatos({ ...j, desfase: j?.actualizado ? Date.now() - Date.parse(j.actualizado) : 0 })
+      // Sin sesión (401/403): no es "GPS sin conectar"; se deja lo último que había con el aviso
+      if (r.status === 401 || r.status === 403) setDatos((d) => ({ conectado: d?.conectado ?? true, camiones: d?.camiones || [], actualizado: d?.actualizado, desfase: d?.desfase, error: j?.error || "No se pudo actualizar" }))
+      else setDatos({ ...j, desfase: j?.actualizado ? Date.now() - Date.parse(j.actualizado) : 0 })
     } catch {
       setDatos((d) => ({ conectado: d?.conectado ?? true, camiones: d?.camiones || [], actualizado: d?.actualizado, desfase: d?.desfase, error: "No se pudo actualizar" }))
     }

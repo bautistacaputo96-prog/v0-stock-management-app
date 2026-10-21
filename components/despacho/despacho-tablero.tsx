@@ -213,6 +213,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const cargarGps = useCallback(async () => {
     try {
       const r = await fetch("/api/gps/posiciones", { cache: "no-store" })
+      if (r.status === 401 || r.status === 403) return // sesión cerrada: queda lo último (el login lo resuelve)
       const j = await r.json()
       const m: Record<string, GpsCamion> = {}
       for (const c of j?.camiones || []) if (c.mixer_id) m[c.mixer_id] = { estado: c.estado, ultima_posicion: c.ultima_posicion, planta_id: c.planta_id || null, probable_obra: !!c.probable_obra }

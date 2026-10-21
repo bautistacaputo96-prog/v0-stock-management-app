@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { posiciones, sbAdmin } from "@/lib/wialon"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { distanciaKm, minutosEstimados } from "@/lib/geo"
 import { estadoGps } from "@/lib/gps-vivo"
 
@@ -10,6 +11,16 @@ export const dynamic = "force-dynamic"
  * patente → mixer, último despacho del día (obra, remito, hora de salida) y un estado simple.
  */
 export async function GET() {
+  // Solo con sesión iniciada en la app (las posiciones de los camiones no son públicas). La usan Logística › En vivo
+  // y Despacho; ningún cron ni Concretus la llama.
+  let soloLectura = false
+  try {
+    const r = await exigirSesion()
+    if (r.respuesta) return r.respuesta
+    soloLectura = r.sesion.local
+  } catch (e) {
+    return respuestaError(e)
+  }
   try {
     const unidades = await posiciones()
     if (!unidades) return NextResponse.json({ conectado: false, camiones: [] })
@@ -33,8 +44,8 @@ export async function GET() {
 
     const camiones = unidades.map((u) => {
       const mixer = (mixers || []).find((m) => m.gps_unit_id === u.id || norm(m.license_plate) === norm(u.nombre))
-      // Guardar el vínculo patente ↔ unidad la primera vez
-      if (mixer && !mixer.gps_unit_id) sb.from("mixers").update({ gps_unit_id: u.id }).eq("id", mixer.id).then(() => {})
+      // Guardar el vínculo patente ↔ unidad la primera vez (lo hace el servidor; en el modo prueba local, no)
+      if (mixer && !mixer.gps_unit_id && !soloLectura) sb.from("mixers").update({ gps_unit_id: u.id }).eq("id", mixer.id).then(() => {})
 
       const pos = u.lat != null && u.lng != null ? { lat: u.lat, lng: u.lng } : null
       const plantaCerca = pos
