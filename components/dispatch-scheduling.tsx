@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils"
 import { format, addDays, startOfWeek, addWeeks, subWeeks, isSameDay, parseISO, setHours, setMinutes, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
 import { AddClientDialog } from "@/components/add-client-dialog"
+import { BuscadorCliente } from "@/components/clientes/buscador-cliente"
 import { AddMixerDialog } from "@/components/add-mixer-dialog"
 import { AddConstructionSiteDialog } from "@/components/add-construction-site-dialog"
 import { currentUserName, useFuncionesNuevas, usePermisos } from "@/lib/current-user"
@@ -1061,12 +1062,16 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   }}
                 />}
               </div>
-              <SearchableSelect
-                items={clients.map((c) => ({ id: c.id, label: c.name }))}
+              {/* Regla del 21/10/2026: busca en Rebucret y en Zomatik a la vez (nombre, CUIT, obra, teléfono, alias) */}
+              <BuscadorCliente
                 value={form.client_id}
-                onChange={(v) => setForm({ ...form, client_id: v, construction_site_id: "" })}
-                placeholder="Buscar cliente..."
-                emptyText="No hay clientes con ese nombre"
+                etiqueta={clients.find((c) => c.id === form.client_id)?.name}
+                plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
+                disabled={soloLectura}
+                onElegir={(c) => {
+                  if (!clients.some((x) => x.id === c.id)) setClients([...clients, { ...c, construction_sites: [] } as any])
+                  setForm({ ...form, client_id: c.id, construction_site_id: "" })
+                }}
               />
             </div>
 

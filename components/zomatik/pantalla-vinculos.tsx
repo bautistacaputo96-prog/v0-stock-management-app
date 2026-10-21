@@ -35,12 +35,14 @@ type ZAnio = {
   vinculado_a: { id: string; name: string } | null; propuesto_para: { id: string; name: string } | null; mismo_nombre: boolean
   cubre: { id: string; name: string; evidencia: string; confianza: Conf; libre: boolean } | null
 }
+type ResDup = { id: string; name: string; cuit: string | null; despachos: number; ultimo_despacho: string | null; obras: string[]; zomatik_codigo: number | null }
+type Dup = { a: ResDup; b: ResDup; motivos: string[] }
 type Conteo = { faltan: number; alta: number; media: number; baja: number; sin: number }
-type Datos = { clientes: FilaC[]; formulas: FilaF[]; proyectos: FilaP[]; zomatik: ZCli[]; zomatikAnio: ZAnio[]; articulos: { codigo: number; nombre: string; linea: string | null }[]; sinCruce: boolean; leido: string | null; conteos: { clientes: Conteo; formulas: Conteo; proyectos: Conteo } }
+type Datos = { clientes: FilaC[]; formulas: FilaF[]; proyectos: FilaP[]; zomatik: ZCli[]; zomatikAnio: ZAnio[]; articulos: { codigo: number; nombre: string; linea: string | null }[]; sinCruce: boolean; leido: string | null; duplicados: Dup[]; conteos: { clientes: Conteo; formulas: Conteo; proyectos: Conteo } }
 type Dias = { evidencia: string; nuestros: { fecha: string; m3: number; obra: string | null; formula: string | null; planta: string; cliente?: string | null; coincide: boolean }[]; zomatik: { fecha: string; m3: number; articulo: string; deposito: string; cliente?: string | null; remito?: string | null; coincide: boolean }[] }
 type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null; etiqueta?: string }
 
-type Pestaña = "clientes" | "formulas" | "proyectos" | "traer"
+type Pestaña = "clientes" | "formulas" | "proyectos" | "traer" | "duplicados"
 type Filtro = "revisar" | "alta" | "vinculados" | "todos"
 
 const fechaCorta = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(2, 4)}` : "")
@@ -189,6 +191,31 @@ export function PantallaVinculos() {
   const [resumen, setResumen] = useState<Item[] | null>(null)
   /** "tipo:id:codigo" de la fila con "Ver días" abierto */
   const [dias, setDias] = useState<string | null>(null)
+  /** Duplicados: cuál queda (por par) y el motivo */
+  const [queda, setQueda] = useState<Record<string, string>>({})
+  const [motivoUnif, setMotivoUnif] = useState<Record<string, string>>({})
+  async function unificar(par: Dup) {
+    const k = `${par.a.id}|${par.b.id}`
+    const q = queda[k] || (par.b.despachos > par.a.despachos ? par.b.id : par.a.id)
+    const quedaC = q === par.a.id ? par.a : par.b
+    const saleC = q === par.a.id ? par.b : par.a
+    const motivo = (motivoUnif[k] || "").trim()
+    if (motivo.length < 5) {
+      toast.error("Escribí el motivo (5 letras como mínimo)")
+      return
+    }
+    if (!window.confirm(`Unificar: queda «${quedaC.name}». Las obras, pedidos y despachos de «${saleC.name}» pasan a «${quedaC.name}» y «${saleC.name}» queda dado de baja. ¿Seguimos?`)) return
+    setTrabajando(true)
+    try {
+      const r = await fetch("/api/clientes/unificar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queda: quedaC.id, sale: saleC.id, motivo }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) toast.error(j?.error || "No se pudo unificar")
+      else toast.success(`Unificados: ${j.obras} obras, ${j.pedidos} pedidos y ${j.despachos} despachos pasaron a ${quedaC.name}`)
+      await cargar()
+    } finally {
+      setTrabajando(false)
+    }
+  }
   const botonDias = (tipo: "cliente" | "formula" | "proyecto", id: string, codigo: string | number) => {
     const k = `${tipo}:${id}:${codigo}`
     return (
@@ -299,6 +326,7 @@ export function PantallaVinculos() {
     formulas: d.formulas.filter((f) => !f.vinculo).length,
     proyectos: d.proyectos.filter((p) => !p.vinculo).length,
     traer: d.zomatikAnio.filter((z) => !z.vinculado_a && !z.generico).length,
+    duplicados: d.duplicados.length,
   }
   const Tab = ({ k, t }: { k: Pestaña; t: string }) => (
     <button onClick={() => setPestaña(k)} className={cn("rounded-md px-3 py-1.5 text-sm", pestaña === k ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
@@ -354,6 +382,7 @@ export function PantallaVinculos() {
         <Tab k="formulas" t="Fórmulas" />
         <Tab k="proyectos" t="Proyectos" />
         <Tab k="traer" t="Zomatik → Rebucret" />
+        <Tab k="duplicados" t="Duplicados" />
         <span className="flex-1" />
         {pestaña !== "traer" && (
           <select className="h-8 rounded border bg-background px-2 text-xs" value={filtro} onChange={(e) => setFiltro(e.target.value as Filtro)}>
@@ -643,6 +672,47 @@ export function PantallaVinculos() {
                 ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {pestaña === "duplicados" && (
+        <div className="rounded-lg border bg-card">
+          <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+            Clientes de Rebucret que parecen el mismo (mismo CUIT, nombre muy parecido o mismas obras). "Unificar" mueve obras, pedidos y despachos al que queda, guarda el otro nombre como alias (el buscador lo
+            sigue encontrando) y deja el otro dado de baja. Todo en una sola operación; queda en Actividad.
+          </div>
+          {d.duplicados.length === 0 && <div className="px-3 py-3 text-xs text-muted-foreground">No hay posibles duplicados.</div>}
+          {d.duplicados
+            .filter((p) => coincide(p.a.name, p.b.name))
+            .map((p) => {
+              const k = `${p.a.id}|${p.b.id}`
+              const q = queda[k] || (p.b.despachos > p.a.despachos ? p.b.id : p.a.id)
+              const Lado = ({ c }: { c: ResDup }) => (
+                <label className={cn("flex flex-1 cursor-pointer gap-2 rounded border p-2", q === c.id && "border-green-600 bg-green-50")}>
+                  <input type="radio" name={k} checked={q === c.id} onChange={() => setQueda({ ...queda, [k]: c.id })} />
+                  <div className="min-w-0">
+                    <div className="font-medium">{c.name} {q === c.id && <span className="text-[10px] text-green-800">(queda)</span>}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {[c.cuit && `CUIT ${c.cuit}`, `${c.despachos} despachos`, c.ultimo_despacho && `último ${fechaCorta(c.ultimo_despacho)}`, c.zomatik_codigo != null && `Zomatik ${c.zomatik_codigo}`].filter(Boolean).join(" · ")}
+                    </div>
+                    {c.obras.length > 0 && <div className="truncate text-[11px] text-muted-foreground">obras: {c.obras.join(", ")}</div>}
+                  </div>
+                </label>
+              )
+              return (
+                <div key={k} className="space-y-1.5 border-b px-3 py-2 text-xs last:border-0">
+                  <div className="font-semibold text-amber-800"><AlertTriangle className="mr-1 inline h-3 w-3" />{p.motivos.join(" · ")}</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Lado c={p.a} />
+                    <Lado c={p.b} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input className="h-7 max-w-md text-xs" placeholder="Motivo (ej.: es el mismo cliente cargado dos veces)" value={motivoUnif[k] || ""} onChange={(e) => setMotivoUnif({ ...motivoUnif, [k]: e.target.value })} />
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={trabajando} onClick={() => unificar(p)}>Unificar</Button>
+                  </div>
+                </div>
+              )
+            })}
         </div>
       )}
 

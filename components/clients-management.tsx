@@ -19,6 +19,8 @@ import { usePermisos } from "@/lib/current-user"
 import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { BuscarZomatik } from "@/components/zomatik/buscar-zomatik"
+import { ConflictoAlta, pedirAlta, type RespuestaAlta } from "@/components/clientes/alta-conflicto"
+import { documentoValido } from "@/lib/clientes-buscar"
 
 type Client = {
   id: string
@@ -139,7 +141,12 @@ export function ClientsManagement() {
   const [deleteClientConfirm, setDeleteClientConfirm] = useState<Client | null>(null)
   const [deleteSiteConfirm, setDeleteSiteConfirm] = useState<ConstructionSite | null>(null)
   // Fase 0c-1: clientes y obras = permiso "clientes"; editar y borrar piden motivo
-  const { puede } = usePermisos()
+  const { puede, esGerencial } = usePermisos()
+  // Alta nueva (regla del 21/10/2026): CUIT válido o excepción gerencial; mismo CUIT o nombres parecidos, en los dos lados
+  const [conflicto, setConflicto] = useState<Extract<RespuestaAlta, { ok: false }> | null>(null)
+  const [descartados, setDescartados] = useState<string[]>([])
+  const [sinCuit, setSinCuit] = useState(false)
+  const [motivoAlta, setMotivoAlta] = useState("")
   const [motivo, setMotivo] = useState("")
   const { toast } = useToast()
 
@@ -175,8 +182,9 @@ export function ClientsManagement() {
       c.construction_sites?.some((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
   )
 
-  async function handleSaveClient() {
+  async function handleSaveClient(desc: string[] = descartados) {
     if (editingClient ? !puede("clientes", "editar") : !puede("clientes", "cargar")) return
+    if (!editingClient) return altaNueva(desc)
     if (editingClient && !motivoValido(motivo)) {
       toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el cliente.", variant: "destructive" })
       return
@@ -244,6 +252,54 @@ export function ClientsManagement() {
     setEditingClient(null)
     setClientForm({ ...EMPTY_CLIENT_FORM })
     loadClients()
+  }
+
+  function cerrarAlta() {
+    setIsClientDialogOpen(false)
+    setEditingClient(null)
+    setClientForm({ ...EMPTY_CLIENT_FORM })
+    setConflicto(null)
+    setDescartados([])
+    setSinCuit(false)
+    setMotivoAlta("")
+    loadClients()
+  }
+
+  /** Alta nueva por el servidor (/api/clientes/alta), con control de duplicados en Rebucret y Zomatik. */
+  async function altaNueva(desc: string[]) {
+    if (!clientForm.name.trim()) {
+      toast({ title: "Error", description: "El nombre es obligatorio", variant: "destructive" })
+      return
+    }
+    const cuitOk = documentoValido(clientForm.cuit)?.tipo === "CUIT"
+    if (!cuitOk && !(esGerencial && sinCuit && motivoAlta.trim().length >= 5)) {
+      toast({ title: "CUIT inválido", description: "Hace falta un CUIT válido (11 dígitos con el dígito verificador; no se acepta DNI). Sin CUIT, solo un gerencial, con motivo.", variant: "destructive" })
+      return
+    }
+    const r = await pedirAlta(
+      {
+        name: clientForm.name,
+        razon_social: clientForm.razon_social || clientForm.name,
+        cuit: clientForm.cuit,
+        cond_iva: clientForm.cond_iva,
+        direccion_fiscal: clientForm.direccion_fiscal,
+        cp: clientForm.cp,
+        localidad_cliente: clientForm.localidad_cliente,
+        provincia: clientForm.provincia,
+        cond_pago: clientForm.cond_pago,
+        phone: clientForm.phone,
+        email: clientForm.email,
+        contact: clientForm.contact,
+        remito_tipo: clientForm.remito_tipo,
+      },
+      desc,
+      cuitOk ? undefined : motivoAlta.trim(),
+    )
+    if (r.ok) {
+      toast({ title: "Cliente creado" })
+      cerrarAlta()
+    } else if (r.codigo === "mismo_documento" || r.codigo === "parecidos") setConflicto(r)
+    else toast({ title: "No se pudo crear", description: r.error, variant: "destructive" })
   }
 
   async function handleSaveSite() {
@@ -432,7 +488,7 @@ export function ClientsManagement() {
           />
         </div>
         {puede("clientes", "cargar") && (
-          <Button onClick={() => { setEditingClient(null); setClientForm({ ...EMPTY_CLIENT_FORM }); setIsClientDialogOpen(true) }} className="gap-2">
+          <Button onClick={() => { setEditingClient(null); setClientForm({ ...EMPTY_CLIENT_FORM }); setConflicto(null); setDescartados([]); setSinCuit(false); setMotivoAlta(""); setIsClientDialogOpen(true) }} className="gap-2">
             <Plus className="h-4 w-4" /> Nuevo Cliente
           </Button>
         )}
@@ -687,9 +743,31 @@ export function ClientsManagement() {
             </div>
           </div>
           {editingClient && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-cliente" ejemplo="Ej: el CUIT estaba mal cargado" />}
+          {!editingClient && esGerencial && documentoValido(clientForm.cuit)?.tipo !== "CUIT" && (
+            <div className="space-y-1 rounded-md border p-2 text-xs">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sinCuit} onChange={(e) => setSinCuit(e.target.checked)} />
+                Dar de alta sin CUIT válido (excepción de gerencial)
+              </label>
+              {sinCuit && <Input className="h-8 text-xs" value={motivoAlta} onChange={(e) => setMotivoAlta(e.target.value)} placeholder="Motivo (queda en Actividad)" />}
+            </div>
+          )}
+          {!editingClient && conflicto && (
+            <ConflictoAlta
+              respuesta={conflicto}
+              nombreNuevo={clientForm.name}
+              onUsar={() => cerrarAlta()}
+              onEsOtro={() => {
+                const d = [...descartados, ...(conflicto.conflictos || []).map((c) => `${c.tipo}:${c.id}`)]
+                setDescartados(d)
+                setConflicto(null)
+                handleSaveClient(d)
+              }}
+            />
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsClientDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveClient} disabled={!clientForm.razon_social || !clientForm.cuit || (!!editingClient && !motivoValido(motivo))}>
+            <Button onClick={() => handleSaveClient()} disabled={!clientForm.razon_social || (!!editingClient && (!clientForm.cuit || !motivoValido(motivo))) || (!editingClient && !clientForm.cuit && !sinCuit)}>
               {editingClient ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>

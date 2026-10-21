@@ -8,6 +8,7 @@ import { NextResponse } from "next/server"
 import { exigirSesion, modoPruebaLocal, respuestaModoLocal, respuestaError, registrarActividad } from "@/lib/auth/servidor"
 import { puedeCon } from "@/lib/permisos"
 import { traerCliente } from "@/lib/zomatik/traer"
+import { olvidarClientes } from "@/lib/clientes-datos"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
@@ -24,6 +25,7 @@ export async function POST(req: Request) {
     const plantId = typeof body?.plantId === "string" && /^[0-9a-f-]{36}$/i.test(body.plantId) ? body.plantId : null
     const res = await traerCliente({ codigo, plantId, usuario: r.sesion.usuario.name })
     if (!res.ok) return NextResponse.json({ error: res.error, cliente: res.cliente }, { status: res.status })
+    olvidarClientes()
     if (!res.yaEstaba)
       await registrarActividad({
         usuario: r.sesion.usuario.name,

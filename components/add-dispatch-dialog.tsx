@@ -31,6 +31,7 @@ import { AddConstructionSiteDialog } from "./add-construction-site-dialog"
 import { AddMixerDialog } from "./add-mixer-dialog"
 import { UserSelector } from "./user-selector"
 import { SearchableSelect } from "@/components/dispatch-scheduling"
+import { BuscadorCliente } from "@/components/clientes/buscador-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, choferPorCamionDelDia, type Chofer } from "@/lib/maestros"
 
@@ -789,12 +790,15 @@ export function AddDispatchDialog({
                   <Label htmlFor="client">Cliente *</Label>
                   <div className="flex gap-2">
                     <div className="flex-1">
-                      <SearchableSelect
-                        items={clients.map((c) => ({ id: c.id, label: c.name }))}
+                      {/* Regla del 21/10/2026: busca en Rebucret y en Zomatik a la vez */}
+                      <BuscadorCliente
                         value={formData.client_id}
-                        onChange={(value) => setFormData({ ...formData, client_id: value })}
-                        placeholder="Escribí para buscar el cliente..."
-                        emptyText="No se encontró el cliente"
+                        etiqueta={clients.find((c: any) => c.id === formData.client_id)?.name}
+                        plantId={dispatchPlantId}
+                        onElegir={(c) => {
+                          if (!clients.some((x: any) => x.id === c.id)) setClients([...clients, c as any])
+                          setFormData({ ...formData, client_id: c.id })
+                        }}
                       />
                     </div>
                     {puede("clientes", "cargar") && <AddClientDialog

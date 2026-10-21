@@ -7,12 +7,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
-import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { BuscarZomatik } from "@/components/zomatik/buscar-zomatik"
+import { ConflictoAlta, pedirAlta, type RespuestaAlta } from "@/components/clientes/alta-conflicto"
+import { usePermisos } from "@/lib/current-user"
+import { documentoValido } from "@/lib/clientes-buscar"
 
 interface AddClientDialogProps {
   plantId: string
@@ -20,97 +21,83 @@ interface AddClientDialogProps {
   onClientAdded?: (client: { id: string; name: string }) => void
 }
 
+const VACIO = { name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "", remito_tipo: "" }
+
+/**
+ * Alta rápida de cliente (pedido y despacho manual). Regla de Bautista del 21/10/2026: no dar de alta el mismo
+ * cliente con otro nombre. Pide CUIT válido (con dígito verificador; no DNI), salvo excepción de un gerencial con
+ * motivo, y el servidor controla en Rebucret y en Zomatik el mismo CUIT y los nombres parecidos.
+ */
 export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDialogProps) {
+  const { esGerencial } = usePermisos()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    name: "",
-    razon_social: "",
-    cuit: "",
-    cond_iva: "Responsable Inscripto",
-    contact: "",
-    phone: "",
-    email: "",
-    remito_tipo: "", // fase 3
-  })
+  const [formData, setFormData] = useState({ ...VACIO })
+  const [conflicto, setConflicto] = useState<Extract<RespuestaAlta, { ok: false }> | null>(null)
+  const [descartados, setDescartados] = useState<string[]>([])
+  const [sinCuit, setSinCuit] = useState(false)
+  const [motivo, setMotivo] = useState("")
 
-  const supabase = createClient()
+  const cuitOk = documentoValido(formData.cuit)?.tipo === "CUIT"
+  const reiniciar = () => {
+    setFormData({ ...VACIO })
+    setConflicto(null)
+    setDescartados([])
+    setSinCuit(false)
+    setMotivo("")
+  }
+  const terminar = (c: { id: string; name: string }) => {
+    reiniciar()
+    setOpen(false)
+    onClientAdded?.(c)
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    console.log("[v0] AddClientDialog handleSubmit called", { formData, plantId })
-
+  async function enviar(desc: string[]) {
     if (!formData.name.trim()) {
       toast.error("El nombre del cliente es obligatorio")
       return
     }
-
-    if (!formData.cuit.trim()) {
-      toast.error("El CUIT es obligatorio para no duplicar clientes")
-      return
-    }
-
     if (!plantId || plantId === "all" || plantId === "") {
       toast.error("Primero seleccione una planta en el formulario de programacion")
       return
     }
-
+    if (!cuitOk && !(esGerencial && sinCuit)) {
+      toast.error("Hace falta un CUIT válido (11 dígitos con el dígito verificador). No se acepta DNI.")
+      return
+    }
+    if (!cuitOk && motivo.trim().length < 5) {
+      toast.error("Escribí por qué se da de alta sin CUIT")
+      return
+    }
     setLoading(true)
-
     try {
-      // Anti-duplicado: si ya existe un cliente activo con el mismo CUIT, no permitir
-      const { data: existing } = await supabase
-        .from("clients")
-        .select("id, name")
-        .eq("cuit", formData.cuit.trim())
-        .neq("active", false)
-        .limit(1)
-
-      if (existing && existing.length > 0) {
-        toast.error(`Ya existe un cliente con ese CUIT: ${existing[0].name}. Usá ese cliente en lugar de crear uno nuevo.`)
-        setLoading(false)
-        return
-      }
-
-      console.log("[v0] Inserting client:", { name: formData.name, plant_id: plantId })
-      const { data, error } = await supabase
-        .from("clients")
-        .insert({
+      const r = await pedirAlta(
+        {
           name: formData.name,
           razon_social: formData.razon_social || formData.name,
-          cuit: formData.cuit.trim(),
-          cond_iva: formData.cond_iva || null,
-          contact: formData.contact || null,
-          phone: formData.phone || null,
-          email: formData.email || null,
+          cuit: formData.cuit,
+          cond_iva: formData.cond_iva,
+          contact: formData.contact,
+          phone: formData.phone,
+          email: formData.email,
           plant_id: plantId,
-          active: true,
-          // Fase 3: solo si se eligió (así anda igual sin la migración)
-          ...(formData.remito_tipo ? { remito_tipo: formData.remito_tipo } : {}),
-        } as any)
-        .select()
-        .single()
-
-      console.log("[v0] Insert result:", { data, error })
-      if (error) throw error
-
-      toast.success("Cliente agregado exitosamente")
-      logActivity({ action: "crear", entity: "cliente", entityId: data?.id, reference: data?.name, plantId, details: { Cliente: formData.name, CUIT: formData.cuit.trim(), "Condición IVA": formData.cond_iva || "-" } })
-      setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "", remito_tipo: "" })
-      setOpen(false)
-
-      if (onClientAdded && data) {
-        onClientAdded({ id: data.id, name: data.name })
-      }
-    } catch (error: any) {
-      toast.error(error.message || "Error al agregar cliente")
+          remito_tipo: formData.remito_tipo,
+        },
+        desc,
+        cuitOk ? undefined : motivo.trim(),
+      )
+      if (r.ok) {
+        toast.success("Cliente agregado exitosamente")
+        terminar(r.cliente)
+      } else if (r.codigo === "mismo_documento" || r.codigo === "parecidos") setConflicto(r)
+      else toast.error(r.error)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reiniciar() }}>
       <DialogTrigger asChild>
         {trigger || (
           <Button variant="outline" size="sm">
@@ -123,37 +110,31 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
         <DialogHeader>
           <DialogTitle>Agregar Nuevo Cliente</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); enviar(descartados) }} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Nombre / Razón Social *</Label>
             <Input
               id="name"
               value={formData.razon_social}
-              onChange={(e) => setFormData({ ...formData, razon_social: e.target.value, name: e.target.value })}
+              onChange={(e) => { setFormData({ ...formData, razon_social: e.target.value, name: e.target.value }); setConflicto(null); setDescartados([]) }}
               placeholder="Ej: GARCÍA JUAN CARLOS"
               required
             />
           </div>
           {/* Zomatik Z0: si ya está en Rebucret, avisa; si está en Zomatik, se trae (no se escribe en Zomatik) */}
-          <BuscarZomatik
-            texto={formData.razon_social}
-            plantId={plantId}
-            onTraido={(c) => {
-              setFormData({ name: "", razon_social: "", cuit: "", cond_iva: "Responsable Inscripto", contact: "", phone: "", email: "", remito_tipo: "" })
-              setOpen(false)
-              onClientAdded?.(c)
-            }}
-          />
+          <BuscarZomatik texto={formData.razon_social} plantId={plantId} onTraido={terminar} />
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="cuit">CUIT *</Label>
               <Input
                 id="cuit"
                 value={formData.cuit}
-                onChange={(e) => setFormData({ ...formData, cuit: e.target.value })}
+                onChange={(e) => { setFormData({ ...formData, cuit: e.target.value }); setConflicto(null) }}
                 placeholder="XX-XXXXXXXX-X"
-                required
               />
+              {formData.cuit.trim() && !cuitOk && (
+                <p className="text-xs text-red-700">{documentoValido(formData.cuit)?.tipo === "DNI" ? "El alta pide CUIT, no DNI." : "CUIT inválido (revisá el dígito verificador)."}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Cond. IVA</Label>
@@ -167,6 +148,15 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
               </Select>
             </div>
           </div>
+          {esGerencial && !cuitOk && (
+            <div className="space-y-1 rounded-md border p-2 text-xs">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sinCuit} onChange={(e) => setSinCuit(e.target.checked)} />
+                Dar de alta sin CUIT (excepción de gerencial)
+              </label>
+              {sinCuit && <Input className="h-8 text-xs" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Motivo (queda en Actividad)" />}
+            </div>
+          )}
           {/* Fase 3: remito R / X por defecto ("" = se decide en cada pedido) */}
           <div className="space-y-2">
             <Label>Remito</Label>
@@ -207,6 +197,20 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
               placeholder="correo@ejemplo.com"
             />
           </div>
+          {conflicto && (
+            <ConflictoAlta
+              respuesta={conflicto}
+              nombreNuevo={formData.name}
+              plantId={plantId}
+              onUsar={terminar}
+              onEsOtro={() => {
+                const d = [...descartados, ...(conflicto.conflictos || []).map((c) => `${c.tipo}:${c.id}`)]
+                setDescartados(d)
+                setConflicto(null)
+                enviar(d)
+              }}
+            />
+          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancelar
