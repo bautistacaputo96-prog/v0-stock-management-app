@@ -11,6 +11,10 @@
     {
       "path": "/api/gps/reconstruir",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/zomatik/leer",
+      "schedule": "30 6 * * *"
     }
   ]
 }

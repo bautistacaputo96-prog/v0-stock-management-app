@@ -9,7 +9,8 @@
     "start": "next start",
     "test:gps": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/gps-viajes.test.mjs lib/__tests__/kpis-logistica.test.mjs lib/__tests__/tiempos-gps.test.mjs",
     "test:sesion": "node --experimental-strip-types --no-warnings --test lib/__tests__/sesion-permisos.test.mjs",
-    "test:despacho": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/despacho.test.mjs"
+    "test:despacho": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/despacho.test.mjs",
+    "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
