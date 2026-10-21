@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Check, ChevronsUpDown, Download, Loader2, X } from "lucide-react"
+import { Check, ChevronsUpDown, Download, Loader2, RefreshCw, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -96,6 +96,7 @@ export function PantallaVinculos() {
   const [error, setError] = useState<string | null>(null)
   const [trabajando, setTrabajando] = useState(false)
   const [trayendo, setTrayendo] = useState<number | null>(null)
+  const [leyendo, setLeyendo] = useState(false)
 
   const cargar = useCallback(async () => {
     const sb = createClient()
@@ -138,6 +139,20 @@ export function PantallaVinculos() {
       await cargar()
     } finally {
       setTrabajando(false)
+    }
+  }
+
+  // Vuelve a leer Zomatik (solo lectura). La ruta frena a una lectura cada 5 minutos.
+  async function actualizar() {
+    setLeyendo(true)
+    try {
+      const r = await fetch("/api/zomatik/leer", { method: "POST" })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok) toast.success("Actualizado desde Zomatik")
+      else toast.error(d?.error || (d?.errores || []).join(" · ") || "No se pudo leer Zomatik")
+      await cargar()
+    } finally {
+      setLeyendo(false)
     }
   }
 
@@ -201,6 +216,12 @@ export function PantallaVinculos() {
 
   if (error) return <div className="p-6 text-sm text-red-700">{error}</div>
   if (!zcli) return <div className="p-6 text-sm text-muted-foreground"><Loader2 className="mr-1 inline h-4 w-4 animate-spin" />Cargando…</div>
+  const botonActualizar = (
+    <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={actualizar} disabled={leyendo}>
+      {leyendo ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+      {leyendo ? "Leyendo Zomatik…" : "Actualizar desde Zomatik"}
+    </Button>
+  )
 
   const Tab = ({ k, t }: { k: Pestaña; t: string }) => (
     <button onClick={() => setPestaña(k)} className={cn("rounded-md px-3 py-1.5 text-sm", pestaña === k ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
@@ -210,13 +231,16 @@ export function PantallaVinculos() {
 
   return (
     <div className="space-y-3 px-4 py-4 md:px-6">
-      <div>
+      <div className="flex flex-wrap items-start gap-2">
+       <div className="flex-1">
         <h1 className="text-xl font-bold">Vínculos con Zomatik</h1>
         <p className="text-xs text-muted-foreground">
           Qué cliente, fórmula y obra de Rebucret es cada uno de Zomatik. Solo se guarda acá: en Zomatik no se toca nada. Copia de Zomatik{" "}
           {leido ? `leída ${new Date(leido).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" })}` : "todavía sin leer"}{" "}
           · <Link href="/programacion#acopios" className="underline">Acopios</Link>
         </p>
+       </div>
+       {botonActualizar}
       </div>
       <div className="flex flex-wrap items-center gap-1">
         <Tab k="clientes" t="Clientes" />
