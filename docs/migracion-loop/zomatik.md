@@ -1,6 +1,6 @@
 # Integración Rebucret ↔ Zomatik (cliente, nota de pedido, orden de fabricación y remito)
 
-Estado: **relevamiento y propuesta del arquitecto (20/10/2026), con las respuestas de Bautista del 21/10/2026 (puntos 16 a 21; cada una manda sobre lo anterior). Maqueta aprobada el 21/10. Nada programado ni cargado en Zomatik.** Quedan las preguntas de 20.9 y los pasos del punto 13 (y la prueba del jueves, 20.6).
+Estado: **relevamiento y propuesta del arquitecto (20/10/2026), con las respuestas de Bautista del 21/10/2026 (puntos 16 a 21; cada una manda sobre lo anterior). Maqueta aprobada el 21/10. Z0 (solo lectura) programada el 21/10 en `loop/zomatik`, sin publicar (ver "Hecho"). Nada cargado en Zomatik.** Quedan las preguntas de 20.9 y los pasos del punto 13 (y la prueba del jueves, 20.6).
 
 Base: lo que contó Bautista el 20/10/2026 y un relevamiento **solo mirando** de `https://concretus.zomatik.com`, sucursal **REBUCRET**, hecho el mismo día con su usuario.
 
@@ -1289,3 +1289,64 @@ Después de la prueba se anula todo lo de prueba **a mano**, por Bautista.
    - Queda la excepción gerencial de 18.4 (Bautista, Juan o Fernando, con motivo, para ese pedido y ese día) por si Zomatik sigue caído a la hora de despachar.
 4. **Despacho manual (sin pedido programado): queda para más adelante.** Ahí se definirá si sale con "NP pendiente" o si la genera en el momento. En esta etapa el despacho manual sigue como hoy, sin el control de NP, y queda anotado en Actividad como "despacho manual sin NP".
 5. **Cambios al orden de trabajo (18.6):** en Z2, "Generar NP ahora" va en Programación. El control del despacho bloquea los pedidos con "NP pendiente" (en modo aviso las 2 primeras semanas) y no incluye el despacho manual.
+
+---
+
+## Hecho
+
+### Z0 — lecturas, copia local, vínculos y "Traer de Zomatik" (obrero, 21/10/2026, rama `loop/zomatik`, sin push)
+
+**Solo lee de Zomatik.** No hay ninguna función que mande un alta ni llame a `manage_*`, `grabar_*`, `generar_*` o `set_*`: el cliente tiene una **lista cerrada de rutas de solo lectura** y rechaza cualquier otra antes de salir (probado en `test:zomatik`).
+
+**Migración** `supabase/migrations/202610211800_zomatik_z0_lecturas.sql` (**no aplicada**). Todo se agrega; compatible con main y con la Fase 3:
+- `clients.zomatik_codigo` (único: dos clientes nuestros nunca pueden tener el mismo código) y `formulas.zomatik_articulo_codigo` / `_nombre`, cada uno con `zomatik_vinculo` (`auto` = primera carga, `manual` = lo confirmó un gerencial, `traido` = "Traer de Zomatik", `sin_par`), quién y cuándo.
+- Copias: `zomatik_clientes` (listado + R/X del año + ficha; **el navegador no la lee**, va por `/api/zomatik/clientes` con sesión), `zomatik_articulos`, `zomatik_proyectos` (saldo **solo en %**, ningún monto; vínculo con la obra en `construction_site_id`, como dice 18.5: varios proyectos pueden ir a la misma obra), `zomatik_proyecto_movimientos` (remito, NP, artículo, m³ por día), `zomatik_np_pendientes` (sin el total en pesos).
+- `zomatik_lecturas` + `zomatik_lectura_registrar()`: registro de cada lectura y freno con candado (una a la vez; "Actualizar" cada 5 min; cron una vez por hora).
+- Datos ya cargados: no cambia nada; las columnas nuevas quedan nulas y las tablas vacías.
+- Probada **dos veces en `BEGIN … ROLLBACK`** (cada una aplicándola dos veces), con `lock_timeout 2s` y `statement_timeout 60s`: 3,2 s y 2,6 s. Controla código repetido (rechazado) y vínculo sin código (rechazado). Tipos (`types/database.ts`) regenerados con la migración aplicada dentro de un ROLLBACK (2,4 s).
+
+**Código**
+- `lib/zomatik/cliente.ts`: copia adaptada de Concretus (login, sucursal REBUCRET 18, `discoverForm`, export XLSX y HTML, ficha por GET, XLS del acopio). **Un login por corrida** (y por proceso, uno cada 10 min como mucho); la cookie se reutiliza (en memoria y en `integraciones`, que solo lee la clave de servicio); si Zomatik rechaza el usuario, **nadie reintenta por 30 min**. 300 ms entre requests.
+- `lib/zomatik/parseo.ts`, `foto.ts`, `vinculos.ts`, `acopios.ts`: funciones puras (parseo, nombre normalizado, CUIT, propuestas de vínculo, saldo en % y ≈ m³, avisos). `npm run test:zomatik`: **24/24**.
+- `lib/zomatik/lectura.ts` + `/api/zomatik/leer`: **cron diario 03:30** (`vercel.json`) y botón "Actualizar" (gerencial). Mismo esquema que `/api/gps/reconstruir` (header del cron) más sesión de gerencial para lo manual. Lee clientes, artículos, remitos del año, proyectos abiertos, historia de los proyectos viejos (una sola vez), tipo de proyecto, fichas y NP pendientes. Historia, tipos (6 por vez) y fichas (25 por vez) van de a poco, con presupuesto de 40 s.
+- `lib/zomatik/traer.ts` + `/api/zomatik/traer-cliente` (`clientes.cargar`): crea el cliente **en nuestra base** con código, razón social, CUIT (solo si es válido), IVA, dirección, contacto y remito sugerido (solo X → X, solo R → R). **Nunca duplica**: si hay uno con el mismo código lo devuelve; con el mismo nombre normalizado o el mismo CUIT válido, no crea y avisa "pedile a un gerencial que lo vincule"; el índice único frena dos "Traer" a la vez.
+- Alta de cliente (`add-client-dialog.tsx`, que es el alta rápida del pedido y del despacho manual, y el "Nuevo cliente" de Clientes): mientras se escribe el nombre o el CUIT aparecen "Ya está en Rebucret" y "En Zomatik (no está en Rebucret)" con **"Traer de Zomatik"**.
+- **Bloque "Acopios"** abajo de la grilla de Programación (Semana y Día), como la maqueta: avance (% usado), remitido, saldo ≈ m³ y %, programado (lo que falta despachar de los pedidos de la obra vinculada), última entrega y estado (saldo bajo con 7 días o 15 %, agotado). Cada fila se despliega al detalle por día con el acumulado. Filtro "con entregas en 90 días o programado" / "todos los abiertos". Sin precios ni $. "Actualizar" y "Vínculos", solo gerenciales; "Crear proyecto" deshabilitado.
+- **`/zomatik` "Vínculos con Zomatik"** (gerencial, en el menú): clientes, fórmulas y proyectos ↔ obras, con las mismas propuestas que el script (seguro / dudoso), "Confirmar", "Elegir otro…", "No está" y "Confirmar los N seguros"; y la pestaña "En Zomatik sin cliente nuestro" con "Traer". Escribe con `/api/zomatik/vincular` y queda en Actividad.
+- `scripts/zomatik-primera-carga.mjs`: Parte A solo lectura (por defecto), Parte B `--escribir` **termina en ROLLBACK**; `--escribir --commit` solo con el OK de Bautista. Graba solo los seguros y nunca pisa un vínculo.
+
+**Lectura real de Zomatik, de punta a punta en local** (un login, solo lectura, sin tocar la base; lo crudo en el scratchpad): primera corrida en **29 s** con el presupuesto real.
+- 467 clientes · 81 artículos (64 + 1 + 16) · 711 renglones de remito del año · **33 proyectos abiertos** (los 33 por monto) · 2.252 renglones de historia (3 años) · 42 NP pendientes · 123 fichas de clientes con remitos en el año (39 con CUIT válido; en la primera corrida entran 25 y el resto en las siguientes).
+- Cargado en las copias dentro de un ROLLBACK (con la migración): 147 movimientos de proyectos del año + 516 de la historia. Acopios: 17 abiertos, 6 saldo bajo, 10 agotados según Zomatik; 23 con remitido, 7 con entregas en los últimos 90 días.
+
+**Vínculos reales** (primera carga, Parte B en ROLLBACK, con las copias recién leídas):
+
+| | Seguros (se graban) | Dudosos (a mano) | Sin par |
+|---|---|---|---|
+| Clientes (84 activos) | **15** (todos por nombre) | **51** | 18 |
+| Fórmulas (67) | **28** (11 nombre igual + 17 con reglas, igual que 6.7) | 32 | 7 |
+| Proyectos (33) | 0 | 5 | 28 (su cliente todavía no está vinculado) |
+
+- Clientes seguros: son muchos menos que los ~59 de 6.3 porque acá "seguro" es **nombre igual** (sin tildes, S.A., ARQ, ING, FIDEICOMISO) y **único de los dos lados**. El relevamiento contaba como "igual" que un nombre estuviera contenido en el otro ("JUAN" ↔ "JUAN LOPEZ", "SAN VICENTE" ↔ "FELICIANO SAN VICENTE"), que no es seguro. Además hay repetidos nuestros ("MERVA" dos veces; "LA TERCERA" y "Fideicomiso La Tercera") que pasan a dudosos. CUIT: ningún par seguro (solo 3 CUIT válidos nuestros).
+- Proyectos: la propuesta es entre las obras del cliente vinculado; cuando se confirmen los clientes en la pantalla, aparecen las propuestas de obra.
+- Clientes de Zomatik con remitos en el año que siguen sin cliente nuestro: 108 (se traen con "Traer", desde la pantalla o el alta).
+
+**Verificación**
+- `npx tsc --noEmit`: 17 errores, los mismos de la rama base; ninguno nuevo.
+- `npx next build --webpack` con variables de relleno: bien (`.next` borrado).
+- `test:despacho` 27/27 · `test:gps` 44/44 · `test:sesion` 21/21 · `test:zomatik` 24/24.
+
+**Para publicar (con el OK de Bautista)**
+1. `ZOMATIK_USER` y `ZOMATIK_PASS` en Vercel (proyecto Rebucret).
+2. Aplicar la migración junto con el deploy.
+3. Correr "Actualizar" (o esperar el cron). Para tener todas las fichas y tipos el mismo día, "Actualizar" 4 o 5 veces (cada 5 min).
+4. `scripts/zomatik-primera-carga.mjs` Parte A, después Parte B (ROLLBACK) y, con el OK, `--escribir --commit`.
+5. Confirmar los dudosos en `/zomatik`.
+
+**Riesgos y pendientes**
+- Se usa el usuario de Bautista (17.6): la cookie del robot y la sesión del navegador al mismo tiempo no se probaron (punto 13).
+- Zomatik puede cambiar un listado: si vienen vacíos clientes, artículos o proyectos, la parte falla y no se marca nada como cerrado; el resto sigue.
+- El cron de Vercel Hobby corre "dentro de la hora" programada; la lectura entra en ~30 s más el grabado (límite 60 s).
+- El "programado" del acopio es por obra: si dos proyectos van a la misma obra, los dos muestran lo mismo (en Z2 cada pedido va a su proyecto).
+- No se crean en esta carga los ~108 clientes de Zomatik del año sin par (11.4): se traen a mano con "Traer", así no entra nada sin mirar.
+- Fuera de Z0 (no se hizo): crear NP, OF, remitos o clientes en Zomatik; cancelar NP; "sin NP no se despacha"; las 7 mejoras del formulario.
