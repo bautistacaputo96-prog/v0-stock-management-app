@@ -1,5 +1,5 @@
 // Tipos de la base de Rebucret (esquema public). ARCHIVO GENERADO: no editar a mano.
-// Generado el 20/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
+// Generado el 21/10/2026 desde la base con scripts/generar-tipos.mjs (ver supabase/migrations/README.md).
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -268,6 +268,10 @@ export type Database = {
           razon_social: string | null
           remito_tipo: string | null
           updated_at: string | null
+          zomatik_codigo: number | null
+          zomatik_vinculado_at: string | null
+          zomatik_vinculado_por: string | null
+          zomatik_vinculo: string | null
         }
         Insert: {
           active?: boolean | null
@@ -288,6 +292,10 @@ export type Database = {
           razon_social?: string | null
           remito_tipo?: string | null
           updated_at?: string | null
+          zomatik_codigo?: number | null
+          zomatik_vinculado_at?: string | null
+          zomatik_vinculado_por?: string | null
+          zomatik_vinculo?: string | null
         }
         Update: {
           active?: boolean | null
@@ -308,6 +316,10 @@ export type Database = {
           razon_social?: string | null
           remito_tipo?: string | null
           updated_at?: string | null
+          zomatik_codigo?: number | null
+          zomatik_vinculado_at?: string | null
+          zomatik_vinculado_por?: string | null
+          zomatik_vinculo?: string | null
         }
         Relationships: [
           {
@@ -751,6 +763,11 @@ export type Database = {
           updated_by: string | null
           useful_life_minutes: number | null
           yield_m3: number
+          zomatik_articulo_codigo: number | null
+          zomatik_articulo_nombre: string | null
+          zomatik_vinculado_at: string | null
+          zomatik_vinculado_por: string | null
+          zomatik_vinculo: string | null
         }
         Insert: {
           code: string
@@ -763,6 +780,11 @@ export type Database = {
           updated_by?: string | null
           useful_life_minutes?: number | null
           yield_m3?: number
+          zomatik_articulo_codigo?: number | null
+          zomatik_articulo_nombre?: string | null
+          zomatik_vinculado_at?: string | null
+          zomatik_vinculado_por?: string | null
+          zomatik_vinculo?: string | null
         }
         Update: {
           code?: string
@@ -775,6 +797,11 @@ export type Database = {
           updated_by?: string | null
           useful_life_minutes?: number | null
           yield_m3?: number
+          zomatik_articulo_codigo?: number | null
+          zomatik_articulo_nombre?: string | null
+          zomatik_vinculado_at?: string | null
+          zomatik_vinculado_por?: string | null
+          zomatik_vinculo?: string | null
         }
         Relationships: [
           {
@@ -2496,6 +2523,313 @@ export type Database = {
           },
         ]
       }
+      zomatik_articulos: {
+        Row: {
+          actualizado_at: string
+          codigo: number
+          linea: string | null
+          nombre: string
+          visto_at: string
+        }
+        Insert: {
+          actualizado_at?: string
+          codigo: number
+          linea?: string | null
+          nombre: string
+          visto_at?: string
+        }
+        Update: {
+          actualizado_at?: string
+          codigo?: number
+          linea?: string | null
+          nombre?: string
+          visto_at?: string
+        }
+        Relationships: []
+      }
+      zomatik_clientes: {
+        Row: {
+          actualizado_at: string
+          categoria: string | null
+          clasificacion: string | null
+          codigo: number
+          condicion_pago: string | null
+          contacto: string | null
+          cp: string | null
+          cuit: string | null
+          direccion: string | null
+          email: string | null
+          estado: string | null
+          ficha_leida_at: string | null
+          localidad: string | null
+          nombre_norm: string
+          provincia: string | null
+          razon_social: string
+          remitos_r_12m: number
+          remitos_x_12m: number
+          telefono: string | null
+          tipo_documento: string | null
+          tipo_iva: string | null
+          ultimo_pedido: string | null
+          ultimo_remito: string | null
+          vendedor: string | null
+          visto_at: string
+        }
+        Insert: {
+          actualizado_at?: string
+          categoria?: string | null
+          clasificacion?: string | null
+          codigo: number
+          condicion_pago?: string | null
+          contacto?: string | null
+          cp?: string | null
+          cuit?: string | null
+          direccion?: string | null
+          email?: string | null
+          estado?: string | null
+          ficha_leida_at?: string | null
+          localidad?: string | null
+          nombre_norm?: string
+          provincia?: string | null
+          razon_social: string
+          remitos_r_12m?: number
+          remitos_x_12m?: number
+          telefono?: string | null
+          tipo_documento?: string | null
+          tipo_iva?: string | null
+          ultimo_pedido?: string | null
+          ultimo_remito?: string | null
+          vendedor?: string | null
+          visto_at?: string
+        }
+        Update: {
+          actualizado_at?: string
+          categoria?: string | null
+          clasificacion?: string | null
+          codigo?: number
+          condicion_pago?: string | null
+          contacto?: string | null
+          cp?: string | null
+          cuit?: string | null
+          direccion?: string | null
+          email?: string | null
+          estado?: string | null
+          ficha_leida_at?: string | null
+          localidad?: string | null
+          nombre_norm?: string
+          provincia?: string | null
+          razon_social?: string
+          remitos_r_12m?: number
+          remitos_x_12m?: number
+          telefono?: string | null
+          tipo_documento?: string | null
+          tipo_iva?: string | null
+          ultimo_pedido?: string | null
+          ultimo_remito?: string | null
+          vendedor?: string | null
+          visto_at?: string
+        }
+        Relationships: []
+      }
+      zomatik_lecturas: {
+        Row: {
+          error: string | null
+          fin: string | null
+          id: string
+          inicio: string
+          ok: boolean | null
+          origen: string
+          resultado: Json | null
+          usuario: string | null
+        }
+        Insert: {
+          error?: string | null
+          fin?: string | null
+          id?: string
+          inicio?: string
+          ok?: boolean | null
+          origen: string
+          resultado?: Json | null
+          usuario?: string | null
+        }
+        Update: {
+          error?: string | null
+          fin?: string | null
+          id?: string
+          inicio?: string
+          ok?: boolean | null
+          origen?: string
+          resultado?: Json | null
+          usuario?: string | null
+        }
+        Relationships: []
+      }
+      zomatik_np_pendientes: {
+        Row: {
+          cliente: string | null
+          deposito: string | null
+          estado: string | null
+          fecha: string | null
+          fecha_entrega: string | null
+          leido_at: string
+          numero: string
+          origen: string | null
+          vendedor: string | null
+        }
+        Insert: {
+          cliente?: string | null
+          deposito?: string | null
+          estado?: string | null
+          fecha?: string | null
+          fecha_entrega?: string | null
+          leido_at?: string
+          numero: string
+          origen?: string | null
+          vendedor?: string | null
+        }
+        Update: {
+          cliente?: string | null
+          deposito?: string | null
+          estado?: string | null
+          fecha?: string | null
+          fecha_entrega?: string | null
+          leido_at?: string
+          numero?: string
+          origen?: string | null
+          vendedor?: string | null
+        }
+        Relationships: []
+      }
+      zomatik_proyecto_movimientos: {
+        Row: {
+          articulo: string | null
+          articulo_codigo: number
+          deposito: string | null
+          es_hormigon: boolean
+          fecha: string
+          id: string
+          leido_at: string
+          m3: number
+          pedido: string | null
+          proyecto_numero: string
+          remito: string
+        }
+        Insert: {
+          articulo?: string | null
+          articulo_codigo?: number
+          deposito?: string | null
+          es_hormigon?: boolean
+          fecha: string
+          id?: string
+          leido_at?: string
+          m3?: number
+          pedido?: string | null
+          proyecto_numero: string
+          remito: string
+        }
+        Update: {
+          articulo?: string | null
+          articulo_codigo?: number
+          deposito?: string | null
+          es_hormigon?: boolean
+          fecha?: string
+          id?: string
+          leido_at?: string
+          m3?: number
+          pedido?: string | null
+          proyecto_numero?: string
+          remito?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "zomatik_proyecto_movimientos_proyecto_numero_fkey"
+            columns: ["proyecto_numero"]
+            isOneToOne: false
+            referencedRelation: "zomatik_proyectos"
+            referencedColumns: ["numero"]
+          },
+        ]
+      }
+      zomatik_proyectos: {
+        Row: {
+          cliente_codigo: number | null
+          cliente_nombre: string | null
+          codigo: number
+          comprobante: string | null
+          construction_site_id: string | null
+          estado: string
+          estado_zomatik: string | null
+          fecha: string | null
+          historia_leida_at: string | null
+          leido_at: string
+          numero: string
+          obra: string | null
+          pactado_m3: number | null
+          remitido_m3: number
+          saldo_pct: number | null
+          tipo: string | null
+          ultima_entrega: string | null
+          vinculado_at: string | null
+          vinculado_por: string | null
+          vinculo: string | null
+          visto_at: string
+        }
+        Insert: {
+          cliente_codigo?: number | null
+          cliente_nombre?: string | null
+          codigo: number
+          comprobante?: string | null
+          construction_site_id?: string | null
+          estado?: string
+          estado_zomatik?: string | null
+          fecha?: string | null
+          historia_leida_at?: string | null
+          leido_at?: string
+          numero: string
+          obra?: string | null
+          pactado_m3?: number | null
+          remitido_m3?: number
+          saldo_pct?: number | null
+          tipo?: string | null
+          ultima_entrega?: string | null
+          vinculado_at?: string | null
+          vinculado_por?: string | null
+          vinculo?: string | null
+          visto_at?: string
+        }
+        Update: {
+          cliente_codigo?: number | null
+          cliente_nombre?: string | null
+          codigo?: number
+          comprobante?: string | null
+          construction_site_id?: string | null
+          estado?: string
+          estado_zomatik?: string | null
+          fecha?: string | null
+          historia_leida_at?: string | null
+          leido_at?: string
+          numero?: string
+          obra?: string | null
+          pactado_m3?: number | null
+          remitido_m3?: number
+          saldo_pct?: number | null
+          tipo?: string | null
+          ultima_entrega?: string | null
+          vinculado_at?: string | null
+          vinculado_por?: string | null
+          vinculo?: string | null
+          visto_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "zomatik_proyectos_construction_site_id_fkey"
+            columns: ["construction_site_id"]
+            isOneToOne: false
+            referencedRelation: "construction_sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -2529,6 +2863,7 @@ export type Database = {
       remito_tipo_para: { Args: { p_pedido_id?: string; p_client_id?: string; p_site_id?: string; p_fecha?: string }; Returns: Json }
       suspender_pedido: { Args: { p_id: string; p_tipo: string; p_motivo?: string; p_usuario?: string }; Returns: Json }
       update_material_stock: { Args: { p_material_id: string; p_quantity_change: number }; Returns: undefined }
+      zomatik_lectura_registrar: { Args: { p_origen: string; p_usuario: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
