@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Plus, ChevronLeft, ChevronRight, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer, RefreshCw } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, addDays, startOfWeek, addWeeks, subWeeks, isSameDay, parseISO, setHours, setMinutes, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
@@ -197,6 +197,16 @@ export function SearchableSelect({
   )
 }
 
+/** Título de sección del formulario del pedido (estilo denso de despacho). Fuera del componente, para no perder el foco. */
+function SeccionPedido({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="border-b pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{titulo}</div>
+      {children}
+    </div>
+  )
+}
+
 export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [selectedPlant, setSelectedPlant] = useState("all") // "all" para todas las plantas
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }))
@@ -207,6 +217,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [empresasBombeo, setEmpresasBombeo] = useState<EmpresaBombeo[]>([])
   const [loading, setLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  // Formulario del pedido: "Más datos" arranca plegado; "Repetir el último pedido de esta obra"
+  const [masDatos, setMasDatos] = useState(false)
+  const [repitiendo, setRepitiendo] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [selectedHour, setSelectedHour] = useState<number | null>(null)
   const [editingDispatch, setEditingDispatch] = useState<ScheduledDispatch | null>(null)
@@ -832,6 +845,80 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     })
   }
 
+  /** "Repetir el último pedido de esta obra": copia fórmula, m³, descarga, bomba, m³ por camión y fibra (spec 19.3.3). */
+  async function repetirUltimoPedido() {
+    if (!form.construction_site_id) return
+    setRepitiendo(true)
+    try {
+      const { data, error } = await createClient()
+        .from("scheduled_dispatches")
+        .select("id, plant_id, formula_id, quantity_m3, metodo_descarga, bomba_la_pone, bomba_empresa_id, m3_por_viaje, fiber_kg_per_m3, finalidad, scheduled_arrival_time")
+        .eq("construction_site_id", form.construction_site_id)
+        .neq("status", "cancelled")
+        .order("scheduled_arrival_time", { ascending: false })
+        .limit(3)
+      if (error) throw error
+      const u = ((data as any[]) || []).find((x) => x.id !== editingDispatch?.id)
+      if (!u) {
+        toast({ title: "Esta obra todavía no tiene pedidos para repetir" })
+        return
+      }
+      const mismaPlanta = !form.plant_id || u.plant_id === form.plant_id
+      setForm((f) => ({
+        ...f,
+        plant_id: f.plant_id || u.plant_id,
+        formula_id: mismaPlanta && u.formula_id ? u.formula_id : f.formula_id,
+        quantity_m3: u.quantity_m3 != null ? String(u.quantity_m3) : f.quantity_m3,
+        metodo_descarga: u.metodo_descarga || f.metodo_descarga,
+        bomba_la_pone: u.bomba_la_pone || "",
+        bomba_empresa_id: u.bomba_empresa_id || "",
+        bomba_hora: u.metodo_descarga === "bomba" ? f.bomba_hora || f.arrival_time : f.bomba_hora,
+        m3_por_viaje: u.m3_por_viaje != null ? String(u.m3_por_viaje) : f.m3_por_viaje,
+        fiber_kg_per_m3: u.fiber_kg_per_m3 != null ? String(u.fiber_kg_per_m3) : "",
+        finalidad: u.finalidad || f.finalidad,
+      }))
+      if (u.fiber_kg_per_m3) setMasDatos(true)
+      toast({
+        title: `Copiado el pedido del ${format(parseISO(u.scheduled_arrival_time), "dd/MM")}`,
+        description: mismaPlanta ? "Revisá fecha, hora y m³ antes de programar." : "Era de otra planta: la fórmula no se copió.",
+      })
+    } catch {
+      toast({ title: "No se pudo leer el último pedido", variant: "destructive" })
+    } finally {
+      setRepitiendo(false)
+    }
+  }
+
+  // Resumen fijo al pie y "Falta: …" (spec 19.3.4 y 19.3.5)
+  const faltaPedido = [
+    !form.client_id && "cliente",
+    !form.construction_site_id && "obra",
+    !form.plant_id && "planta",
+    !form.formula_id && "fórmula",
+    !form.metodo_descarga && "descarga",
+    !!editingDispatch && !motivoValido(motivo) && "motivo",
+  ].filter(Boolean) as string[]
+  const resumenPedido = (() => {
+    const m3 = parseFloat(form.quantity_m3)
+    if (!(m3 > 0) && !form.formula_id && !form.construction_site_id) return ""
+    const f = formulas.find((x) => x.id === form.formula_id)
+    const porCamion = parseFloat(form.m3_por_viaje) > 0 ? parseFloat(form.m3_por_viaje) : 8
+    const viajes = ve && sugerencia ? sugerencia.viajes : m3 > 0 ? Math.ceil(m3 / porCamion) : 0
+    const rx = form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo || ""
+    return [
+      m3 > 0 && `${m3.toLocaleString("es-AR")} m³`,
+      f?.name,
+      viajes > 0 && `${viajes} ${viajes === 1 ? "viaje" : "viajes"}`,
+      ve && sugerencia && `carga ${format(parseISO(sugerencia.carga), "HH:mm")}`,
+      form.arrival_time && `llega ${form.arrival_date ? `${form.arrival_date.slice(8, 10)}/${form.arrival_date.slice(5, 7)} ` : ""}${form.arrival_time}`,
+      form.metodo_descarga === "bomba" ? "con bomba" : form.metodo_descarga === "directo" ? "directo" : "",
+      rx === "R" ? "remito R" : rx === "X" ? "remito X" : "",
+      selectedSite?.name && `obra ${selectedSite.name}`,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+  })()
+
   return (
     <div className="space-y-3 md:space-y-4">
       {/* Header */}
@@ -990,448 +1077,454 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         </Card>
       </div>
 
-      {/* Dialog */}
+      {/* Formulario del pedido: ventana grande y compacta (pedido de Bautista del 21/10), con las 7 mejoras de la spec 19.3 */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingDispatch ? (soloLectura ? "Ver pedido" : "Editar Despacho") : "Nuevo Despacho Programado"}</DialogTitle>
+        <DialogContent
+          className={cn(
+            "w-[96vw] sm:max-w-[1080px] max-h-[94vh] gap-2 p-4 text-[13px]",
+            "[&_[data-slot=input]]:h-8 [&_[data-slot=input]]:text-[13px] [&_[data-slot=input]]:px-2",
+            "[&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:text-[13px]",
+            "[&_[role=combobox]]:h-8 [&_[role=combobox]]:text-[13px] [&_label]:text-[12px] [&_textarea]:text-[13px] [&_textarea]:min-h-[48px]",
+          )}
+        >
+          <DialogHeader className="space-y-0">
+            <DialogTitle className="text-base">{editingDispatch ? (soloLectura ? "Ver pedido" : "Editar pedido") : "Nuevo pedido"}</DialogTitle>
           </DialogHeader>
           {soloLectura && (
-            <p className="text-xs rounded-md border bg-muted/50 px-3 py-2">
+            <p className="text-xs rounded-md border bg-muted/50 px-3 py-1.5">
               Pedido cargado por {editingDispatch?.created_by || "otra persona"}: lo podés ver, pero no cambiar.
             </p>
           )}
-          <fieldset disabled={soloLectura} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 min-w-0">
-            {/* Selector de planta: siempre visible para ver/elegir a qué planta pertenece el despacho */}
-            <div className="space-y-2">
-              <Label>Planta *</Label>
-              <Select value={form.plant_id} onValueChange={(v) => setForm({ ...form, plant_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar planta" /></SelectTrigger>
-                <SelectContent>
-                  {plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Fecha de Llegada *</Label>
-                <Input type="date" value={form.arrival_date} onChange={(e) => setForm({ ...form, arrival_date: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Hora de Llegada *</Label>
-                <Input type="time" value={form.arrival_time} onChange={(e) => setForm({ ...form, arrival_time: e.target.value, bomba_hora: form.bomba_hora === form.arrival_time ? e.target.value : form.bomba_hora })} />
-              </div>
-            </div>
-
-            {/* Fase 2: cuándo empieza a cargar y si choca en la boca de carga (solo con el interruptor) */}
-            {ve && sugerencia && (
-              <div className={cn("rounded-md border px-3 py-2 text-sm space-y-2", sugerencia.choque ? "border-red-300 bg-red-50" : "bg-muted/40")}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span>Empieza a cargar a las <strong>{format(parseISO(sugerencia.carga), "HH:mm")}</strong> · {sugerencia.viajes} {sugerencia.viajes === 1 ? "viaje" : "viajes"}</span>
-                  <NuevoBadge />
-                </div>
-                {sugerencia.choque && (
-                  <div className="space-y-1.5">
-                    <p className="text-red-700 font-medium flex items-center gap-1"><AlertTriangle className="h-4 w-4" />Choca con {sugerencia.choque} en la boca de carga</p>
-                    <div className="flex gap-2 flex-wrap">
-                      {sugerencia.sug?.antes && <Button type="button" size="sm" variant="outline" className="h-7 bg-background" onClick={() => usarLlegada(sugerencia.sug!.antes!)}>Llegada {format(sugerencia.sug.antes, "HH:mm")} (antes)</Button>}
-                      {sugerencia.sug?.despues && <Button type="button" size="sm" variant="outline" className="h-7 bg-background" onClick={() => usarLlegada(sugerencia.sug!.despues!)}>Llegada {format(sugerencia.sug.despues, "HH:mm")} (después)</Button>}
-                    </div>
+          <fieldset disabled={soloLectura} className="space-y-3 max-h-[68vh] overflow-y-auto pr-1 min-w-0">
+            {/* 1. Cliente y obra arriba: los tiempos del GPS, la llegada sugerida y la bomba dependen de la obra */}
+            <SeccionPedido titulo="Cliente y obra">
+              <div className="grid gap-x-3 gap-y-2 md:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label>Cliente *</Label>
+                    {puede("clientes", "cargar") && !soloLectura && <AddClientDialog
+                      plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
+                      trigger={
+                        <Button type="button" variant="ghost" size="sm" className="h-5 px-1.5 text-[11px]">
+                          <UserPlus className="h-3 w-3 mr-1" />
+                          Agregar
+                        </Button>
+                      }
+                      onClientAdded={(newClient) => {
+                        // "Traer de Zomatik" puede devolver uno que ya estaba: no se repite en la lista
+                        if (!clients.some((c) => c.id === newClient.id)) setClients([...clients, { ...newClient, construction_sites: [] }])
+                        setForm({ ...form, client_id: newClient.id, construction_site_id: "" })
+                      }}
+                    />}
                   </div>
-                )}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Cliente *</Label>
-                {puede("clientes", "cargar") && !soloLectura && <AddClientDialog
-                  plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
-                  trigger={
-                    <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                      <UserPlus className="h-3 w-3 mr-1" />
-                      Agregar
-                    </Button>
-                  }
-                  onClientAdded={(newClient) => {
-                    // "Traer de Zomatik" puede devolver uno que ya estaba: no se repite en la lista
-                    if (!clients.some((c) => c.id === newClient.id)) setClients([...clients, { ...newClient, construction_sites: [] }])
-                    setForm({ ...form, client_id: newClient.id, construction_site_id: "" })
-                  }}
-                />}
-              </div>
-              {/* Regla del 21/10/2026: busca en Rebucret y en Zomatik a la vez (nombre, CUIT, obra, teléfono, alias) */}
-              <BuscadorCliente
-                value={form.client_id}
-                etiqueta={clients.find((c) => c.id === form.client_id)?.name}
-                plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
-                disabled={soloLectura}
-                onElegir={(c) => {
-                  if (!clients.some((x) => x.id === c.id)) setClients([...clients, { ...c, construction_sites: [] } as any])
-                  setForm({ ...form, client_id: c.id, construction_site_id: "" })
-                }}
-              />
-            </div>
-
-            {selectedClient && !selectedClient.cuit && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
-                <p className="text-xs text-amber-800 dark:text-amber-200 font-medium">
-                  Este cliente no tiene CUIT. Agregalo para identificarlo y evitar duplicados.
-                </p>
-                <Input value={cuitPrompt} onChange={(e) => setCuitPrompt(e.target.value)} placeholder="CUIT del cliente" />
-              </div>
-            )}
-
-            {selectedClient && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Obra *</Label>
-                  {puede("clientes", "cargar") && !soloLectura && <AddConstructionSiteDialog
-                    clientId={form.client_id}
-                    trigger={
-                      <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                        <Plus className="h-3 w-3 mr-1" />
-                        Agregar
-                      </Button>
-                    }
-                    onSiteAdded={(newSite) => {
-                      const updatedClients = clients.map(c => {
-                        if (c.id === form.client_id) {
-                          return {
-                            ...c,
-                            construction_sites: [...(c.construction_sites || []), newSite]
-                          }
-                        }
-                        return c
-                      })
-                      setClients(updatedClients)
-                      setForm({ ...form, construction_site_id: newSite.id })
+                  {/* Regla del 21/10/2026: busca en Rebucret y en Zomatik a la vez (nombre, CUIT, obra, teléfono, alias) */}
+                  <BuscadorCliente
+                    value={form.client_id}
+                    etiqueta={clients.find((c) => c.id === form.client_id)?.name}
+                    plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
+                    disabled={soloLectura}
+                    onElegir={(c) => {
+                      if (!clients.some((x) => x.id === c.id)) setClients([...clients, { ...c, construction_sites: [] } as any])
+                      setForm({ ...form, client_id: c.id, construction_site_id: "" })
                     }}
-                  />}
+                  />
+                  {selectedClient && !selectedClient.cuit && (
+                    <div className="flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 dark:bg-amber-950/20">
+                      <span className="shrink-0 text-[11px] font-medium text-amber-800 dark:text-amber-200">Sin CUIT:</span>
+                      <Input value={cuitPrompt} onChange={(e) => setCuitPrompt(e.target.value)} placeholder="CUIT del cliente (para no duplicarlo)" className="bg-background" />
+                    </div>
+                  )}
                 </div>
-                <SearchableSelect
-                  items={(selectedClient.construction_sites || []).map((s) => ({ id: s.id, label: s.name, hint: `${s.travel_time_minutes} min` }))}
-                  value={form.construction_site_id}
-                  onChange={(v) => setForm({ ...form, construction_site_id: v })}
-                  placeholder="Buscar obra..."
-                  emptyText="No hay obras con ese nombre"
-                />
-              </div>
-            )}
-
-            {selectedSite && (
-              <Card className="bg-muted/50">
-                <CardContent className="p-3 text-sm space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    <span>Tiempo viaje: {selectedSite.travel_time_minutes} min | Descarga: {selectedSite.unload_time_minutes} min</span>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <Label>Obra *</Label>
+                    <div className="flex items-center gap-1">
+                      {/* 3. Repetir el último pedido de esta obra */}
+                      {form.construction_site_id && !soloLectura && (
+                        <Button type="button" variant="ghost" size="sm" className="h-5 px-1.5 text-[11px] text-blue-700" disabled={repitiendo} onClick={repetirUltimoPedido}>
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Repetir el último pedido de esta obra
+                        </Button>
+                      )}
+                      {selectedClient && puede("clientes", "cargar") && !soloLectura && <AddConstructionSiteDialog
+                        clientId={form.client_id}
+                        trigger={
+                          <Button type="button" variant="ghost" size="sm" className="h-5 px-1.5 text-[11px]">
+                            <Plus className="h-3 w-3 mr-1" />
+                            Agregar
+                          </Button>
+                        }
+                        onSiteAdded={(newSite) => {
+                          const updatedClients = clients.map(c => {
+                            if (c.id === form.client_id) {
+                              return {
+                                ...c,
+                                construction_sites: [...(c.construction_sites || []), newSite]
+                              }
+                            }
+                            return c
+                          })
+                          setClients(updatedClients)
+                          setForm({ ...form, construction_site_id: newSite.id })
+                        }}
+                      />}
+                    </div>
                   </div>
-                  {selectedSite.requires_pump && (
-                    <div className="flex items-center gap-2 text-yellow-600">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>Requiere bomba</span>
-                    </div>
-                  )}
-                  {selectedSite.reception_hours_start && (
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4" />
-                      <span>Horario: {selectedSite.reception_hours_start?.slice(0, 5)} - {selectedSite.reception_hours_end?.slice(0, 5)}</span>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Fase 2b: obra en el mapa y viaje real desde la planta del pedido (solo con el interruptor) */}
-            {ve && selectedSite && (
-              <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 space-y-2">
-                {selectedSite.gps_lat == null && (
-                  <>
-                    <p className="text-sm font-medium text-amber-800 flex items-center gap-2 flex-wrap">
-                      <MapPin className="h-4 w-4" />
-                      {ubicObra.lat == null ? "Esta obra no está ubicada: buscala en el mapa" : "Obra ubicada: se guarda en la obra al guardar el pedido"}
-                      <NuevoBadge />
+                  <SearchableSelect
+                    items={(selectedClient?.construction_sites || []).map((s) => ({ id: s.id, label: s.name, hint: `${s.travel_time_minutes} min` }))}
+                    value={form.construction_site_id}
+                    onChange={(v) => setForm({ ...form, construction_site_id: v })}
+                    placeholder={selectedClient ? "Buscar obra..." : "Primero elegí el cliente"}
+                    emptyText="No hay obras con ese nombre"
+                    disabled={!selectedClient}
+                  />
+                  {selectedSite && (
+                    <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />Viaje {selectedSite.travel_time_minutes} min · descarga {selectedSite.unload_time_minutes} min</span>
+                      {selectedSite.requires_pump && <span className="inline-flex items-center gap-1 text-yellow-700"><AlertTriangle className="h-3 w-3" />Requiere bomba</span>}
+                      {selectedSite.reception_hours_start && <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3" />Recibe {selectedSite.reception_hours_start?.slice(0, 5)}–{selectedSite.reception_hours_end?.slice(0, 5)}</span>}
                     </p>
-                    <ObraUbicacion
-                      direccion={selectedSite.address || ""}
-                      localidad={selectedSite.localidad || ""}
-                      plantaId={form.plant_id}
-                      valor={ubicObra}
-                      onChange={setUbicObra}
-                    />
-                  </>
-                )}
-                {obraLat != null && (
-                  <p className="text-sm flex items-center gap-2 flex-wrap">
-                    <MapPin className="h-4 w-4 text-violet-700" />
-                    {ruta?.minutos != null
-                      ? <>Viaje estimado desde {ruta.planta}: <strong>{ruta.km} km · {ruta.minutos} min</strong></>
-                      : ruta === null && plantasGps[form.plant_id]?.lat == null ? "La planta no tiene ubicación cargada para calcular el viaje" : "Calculando el viaje..."}
-                    {selectedSite.gps_lat != null && <NuevoBadge />}
-                    {idaGps && <span className="text-xs text-violet-700">· real GPS: {idaGps.min} min ({idaGps.viajes} viajes), se usa ese</span>}
-                  </p>
-                )}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Minutos de viaje de este pedido</Label>
-                    <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setViajeOrigen("a_mano"); setForm({ ...form, viaje_min: e.target.value }) }}
-                      readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
-                      placeholder={tiemposAuto ? `${tiemposAuto.viaje.min} (${textoFuente(tiemposAuto.viaje)})` : `${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
-                    {tiemposAuto && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Se usa: {parseInt(form.viaje_min) > 0
-                          ? `${parseInt(form.viaje_min)} min · ${textoFuente({ fuente: (viajeOrigen || "a_mano") as FuenteTiempo })}`
-                          : `${tiemposAuto.viaje.min} min · ${textoFuente(tiemposAuto.viaje)}`}
-                        {parseInt(form.viaje_min) > 0 && idaGps && parseInt(form.viaje_min) !== idaGps.min ? ` (real GPS: ${idaGps.min} min, ${idaGps.viajes} viajes)` : ""}
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Descarga por camión de 8 m³ (min)</Label>
-                    <Input type="number" min="1" className="bg-background" value={form.descarga_min} onChange={(e) => setForm({ ...form, descarga_min: e.target.value })}
-                      readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
-                      placeholder={tiemposAuto ? `${tiemposAuto.descarga.min} (${tiemposAuto.descarga.fuente === "planta" ? "la de la planta" : textoFuente(tiemposAuto.descarga)})`
-                        : form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
-                    {tiemposAuto && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Se usa: {parseInt(form.descarga_min) > 0 ? `${parseInt(form.descarga_min)} min · cargado a mano` : `${tiemposAuto.descarga.min} min · ${textoFuente(tiemposAuto.descarga)}`}
-                      </p>
-                    )}
-                  </div>
+                  )}
                 </div>
-                {!corrigeTiempos && (
-                  <p className="text-[11px] text-muted-foreground">Los minutos de viaje y de descarga los calcula el sistema con el GPS de los viajes anteriores. Si no te parecen bien, avisale a un gerencial.</p>
-                )}
-                {tiemposAuto && !(parseInt(form.descarga_min) > 0) && textoDescargaObra(tiemposAuto) && (
-                  <p className="text-xs text-violet-800">{textoDescargaObra(tiemposAuto)}.</p>
-                )}
-                {tiemposAuto?.enPlanta.fuente === "gps_planta" && (
-                  <p className="text-xs text-muted-foreground">
-                    Tiempo en planta real ({textoFuente(tiemposAuto.enPlanta)}): {tiemposAuto.enPlanta.min} min = carga {tiemposAuto.enPlanta.carga} + espera {tiemposAuto.enPlanta.espera} antes de volver a cargar.
-                  </p>
-                )}
-                <p className="text-xs text-muted-foreground">El viaje depende de la planta que despacha. La descarga es el dato que marca el ritmo de los camiones: corregila si la obra es más lenta o más rápida.</p>
               </div>
-            )}
 
-            <div className="space-y-2">
-              <Label>Descarga *</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {([["bomba", "Con bomba", "Más rápido: ~15 min por camión"], ["directo", "Directo / canaleta", "~25 min por camión"]] as const).map(([v, l, d]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setForm({ ...form, metodo_descarga: v, bomba_hora: v === "bomba" && !form.bomba_hora ? form.arrival_time : form.bomba_hora })}
-                    className={cn(
-                      "rounded-lg border-2 p-2 text-left transition-colors",
-                      form.metodo_descarga === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
-                    )}
-                  >
-                    <p className="text-sm font-medium">{l}</p>
-                    <p className="text-xs text-muted-foreground">{d}</p>
-                  </button>
-                ))}
-              </div>
-              {!form.metodo_descarga && selectedSite?.requires_pump && (
-                <p className="text-xs text-muted-foreground">Esta obra suele trabajar con bomba.</p>
+              {/* Fase 2b: obra en el mapa y viaje real desde la planta del pedido (solo con el interruptor) */}
+              {ve && selectedSite && (
+                <div className="rounded-md border border-violet-200 bg-violet-50/40 p-2 space-y-1.5">
+                  {selectedSite.gps_lat == null && (
+                    <>
+                      <p className="text-xs font-medium text-amber-800 flex items-center gap-2 flex-wrap">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {ubicObra.lat == null ? "Esta obra no está ubicada: buscala en el mapa" : "Obra ubicada: se guarda en la obra al guardar el pedido"}
+                        <NuevoBadge />
+                      </p>
+                      <ObraUbicacion
+                        direccion={selectedSite.address || ""}
+                        localidad={selectedSite.localidad || ""}
+                        plantaId={form.plant_id}
+                        valor={ubicObra}
+                        onChange={setUbicObra}
+                      />
+                    </>
+                  )}
+                  {obraLat != null && (
+                    <p className="text-xs flex items-center gap-2 flex-wrap">
+                      <MapPin className="h-3.5 w-3.5 text-violet-700" />
+                      {ruta?.minutos != null
+                        ? <>Viaje estimado desde {ruta.planta}: <strong>{ruta.km} km · {ruta.minutos} min</strong></>
+                        : ruta === null && plantasGps[form.plant_id]?.lat == null ? "La planta no tiene ubicación cargada para calcular el viaje" : "Calculando el viaje..."}
+                      {selectedSite.gps_lat != null && <NuevoBadge />}
+                      {idaGps && <span className="text-[11px] text-violet-700">· real GPS: {idaGps.min} min ({idaGps.viajes} viajes), se usa ese</span>}
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-muted-foreground">Minutos de viaje de este pedido</Label>
+                      <Input type="number" min="1" className="bg-background" value={form.viaje_min} onChange={(e) => { setViajeTocado(true); setViajeOrigen("a_mano"); setForm({ ...form, viaje_min: e.target.value }) }}
+                        readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
+                        placeholder={tiemposAuto ? `${tiemposAuto.viaje.min} (${textoFuente(tiemposAuto.viaje)})` : `${selectedSite.travel_time_minutes || 30} (el de la obra)`} />
+                      {tiemposAuto && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Se usa: {parseInt(form.viaje_min) > 0
+                            ? `${parseInt(form.viaje_min)} min · ${textoFuente({ fuente: (viajeOrigen || "a_mano") as FuenteTiempo })}`
+                            : `${tiemposAuto.viaje.min} min · ${textoFuente(tiemposAuto.viaje)}`}
+                          {parseInt(form.viaje_min) > 0 && idaGps && parseInt(form.viaje_min) !== idaGps.min ? ` (real GPS: ${idaGps.min} min, ${idaGps.viajes} viajes)` : ""}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-0.5">
+                      <Label className="text-muted-foreground">Descarga por camión de 8 m³ (min)</Label>
+                      <Input type="number" min="1" className="bg-background" value={form.descarga_min} onChange={(e) => setForm({ ...form, descarga_min: e.target.value })}
+                        readOnly={!corrigeTiempos} disabled={!corrigeTiempos}
+                        placeholder={tiemposAuto ? `${tiemposAuto.descarga.min} (${tiemposAuto.descarga.fuente === "planta" ? "la de la planta" : textoFuente(tiemposAuto.descarga)})`
+                          : form.plant_id && paramsPorPlanta[form.plant_id] ? `${descarga8De({ id: "", plant_id: form.plant_id, quantity_m3: 0, scheduled_arrival_time: "", metodo_descarga: form.metodo_descarga || null }, paramsPorPlanta[form.plant_id])} (la de la planta)` : "La de la planta"} />
+                      {tiemposAuto && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Se usa: {parseInt(form.descarga_min) > 0 ? `${parseInt(form.descarga_min)} min · cargado a mano` : `${tiemposAuto.descarga.min} min · ${textoFuente(tiemposAuto.descarga)}`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {!corrigeTiempos && (
+                    <p className="text-[11px] text-muted-foreground">Los minutos de viaje y de descarga los calcula el sistema con el GPS de los viajes anteriores. Si no te parecen bien, avisale a un gerencial.</p>
+                  )}
+                  {tiemposAuto && !(parseInt(form.descarga_min) > 0) && textoDescargaObra(tiemposAuto) && (
+                    <p className="text-[11px] text-violet-800">{textoDescargaObra(tiemposAuto)}.</p>
+                  )}
+                  {tiemposAuto?.enPlanta.fuente === "gps_planta" && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Tiempo en planta real ({textoFuente(tiemposAuto.enPlanta)}): {tiemposAuto.enPlanta.min} min = carga {tiemposAuto.enPlanta.carga} + espera {tiemposAuto.enPlanta.espera} antes de volver a cargar.
+                    </p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">El viaje depende de la planta que despacha. La descarga es el dato que marca el ritmo de los camiones: corregila si la obra es más lenta o más rápida.</p>
+                </div>
               )}
-            </div>
+            </SeccionPedido>
 
-            {/* Bomba de terceros (fase 1): solo cuando el pedido va con bomba */}
-            {form.metodo_descarga === "bomba" && (
-              <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 space-y-3">
-                <div className="space-y-2">
-                  <Label>¿Quién pone la bomba?</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([["rebucret", "Rebucret la contrata"], ["cliente", "La trae el cliente"]] as const).map(([v, l]) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setForm({ ...form, bomba_la_pone: v, bomba_empresa_id: v === "cliente" ? "" : form.bomba_empresa_id })}
-                        className={cn(
-                          "rounded-lg border-2 p-2 text-left text-sm font-medium transition-colors bg-background",
-                          form.bomba_la_pone === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
-                        )}
-                      >
+            <SeccionPedido titulo="Cuándo">
+              <div className="grid gap-x-3 gap-y-2 grid-cols-2 md:grid-cols-3">
+                {/* Selector de planta: siempre visible para ver/elegir a qué planta pertenece el despacho */}
+                <div className="space-y-1">
+                  <Label>Planta *</Label>
+                  <Select value={form.plant_id} onValueChange={(v) => setForm({ ...form, plant_id: v })}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Seleccionar planta" /></SelectTrigger>
+                    <SelectContent>
+                      {plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Fecha de llegada *</Label>
+                  <Input type="date" value={form.arrival_date} onChange={(e) => setForm({ ...form, arrival_date: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Hora de llegada *</Label>
+                  <Input type="time" value={form.arrival_time} onChange={(e) => setForm({ ...form, arrival_time: e.target.value, bomba_hora: form.bomba_hora === form.arrival_time ? e.target.value : form.bomba_hora })} />
+                </div>
+              </div>
+              {/* Fase 2: cuándo empieza a cargar y si choca en la boca de carga (solo con el interruptor) */}
+              {ve && sugerencia && (
+                <div className={cn("rounded-md border px-2 py-1.5 text-xs space-y-1.5", sugerencia.choque ? "border-red-300 bg-red-50" : "bg-muted/40")}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>Empieza a cargar a las <strong>{format(parseISO(sugerencia.carga), "HH:mm")}</strong> · {sugerencia.viajes} {sugerencia.viajes === 1 ? "viaje" : "viajes"}</span>
+                    <NuevoBadge />
+                  </div>
+                  {sugerencia.choque && (
+                    <div className="space-y-1">
+                      <p className="text-red-700 font-medium flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Choca con {sugerencia.choque} en la boca de carga</p>
+                      <div className="flex gap-2 flex-wrap">
+                        {sugerencia.sug?.antes && <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" onClick={() => usarLlegada(sugerencia.sug!.antes!)}>Llegada {format(sugerencia.sug.antes, "HH:mm")} (antes)</Button>}
+                        {sugerencia.sug?.despues && <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" onClick={() => usarLlegada(sugerencia.sug!.despues!)}>Llegada {format(sugerencia.sug.despues, "HH:mm")} (después)</Button>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </SeccionPedido>
+
+            <SeccionPedido titulo="Hormigón">
+              <div className="grid gap-x-3 gap-y-2 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>Fórmula *</Label>
+                  <FormulaCombobox
+                    formulas={formulas.filter((f) => !form.plant_id || f.plant_id === form.plant_id)}
+                    value={form.formula_id}
+                    onChange={(v) => setForm({ ...form, formula_id: v })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>m³ del pedido *</Label>
+                  <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} placeholder="Ej: 40" />
+                </div>
+                {/* 7. Remito con factura (R) o sin factura (X), al lado de los m³. Por defecto, lo que diga la obra o el cliente */}
+                <div className="space-y-1">
+                  <Label>Remito</Label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {([
+                      ["", `Según ${(selectedSite?.remito_tipo || selectedClient?.remito_tipo) ? `obra/cliente (${selectedSite?.remito_tipo || selectedClient?.remito_tipo})` : "despacho"}`],
+                      ["R", "R · con factura"],
+                      ["X", "X · sin factura"],
+                    ] as const).map(([k, l]) => (
+                      <Button key={k || "segun"} type="button" variant={form.remito_tipo === k ? "default" : "outline"} className="h-8 px-1 whitespace-normal text-[11px] leading-tight"
+                        disabled={soloLectura} onClick={() => setForm({ ...form, remito_tipo: k })}>
                         {l}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {form.bomba_la_pone === "rebucret" && (
-                    <div className="space-y-2">
-                      <Label>Empresa de bomba</Label>
-                      <Select value={form.bomba_empresa_id || "none"} onValueChange={(v) => setForm({ ...form, bomba_empresa_id: v === "none" ? "" : v })}>
-                        <SelectTrigger className="bg-background"><SelectValue placeholder="A confirmar" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">A confirmar</SelectItem>
-                          {empresasBombeo
-                            .filter((e) => e.activo || e.id === form.bomba_empresa_id)
-                            .map((e) => <SelectItem key={e.id} value={e.id}>{e.nombre}{!e.activo ? " (de baja)" : ""}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      {empresasBombeo.filter((e) => e.activo).length === 0 && (
-                        <p className="text-xs text-muted-foreground">Cargá las empresas en Camiones › Bombas.</p>
-                      )}
-                    </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Descarga *</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {([["bomba", "Con bomba", "~15 min por camión"], ["directo", "Directo / canaleta", "~25 min por camión"]] as const).map(([v, l, d]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setForm({ ...form, metodo_descarga: v, bomba_hora: v === "bomba" && !form.bomba_hora ? form.arrival_time : form.bomba_hora })}
+                        className={cn(
+                          "h-8 rounded-md border-2 px-2 text-left transition-colors flex items-center gap-2",
+                          form.metodo_descarga === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
+                        )}
+                      >
+                        <span className="text-[13px] font-medium">{l}</span>
+                        <span className="text-[11px] text-muted-foreground">{d}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {!form.metodo_descarga && selectedSite?.requires_pump && (
+                    <p className="text-[11px] text-muted-foreground">Esta obra suele trabajar con bomba.</p>
                   )}
-                  <div className="space-y-2">
-                    <Label>Hora de la bomba en obra</Label>
-                    <Input type="time" className="bg-background" value={form.bomba_hora || form.arrival_time} onChange={(e) => setForm({ ...form, bomba_hora: e.target.value })} />
-                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">La empresa se puede confirmar el día anterior: la vista Día avisa si falta.</p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Formula *</Label>
-              <FormulaCombobox
-                formulas={formulas.filter((f) => !form.plant_id || f.plant_id === form.plant_id)}
-                value={form.formula_id}
-                onChange={(v) => setForm({ ...form, formula_id: v })}
-              />
-            </div>
-
-            {/* Finalidad (fase 1), opcional, junto a la fórmula */}
-            <div className="space-y-2">
-              <Label>Finalidad</Label>
-              <Select value={form.finalidad || "none"} onValueChange={(v) => setForm({ ...form, finalidad: v === "none" ? "" : v })}>
-                <SelectTrigger><SelectValue placeholder="Sin especificar" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin especificar</SelectItem>
-                  {FINALIDADES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-                  {form.finalidad && !(FINALIDADES as readonly string[]).includes(form.finalidad) && <SelectItem value={form.finalidad}>{form.finalidad}</SelectItem>}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Fase 3: remito con factura (R) o sin factura (X). Por defecto, lo que diga la obra o el cliente */}
-            <div className="space-y-2">
-              <Label>Remito</Label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {([
-                  ["", `Según obra o cliente (${(selectedSite?.remito_tipo || selectedClient?.remito_tipo) === "R" ? "Con factura" : (selectedSite?.remito_tipo || selectedClient?.remito_tipo) === "X" ? "Sin factura" : "se pregunta al despachar"})`],
-                  ["R", "Con factura · R"],
-                  ["X", "Sin factura · X"],
-                ] as const).map(([k, l]) => (
-                  <Button key={k || "segun"} type="button" variant={form.remito_tipo === k ? "default" : "outline"} className="h-auto min-h-10 whitespace-normal text-xs"
-                    disabled={soloLectura} onClick={() => setForm({ ...form, remito_tipo: k })}>
-                    {l}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Cantidad Total (m3) *</Label>
-              <Input type="number" step="0.5" value={form.quantity_m3} onChange={(e) => setForm({ ...form, quantity_m3: e.target.value })} placeholder="Ej: 40" />
-            </div>
-
-            {/* Fase 2: cómo se parte en viajes (solo con el interruptor) */}
-            {ve && (
-              <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 space-y-2">
-                <div className="flex items-center gap-2"><Label>Viajes</Label><NuevoBadge /></div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">m³ por camión</Label>
-                    <Input type="number" step="0.5" min="0.5" className="bg-background" value={form.m3_por_viaje} onChange={(e) => setForm({ ...form, m3_por_viaje: e.target.value })} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Minutos entre camiones</Label>
-                    <Input type="number" min="1" className="bg-background" value={form.espaciado_min} onChange={(e) => setForm({ ...form, espaciado_min: e.target.value })} placeholder="Lo que tarda en descargar" />
-                  </div>
+                {/* Finalidad (fase 1), opcional, junto a la fórmula */}
+                <div className="space-y-1">
+                  <Label>Finalidad</Label>
+                  <Select value={form.finalidad || "none"} onValueChange={(v) => setForm({ ...form, finalidad: v === "none" ? "" : v })}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Sin especificar" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin especificar</SelectItem>
+                      {FINALIDADES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                      {form.finalidad && !(FINALIDADES as readonly string[]).includes(form.finalidad) && <SelectItem value={form.finalidad}>{form.finalidad}</SelectItem>}
+                    </SelectContent>
+                  </Select>
                 </div>
-                {(() => {
-                  // Tiempos reales: m³ por camión habituales de la obra (si tiene un patrón claro y es distinto)
-                  const sug = tiemposAuto ? m3ParaSugerir(tiemposAuto, parseFloat(form.m3_por_viaje)) : null
-                  return sug ? (
-                    <div className="flex items-center gap-2 flex-wrap text-xs text-violet-800">
-                      <span>Esta obra suele llevar <strong>{sug.m3.toLocaleString("es-AR")} m³ por camión</strong> ({sug.viajes} viajes, de {sug.desde.toLocaleString("es-AR")} a {sug.hasta.toLocaleString("es-AR")}).</span>
-                      <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" disabled={soloLectura} onClick={() => setForm({ ...form, m3_por_viaje: String(sug.m3) })}>Usar {sug.m3.toLocaleString("es-AR")} m³</Button>
+              </div>
+
+              {/* Bomba de terceros (fase 1): solo cuando el pedido va con bomba */}
+              {form.metodo_descarga === "bomba" && (
+                <div className="rounded-md border border-sky-200 bg-sky-50/50 p-2">
+                  <div className="grid gap-x-3 gap-y-2 md:grid-cols-3">
+                    <div className="space-y-1">
+                      <Label>¿Quién pone la bomba?</Label>
+                      <div className="grid grid-cols-2 gap-1">
+                        {([["rebucret", "Rebucret la contrata"], ["cliente", "La trae el cliente"]] as const).map(([v, l]) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setForm({ ...form, bomba_la_pone: v, bomba_empresa_id: v === "cliente" ? "" : form.bomba_empresa_id })}
+                            className={cn(
+                              "h-8 rounded-md border-2 px-1.5 text-left text-[12px] font-medium leading-tight transition-colors bg-background",
+                              form.bomba_la_pone === v ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
+                            )}
+                          >
+                            {l}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  ) : null
-                })()}
-                <p className="text-xs text-muted-foreground">Al guardar se arman los viajes. El último camión lleva el resto. Los viajes no tocan stock.</p>
-              </div>
-            )}
+                    {form.bomba_la_pone === "rebucret" && (
+                      <div className="space-y-1">
+                        <Label>Empresa de bomba</Label>
+                        <Select value={form.bomba_empresa_id || "none"} onValueChange={(v) => setForm({ ...form, bomba_empresa_id: v === "none" ? "" : v })}>
+                          <SelectTrigger className="w-full bg-background"><SelectValue placeholder="A confirmar" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">A confirmar</SelectItem>
+                            {empresasBombeo
+                              .filter((e) => e.activo || e.id === form.bomba_empresa_id)
+                              .map((e) => <SelectItem key={e.id} value={e.id}>{e.nombre}{!e.activo ? " (de baja)" : ""}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        {empresasBombeo.filter((e) => e.activo).length === 0 && (
+                          <p className="text-[11px] text-muted-foreground">Cargá las empresas en Camiones › Bombas.</p>
+                        )}
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <Label>Hora de la bomba en obra</Label>
+                      <Input type="time" className="bg-background" value={form.bomba_hora || form.arrival_time} onChange={(e) => setForm({ ...form, bomba_hora: e.target.value })} />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">La empresa se puede confirmar el día anterior: la vista Día avisa si falta.</p>
+                </div>
+              )}
 
-            {/* Fibra: se define en el pedido para que el plantista sepa
-                que ese hormigón la lleva; el valor se propone al cargar cada camión. */}
-            <div className="space-y-2">
-              <Label>Fibra (kg por m3)</Label>
-              <Input
-                type="number"
-                step="0.1"
-                min="0"
-                value={form.fiber_kg_per_m3}
-                onChange={(e) => setForm({ ...form, fiber_kg_per_m3: e.target.value })}
-                placeholder="Dejar vacio si no lleva"
-              />
-              {form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && parseFloat(form.quantity_m3) > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Total estimado del pedido:{" "}
-                  <span className="font-semibold text-foreground">
-                    {(parseFloat(form.fiber_kg_per_m3) * parseFloat(form.quantity_m3)).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
-                  </span>{" "}
-                  ({form.fiber_kg_per_m3} kg/m³ × {form.quantity_m3} m³)
-                </p>
+              {/* Fase 2: cómo se parte en viajes (solo con el interruptor) */}
+              {ve && (
+                <div className="rounded-md border border-violet-200 bg-violet-50/40 p-2 space-y-1.5">
+                  <div className="grid gap-x-3 gap-y-2 grid-cols-2 md:grid-cols-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-muted-foreground">m³ por camión</Label>
+                      <Input type="number" step="0.5" min="0.5" className="bg-background" value={form.m3_por_viaje} onChange={(e) => setForm({ ...form, m3_por_viaje: e.target.value })} />
+                    </div>
+                    <div className="space-y-0.5">
+                      <Label className="text-muted-foreground">Minutos entre camiones</Label>
+                      <Input type="number" min="1" className="bg-background" value={form.espaciado_min} onChange={(e) => setForm({ ...form, espaciado_min: e.target.value })} placeholder="Lo que tarda en descargar" />
+                    </div>
+                    <div className="flex items-end pb-1"><NuevoBadge /></div>
+                  </div>
+                  {(() => {
+                    // Tiempos reales: m³ por camión habituales de la obra (si tiene un patrón claro y es distinto)
+                    const sug = tiemposAuto ? m3ParaSugerir(tiemposAuto, parseFloat(form.m3_por_viaje)) : null
+                    return sug ? (
+                      <div className="flex items-center gap-2 flex-wrap text-[11px] text-violet-800">
+                        <span>Esta obra suele llevar <strong>{sug.m3.toLocaleString("es-AR")} m³ por camión</strong> ({sug.viajes} viajes, de {sug.desde.toLocaleString("es-AR")} a {sug.hasta.toLocaleString("es-AR")}).</span>
+                        <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" disabled={soloLectura} onClick={() => setForm({ ...form, m3_por_viaje: String(sug.m3) })}>Usar {sug.m3.toLocaleString("es-AR")} m³</Button>
+                      </div>
+                    ) : null
+                  })()}
+                  <p className="text-[11px] text-muted-foreground">Al guardar se arman los viajes. El último camión lleva el resto. Los viajes no tocan stock.</p>
+                </div>
+              )}
+            </SeccionPedido>
+
+            {/* Lo menos usado, plegado */}
+            <div className="space-y-1.5">
+              <button type="button" onClick={() => setMasDatos(!masDatos)} className="flex w-full items-center gap-1 border-b pb-0.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                {masDatos ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                Más datos
+                <span className="font-normal normal-case tracking-normal">
+                  {[form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && `fibra ${form.fiber_kg_per_m3} kg/m³`, form.mixer_id && `camión ${mixers.find((m) => m.id === form.mixer_id)?.license_plate || ""}`, form.observations.trim() && "con observaciones"].filter(Boolean).join(" · ") || "(fibra, camión, observaciones)"}
+                </span>
+              </button>
+              {masDatos && (
+                <div className="grid gap-x-3 gap-y-2 md:grid-cols-3">
+                  {/* Fibra: se define en el pedido para que el plantista sepa que ese hormigón la lleva; el valor se propone al cargar cada camión. */}
+                  <div className="space-y-1">
+                    <Label>Fibra (kg por m³)</Label>
+                    <Input type="number" step="0.1" min="0" value={form.fiber_kg_per_m3} onChange={(e) => setForm({ ...form, fiber_kg_per_m3: e.target.value })} placeholder="Dejar vacío si no lleva" />
+                    {form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && parseFloat(form.quantity_m3) > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Total estimado: <span className="font-semibold text-foreground">{(parseFloat(form.fiber_kg_per_m3) * parseFloat(form.quantity_m3)).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg</span> ({form.fiber_kg_per_m3} kg/m³ × {form.quantity_m3} m³)
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Label>Camión (opcional)</Label>
+                      {puede("flota", "cargar") && !soloLectura && <AddMixerDialog
+                        plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
+                        trigger={
+                          <Button type="button" variant="ghost" size="sm" className="h-5 px-1.5 text-[11px]">
+                            <TruckIcon className="h-3 w-3 mr-1" />
+                            Agregar
+                          </Button>
+                        }
+                        onMixerAdded={(newMixer) => {
+                          setMixers([...mixers, { ...newMixer, capacity_m3: 8, status: "available" }])
+                          setForm({ ...form, mixer_id: newMixer.id })
+                        }}
+                      />}
+                    </div>
+                    <Select value={form.mixer_id || "none"} onValueChange={(v) => setForm({ ...form, mixer_id: v === "none" ? "" : v })}>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Asignar después" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Sin asignar</SelectItem>
+                        {/* Todos los activos: el pedido puede ser para otro día, así que uno que ahora está en ruta también sirve */}
+                        {mixers.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>{m.license_plate} ({m.capacity_m3}m3){m.status === "in_transit" ? " (en ruta)" : m.status !== "available" ? " (no disponible)" : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Observaciones</Label>
+                    <Textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} rows={2} />
+                  </div>
+                </div>
               )}
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Camion (opcional)</Label>
-                {puede("flota", "cargar") && !soloLectura && <AddMixerDialog
-                  plantId={form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)}
-                  trigger={
-                    <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                      <TruckIcon className="h-3 w-3 mr-1" />
-                      Agregar
-                    </Button>
-                  }
-                  onMixerAdded={(newMixer) => {
-                    setMixers([...mixers, { ...newMixer, capacity_m3: 8, status: "available" }])
-                    setForm({ ...form, mixer_id: newMixer.id })
-                  }}
-                />}
-              </div>
-              <Select value={form.mixer_id || "none"} onValueChange={(v) => setForm({ ...form, mixer_id: v === "none" ? "" : v })}>
-                <SelectTrigger><SelectValue placeholder="Asignar despues" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin asignar</SelectItem>
-                  {/* Todos los activos: el pedido puede ser para otro día, así que uno que ahora está en ruta también sirve */}
-                  {mixers.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>{m.license_plate} ({m.capacity_m3}m3){m.status === "in_transit" ? " (en ruta)" : m.status !== "available" ? " (no disponible)" : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Observaciones</Label>
-              <Textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} rows={2} />
-            </div>
-            
             {/* Fase 0c-1: el pedido lo carga la persona en sesión (sin selector) */}
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-muted-foreground">
               Programado por: <span className="font-medium text-foreground">{editingDispatch ? editingDispatch.created_by || "-" : currentUserName()}</span>
             </p>
           </fieldset>
 
           {editingDispatch && !soloLectura && <CampoMotivo value={motivo} onChange={setMotivo} ejemplo="Ej: el cliente cambió la hora" />}
 
-          <DialogFooter className="gap-2">
+          {/* 4. Resumen fijo al pie */}
+          <div className="rounded-md bg-muted px-2.5 py-1.5 text-[12px]">
+            {resumenPedido || <span className="text-muted-foreground">El resumen del pedido aparece acá a medida que se completa.</span>}
+          </div>
+          <DialogFooter className="gap-2 sm:items-center">
+            {/* 5. Decir qué falta */}
+            {!soloLectura && faltaPedido.length > 0 && <span className="mr-auto text-[12px] font-medium text-amber-700">Falta: {faltaPedido.join(", ")}</span>}
             {editingDispatch && editingDispatch.status !== "cancelled" && puede("programacion", "borrar") && (
-              <Button variant="destructive" onClick={() => { setCancelar(editingDispatch); setIsDialogOpen(false) }}>
-                Cancelar Despacho
+              <Button variant="destructive" size="sm" onClick={() => { setCancelar(editingDispatch); setIsDialogOpen(false) }}>
+                Cancelar pedido
               </Button>
             )}
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
+            <Button variant="outline" size="sm" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
             {!soloLectura && (
-              <Button onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo))}>
+              <Button size="sm" onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo))}>
                 {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
               </Button>
             )}
