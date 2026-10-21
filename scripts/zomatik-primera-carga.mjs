@@ -33,6 +33,11 @@ const corto = (s, n = 28) => {
  * La transacción la maneja quien llama. Devuelve los conteos.
  */
 export async function primeraCarga(q, { escribir = false, log = console.log } = {}) {
+  const [hay] = await q(`select to_regclass('public.zomatik_clientes') is not null as ok`)
+  if (!hay?.ok) {
+    log("⚠ Falta aplicar la migración 202610211800_zomatik_z0_lecturas.sql.")
+    return null
+  }
   const clientes = await q(`select id, name, razon_social, cuit, zomatik_codigo, zomatik_vinculo from clients where active is not false`)
   const zcli = await q(`select codigo, razon_social, cuit, remitos_r_12m + remitos_x_12m as remitos_12m from zomatik_clientes where estado is null or estado ilike 'activ%'`)
   const formulas = await q(`select f.id, f.name, f.code, coalesce(p.name, '') as planta, f.zomatik_articulo_codigo, f.zomatik_vinculo from formulas f left join plants p on p.id = f.plant_id`)
