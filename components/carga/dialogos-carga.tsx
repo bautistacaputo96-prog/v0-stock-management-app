@@ -193,6 +193,7 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
   const ex = extras.reduce((s, e) => s + Number(e.litros || 0), 0)
   const agua = filas.find((f) => f.salida === "agua")?.real || 0
   const cem = filas.filter((f) => f.salida.startsWith("cemento")).reduce((s, f) => s + Number(f.real || 0), 0)
+  const desp = tiempos.despachado ? new Date(tiempos.despachado).getTime() : null
   const ini = tiempos.inicio ? new Date(tiempos.inicio).getTime() : null, fin = tiempos.fin ? new Date(tiempos.fin).getTime() : null, sal = tiempos.salida ? new Date(tiempos.salida).getTime() : null
   return (
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
@@ -201,7 +202,8 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
         <div className="space-y-2 text-[13px]">
           <div className="rounded-md bg-muted/50 px-2 py-1.5 text-[12.5px]">{cabecera}</div>
           <div className="flex flex-wrap gap-x-4 gap-y-0.5 rounded-md border px-2.5 py-1 text-[12px]">
-            <span><span className="text-muted-foreground">Despachado (remito) </span><b>{hhmm(tiempos.despachado)}</b></span>
+            <span><span className="text-muted-foreground">Despacho (hora fija del remito) </span><b>{hhmm(tiempos.despachado)}</b></span>
+            <span><span className="text-muted-foreground">Espera en cola </span><b>{desp != null && ini != null && ini >= desp - 60000 ? minTxt((ini - desp) / 60000) : "—"}</b></span>
             <span><span className="text-muted-foreground">Inicio de carga </span><b>{hms(tiempos.inicio)}</b></span>
             <span><span className="text-muted-foreground">Fin </span><b>{hms(tiempos.fin)}</b></span>
             <span><span className="text-muted-foreground">Tiempo de carga </span><b>{ini != null && fin != null ? mmss((fin - ini) / 1000) : "—"}</b></span>

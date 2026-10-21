@@ -136,9 +136,11 @@ export function usarPuenteSimulado(o: {
       for (const x of c) {
         let r: Response
         try { r = await fetch(x.ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(x.body) }) } catch { break }
-        if (r.status === 401 || r.status === 403) { sinSesion = true; break }
         if (r.status >= 500) break
         const j = await r.json().catch(() => ({}))
+        // 401 (o 403 porque falta elegir la contraseña): la sesión vuelve, se conserva todo. Otro 403 (sin permiso) es
+        // permanente: se aparta a "rechazados" para no trabar la cola.
+        if (r.status === 401 || (r.status === 403 && /contraseña|sesión/i.test(String(j?.error || "")))) { sinSesion = true; break }
         if (r.ok || j?.duplicado) { subidos.add(x.body.pedido); continue }
         rechazados.push({ ...x, status: r.status, error: String(j?.error || "") })
       }
@@ -331,6 +333,8 @@ export function usarPuenteSimulado(o: {
     await espera(450)
     try {
       await p.cargarYArrancar(ordenPlanta, receta ? huellaReceta(receta) : null, (i) => { setPrep((x) => (x ? { ...x, i: i + 1 } : x)) }, cancelada)
+      // La hora del arranque es la de CARGAR en la planta (no la del permiso): se registra en ese mismo instante
+      void subir(`/api/carga/${k.id}`, { accion: "arranco", contador: s.contador, inicio_plc: s.estado().reloj_plc })
       await espera(450)
       setPrep(null)
       ultimaRef.current = null

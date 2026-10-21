@@ -963,6 +963,17 @@ Sigue abierta 19.12.4: ¿alcanza el indicador en la tarjeta del camión? La reco
    - Sigue valiendo que la NP no se genera desde el despacho ni desde la carga: se genera al programar (19.3).
 3. **Sin internet, sin PIN** (confirma el punto 20.2). La maqueta ya no lo muestra: el primer paso de "Arrancando" sin internet dice que la orden ya bajó y la validó la nube, y que el puente la acepta sin pedir nada extra.
 
+## 22. Respuestas de Bautista (21/10/2026, 5) — mandan sobre lo anterior
+
+1. **La muestra pasa al final de la carga.**
+   - En la Entrega de la pantalla nueva de despacho, **cuando la planta tiene puesto de carga que recibe órdenes**, ya no se carga la muestra (número y asentamiento): queda solo la casilla opcional **"Sacar muestra a este camión"**, que es un aviso para la planta (`cargas.muestra_pedida`). `registrar_despacho` no cambia.
+   - En la pantalla de Carga, al terminar: **"¿Se sacó muestra?" (Sí / No)**. Con Sí se piden el número y el asentamiento medido y se crean las probetas con **el mismo camino que "Agregar muestra después del despacho" del Historial** (`lib/muestra.ts`: marca el despacho y, si no tenía, crea 3 probetas a 7 y 28 días con el moldeo en la fecha del despacho; pide `historial.cargar`). El Historial usa ahora esa misma función. Si el camión tenía la casilla marcada, la pregunta viene destacada. La respuesta queda en `cargas.muestra`.
+   - El trigger `trigger_create_test_cylinders` corre solo al insertar el despacho: por eso las probetas de una muestra que se agrega después las crea esa función, como siempre hizo el Historial.
+   - Si se olvida, se agrega después desde el Historial, igual que hoy.
+   - **Sin cambios:** la pantalla de despacho de siempre, el despacho manual y la Entrega de una planta sin puesto de carga (por ejemplo, Hudson), con su muestra al despachar.
+2. **Tiempos, con la secuencia A** (en la Auditoría de carga y en el reporte de cada carga): despacho (hora fija del remito) · inicio y fin de carga (de la planta) · salida de planta (GPS) · **espera en cola** (despacho → inicio) · tiempo de carga (inicio → fin) · espera hasta salir (fin → salida GPS). La vista `cargas_tiempos` suma `min_espera_cola`.
+3. **Detalles de la segunda revisión:** el inicio de carga se registra cuando la planta aprieta CARGAR (no cuando se pide el permiso); un 403 permanente (sin permiso) no traba la cola sin internet (se aparta; si es la sesión o la contraseña, se conserva); la ruta de recetas saca los repetidos antes de `armar_recetas_puesto`; "Armar las 20 recetas" avisa (y abre la alerta) si una receta que ya estaba leída cambia.
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)
@@ -1002,6 +1013,8 @@ La pantalla de carga está en el sistema con la **planta SIMULADA** hasta ver el
 - **Entrega:** espera el control "En la planta" antes de dejar despachar y descarta respuestas viejas si se cambia de pedido.
 - **Emparejador:** con los mismos dígitos prefiere el remito del mismo tipo (R/X, si la Observación lo dice), después el del mismo camión y después el más cercano en la hora.
 
-**Pruebas:** `npm run test:carga` (34: simulador, control de receta, puente con PARAR mientras arranca, reloj, emparejador con tipo y camión, auditoría, cierre e indicador), más `test:despacho`, `test:gps` y `test:sesion` sin cambios. `tsc` sin errores nuevos (los 17 de siempre) y `next build --webpack` bien.
+**Respuestas del punto 22 (21/10, 5):** la muestra al final de la carga ("Sacar muestra a este camión" en la Entrega y "¿Se sacó muestra?" al terminar, con `lib/muestra.ts`, el mismo camino del Historial), la espera en cola en la Auditoría y el reporte, y los detalles de la segunda revisión. **La migración `202610211800_carga_planta.sql` ya está aplicada en producción (21/10, 11:44, puesto en etapa C, 20 recetas armadas)**: lo nuevo va en **`202610212000_carga_muestra_tiempos.sql`** (NO aplicada; `cargas.muestra_pedida`, `cargas.muestra` y `min_espera_cola`), probada dos veces en `BEGIN … ROLLBACK`. Hay que aplicarla junto con este deploy; mientras tanto la orden sale igual sin el aviso de muestra y la pregunta "¿Se sacó muestra?" no aparece (la muestra se agrega desde el Historial).
+
+**Pruebas:** `npm run test:carga` (36: simulador, control de receta, puente con PARAR mientras arranca, reloj, emparejador con tipo y camión, auditoría, cierre, indicador, tiempos con la espera en cola y la muestra al final), más `test:despacho`, `test:gps` y `test:sesion` sin cambios. `tsc` sin errores nuevos (los 17 de siempre) y `next build --webpack` bien.
 
 **Para después del jueves 23/10:** el adaptador real de Indumix (según el HAR), el servicio del puente en `127.0.0.1:8787` con el permiso de arranque firmado (3.2.3), el alta del puesto con credencial, el latido y "puente caído", la lectura de reportes con hora estimada (10), las 20 recetas reales y su asociación a fórmulas, corregir el despacho de verdad al parar o cancelar, la NP con la rama `loop/zomatik`, y prender el stock con kilos reales cuando lo diga Bautista.

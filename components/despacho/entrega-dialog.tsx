@@ -97,6 +97,7 @@ export function EntregaDialog({
   const [enPlanta, setEnPlanta] = useState<{ simulada: boolean; ctl: ControlReceta } | null>(null)
   const [frenadaOk, setFrenadaOk] = useState(false)
   const [cargandoPlanta, setCargandoPlanta] = useState(false)
+  const [muestraPedida, setMuestraPedida] = useState(false)
   // Cada apertura tiene su número: si se cambia de pedido, la respuesta vieja se descarta
   const vueltaPlanta = useRef(0)
 
@@ -132,7 +133,7 @@ export function EntregaDialog({
     setResuelto({ tipo: null, origen: null })
     setCargando(true)
     const sb = createClient()
-    setEnPlanta(null); setFrenadaOk(false); setCargandoPlanta(true)
+    setEnPlanta(null); setFrenadaOk(false); setCargandoPlanta(true); setMuestraPedida(false)
     const vuelta = ++vueltaPlanta.current
     // Sin puesto de carga en etapa B o C (o sin la migración), no aparece nada y el despacho es el de siempre
     cargarPuesto(sb, planta.id).then(async (pu) => {
@@ -140,6 +141,8 @@ export function EntregaDialog({
       const [ctx, fs] = await Promise.all([cargarContexto(sb, pu!), cargarFormulas(sb, ped.formula_id ? [ped.formula_id] : [])])
       if (vuelta !== vueltaPlanta.current) return
       setEnPlanta({ simulada: pu!.sistema === "simulador", ctl: controlDeFormula(ctx, fs[0] || null) })
+      // La muestra pasa al final de la carga: en este despacho no se carga
+      setForm((f) => (f ? { ...f, muestraOn: false, muestraNum: "", asentamiento: "" } : f))
     }).catch(() => { if (vuelta === vueltaPlanta.current) setEnPlanta(null) })
       .finally(() => { if (vuelta === vueltaPlanta.current) setCargandoPlanta(false) })
     const desde = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString()
@@ -241,7 +244,7 @@ export function EntregaDialog({
       // quedó grabado igual (se avisa).
       if (enPlanta) {
         try {
-          const rc = await fetch("/api/carga/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dispatch_id: r.id, frenada_confirmada: enPlanta.ctl.frena && frenadaOk }) })
+          const rc = await fetch("/api/carga/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dispatch_id: r.id, frenada_confirmada: enPlanta.ctl.frena && frenadaOk, muestra_pedida: muestraPedida }) })
           const jc = await rc.json().catch(() => ({}))
           if (!rc.ok) toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: jc?.error || `Error ${rc.status}` })
           else if (jc.enviada) toast({ title: `Orden en la cola de carga${jc.simulada ? " (planta simulada)" : ""}`, description: jc.frena ? `Va a quedar frenada en la planta. ${jc.mail?.enviado ? "Se avisó por mail a Juan Oreguy." : `No salió el mail (${jc.mail?.motivo || "?"}).`}` : jc.agua_distinta ? "Agua de la receta distinta: no frena, queda en la auditoría." : "La tarjeta del camión dice «En cola de carga · Ver carga»." })
@@ -422,6 +425,13 @@ export function EntregaDialog({
             )}
           </div>
 
+          {enPlanta ? (
+            // Con carga de planta, la muestra se carga al terminar la carga (respuestas 21/10 · 5): acá solo el aviso
+            <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <div><div className="font-bold">Sacar muestra a este camión</div><div className="text-xs text-muted-foreground">Es un aviso para la planta. El número y el asentamiento se cargan al terminar la carga («¿Se sacó muestra?»).</div></div>
+              <Switch checked={muestraPedida} onCheckedChange={setMuestraPedida} />
+            </label>
+          ) : (
           <div className="rounded-lg border px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <div><div className="font-bold">Muestra de probeta</div><div className="text-xs text-muted-foreground">Se extrajo muestra para ensayo de compresión</div></div>
@@ -438,6 +448,7 @@ export function EntregaDialog({
               </div>
             )}
           </div>
+          )}
 
           {err && <div className="rounded-lg bg-red-100 px-3 py-2 text-sm font-semibold text-red-800">{err}</div>}
           {aviso && (

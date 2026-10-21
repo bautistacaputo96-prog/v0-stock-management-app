@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { RefreshCw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { createClient } from "@/lib/supabase/client"
 import { usePermisos } from "@/lib/current-user"
 import { NuevoBadge } from "@/components/nuevo-badge"
@@ -33,6 +34,8 @@ import { AlertasCarga, ResolverDialog } from "./alertas-carga"
 import { RecetasPlanta } from "./recetas-planta"
 import { usarDatosCarga, ESTADOS_COLA, ESTADOS_PLANTA, type AlertaFila, type CargaFila } from "./usar-datos-carga"
 import { usarPuenteSimulado } from "./usar-puente-simulado"
+import { agregarMuestraDespacho, asentamientoValido } from "@/lib/muestra"
+import { logActivity } from "@/lib/activity-log"
 
 type Planta = { id: string; name: string }
 type Tab = "carga" | "recetas" | "alertas"
@@ -46,10 +49,10 @@ export function PantallaCarga({ plants }: { plants: Planta[] }) {
   const { listo, usuario, puede } = usePermisos()
   if (!listo) return null
   if (!usuario?.veFuncionesNuevas) return <SinAcceso texto="La carga de planta está en prueba: por ahora la ven solo los usuarios con las funciones nuevas." />
-  return <Pantalla plants={plants} puedeCargar={puede("carga", "cargar")} puedeEditar={puede("carga", "editar")} puedeResolver={puede("formulas", "editar")} />
+  return <Pantalla plants={plants} puedeCargar={puede("carga", "cargar")} puedeEditar={puede("carga", "editar")} puedeResolver={puede("formulas", "editar")} puedeMuestra={puede("historial", "cargar")} />
 }
 
-function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants: Planta[]; puedeCargar: boolean; puedeEditar: boolean; puedeResolver: boolean }) {
+function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestra }: { plants: Planta[]; puedeCargar: boolean; puedeEditar: boolean; puedeResolver: boolean; puedeMuestra: boolean }) {
   const { toast } = useToast()
   const aviso = useCallback((title: string, description?: string) => toast({ title, description }), [toast])
   const [planta, setPlanta] = useState(() => plants.find((p) => p.name === "Canning")?.id || plants[0]?.id || "")
@@ -76,6 +79,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
   const [resolver, setResolver] = useState<AlertaFila | null>(null)
   const [reporte, setReporte] = useState<{ carga: CargaFila; filas: FilaReporte[] } | null>(null)
   const [humAcopio, setHumAcopio] = useState<number | null>(null)
+  const [muestra, setMuestra] = useState<CargaFila | null>(null)
 
   // Humedad del acopio de la Arena Fina (aviso si difiere de la de Indumix más de 1,5 puntos; no frena)
   useEffect(() => {
@@ -100,6 +104,9 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
   const ultimaCarga = ultimaId ? D.cargas.find((c) => c.id === ultimaId) || null : null
   const elegida = (sel && colaVisible.find((c) => c.id === sel)) || colaVisible[0] || null
   const formulaDe = useCallback((id: string | null) => D.formulas.find((f) => f.id === id) || null, [D.formulas])
+  // "¿Se sacó muestra?" (21/10 · 5): las cargas de hoy terminadas, con despacho, que todavía no tienen respuesta
+  // (solo si la base ya tiene la columna: migración 202610212000)
+  const faltaMuestra = D.cargas.filter((c) => "muestra" in c && c.dispatch_id && !c.muestra && (c.estado === "terminada" || (c.estado === "parada" && c.resolucion?.modo === "sale")))
 
   // Las órdenes que llegan a la PC de la planta: "bajó" (19.6)
   const bajadas = useRef(new Set<string>())
@@ -165,7 +172,8 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
     if (!ctx) return
     const { recetas, mapeo } = recetasIniciales(D.formulas.map((f) => ({ ...f, usos: f.usos || 0 })), ctx.salidas, ctx.materiales)
     const j = await api("/api/carga/recetas", { puesto_id: ctx.puesto.id, leida_at: new Date().toISOString(), recetas, mapeo })
-    if (j) aviso("Recetas del simulador armadas", `${mapeo.filter((m) => m.formula_id).length} fórmulas con número. La 13 es la real de la foto (frena por cemento).`)
+    if (j) aviso(j.cambios ? `Recetas armadas · ${j.cambios} cambiada${j.cambios > 1 ? "s" : ""}` : "Recetas del simulador armadas",
+      j.cambios ? `Cambiaron las recetas ${j.cambiadas.join(", ")} (quedó la versión anterior y la alerta).` : `${mapeo.filter((m) => m.formula_id).length} fórmulas con número. La 13 es la real de la foto (frena por cemento).`)
   }
   async function verReporte(k: CargaFila) {
     const { data } = await createClient().from("cargas_materiales").select("*").eq("carga_id", k.id).eq("ciclo", 0)
@@ -176,6 +184,18 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
       teorico_corregido: m.teorico_corregido == null ? null : Number(m.teorico_corregido), real: m.real == null ? null : Number(m.real), unidad: m.unidad,
     }))
     setReporte({ carga: k, filas })
+  }
+  async function responderMuestra(k: CargaFila, tomada: boolean, datos?: { numero: string; asentamiento: number }) {
+    if (tomada && datos && k.dispatch_id) {
+      // El mismo camino que "Agregar muestra" del Historial: marca el despacho y crea las 3 probetas
+      const r = await agregarMuestraDespacho(createClient(), logActivity, {
+        dispatchId: k.dispatch_id, numero: datos.numero, asentamiento: datos.asentamiento, remito: k.remito, plantId: k.despacho ? planta : null, origen: "Carga de planta (al terminar la carga)",
+      })
+      if (!r.ok) { aviso("No se pudo guardar la muestra", r.error); return false }
+      aviso(`Muestra ${datos.numero} registrada`, r.probetas === "creadas" ? "3 probetas creadas (7 y 28 días)." : "El despacho ya tenía probetas: no se crearon de nuevo.")
+    }
+    const j = await api(`/api/carga/${k.id}`, { accion: "muestra", tomada, numero: datos?.numero, asentamiento: datos?.asentamiento })
+    return !!j
   }
   function aplicarFicha() {
     const s = P.simulador
@@ -349,6 +369,18 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
               {colaVisible.map((k) => <FilaCola key={k.id} k={k} sel={elegida?.id === k.id} ch={chequeo(k)} corriendo={activa?.id === k.id || P.prep?.cargaId === k.id} onClick={() => setSel(k.id)} />)}
               {!colaVisible.length && <div className="py-6 text-center text-[12px] text-muted-foreground">No hay cargas. Llegan desde Despacho al tocar «Despachar»{simulada && enPlanta ? ", o con «Simular… › Orden de prueba»" : ""}.</div>}
               {sinBajar > 0 && <div className="rounded-md bg-amber-50 px-2 py-1 text-[12px] text-amber-900">{sinBajar} despacho{sinBajar > 1 ? "s" : ""} todavía no bajó (sin internet). Cargalo a mano en Indumix con el remito en Observación: el emparejador lo une después.</div>}
+              {faltaMuestra.filter((k) => k.id !== ultimaCarga?.id).length > 0 && (
+                <div className="mt-1 rounded-md border border-dashed px-2 py-1 text-[11.5px]">
+                  <b>Falta responder la muestra</b>
+                  {faltaMuestra.filter((k) => k.id !== ultimaCarga?.id).map((k) => (
+                    <div key={k.id} className="mt-0.5 flex items-center gap-1">
+                      <span className={cn("truncate", k.muestra_pedida && "font-semibold text-amber-800")}>{k.mixers?.license_plate || k.patente_planta} · {k.remito_tipo || ""} {k.remito} · {hhmm(k.fin_at)}{k.muestra_pedida ? " · pidieron muestra" : ""}</span>
+                      <span className="flex-1" />
+                      {puedeMuestra && <><button className="text-blue-800 underline" onClick={() => setMuestra(k)}>Sí</button><button className="text-muted-foreground underline" onClick={() => void responderMuestra(k, false)}>No</button></>}
+                    </div>
+                  ))}
+                </div>
+              )}
               {yaCargadas.map((k) => (
                 <div key={k.id} className="d3c-card rounded-md border border-l-[3px] border-l-slate-500 bg-card px-2 py-1 text-[12px] opacity-80">
                   <b>{k.mixers?.license_plate || k.patente_planta}</b> · remito {k.remito} <Tag tono="slate">Ya cargada en Indumix</Tag>
@@ -404,6 +436,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
                 onSuspender={() => void (e?.suspendida ? P.reanudar() : P.suspender())}
                 onExtra={(k, despues) => setExtra({ carga: k, despues })} onParada={(k, modo) => setParada({ carga: k, modo })}
                 onResolver={setResolver} onReporte={verReporte} onOlvidarUltima={P.olvidarUltima}
+                puedeMuestra={puedeMuestra} onMuestra={(k, si) => { if (si) setMuestra(k); else void responderMuestra(k, false) }}
               />
             </div>
           </section>
@@ -463,6 +496,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver }: { plants:
           onEnviar={async (b) => { const r = await fetch(`/api/carga/alertas/${resolver.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); const j = await r.json().catch(() => ({})); if (!r.ok) { aviso("No se pudo", j?.error); return false } D.leer(); return true }}
           onCerrar={() => setResolver(null)} />
       )}
+      {muestra && <MuestraDialog k={muestra} onGuardar={(d) => responderMuestra(muestra, true, d)} onCerrar={() => setMuestra(null)} />}
       {reporte && (
         <ReporteCarga k={reporte.carga} filas={reporte.filas} extras={D.extras.filter((x) => x.carga_id === reporte.carga.id)} ahora={ahora} onCerrar={() => setReporte(null)} />
       )}
@@ -507,6 +541,7 @@ function PanelDerecho(p: {
   onCargar: (k: CargaFila) => void; onBocina: () => void; onCancelar: (k: CargaFila) => void; onSuspender: () => void
   onExtra: (k: CargaFila, despues: boolean) => void; onParada: (k: CargaFila, modo: ModoParada) => void
   onResolver: (a: AlertaFila) => void; onReporte: (k: CargaFila) => void; onOlvidarUltima: () => void
+  puedeMuestra: boolean; onMuestra: (k: CargaFila, si: boolean) => void
 }) {
   const { ctx, enPlanta, puedeCargar, prep, activa, elegida, estado: e } = p
   const listaExtras = (id: string) => {
@@ -584,6 +619,16 @@ function PanelDerecho(p: {
     <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-[12px]">
       <h3 className="text-[12.5px] font-semibold">{pat(p.ultima)} cargado {hhmm(p.ultima.fin_at)} · esperando que salga (GPS)</h3>
       {listaExtras(p.ultima.id)}
+      {"muestra" in p.ultima && p.ultima.dispatch_id && !p.ultima.muestra && (
+        <div className={cn("mt-1 flex flex-wrap items-center gap-1 rounded-md px-1.5 py-1", p.ultima.muestra_pedida ? "border-2 border-amber-500 bg-amber-50" : "border")}>
+          <b className={cn(p.ultima.muestra_pedida && "text-amber-900")}>¿Se sacó muestra?</b>
+          {p.ultima.muestra_pedida && <span className="text-[11px] font-semibold text-amber-900">Pidieron muestra a este camión.</span>}
+          <span className="flex-1" />
+          {p.puedeMuestra ? <><Btn tono="pri" className="h-[26px] text-[12px]" onClick={() => p.onMuestra(p.ultima!, true)}>Sí</Btn><Btn className="h-[26px] text-[12px]" onClick={() => p.onMuestra(p.ultima!, false)}>No</Btn></>
+            : <span className="text-[11px] text-muted-foreground">La carga quien tiene Historial · cargar.</span>}
+        </div>
+      )}
+      {p.ultima.muestra && <div className="mt-0.5 text-[11.5px]">{p.ultima.muestra.tomada ? `Muestra ${p.ultima.muestra.numero} · asentamiento ${p.ultima.muestra.asentamiento} cm` : "Sin muestra"} · {p.ultima.muestra.por}</div>}
       <div className="mt-1 flex flex-wrap gap-1">
         {enPlanta && <Btn className="border-blue-300 text-blue-800" disabled={!puedeCargar} onClick={() => p.onExtra(p.ultima!, true)}>Extra agua</Btn>}
         <Btn className="h-[26px] text-[12px]" onClick={() => p.onReporte(p.ultima!)}>Ver reporte</Btn>
@@ -657,5 +702,32 @@ function ReporteCarga({ k, filas, extras, ahora, onCerrar }: { k: CargaFila; fil
       tiempos={{ despachado: k.despacho?.created_at || null, inicio: k.inicio_at, fin: k.fin_at || k.parada_at, salida: k.salida_gps || null }}
       banderas={banderas(fila, ahora)} nota={k.resolucion?.efecto?.texto || null} onCerrar={onCerrar}
     />
+  )
+}
+
+/** "¿Se sacó muestra?" › Sí: número y asentamiento medido, como "Agregar muestra" del Historial. */
+function MuestraDialog({ k, onGuardar, onCerrar }: { k: CargaFila; onGuardar: (d: { numero: string; asentamiento: number }) => Promise<boolean>; onCerrar: () => void }) {
+  const [numero, setNumero] = useState("")
+  const [asent, setAsent] = useState("")
+  const [ultima, setUltima] = useState<string | null>(null)
+  const [env, setEnv] = useState(false)
+  useEffect(() => {
+    createClient().from("dispatches").select("sample_number").not("sample_number", "is", null).order("created_at", { ascending: false }).limit(1)
+      .then((r: any) => setUltima(r.data?.[0]?.sample_number || null))
+  }, [])
+  const a = asentamientoValido(asent)
+  return (
+    <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader><DialogTitle>Muestra · {k.mixers?.license_plate || k.patente_planta} · remito {k.remito_tipo || ""} {k.remito}</DialogTitle></DialogHeader>
+        <div className="space-y-2 text-[13px]">
+          {ultima && <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-[12.5px] font-bold text-blue-800">Última muestra: {ultima}</span>}
+          <label className="block text-[11.5px] font-semibold">Número de muestra *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: M-0413" /></label>
+          <label className="block text-[11.5px] font-semibold">Asentamiento medido (cm) *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" inputMode="decimal" value={asent} onChange={(e) => setAsent(e.target.value)} placeholder="Ej: 12,5" /></label>
+          <div className="text-[12px] text-muted-foreground">Se crean 3 probetas (1 a 7 días y 2 a 28) con el moldeo en la fecha del despacho, igual que «Agregar muestra» del Historial.</div>
+        </div>
+        <DialogFooter><Btn onClick={onCerrar} disabled={env}>Cancelar</Btn><Btn tono="pri" disabled={!numero.trim() || a == null || env} onClick={async () => { setEnv(true); const ok = await onGuardar({ numero: numero.trim(), asentamiento: a! }); setEnv(false); if (ok) onCerrar() }}>Guardar muestra</Btn></DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

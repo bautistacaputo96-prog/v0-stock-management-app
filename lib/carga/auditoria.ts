@@ -112,13 +112,20 @@ export function banderas(f: FilaAuditoria, ahora: number, tol?: Record<Grupo, nu
   return b
 }
 
-/** Tiempos de planta (19.6): tiempo de carga y espera hasta salir (GPS). En minutos. */
-export function tiempos(f: Pick<FilaAuditoria, "cargas" | "salida_gps">): { cargaMin: number | null; esperaSalidaMin: number | null } {
-  const c = f.cargas.find((x) => x.inicio_at && x.fin_at) || null
+/**
+ * Tiempos de planta con la secuencia A (19.6 y 21/10 · 5), en minutos:
+ * - espera en cola: del despacho (la hora fija del remito, created_at) al inicio de la carga;
+ * - tiempo de carga: inicio → fin (si se completó con otra carga, hasta el fin de la última);
+ * - espera hasta salir: fin de la carga → salida de la planta por GPS.
+ */
+export function tiempos(f: Pick<FilaAuditoria, "cargas" | "salida_gps"> & { despacho?: Pick<DespachoAuditoria, "despachado_at"> | null }): { colaMin: number | null; cargaMin: number | null; esperaSalidaMin: number | null } {
+  const c = f.cargas.find((x) => x.inicio_at && x.fin_at) || f.cargas.find((x) => x.inicio_at) || null
   const ini = c?.inicio_at ? new Date(c.inicio_at).getTime() : null
   const fin = f.cargas.reduce<number | null>((m, x) => (x.fin_at ? Math.max(m ?? 0, new Date(x.fin_at).getTime()) : m), null)
   const sal = f.salida_gps ? new Date(f.salida_gps).getTime() : null
+  const desp = f.despacho?.despachado_at ? new Date(f.despacho.despachado_at).getTime() : null
   return {
+    colaMin: desp != null && ini != null && ini >= desp - MIN ? (ini - desp) / MIN : null,
     cargaMin: ini != null && fin != null ? (fin - ini) / MIN : null,
     esperaSalidaMin: fin != null && sal != null && sal >= fin - MIN ? (sal - fin) / MIN : null,
   }

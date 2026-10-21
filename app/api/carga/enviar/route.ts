@@ -11,7 +11,9 @@ export const dynamic = "force-dynamic"
  * La llama la Entrega DESPUÉS de que `registrar_despacho` grabó el despacho (remito, stock teórico, probetas, pedido,
  * viaje y camión). Crea la orden `pendiente` (o `bloqueada` si la receta frena) con su dispatch_id.
  *
- * Body: {dispatch_id, frenada_confirmada?: boolean}
+ * Body: {dispatch_id, frenada_confirmada?: boolean, muestra_pedida?: boolean}
+ * - muestra_pedida: la casilla "Sacar muestra a este camión" de la Entrega (solo un aviso: la muestra se carga al
+ *   terminar la carga, respuestas 21/10 · 5).
  * - Si el control de receta frena (cemento, áridos, aditivo o Tolva 1), hace falta `frenada_confirmada` (la casilla
  *   "La carga va a quedar frenada en la planta… ¿Despachar igual?") y se manda el mail a Juan Oreguy (20.1).
  * - El agua distinta no frena: solo queda marcada.
@@ -49,15 +51,19 @@ export async function POST(req: Request) {
     const m3 = Number(desp.quantity_m3) || 0
     const ciclos = Math.max(1, Math.ceil(m3 / puesto!.m3_max_ciclo - 1e-9))
     const patente = desp.mixers?.license_plate || null
-    const { data: carga, error: e2 } = await sb.from("cargas").insert({
+    const fila: Record<string, unknown> = {
       puesto_id: puesto!.id, plant_id: desp.plant_id, estado: ctl.frena ? "bloqueada" : "pendiente", origen: "sistema",
       dispatch_id: dispatchId, pedido_id: desp.scheduled_dispatch_id, remito: desp.remito, remito_tipo: desp.remito_tipo,
       mixer_id: desp.mixer_id, patente_planta: patente ? patenteParaPlanta(patente) : null,
       cliente_planta: String(desp.clients?.name || "").slice(0, 20), observacion_planta: String(desp.remito || "").replace(/\D/g, "").padStart(4, "0"),
       formula_id: desp.formula_id, receta_numero: ctl.numero, receta_planta_id: ctl.receta?.id ?? null, m3, ciclos, m3_ciclo: m3 / ciclos,
       bloqueo: bloqueoDe(ctl), agua_distinta: ctl.aguaDistinta, frenada_confirmada_por: ctl.frena ? r.usuario : null,
-      union_remito: "por id", created_by: r.usuario,
-    }).select("id, simulada").single()
+      union_remito: "por id", created_by: r.usuario, muestra_pedida: body?.muestra_pedida === true,
+    }
+    let ins = await sb.from("cargas").insert(fila).select("id, simulada").single()
+    // Sin la migración 202610212000 todavía no existe muestra_pedida: la orden sale igual, sin el aviso
+    if (ins.error && /muestra_pedida/.test(ins.error.message || "")) { delete fila.muestra_pedida; ins = await sb.from("cargas").insert(fila).select("id, simulada").single() }
+    const { data: carga, error: e2 } = ins
     if (e2) {
       if ((e2 as { code?: string }).code === "23505") return NextResponse.json({ ok: true, enviada: false, motivo: "Ese despacho ya está en la cola de carga." })
       throw e2

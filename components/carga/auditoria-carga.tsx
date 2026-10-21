@@ -147,6 +147,8 @@ function Auditoria({ plants }: { plants: Planta[] }) {
   const agua = useMemo(() => resumenAguaExtra(filas), [filas])
   const conT = filas.map((f) => tiempos(f)).filter((t) => t.cargaMin != null)
   const promCarga = conT.length ? conT.reduce((s, t) => s + (t.cargaMin || 0), 0) / conT.length : null
+  const conC = filas.map((f) => tiempos(f).colaMin).filter((x): x is number => x != null)
+  const promCola = conC.length ? conC.reduce((s, x) => s + x, 0) / conC.length : null
   const conE = filas.map((f) => tiempos(f).esperaSalidaMin).filter((x): x is number => x != null)
   const promEspera = conE.length ? conE.reduce((s, x) => s + x, 0) / conE.length : null
   const nCargas = filas.reduce((s, f) => s + f.cargas.length, 0)
@@ -158,7 +160,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
       return {
         Remito: f.despacho ? `${f.despacho.remito_tipo || ""} ${f.despacho.remito || ""}`.trim() : "sin remito", Camión: f.despacho?.patente || c?.patente_planta || "",
         Despacho: f.despacho ? hhmm(f.despacho.despachado_at) : "", Fórmula: f.despacho?.formula || (c ? extraInfo[c.id]?.formula : "") || "", "m³ remito": f.despacho?.m3 ?? "",
-        "Carga N°": c?.contador ?? "", Inicio: hhmm(c?.inicio_at), Fin: hhmm(c?.fin_at), "Tiempo de carga (min)": t.cargaMin != null ? Math.round(t.cargaMin * 10) / 10 : "",
+        "Carga N°": c?.contador ?? "", "Espera en cola (min)": t.colaMin != null ? Math.round(t.colaMin) : "", Inicio: hhmm(c?.inicio_at), Fin: hhmm(c?.fin_at), "Tiempo de carga (min)": t.cargaMin != null ? Math.round(t.cargaMin * 10) / 10 : "",
         "Salió (GPS)": f.salida_gps ? hhmm(f.salida_gps) : "", "Espera hasta salir (min)": t.esperaSalidaMin != null ? Math.round(t.esperaSalidaMin) : "",
         "m³ carga": f.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0) || "", Receta: c?.receta_numero ?? "", "Agua extra (L)": f.extras.reduce((s, e) => s + e.litros, 0) || "",
         Plantista: c?.plantista || "", Unión: f.union || "", Simulada: c?.simulada ? "sí" : "", Problemas: b.map((x) => NOMBRE_BANDERA[x]).join(", "),
@@ -203,6 +205,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
             <span><span className="text-muted-foreground">Cargas </span><b>{nCargas}</b></span>
             <span><span className="text-muted-foreground">m³ remitos </span><b>{m3t(filas.reduce((s, f) => s + (f.despacho?.m3 || 0), 0))}</b></span>
             <span><span className="text-muted-foreground">m³ cargas </span><b>{m3t(filas.reduce((s, f) => s + f.cargas.reduce((a, c) => a + Number(c.m3_cargados ?? c.m3 ?? 0), 0), 0))}</b></span>
+            <span><span className="text-muted-foreground">Espera en cola prom. </span><b>{promCola != null ? minTxt(promCola) : "—"}</b></span>
             <span><span className="text-muted-foreground">Tiempo de carga prom. </span><b>{promCarga != null ? mmss(promCarga * 60) : "—"}</b></span>
             <span><span className="text-muted-foreground">Espera hasta salir prom. </span><b>{promEspera != null ? `${nf(promEspera, 1)} min` : "—"}</b></span>
             <span><span className="text-muted-foreground">Con problemas </span><b className="text-red-700">{todas.filter((x) => x.b.some((b) => b !== "aguaExtra" && b !== "simulada")).length}</b></span>
@@ -224,7 +227,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
               <table className="w-full min-w-[1180px] border-collapse text-[12px]">
                 <thead><tr className="bg-muted/50 text-left text-[11px] text-muted-foreground">
                   {["Remito", "Camión", "Despacho", "Fórmula", "m³"].map((h) => <th key={h} className={cn("border-b px-1.5 py-0.5 font-semibold", h === "m³" && "text-right")}>{h}</th>)}
-                  {["Carga", "Inicio", "Fin", "Carga", "Salió (GPS)", "Espera", "m³", "Receta", "Agua extra", "Problemas"].map((h, i) => <th key={h + i} className={cn("border-b px-1.5 py-0.5 font-semibold", i === 0 && "border-l-2", [3, 5, 6, 8].includes(i) && "text-right")}>{h}</th>)}
+                  {["Carga", "En cola", "Inicio", "Fin", "Carga", "Salió (GPS)", "Espera salir", "m³", "Receta", "Agua extra", "Problemas"].map((h, i) => <th key={h + i} className={cn("border-b px-1.5 py-0.5 font-semibold", i === 0 && "border-l-2", [1, 4, 6, 7, 9].includes(i) && "text-right")}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {vis.map(({ f, b }, i) => {
@@ -239,6 +242,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
                         <td className="border-b px-1.5 py-0.5">{f.despacho?.formula || (c ? extraInfo[c.id]?.formula : "") || "—"}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{f.despacho ? m3t(f.despacho.m3) : "—"}</td>
                         <td className="border-b border-l-2 px-1.5 py-0.5">{c ? (c.contador ? `N° ${c.contador}` : c.estado) : <span className="font-semibold text-red-700">sin carga</span>}{f.cargas.length > 1 ? ` +${f.cargas.length - 1}` : ""}</td>
+                        <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.colaMin != null ? minTxt(t.colaMin) : ""}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{hhmm(c?.inicio_at)}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{hhmm(c?.fin_at)}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.cargaMin != null ? mmss(t.cargaMin * 60) : "—"}</td>
@@ -251,11 +255,11 @@ function Auditoria({ plants }: { plants: Planta[] }) {
                       </tr>
                     )
                   })}
-                  {!vis.length && <tr><td colSpan={15} className="py-8 text-center text-muted-foreground">No hay cargas{cat ? " con esa categoría" : ""} ese día.</td></tr>}
+                  {!vis.length && <tr><td colSpan={16} className="py-8 text-center text-muted-foreground">No hay cargas{cat ? " con esa categoría" : ""} ese día.</td></tr>}
                 </tbody>
               </table>
             </div>
-            <div className="px-2 py-1 text-[11px] text-muted-foreground">«Despacho» es la hora en que se grabó el remito; «Inicio» y «Fin», las de la carga (hora del puente); «Salió», la salida de la geocerca de la planta por GPS (viajes_gps). Unión: por id (la carga salió del sistema), por remito en «Observación» o por camión y hora. «Sin carga» cuenta solo los días con cargas.</div>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">Secuencia A: despacho → cola → carga → salida. «Despacho» es la hora fija del remito (cuando se grabó); «En cola», del despacho al inicio de la carga; «Inicio» y «Fin», las de la carga (hora del puente); «Salió», la salida de la geocerca de la planta por GPS (viajes_gps). Unión: por id (la carga salió del sistema), por remito en «Observación» o por camión y hora. «Sin carga» cuenta solo los días con cargas.</div>
           </div>
         </>
       )}

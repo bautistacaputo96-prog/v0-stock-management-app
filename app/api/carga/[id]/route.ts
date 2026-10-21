@@ -33,14 +33,16 @@ const PERMISO: Record<string, Accion> = {
   // PARAR no pide permiso (alcanza con ver la pantalla). Lo que sube el puente (terminar) pide cargar mientras no
   // exista la credencial del puesto.
   bajada: "ver", evento: "ver", parar: "ver", no_arranco: "ver", terminar: "cargar",
-  arrancar: "cargar", agua_extra: "cargar", resolver_parada: "cargar", cancelar: "cargar",
+  arrancar: "cargar", arranco: "cargar", agua_extra: "cargar", resolver_parada: "cargar", cancelar: "cargar",
+  // la muestra al terminar la carga pide historial.cargar (como "Agregar muestra" del Historial): se controla aparte
+  muestra: "cargar",
   revisar: "editar",
 }
 /** Los botones de la planta (suspender, reanudar, bocina) piden cargar; el resto de los eventos los sube el puente. */
 const permisoDe = (accion: string, tipo: unknown): Accion =>
   accion === "evento" && ["suspender", "reanudar", "bocina"].includes(String(tipo)) ? "cargar" : PERMISO[accion]
 /** Lo que el puente sube con la etiqueta "sin internet" y que se guarda aunque la orden se haya cancelado mientras */
-const DEL_PUENTE = ["arrancar", "evento", "parar", "terminar", "agua_extra"]
+const DEL_PUENTE = ["arrancar", "arranco", "evento", "parar", "terminar", "agua_extra"]
 const EN_COLA = ["pendiente", "bloqueada", "lista", "preparada"]
 const num = (x: unknown) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x))
 
@@ -52,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const body = await req.json().catch(() => ({}))
     const accion = String(body?.accion || "")
     if (!PERMISO[accion]) return error("Acción desconocida.")
-    const r = await exigirCarga("carga", permisoDe(accion, body?.tipo))
+    const r = accion === "muestra" ? await exigirCarga("historial", "cargar") : await exigirCarga("carga", permisoDe(accion, body?.tipo))
     if (r.respuesta) return r.respuesta
     const sb = sbServicio()
     const { data: c, error: e0 } = await sb.from("cargas").select("*").eq("id", idPedido).maybeSingle()
@@ -113,6 +115,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
         if (!act?.length) return error("Esa carga ya no está en la cola (la arrancaron o la cancelaron).", 409)
         await evento("arranque", { sin_internet: sinInternet, contador: num(body?.contador), receta: num(body?.receta), camion_abajo_at: body?.camion_abajo_at || null })
+        return listo()
+      }
+
+      case "arranco": {
+        // La hora real del arranque: cuando la planta aprieta CARGAR (después de escribir y verificar la orden)
+        await sb.from("cargas").update({ inicio_at: at, contador_planta: num(body?.contador), inicio_plc: body?.inicio_plc ? String(body.inicio_plc).slice(0, 40) : carga.inicio_plc })
+          .eq("id", id).in("estado", ["en_curso", "suspendida"])
+        return listo()
+      }
+
+      case "muestra": {
+        // "¿Se sacó muestra?" al terminar: con Sí, las probetas ya las creó la pantalla con el mismo camino que el
+        // Historial (lib/muestra.ts). Acá solo queda en la carga.
+        if (!["terminada", "parada", "ya_cargada_indumix", "leida"].includes(carga.estado)) return error("La carga todavía no terminó.", 409)
+        const tomada = body?.tomada === true
+        const m = { tomada, numero: tomada ? String(body?.numero || "").slice(0, 40) : null, asentamiento: tomada ? num(body?.asentamiento) : null, por: r.usuario, at }
+        const { error: em } = await upd({ muestra: m })
+        if (em) return error(/muestra/.test(em.message || "") ? "Falta aplicar en la base la migración 202610212000 (muestra al final de la carga). Las probetas ya se crearon en el despacho." : em.message, 409)
+        await evento("muestra", m)
         return listo()
       }
 

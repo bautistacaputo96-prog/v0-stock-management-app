@@ -20,6 +20,7 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
 import { logActivity, logCambio, logDeletion, notifyDeletion } from "@/lib/activity-log"
+import { agregarMuestraDespacho } from "@/lib/muestra"
 import { currentUserName, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { es } from "date-fns/locale"
@@ -777,21 +778,6 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
     if (existingDispatch) {
       dispatchId = existingDispatch.id
-      // Update existing dispatch
-      const { error } = await supabase
-        .from("dispatches")
-        .update({
-          sample_taken: true,
-          sample_number: sampleNumber.trim(),
-          actual_slump_cm: slumpValue,
-        })
-        .eq("id", sampleDispatch.id)
-
-      if (error) {
-        toast({ title: "Error", description: "No se pudo guardar la muestra", variant: "destructive" })
-        setSaving(false)
-        return
-      }
     } else {
       // This is a scheduled_dispatch, we need to find the linked dispatch
       const { data: scheduledDispatch } = await supabase
@@ -802,21 +788,6 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
 
       if (scheduledDispatch?.dispatch_id) {
         dispatchId = scheduledDispatch.dispatch_id
-        // Update the linked dispatch
-        const { error } = await supabase
-          .from("dispatches")
-          .update({
-            sample_taken: true,
-            sample_number: sampleNumber.trim(),
-            actual_slump_cm: slumpValue,
-          })
-          .eq("id", scheduledDispatch.dispatch_id)
-
-        if (error) {
-          toast({ title: "Error", description: "No se pudo guardar la muestra", variant: "destructive" })
-          setSaving(false)
-          return
-        }
       } else {
         toast({ title: "Error", description: "Este despacho no tiene un registro de entrega asociado", variant: "destructive" })
         setSaving(false)
@@ -824,63 +795,18 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       }
     }
 
-    // Create test cylinders if dispatch was found and updated
+    // Marca el despacho, crea las 3 probetas (si no tenía) y deja Actividad. El mismo camino usa la pantalla de Carga.
     if (dispatchId) {
-      // Check if cylinders already exist
-      const { data: existingCylinders } = await supabase
-        .from("test_cylinders")
-        .select("id")
-        .eq("dispatch_id", dispatchId)
-        .limit(1)
-
-      const yaTenia = !!existingCylinders && existingCylinders.length > 0
-      if (!yaTenia) {
-        // El moldeo es siempre la fecha del despacho: la rotura se programa desde
-        // ahí, no desde el día en que se registra la muestra (que puede ser semanas después).
-        const { data: dRow } = await supabase.from("dispatches").select("dispatch_date").eq("id", dispatchId).single()
-        const moldeo = dRow?.dispatch_date ? parseISO(dRow.dispatch_date) : new Date()
-        const cylinders = [
-          {
-            dispatch_id: dispatchId,
-            cylinder_number: 1,
-            test_age_days: 7,
-            scheduled_test_date: format(addDays(moldeo, 7), "yyyy-MM-dd"),
-          },
-          {
-            dispatch_id: dispatchId,
-            cylinder_number: 2,
-            test_age_days: 28,
-            scheduled_test_date: format(addDays(moldeo, 28), "yyyy-MM-dd"),
-          },
-          {
-            dispatch_id: dispatchId,
-            cylinder_number: 3,
-            test_age_days: 28,
-            scheduled_test_date: format(addDays(moldeo, 28), "yyyy-MM-dd"),
-          },
-        ]
-
-        const { error: cylindersError } = await supabase.from("test_cylinders").insert(cylinders)
-        if (cylindersError) {
-          console.error("Error creating test cylinders:", cylindersError)
-        }
-      }
-
-      toast({ title: "Muestra registrada", description: `Muestra ${sampleNumber} con 3 probetas creadas` })
-      // Fase 0c-1: "agregar muestra después del despacho" queda en Actividad
-      logActivity({
-        action: "editar",
-        entity: "despacho",
-        entityId: dispatchId,
-        reference: sampleDispatch.remito || null,
-        plantId: sampleDispatch.plant_id || null,
-        details: {
-          Muestra: sampleNumber.trim(),
-          "Asentamiento (cm)": slumpValue,
-          Probetas: yaTenia ? "ya tenía (no se crearon)" : "3 creadas (7 y 28 días)",
-          Origen: "Agregar muestra (Historial)",
-        },
+      const r = await agregarMuestraDespacho(supabase, logActivity, {
+        dispatchId, numero: sampleNumber, asentamiento: slumpValue, remito: sampleDispatch.remito || null,
+        plantId: sampleDispatch.plant_id || null, origen: "Agregar muestra (Historial)",
       })
+      if (!r.ok) {
+        toast({ title: "Error", description: r.error, variant: "destructive" })
+        setSaving(false)
+        return
+      }
+      toast({ title: "Muestra registrada", description: `Muestra ${sampleNumber} con 3 probetas creadas` })
       setSampleDispatch(null)
       loadData()
     }

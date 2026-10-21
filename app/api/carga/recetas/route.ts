@@ -49,20 +49,40 @@ export async function POST(req: Request) {
     // "Armar las 20 recetas" (con mapeo): todo junto en una función de la base, o todo o nada
     if (Array.isArray(body?.mapeo)) {
       if (!puedeCon(r.sesion.usuario, "carga", "editar")) return error("Asignar fórmulas a las recetas pide Carga · editar.", 403)
+      // Se sacan los repetidos antes de llamar a la base: un número una sola vez y una fórmula en un solo número (queda
+      // el primero)
+      const numeros = new Set<number>(), formulasVistas = new Set<string>()
       const filas = (body.mapeo as { numero: number; formula_id: string | null; tipo: string }[])
         .filter((m) => Number(m.numero) >= 1 && Number(m.numero) <= puesto.max_recetas)
         .map((m) => ({ numero: Number(m.numero), formula_id: m.formula_id || null, tipo: m.tipo === "rotativa" ? "rotativa" : "fija" }))
-      const vistos = new Set<string>()
-      for (const f of filas) if (f.formula_id) { if (vistos.has(f.formula_id)) return error("Una fórmula va en un solo número."); vistos.add(f.formula_id) }
+        .filter((m) => {
+          if (numeros.has(m.numero)) return false
+          numeros.add(m.numero)
+          if (m.formula_id) { if (formulasVistas.has(m.formula_id)) return false; formulasVistas.add(m.formula_id) }
+          return true
+        })
+      const unicas = [...new Map(limpias.map((x) => [x.numero, x])).values()]
+      // Avisar si alguna receta que ya estaba leída cambia con el armado
+      const { data: antes } = await sb.from("recetas_planta_actual").select("*").eq("puesto_id", puesto.id)
+      const previas = new Map(((antes || []) as Record<string, unknown>[]).map((x) => { const rl = aRecetaLeida(x); return [rl.numero, rl] as const }))
+      const cambiadas = unicas.filter((x) => { const a = previas.get(x.numero); return !!a && a.huella !== huellaReceta(x) })
       const { data: res, error: ea } = await sb.rpc("armar_recetas_puesto", {
-        p_puesto: puesto.id, p_mapeo: filas, p_recetas: limpias.map((x) => ({ ...x, huella: huellaReceta(x) })), p_usuario: r.usuario, p_leida: leida,
+        p_puesto: puesto.id, p_mapeo: filas, p_recetas: unicas.map((x) => ({ ...x, huella: huellaReceta(x) })), p_usuario: r.usuario, p_leida: leida,
       })
       if (ea) throw ea
+      for (const x of cambiadas) {
+        const a = previas.get(x.numero)!
+        await sb.from("alertas_carga").insert({
+          puesto_id: puesto.id, tipo: "receta_cambiada", receta_numero: x.numero,
+          titulo: `La receta ${x.numero} cambió al armar las recetas (${hhmmAR(a.ultima_lectura_at)} → ${hhmmAR(leida)})`,
+          detalle: { diferencias: diferenciasReceta(a, x), anterior_id: a.id, simulada: puesto.sistema === "simulador", nota: "Se guardó la versión anterior." },
+        })
+      }
       await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: puesto.id, reference: puesto.nombre, details: { "Recetas de la planta": `${filas.filter((f) => f.formula_id).length} fórmulas asignadas a números`, Recetas: String((res as any)?.recetas ?? "") } })
       const ctx = await contextoServidor(puesto)
       const al = await sincronizarAlertasReceta(ctx, leida)
       const recalculadas = await recalcularBloqueos(ctx)
-      return NextResponse.json({ ok: true, nuevas: (res as any)?.recetas ?? 0, cambios: 0, mapeo: true, alertas: al, recalculadas })
+      return NextResponse.json({ ok: true, nuevas: (res as any)?.recetas ?? 0, cambios: cambiadas.length, cambiadas: cambiadas.map((x) => x.numero), mapeo: true, alertas: al, recalculadas })
     }
 
     // Recetas leídas: versiones nuevas y avisos de cambio

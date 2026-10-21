@@ -44,6 +44,9 @@ export type CargaFila = {
   resolucion: { modo: string; motivo: string; por: string; at: string; efecto?: { texto: string } } | null
   union_remito: string | null
   estado_auditoria: string | null
+  /** "Sacar muestra a este camión" (aviso de la Entrega) y la respuesta al terminar */
+  muestra_pedida: boolean
+  muestra: { tomada: boolean; numero: string | null; asentamiento: number | null; por: string; at: string } | null
   created_by: string | null
   created_at: string
   formulas?: { code: string } | null
