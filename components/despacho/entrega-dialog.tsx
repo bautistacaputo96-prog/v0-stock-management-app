@@ -26,6 +26,8 @@ import {
   TIPO_TEXTO, validarEntrega, type AvisoRemito, type FormEntrega, type OrigenTipo, type RemitoHist, type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
+import { cargarContexto, cargarFormulas, cargarPuesto, controlDeFormula, mandaOrdenes } from "@/lib/carga/datos"
+import type { ControlReceta } from "@/lib/carga/receta"
 import type { CamionT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 
 export type EntregaAbierta = { pedido: PedidoT; viajeClave: string | null; camionId: string }
@@ -91,6 +93,9 @@ export function EntregaDialog({
   const [imprimirPend, setImprimirPend] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const ahoraAbierto = useRef(Date.now())
+  // Carga de planta (en prueba): control de receta "En la planta" y la orden a la cola de carga (carga-planta.md 19.2)
+  const [enPlanta, setEnPlanta] = useState<{ simulada: boolean; ctl: ControlReceta } | null>(null)
+  const [frenadaOk, setFrenadaOk] = useState(false)
 
   const pend = useMemo(() => (p ? pendientes(viajes.filter((v) => v.pedido_id === p.id)) as ViajeT[] : []), [p, viajes])
   const camion = (id: string) => camiones.find((c) => c.id === id) || null
@@ -124,6 +129,13 @@ export function EntregaDialog({
     setResuelto({ tipo: null, origen: null })
     setCargando(true)
     const sb = createClient()
+    setEnPlanta(null); setFrenadaOk(false)
+    // Sin puesto de carga en etapa B o C (o sin la migración), no aparece nada y el despacho es el de siempre
+    cargarPuesto(sb, planta.id).then(async (pu) => {
+      if (!mandaOrdenes(pu)) return
+      const [ctx, fs] = await Promise.all([cargarContexto(sb, pu!), cargarFormulas(sb, ped.formula_id ? [ped.formula_id] : [])])
+      setEnPlanta({ simulada: pu!.sistema === "simulador", ctl: controlDeFormula(ctx, fs[0] || null) })
+    }).catch(() => setEnPlanta(null))
     const desde = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString()
     Promise.all([
       sb.rpc("remito_tipo_para", { p_pedido_id: ped.id }).then((r: any) => (r.error ? null : r.data)),
@@ -157,6 +169,8 @@ export function EntregaDialog({
   const sinDefinir = !resuelto.tipo
   const preguntando = !form.tipo || form.origenTipo === "pregunta" || cambiando
   const m3n = num(form.m3), fibra = num(form.fibraKgM3)
+  // Con la receta que frena la carga, hay que tildar "¿Despachar igual?" (carga-planta.md 20.1)
+  const frenadaFalta = !!enPlanta?.ctl.frena && !frenadaOk
 
   function elegirTipo(t: TipoRemito) {
     const origen: OrigenTipo = sinDefinir ? "pregunta" : "manual"
@@ -217,6 +231,18 @@ export function EntregaDialog({
       }
       const tipo = (r.remito_tipo || form.tipo)!
       const restante = Math.max(0, r.restante ?? falta - m3n)
+      // Como Loop: Despachar también manda la orden a la cola de carga de la PC de la planta. Si falla, el despacho ya
+      // quedó grabado igual (se avisa).
+      if (enPlanta) {
+        try {
+          const rc = await fetch("/api/carga/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dispatch_id: r.id, frenada_confirmada: enPlanta.ctl.frena && frenadaOk }) })
+          const jc = await rc.json().catch(() => ({}))
+          if (!rc.ok) toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: jc?.error || `Error ${rc.status}` })
+          else if (jc.enviada) toast({ title: `Orden en la cola de carga${jc.simulada ? " (planta simulada)" : ""}`, description: jc.frena ? `Va a quedar frenada en la planta. ${jc.mail?.enviado ? "Se avisó por mail a Juan Oreguy." : `No salió el mail (${jc.mail?.motivo || "?"}).`}` : jc.agua_distinta ? "Agua de la receta distinta: no frena, queda en la auditoría." : "La tarjeta del camión dice «En cola de carga · Ver carga»." })
+        } catch {
+          toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: "Sin conexión con el sistema." })
+        }
+      }
       toast({
         title: `Camión despachado · Remito ${tipo} ${form.remito.trim()}`,
         description: `${cam?.patente || ""} sale con ${m3txt(m3n)} m³ · ${r.completo || restante <= 0.01 ? "Pedido completo" : `falta ${m3txt(restante)} m³`}${form.origenTipo === "pregunta" ? ` · ${TIPO_TEXTO[tipo]} queda para todo el día de ${p.clients?.name || "este cliente"}` : ""}${av && avisoAceptado ? " · aviso de remito aceptado (queda en Actividad)" : ""}`,
@@ -286,6 +312,27 @@ export function EntregaDialog({
               {cambiando && <button className="mt-1.5 text-[13px] underline" onClick={noCambiar}>No cambiar</button>}
             </div>
           )}
+
+          {enPlanta && (() => {
+            const c = enPlanta.ctl
+            const items = c.items.filter((i) => ["receta", "agua", "tolva"].includes(i.clave))
+            return (
+              <div className="space-y-1.5">
+                <div className={cn("flex flex-wrap items-center gap-1.5 rounded-lg border border-l-[3px] px-2.5 py-1.5 text-[12.5px]", c.frena ? "border-l-red-600 bg-red-50" : c.aguaDistinta ? "border-l-amber-500" : "border-l-emerald-500")}>
+                  <b>En la planta</b>
+                  {items.map((i) => <span key={i.clave + i.corto} title={i.texto} className={cn("rounded px-1 text-[11px] font-semibold", !i.ok ? "bg-red-100 text-red-800" : i.aviso ? "bg-amber-100 text-amber-900" : "bg-emerald-50 text-emerald-800")}>{i.corto} {!i.ok ? "✕" : i.aviso ? "!" : "✓"}</span>)}
+                  {enPlanta.simulada && <span className="rounded bg-amber-100 px-1 text-[11px] font-semibold text-amber-900">planta simulada</span>}
+                  <span className="text-[11px] text-muted-foreground">NP: se controla cuando esté Zomatik</span>
+                </div>
+                {c.frena ? (
+                  <label className="flex items-start gap-2 rounded-lg border border-red-300 px-2.5 py-1.5 text-[12.5px]">
+                    <input type="checkbox" className="mt-0.5 h-4 w-4" checked={frenadaOk} onChange={(e) => setFrenadaOk(e.target.checked)} />
+                    <span><b>La carga va a quedar frenada en la planta</b>: {c.motivo}. Lo resuelven Bautista, Fernando y Juan; se le avisa por mail a Juan Oreguy. ¿Despachar igual?</span>
+                  </label>
+                ) : c.aguaDistinta ? <div className="text-[12px] font-semibold text-amber-800">{c.items.find((i) => i.clave === "agua")?.texto}.</div> : null}
+              </div>
+            )
+          })()}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -396,8 +443,8 @@ export function EntregaDialog({
         </div>
         <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" className="h-11" onClick={onClose} disabled={enviando}>Cancelar</Button>
-          <Button variant="outline" className="h-11" onClick={() => despachar(true)} disabled={enviando || cargando}>🖨 Despachar e imprimir</Button>
-          <Button className="h-11 bg-green-600 hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando}>
+          <Button variant="outline" className="h-11" onClick={() => despachar(true)} disabled={enviando || cargando || frenadaFalta}>🖨 Despachar e imprimir</Button>
+          <Button className="h-11 bg-green-600 hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || frenadaFalta}>
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Despachar"}
           </Button>
         </DialogFooter>

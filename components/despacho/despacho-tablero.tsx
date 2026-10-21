@@ -37,6 +37,7 @@ import {
   type DespachoCamion, type GpsCamion, type MixerDia, type MotivoTipo, type Puntualidad, type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
+import { indicadoresPorCamion, type Indicador } from "@/lib/carga/indicador"
 import { ContadoresDia } from "./contadores-dia"
 import { ColumnaViajes, FantasmaViaje } from "./columna-viajes"
 import { ColumnaCamiones, type FiltroCamion } from "./columna-camiones"
@@ -224,6 +225,26 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 60_000)
     return () => clearInterval(t)
   }, [cargarGps])
+
+  // Carga de planta (en prueba): el indicador chico en la tarjeta del camión, cada 10 s. Sin la migración, nada.
+  const [cargasCamion, setCargasCamion] = useState<Record<string, Indicador>>({})
+  const cargarCargas = useCallback(async () => {
+    if (!planta) return
+    const sb = createClient()
+    const { data, error } = await sb.from("cargas")
+      .select("id, puesto_id, mixer_id, estado, ciclo_actual, ciclos, fin_at, created_at, completa_carga_id, simulada, bloqueo, resolucion, dispatch_id")
+      .eq("plant_id", planta).gte("created_at", new Date(Date.now() - 14 * 3600_000).toISOString())
+    if (error || !data) { setCargasCamion({}); return }
+    const ids = (data as any[]).map((c) => c.dispatch_id).filter(Boolean)
+    const { data: g } = ids.length ? await sb.from("viajes_gps").select("dispatch_id, salida_planta").in("dispatch_id", ids) : { data: [] }
+    const sal = new Map(((g || []) as any[]).map((x) => [x.dispatch_id, x.salida_planta]))
+    setCargasCamion(indicadoresPorCamion((data as any[]).map((c) => ({ ...c, resolucion_modo: c.resolucion?.modo || null, salida_gps: c.dispatch_id ? sal.get(c.dispatch_id) || null : null })), Date.now()))
+  }, [planta])
+  useEffect(() => {
+    cargarCargas()
+    const t = setInterval(() => { if (document.visibilityState === "visible") cargarCargas() }, 10_000)
+    return () => clearInterval(t)
+  }, [cargarCargas])
 
   // ── Derivados ──
   const prmDePlanta = useCallback((id: string) => (plantasFull[id] ? parametrosDePlanta(plantasFull[id]) : PARAMETROS_BASE), [plantasFull])
@@ -430,6 +451,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     setNueva(r.id)
     setTimeout(() => setNueva(null), 4000)
     cargar()
+    cargarCargas()
   }
 
   // ── Camión: volvió, taller, disponible ──
@@ -576,6 +598,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         camiones={camiones} planta={planta} plantas={plants} filtro={filtroCam} setFiltro={setFiltroCam} ahora={ahora}
         puedeDespachar={puedeDespachar} hayViajeElegido={!!selViaje || !!arrastre.fantasma} sobre={arrastre.sobre}
         onTocar={tocarCamion} onVolvio={volvio} onTaller={(id) => { setNotaTaller(""); setTaller(id) }} onDisponible={disponible}
+        cargas={cargasCamion}
       />
     ),
     pedidos: (

@@ -3,6 +3,7 @@
 /** Columna Camiones, compacta: dos líneas por camión (patente, estado y tiempo / destino, chofer, ciclo y fuente). */
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { duracion, hhmm, textoFuenteEstado } from "@/lib/despacho"
+import type { Indicador } from "@/lib/carga/indicador"
 import { cn } from "@/lib/utils"
 import type { CamionT, Planta } from "./tipos"
 
@@ -17,10 +18,14 @@ const ETIQUETA: Record<string, string> = {
   taller: "bg-slate-200 text-slate-800", fuera: "bg-slate-100 text-slate-700",
 }
 export const COLOR_ESTADO = ETIQUETA
+/** Indicador de la carga de planta (en prueba): chico, con link "Ver carga" (carga-planta.md 19.2) */
+const TONO_CARGA: Record<Indicador["tono"], string> = {
+  violet: "bg-violet-50 text-violet-800", bad: "bg-red-50 text-red-700", blue: "bg-blue-50 text-blue-800", dark: "bg-slate-800 text-white", warn: "bg-amber-50 text-amber-900",
+}
 
 export function ColumnaCamiones({
   camiones, planta, plantas, filtro, setFiltro, ahora, puedeDespachar, hayViajeElegido, sobre,
-  onTocar, onVolvio, onTaller, onDisponible,
+  onTocar, onVolvio, onTaller, onDisponible, cargas,
 }: {
   camiones: CamionT[]
   planta: string
@@ -36,6 +41,8 @@ export function ColumnaCamiones({
   onVolvio: (id: string) => void
   onTaller: (id: string) => void
   onDisponible: (id: string) => void
+  /** carga de planta por camión (solo con el interruptor de funciones nuevas y la migración aplicada) */
+  cargas?: Record<string, Indicador>
 }) {
   const nombre = (id: string | null) => plantas.find((p) => p.id === id)?.name || "planta"
   const libresAca = camiones.filter((c) => c.e.clave === "planta" && c.e.plantaId === planta).length
@@ -100,6 +107,12 @@ export function ColumnaCamiones({
                     {e.probableObra ? " (obra sin ubicar)" : ""}
                     {e.llegando ? " · debería estar llegando" : ""}
                   </div>
+                  {cargas?.[c.id] && (
+                    <div className="mt-px flex items-center gap-1.5 text-[11px]">
+                      <span className={cn("d3c-tag truncate rounded px-1 text-[10.5px] font-semibold leading-4", TONO_CARGA[cargas[c.id].tono])}>{cargas[c.id].texto}{cargas[c.id].simulada ? " · simulada" : ""}</span>
+                      <a href={`/carga?carga=${cargas[c.id].cargaId}`} className="shrink-0 text-[11px] text-blue-800 underline">Ver carga</a>
+                    </div>
+                  )}
                 </div>
                 {puedeDespachar && e.preguntarVolvio && (
                   <button className="h-8 shrink-0 rounded-md border border-amber-400 bg-amber-50 px-2 text-xs font-medium text-amber-900" onClick={() => onVolvio(c.id)} title="Ya debería estar en planta">¿Volvió?</button>

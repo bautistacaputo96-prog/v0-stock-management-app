@@ -53,6 +53,8 @@ const dispatchSubItems = [
   { href: "/programacion", label: "Programacion" },
   { href: "/plantista", label: "Despacho Diario" },
   { href: "/historial-despachos", label: "Historial" },
+  // Carga de planta (en prueba, planta simulada): solo con el interruptor de funciones nuevas
+  { href: "/carga", label: "Carga de planta", soloNuevas: true },
 ]
 
 const qualitySubItems = [
@@ -67,7 +69,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [dispatchOpen, setDispatchOpen] = useState(
     pathname.startsWith("/programacion") || 
     pathname.startsWith("/plantista") || 
-    pathname.startsWith("/historial-despachos")
+    pathname.startsWith("/historial-despachos") ||
+    pathname.startsWith("/carga")
   )
   const [logisticaOpen, setLogisticaOpen] = useState(pathname.startsWith("/logistica"))
   const [collapsed, setCollapsed] = useState(false)
@@ -83,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return !s || puede(s, "ver")
   }
   const navItems = mainNavItems.filter((i) => veRuta(i.href))
-  const dispatchItems = dispatchSubItems.filter((i) => veRuta(i.href))
+  const dispatchItems = dispatchSubItems.filter((i) => veRuta(i.href) && (!i.soloNuevas || usuario?.veFuncionesNuevas === true))
   const veCalidad = veRuta("/calidad")
 
   function handleLogout() {
@@ -162,7 +165,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         onClick={() => setDispatchOpen(!dispatchOpen)}
         className={cn(
           "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors w-full text-left",
-          (pathname.startsWith("/programacion") || pathname.startsWith("/plantista") || pathname.startsWith("/historial-despachos"))
+          (pathname.startsWith("/programacion") || pathname.startsWith("/plantista") || pathname.startsWith("/historial-despachos") || pathname.startsWith("/carga"))
             ? "bg-[#1e293b] text-white"
             : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
         )}
@@ -333,7 +336,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 href={dispatchItems[0].href}
                 className={cn(
                   "flex items-center justify-center rounded-md p-2.5 transition-colors",
-                  (pathname.startsWith("/programacion") || pathname.startsWith("/plantista") || pathname.startsWith("/historial-despachos"))
+                  (pathname.startsWith("/programacion") || pathname.startsWith("/plantista") || pathname.startsWith("/historial-despachos") || pathname.startsWith("/carga"))
                     ? "bg-[#1e293b] text-white"
                     : "text-[#94a3b8] hover:bg-[#1e293b] hover:text-white"
                 )}
