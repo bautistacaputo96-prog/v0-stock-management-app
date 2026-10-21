@@ -107,21 +107,25 @@ export function ColumnaCamiones({
                 {puedeDespachar && !e.preguntarVolvio && e.fuente === "estimado" && enViaje && (
                   <button className="h-8 shrink-0 rounded-md border px-2 text-xs" onClick={() => onVolvio(c.id)} title="Volvió a planta · disponible">Volvió</button>
                 )}
-                {puedeDespachar && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[220px]">
-                      {e.clave === "taller"
-                        ? <DropdownMenuItem className="min-h-[32px]" onClick={() => onDisponible(c.id)}>✅ Disponible (salió del taller)</DropdownMenuItem>
-                        : e.clave !== "fuera" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onTaller(c.id)}>🔧 Mandar a taller</DropdownMenuItem>}
-                      {c.status === "in_transit" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onVolvio(c.id)}>🏁 Volvió a planta</DropdownMenuItem>}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="min-h-[32px]" onClick={() => window.open("/logistica", "_blank")}>📍 Ver en el mapa</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                {/* "Ver en el mapa" también en modo consulta; lo demás solo para quien despacha */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[220px]">
+                    {puedeDespachar && (
+                      <>
+                        {e.clave === "taller"
+                          ? <DropdownMenuItem className="min-h-[32px]" onClick={() => onDisponible(c.id)}>✅ Disponible (salió del taller)</DropdownMenuItem>
+                          : e.clave !== "fuera" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onTaller(c.id)}>🔧 Mandar a taller</DropdownMenuItem>}
+                        {c.status === "in_transit" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onVolvio(c.id)}>🏁 Volvió a planta</DropdownMenuItem>}
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {/* Abre Logística › En vivo con el camión centrado y resaltado */}
+                    <DropdownMenuItem className="min-h-[32px]" onClick={() => window.open(`/logistica?camion=${encodeURIComponent(c.patente)}`, "_blank")}>📍 Ver en el mapa</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           )

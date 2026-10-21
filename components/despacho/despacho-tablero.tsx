@@ -209,7 +209,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     cargarTiemposGps(sb).then(setTiempos)
   }, [])
 
-  // GPS cada 60 s (posiciones() tiene caché en el servidor)
+  // GPS cada 30 s (posiciones() tiene caché de 8 s en el servidor; gps-vivo.md)
   const cargarGps = useCallback(async () => {
     try {
       const r = await fetch("/api/gps/posiciones", { cache: "no-store" })
@@ -221,7 +221,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   }, [])
   useEffect(() => {
     cargarGps()
-    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 60_000)
+    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 30_000)
     return () => clearInterval(t)
   }, [cargarGps])
 
