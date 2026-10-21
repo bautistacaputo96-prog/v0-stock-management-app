@@ -36,6 +36,7 @@ type Client = {
   active: boolean
   plant_id?: string | null
   construction_sites?: ConstructionSite[]
+  remito_tipo?: "R" | "X" | null // fase 3
 }
 
 type ConstructionSite = {
@@ -57,7 +58,13 @@ type ConstructionSite = {
   gps_lng?: number | null
   gps_source?: string | null
   travel_distance_km?: number | null
+  remito_tipo?: "R" | "X" | null // fase 3
 }
+
+/** Fase 3: remito con factura (R) o sin factura (X) por defecto para el cliente o la obra ("" = se decide en cada pedido) */
+const REMITO_OPCIONES: [string, string][] = [["", "Se decide en cada pedido"], ["R", "Siempre con factura (R)"], ["X", "Siempre sin factura (X)"]]
+/** Solo se manda si cambió: así el formulario anda igual si la migración de la fase 3 no está aplicada */
+const remitoTipoCambio = (antes: string | null | undefined, ahora: string): { remito_tipo?: string | null } => ((antes || "") !== ahora ? { remito_tipo: ahora || null } : {})
 
 const COND_IVA_OPTIONS = [
   "Responsable Inscripto",
@@ -88,6 +95,7 @@ const EMPTY_CLIENT_FORM = {
   phone: "",
   email: "",
   contact: "",
+  remito_tipo: "",
 }
 
 const EMPTY_SITE_FORM = {
@@ -102,17 +110,20 @@ const EMPTY_SITE_FORM = {
   site_contact: "",
   site_phone: "",
   observations: "",
+  remito_tipo: "",
 }
 
 // Fase 0c-1: nombres en pantalla de los campos que quedan en Actividad al editar
 const ETIQUETAS_CLIENTE: Record<string, string> = {
   name: "Nombre", razon_social: "Razón social", cuit: "CUIT", cond_iva: "Condición IVA", direccion_fiscal: "Dirección fiscal",
   cp: "CP", localidad_cliente: "Localidad", provincia: "Provincia", cond_pago: "Condición de pago", phone: "Teléfono", email: "Mail", contact: "Contacto",
+  remito_tipo: "Remito (R con factura / X sin factura)",
 }
 const ETIQUETAS_OBRA: Record<string, string> = {
   name: "Nombre", address: "Dirección", localidad: "Localidad", travel_time_minutes: "Viaje (min)", unload_time_minutes: "Descarga (min)",
   requires_pump: "Bomba", reception_hours_start: "Recibe desde", reception_hours_end: "Recibe hasta", site_contact: "Contacto en obra",
   site_phone: "Teléfono en obra", observations: "Observaciones", gps: "Ubicación",
+  remito_tipo: "Remito (R con factura / X sin factura)",
 }
 
 export function ClientsManagement() {
@@ -205,6 +216,7 @@ export function ClientsManagement() {
       phone:             clientForm.phone.trim() || null,
       email:             clientForm.email.trim() || null,
       contact:           clientForm.contact.trim() || null,
+      ...remitoTipoCambio(editingClient?.remito_tipo, clientForm.remito_tipo),
     }
 
     if (editingClient) {
@@ -272,6 +284,7 @@ export function ClientsManagement() {
       gps_source:             siteUbic.fuente,
       travel_distance_km:     siteUbic.km,
       gps_updated_at:         siteUbic.lat != null ? new Date().toISOString() : null,
+      ...remitoTipoCambio(editingSite?.remito_tipo, siteForm.remito_tipo),
     }
 
     if (editingSite) {
@@ -323,6 +336,7 @@ export function ClientsManagement() {
       phone:             client.phone             || "",
       email:             client.email             || "",
       contact:           client.contact           || "",
+      remito_tipo:       client.remito_tipo       || "",
     })
     setIsClientDialogOpen(true)
   }
@@ -349,6 +363,7 @@ export function ClientsManagement() {
       site_contact:           site.site_contact  || "",
       site_phone:             site.site_phone    || "",
       observations:           site.observations  || "",
+      remito_tipo:            site.remito_tipo   || "",
     })
     setIsSiteDialogOpen(true)
   }
@@ -581,6 +596,16 @@ export function ClientsManagement() {
                     </SelectContent>
                   </Select>
                 </div>
+                {/* Fase 3: remito R / X por defecto para todos los pedidos de este cliente */}
+                <div className="space-y-1">
+                  <Label>Remito</Label>
+                  <Select value={clientForm.remito_tipo || "segun"} onValueChange={(v) => setClientForm({ ...clientForm, remito_tipo: v === "segun" ? "" : v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {REMITO_OPCIONES.map(([k, l]) => <SelectItem key={k || "segun"} value={k || "segun"}>{l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
@@ -715,6 +740,16 @@ export function ClientsManagement() {
                 <div className="flex items-center justify-between">
                   <Label>Requiere Bomba</Label>
                   <Switch checked={siteForm.requires_pump} onCheckedChange={(checked) => setSiteForm({ ...siteForm, requires_pump: checked })} />
+                </div>
+                {/* Fase 3: remito R / X por defecto para los pedidos de esta obra (gana sobre el del cliente) */}
+                <div className="space-y-1">
+                  <Label>Remito</Label>
+                  <Select value={siteForm.remito_tipo || "segun"} onValueChange={(v) => setSiteForm({ ...siteForm, remito_tipo: v === "segun" ? "" : v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {REMITO_OPCIONES.map(([k, l]) => <SelectItem key={k || "segun"} value={k || "segun"}>{l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">

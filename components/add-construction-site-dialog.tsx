@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AddConstructionSiteDialogProps {
   clientId: string
@@ -29,6 +30,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
     localidad: "",
     travel_time_minutes: "30",
     unload_time_minutes: "20",
+    remito_tipo: "", // fase 3
   })
   const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
   const [ubic, setUbic] = useState<UbicacionObra>(UBIC_VACIA)
@@ -68,7 +70,9 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
           gps_updated_at: ubic.lat != null ? new Date().toISOString() : null,
           travel_time_minutes: parseInt(formData.travel_time_minutes) || 30,
           unload_time_minutes: parseInt(formData.unload_time_minutes) || 20,
-        })
+          // Fase 3: solo si se eligió (así anda igual sin la migración)
+          ...(formData.remito_tipo ? { remito_tipo: formData.remito_tipo } : {}),
+        } as any)
         .select()
         .single()
 
@@ -76,7 +80,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
 
       toast.success("Obra agregada exitosamente")
       logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: formData.localidad || "-", "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
-      setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20" })
+      setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20", remito_tipo: "" })
       setUbic(UBIC_VACIA)
       setOpen(false)
 
@@ -176,6 +180,18 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
                 placeholder="20"
               />
             </div>
+          </div>
+          {/* Fase 3: remito R / X por defecto ("" = se decide en cada pedido) */}
+          <div className="space-y-2">
+            <Label>Remito</Label>
+            <Select value={formData.remito_tipo || "segun"} onValueChange={(v) => setFormData({ ...formData, remito_tipo: v === "segun" ? "" : v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="segun">Se decide en cada pedido</SelectItem>
+                <SelectItem value="R">Siempre con factura (R)</SelectItem>
+                <SelectItem value="X">Siempre sin factura (X)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
