@@ -26,10 +26,10 @@ import { controlDeFormula, recetaDeFormula, type Contexto } from "@/lib/carga/da
 import { efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
 import { banderas, type FilaAuditoria } from "@/lib/carga/auditoria"
 import { recetasIniciales } from "@/lib/carga/recetas-sim"
-import { INFO_SALIDA, SALIDAS, grupoDeSalida, type Salida } from "@/lib/carga/tipos"
+import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
 import { Btn, CartelSimulada, Chip, Tag, hhmm, hms, m3t, mmss } from "./comun"
 import { PlantaVivo, TablaPesajes, nombreCorto } from "./planta-vivo"
-import { ConfirmarCamion, ExtraAguaDialog, MotivoDialog, PruebaDialog, ReporteDialog, TablaComparacion, TolvaDialog, type FilaReporte } from "./dialogos-carga"
+import { ConfirmarCamion, MotivoDialog, PruebaDialog, ReporteDialog, TablaComparacion, TolvaDialog, type FilaReporte } from "./dialogos-carga"
 import { AlertasCarga, ResolverDialog } from "./alertas-carga"
 import { RecetasPlanta } from "./recetas-planta"
 import { usarDatosCarga, ESTADOS_COLA, ESTADOS_PLANTA, type AlertaFila, type CargaFila } from "./usar-datos-carga"
@@ -71,7 +71,6 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
 
   // Diálogos
   const [confirmar, setConfirmar] = useState<CargaFila | null>(null)
-  const [extra, setExtra] = useState<{ carga: CargaFila; despues: boolean } | null>(null)
   const [parada, setParada] = useState<{ carga: CargaFila; modo: ModoParada } | null>(null)
   const [cancelar, setCancelar] = useState<CargaFila | null>(null)
   const [tolva, setTolva] = useState(false)
@@ -431,11 +430,13 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
               <PanelDerecho
                 ctx={ctx} enPlanta={enPlanta} puedeCargar={puedeCargar} puedeResolver={puedeResolver} simulada={simulada}
                 prep={P.prep} activa={activa} elegida={elegida} chequeo={chequeo} estado={e} ordenEnPlanta={!!P.orden}
-                ultima={ultimaCarga && !activa ? ultimaCarga : null} extras={D.extras} formulaDe={formulaDe} alertas={D.alertas}
+                ultima={ultimaCarga && !activa && !ultimaCarga.salida_gps ? ultimaCarga : null} extras={D.extras} formulaDe={formulaDe} alertas={D.alertas}
                 onCargar={(k) => setConfirmar(k)} onBocina={() => void P.bocina()} onCancelar={setCancelar}
                 onSuspender={() => void (e?.suspendida ? P.reanudar() : P.suspender())}
-                onExtra={(k, despues) => setExtra({ carga: k, despues })} onParada={(k, modo) => setParada({ carga: k, modo })}
-                onResolver={setResolver} onReporte={verReporte} onOlvidarUltima={P.olvidarUltima}
+                onParada={(k, modo) => setParada({ carga: k, modo })}
+                onResolver={setResolver} onReporte={verReporte}
+                agua={{ abierta: !!e?.agua_extra_abierta, pulso: e?.agua_extra_pulso || 0, total: e?.agua.extra || 0, abrir: P.aguaAbrir, soltar: () => void P.aguaParar() }}
+                pesajeTerminado={P.pesajeTerminado} onTerminar={(k) => void P.terminarCarga(k.id, k.formula_id)}
                 puedeMuestra={puedeMuestra} onMuestra={(k, si) => { if (si) setMuestra(k); else void responderMuestra(k, false) }}
               />
             </div>
@@ -466,11 +467,6 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
             void P.cargar({ ...k, receta_numero: numero ?? k.receta_numero }, receta)
           }}
         />
-      )}
-      {extra && (
-        <ExtraAguaDialog camion={extra.carga.mixers?.license_plate || extra.carga.patente_planta || "—"}
-          contexto={extra.despues ? <><b>Después de terminar la carga</b> (terminó {hhmm(extra.carga.fin_at)}; el camión sigue en planta).</> : <>Durante la carga (ciclo {e?.ciclo} de {e?.ciclos}).</>}
-          onAgregar={(l) => P.extraAgua(l, extra.carga.id, extra.despues)} onCerrar={() => setExtra(null)} />
       )}
       {parada && (() => {
         const k = parada.carga
@@ -539,8 +535,11 @@ function PanelDerecho(p: {
   extras: { carga_id: string; litros: number; at: string; despues_de_terminar: boolean }[]
   formulaDe: (id: string | null) => any; alertas: AlertaFila[]
   onCargar: (k: CargaFila) => void; onBocina: () => void; onCancelar: (k: CargaFila) => void; onSuspender: () => void
-  onExtra: (k: CargaFila, despues: boolean) => void; onParada: (k: CargaFila, modo: ModoParada) => void
-  onResolver: (a: AlertaFila) => void; onReporte: (k: CargaFila) => void; onOlvidarUltima: () => void
+  onParada: (k: CargaFila, modo: ModoParada) => void
+  onResolver: (a: AlertaFila) => void; onReporte: (k: CargaFila) => void
+  /** Extra agua mantenido (21/10 · 6): litros en vivo de esta pulsada y total del camión */
+  agua: { abierta: boolean; pulso: number; total: number; abrir: () => Promise<boolean>; soltar: () => void }
+  pesajeTerminado: boolean; onTerminar: (k: CargaFila) => void
   puedeMuestra: boolean; onMuestra: (k: CargaFila, si: boolean) => void
 }) {
   const { ctx, enPlanta, puedeCargar, prep, activa, elegida, estado: e } = p
@@ -601,13 +600,23 @@ function PanelDerecho(p: {
             ) : <div className="text-[12px] text-muted-foreground">{k.estado === "parada" ? "Lo decide el plantista en la PC de la planta." : "Registrando…"}</div>}
             {p.simulada && <div className="mt-1 text-[11px] text-amber-800">Planta simulada: queda registrado qué se haría con el remito; el despacho real no se toca.</div>}
           </div>
+        ) : enPlanta && p.ordenEnPlanta && p.pesajeTerminado ? (
+          <div className="rounded-md border border-l-[3px] border-l-green-600 px-2 py-1.5 text-[12px]">
+            <h3 className="mb-1 text-[12.5px] font-semibold">Pesaje terminado · el camión sigue abajo</h3>
+            <BotonAgua {...p.agua} disabled={!puedeCargar} />
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              <Btn tono="ok" disabled={!puedeCargar || p.agua.abierta} onClick={() => p.onTerminar(k)}>Terminar carga</Btn>
+              <Btn onClick={p.onBocina}>Bocina</Btn>
+            </div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">«Terminar carga» cierra la carga con el agua extra total; después se pregunta por la muestra y el camión queda «Cargado · esperando salir».</div>
+          </div>
         ) : enPlanta && p.ordenEnPlanta ? (
           <>
             <div className="flex flex-wrap gap-1">
-              <Btn tono="amb" onClick={p.onSuspender}>{susp ? "Reanudar" : "Suspender"}</Btn>
-              <Btn onClick={p.onBocina}>Bocina</Btn>
-              <Btn className="border-blue-300 text-blue-800" disabled={!puedeCargar} onClick={() => p.onExtra(k, false)}>Extra agua</Btn>
+              <Btn tono="amb" disabled={!puedeCargar} onClick={p.onSuspender}>{susp ? "Reanudar" : "Suspender"}</Btn>
+              <Btn disabled={!puedeCargar} onClick={p.onBocina}>Bocina</Btn>
             </div>
+            <BotonAgua {...p.agua} disabled={!puedeCargar} />
             <div className="text-[11px] text-muted-foreground">PARAR: abajo a la derecha, siempre.</div>
           </>
         ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-[12px] text-slate-600">{enPlanta ? "En curso según el sistema, pero esta PC no la está cargando (¿se cargó desde otra PC o se recargó la página?). La planta sigue según Indumix." : "Vista remota: se ve, no se acciona."}</div>}
@@ -617,7 +626,7 @@ function PanelDerecho(p: {
 
   const ult = p.ultima ? (
     <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-[12px]">
-      <h3 className="text-[12.5px] font-semibold">{pat(p.ultima)} cargado {hhmm(p.ultima.fin_at)} · esperando que salga (GPS)</h3>
+      <h3 className="text-[12.5px] font-semibold">{pat(p.ultima)} · Cargado {hhmm(p.ultima.fin_at)} · esperando salir (GPS)</h3>
       {listaExtras(p.ultima.id)}
       {"muestra" in p.ultima && p.ultima.dispatch_id && !p.ultima.muestra && (
         <div className={cn("mt-1 flex flex-wrap items-center gap-1 rounded-md px-1.5 py-1", p.ultima.muestra_pedida ? "border-2 border-amber-500 bg-amber-50" : "border")}>
@@ -630,9 +639,7 @@ function PanelDerecho(p: {
       )}
       {p.ultima.muestra && <div className="mt-0.5 text-[11.5px]">{p.ultima.muestra.tomada ? `Muestra ${p.ultima.muestra.numero} · asentamiento ${p.ultima.muestra.asentamiento} cm` : "Sin muestra"} · {p.ultima.muestra.por}</div>}
       <div className="mt-1 flex flex-wrap gap-1">
-        {enPlanta && <Btn className="border-blue-300 text-blue-800" disabled={!puedeCargar} onClick={() => p.onExtra(p.ultima!, true)}>Extra agua</Btn>}
         <Btn className="h-[26px] text-[12px]" onClick={() => p.onReporte(p.ultima!)}>Ver reporte</Btn>
-        <Btn tono="ghost" className="h-[26px] text-[12px]" onClick={p.onOlvidarUltima}>Ya salió</Btn>
       </div>
     </div>
   ) : null
@@ -729,5 +736,39 @@ function MuestraDialog({ k, onGuardar, onCerrar }: { k: CargaFila; onGuardar: (d
         <DialogFooter><Btn onClick={onCerrar} disabled={env}>Cancelar</Btn><Btn tono="pri" disabled={!numero.trim() || a == null || env} onClick={async () => { setEnv(true); const ok = await onGuardar({ numero: numero.trim(), asentamiento: a! }); setEnv(false); if (ok) onCerrar() }}>Guardar muestra</Btn></DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * "Extra agua" MANTENIDO (21/10 · 6): mientras se mantiene apretado cae agua al camión con caudal constante; al soltar,
+ * se frena. También se frena si el puntero sale del botón, si se pierde el foco o la pestaña se oculta, y la planta la
+ * corta sola si se corta la comunicación. Mouse y dedo (pointer events).
+ */
+function BotonAgua({ abierta, pulso, total, abrir, soltar, disabled }: { abierta: boolean; pulso: number; total: number; abrir: () => Promise<boolean>; soltar: () => void; disabled?: boolean }) {
+  const apretado = useRef(false)
+  const cortar = useCallback(() => { if (apretado.current) { apretado.current = false; soltar() } }, [soltar])
+  useEffect(() => {
+    const vis = () => { if (document.visibilityState !== "visible") cortar() }
+    window.addEventListener("blur", cortar)
+    document.addEventListener("visibilitychange", vis)
+    return () => { window.removeEventListener("blur", cortar); document.removeEventListener("visibilitychange", vis); cortar() }
+  }, [cortar])
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <button
+        disabled={disabled}
+        className={cn("h-[34px] select-none rounded-md border px-3 text-[13px] font-semibold disabled:opacity-45", abierta ? "border-blue-700 bg-blue-600 text-white" : "border-blue-300 bg-blue-50 text-blue-900")}
+        style={{ touchAction: "none", WebkitUserSelect: "none" } as React.CSSProperties}
+        onContextMenu={(ev) => ev.preventDefault()}
+        onPointerDown={async (ev) => { ev.preventDefault(); apretado.current = true; const ok = await abrir(); if (!ok) apretado.current = false; else if (!apretado.current) soltar() }}
+        onPointerUp={cortar} onPointerLeave={cortar} onPointerCancel={cortar}
+        onKeyDown={(ev) => { if ((ev.key === " " || ev.key === "Enter") && !ev.repeat && !apretado.current) { apretado.current = true; void abrir().then((ok) => { if (!ok) apretado.current = false }) } }}
+        onKeyUp={(ev) => { if (ev.key === " " || ev.key === "Enter") cortar() }}
+        onBlur={cortar}
+      >
+        {abierta ? `Cayendo agua… ${nf(pulso, 1)} L` : "Extra agua · mantené apretado"}
+      </button>
+      <span className="text-[12px]">Total de este camión <b className="tabular-nums">{nf(total, 1)} L</b></span>
+    </div>
   )
 }

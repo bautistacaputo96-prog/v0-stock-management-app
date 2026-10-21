@@ -23,6 +23,10 @@ import {
 } from "@/lib/carga/tipos"
 import { relojPlc } from "@/lib/carga/reloj"
 
+/** Caudal del "Extra agua" mantenido en el simulador (L/s). En la planta real lo dirá Indumix. */
+export const CAUDAL_AGUA_EXTRA_LPS = 2.5
+/** Si la pantalla deja de mantener la válvula (se soltó o se cortó la comunicación), se cierra sola a este tiempo (s) */
+export const VIGIA_AGUA_EXTRA_S = 1
 /** Duración de un ciclo en el simulador (s): pesaje ~50 s, descarga hasta ~98 s, fin a los 108 s (1:48). */
 export const DURACION_CICLO_S = 108
 /** Ventanas de descarga al camión, por grupo (s dentro del ciclo) */
@@ -119,6 +123,11 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
   reportes: ReportePlanta[] = []
   bocinaHastaS = -1
   noArranca: string | null = null
+  /** "Extra agua" mantenido: válvula abierta, litros de esta pulsada y hasta cuándo vale sin otro "mantener" */
+  aguaAbierta = false
+  aguaPulso = 0
+  aguaVigiaHastaS = 0
+  caudalAguaLps = CAUDAL_AGUA_EXTRA_LPS
   private semilla: number
   private errorPesaje: OpcionesSimulador["errorPesaje"]
 
@@ -210,15 +219,26 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
     if (!(litros > 0) || litros > 500) throw new PlantaRechazoError("Litros fuera de rango.")
     const C = this.carga
     if (!C) throw new PlantaRechazoError("No hay un camión cargando ni recién cargado en la planta.")
-    const despues = C.fase === "terminada" || C.fase === "parada"
-    C.extras.push({ litros, despues_de_terminar: despues, at_s: this.plcS })
-    // El reporte de esa carga suma el agua extra (Indumix la muestra en "Extra … Litros")
-    const rep = this.reportes.find((r) => r.numero === C.contador)
-    if (rep) {
-      rep.extras = C.extras.map((e) => ({ ...e }))
-      const lw = rep.lineas.find((l) => l.salida === "agua")
-      if (lw) lw.extra = C.extras.reduce((s, e) => s + e.litros, 0)
-    }
+    this.anotarExtra(litros, C.fase === "terminada" || C.fase === "parada")
+  }
+
+  async extraAguaAbrir() {
+    this.exigirConexion()
+    if (!this.carga) throw new PlantaRechazoError("No hay un camión cargando ni recién cargado en la planta.")
+    if (this.aguaAbierta) { this.aguaVigiaHastaS = this.plcS + VIGIA_AGUA_EXTRA_S; return }
+    this.aguaAbierta = true
+    this.aguaPulso = 0
+    this.aguaVigiaHastaS = this.plcS + VIGIA_AGUA_EXTRA_S
+  }
+
+  async extraAguaMantener() {
+    this.exigirConexion()
+    if (this.aguaAbierta) this.aguaVigiaHastaS = this.plcS + VIGIA_AGUA_EXTRA_S
+  }
+
+  async extraAguaCerrar(): Promise<{ litros: number }> {
+    // Cerrar no pide conexión en el simulador: la válvula se cierra igual (en la real, el vigía de la planta)
+    return { litros: this.cerrarAgua() }
   }
 
   // ───────────── solo del simulador ─────────────
@@ -230,6 +250,12 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
       const paso = Math.min(resto, 1)
       resto -= paso
       this.plcS += paso
+      if (this.aguaAbierta) {
+        // El agua cae con caudal constante; sin "mantener" a tiempo (se soltó o se cortó), la planta la cierra
+        const hasta = Math.min(this.plcS, this.aguaVigiaHastaS)
+        this.aguaPulso += Math.max(0, hasta - (this.plcS - paso)) * this.caudalAguaLps
+        if (this.plcS >= this.aguaVigiaHastaS) this.cerrarAgua()
+      }
       const C = this.carga
       if (!C || C.fase !== "en_ciclo" || this.alarmas.length) continue
       C.t += paso
@@ -247,6 +273,8 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
         this.alarmas = []
         break
       case "sin_conexion":
+        // Se cortó la comunicación: la válvula del agua extra se cierra (no se puede seguir manteniendo)
+        this.cerrarAgua()
         this.conectado = false
         break
       case "con_conexion":
@@ -312,7 +340,10 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
       seleccion: this.seleccion ? { ...this.seleccion } : null,
       salidas,
       balanzas: [bal("aridos", "arido", "kg"), bal("cemento", "cemento", "kg"), bal("aditivo", "aditivo", "g")],
-      agua: { real: C && enCurso && C.tot.agua != null ? this.valor("agua", t) : 0, objetivo: aguaObj, extra: C ? C.extras.reduce((s, e) => s + e.litros, 0) : 0 },
+      agua: { real: C && enCurso && C.tot.agua != null ? this.valor("agua", t) : 0, objetivo: aguaObj, extra: (C ? C.extras.reduce((s, e) => s + e.litros, 0) : 0) + (this.aguaAbierta ? this.aguaPulso : 0) },
+      agua_extra_abierta: this.aguaAbierta,
+      agua_extra_pulso: this.aguaAbierta ? this.aguaPulso : 0,
+      agua_extras: C ? C.extras.map((x) => ({ ...x })) : [],
       m3_en_trompo: C ? (enCurso ? this.m3EnTrompo() : C.m3_cargados ?? C.orden.m3) : 0,
       cinta_en_marcha: !!C && C.fase === "en_ciclo" && !this.alarmas.length && t >= DESCARGA.arido[0] && t < DESCARGA.arido[1],
       bocina: this.plcS < this.bocinaHastaS,
@@ -325,6 +356,29 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
 
   private exigirConexion() {
     if (!this.conectado) throw new SinConexionError()
+  }
+
+  /** Cierra la válvula del agua extra y anota la pulsada (si cayó algo). */
+  private cerrarAgua(): number {
+    if (!this.aguaAbierta) return 0
+    this.aguaAbierta = false
+    const l = Math.round(this.aguaPulso * 10) / 10
+    this.aguaPulso = 0
+    const C = this.carga
+    if (C && l > 0) this.anotarExtra(l, C.fase === "terminada" || C.fase === "parada")
+    return l
+  }
+
+  private anotarExtra(litros: number, despues: boolean) {
+    const C = this.carga!
+    C.extras.push({ litros, despues_de_terminar: despues, at_s: this.plcS })
+    // El reporte de esa carga suma el agua extra (Indumix la muestra en "Extra … Litros")
+    const rep = this.reportes.find((r) => r.numero === C.contador)
+    if (rep) {
+      rep.extras = C.extras.map((e) => ({ ...e }))
+      const lw = rep.lineas.find((l) => l.salida === "agua")
+      if (lw) lw.extra = C.extras.reduce((s, e) => s + e.litros, 0)
+    }
   }
 
   private arrancarInterno() {
@@ -357,6 +411,7 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
       } else tot[s] = teo[s]
     }
     if (tot.agua != null) tot.agua = Math.max(0, teo.agua! - aguaAridos)
+    this.cerrarAgua()
     this.contador++
     this.carga = {
       orden: { ...o }, receta: JSON.parse(JSON.stringify(receta)), contador: this.contador, ciclos, m3c, c: 1, t: 0, total: 0, fase: "en_ciclo",

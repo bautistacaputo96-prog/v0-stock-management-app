@@ -1,6 +1,8 @@
 "use client"
 
 /**
+ * 21/10 · 6: el atraso y la hora pasan a un indicador chico (franja y punto rojos y "+15'"); lo que destaca es obra,
+ * cliente, fórmula y m³. Finalidad y bomba siguen a la vista, en chico.
  * Columna Viajes, compacta (21/10, Bautista: "que entre mucha más información sin scrollear", pensada para PC): una
  * fila de dos líneas por viaje con todo lo que importa a la vista (hora, obra, cliente, m³, R/X, estado / fórmula,
  * finalidad, bomba o directo). Lo que se achicó es el espacio, no los datos. El resto (dirección, horarios, camión
@@ -88,31 +90,35 @@ export function ColumnaViajes({
               className={cn(
                 "d3c-card relative select-none rounded-md border border-l-[3px] border-l-violet-400 bg-card",
                 puedeDespachar && "cursor-pointer",
-                at.tipo === "atrasado" && "border-l-red-600 bg-red-50/50",
+                at.tipo === "atrasado" && "border-l-red-600",
                 at.tipo === "ahora" && "border-l-amber-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
             >
               <div className="flex items-center gap-2 py-[3px] pl-2 pr-1">
                 {/* Hora de carga y n/N */}
-                <div className="w-[38px] shrink-0 leading-tight">
-                  <div className={cn("text-[13px] font-semibold tabular-nums", at.tipo === "atrasado" && "text-red-700")}>{hhmm(v.hora_carga)}</div>
-                  <div className="text-[10.5px] text-muted-foreground">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</div>
+                <div className="w-[34px] shrink-0 leading-tight text-muted-foreground" title={at.texto || undefined}>
+                  <div className="text-[11px] tabular-nums">{hhmm(v.hora_carga)}</div>
+                  <div className="flex items-center gap-0.5 text-[10px] tabular-nums">
+                    {at.tipo === "atrasado" ? <><i className="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-red-600" /><span className="font-semibold text-red-700">+{at.min}&apos;</span></>
+                      : at.tipo === "ahora" ? <><i className="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-amber-500" /><span className="text-amber-800">{at.min > 0 ? `${at.min}'` : "ya"}</span></>
+                      : <span>{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>}
+                  </div>
                 </div>
                 {/* Línea 1: obra · cliente · m³ · R/X · estado. Línea 2: fórmula · finalidad · bomba/directo · sugerido */}
                 <div className="min-w-0 flex-1 leading-tight">
                   <div className="flex items-center gap-1.5">
                     <span className="min-w-0 truncate text-[13px]">
-                      <span className="font-medium">{p.construction_sites?.name || "Obra"}</span>
-                      <span className="text-muted-foreground"> · {p.clients?.name}</span>
+                      <span className="font-semibold">{p.construction_sites?.name || "Obra"}</span>
+                      <span className="font-medium"> · {p.clients?.name}</span>
                     </span>
-                    <span className="ml-auto shrink-0 text-[13px] font-semibold tabular-nums">{m3txt(v.m3)} m³</span>
+                    <span className="ml-auto shrink-0 text-[14px] font-bold tabular-nums">{m3txt(v.m3)} m³</span>
                     <MarcaTipo tipo={tipo} />
-                    {at.texto && <span className={cn("shrink-0 text-[11px] font-semibold", at.tipo === "atrasado" ? "text-red-700" : "text-amber-700")}>{at.texto}</span>}
                   </div>
-                  <div className="flex items-center gap-1 text-[11.5px] text-muted-foreground">
+                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                     <span className="min-w-0 truncate">
-                      <span className="text-foreground/80">{p.formulas?.code}</span>
+                      <span className="text-[12px] font-semibold text-foreground">{p.formulas?.code}</span>
+                      {at.tipo ? <span className="ml-1">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span> : null}
                       {p.finalidad ? ` · ${p.finalidad}` : ""}
                       {bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}
                       {Number(p.fiber_kg_per_m3) > 0 ? " · fibra" : ""}

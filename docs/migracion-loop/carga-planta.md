@@ -974,6 +974,17 @@ Sigue abierta 19.12.4: ¿alcanza el indicador en la tarjeta del camión? La reco
 2. **Tiempos, con la secuencia A** (en la Auditoría de carga y en el reporte de cada carga): despacho (hora fija del remito) · inicio y fin de carga (de la planta) · salida de planta (GPS) · **espera en cola** (despacho → inicio) · tiempo de carga (inicio → fin) · espera hasta salir (fin → salida GPS). La vista `cargas_tiempos` suma `min_espera_cola`.
 3. **Detalles de la segunda revisión:** el inicio de carga se registra cuando la planta aprieta CARGAR (no cuando se pide el permiso); un 403 permanente (sin permiso) no traba la cola sin internet (se aparta; si es la sesión o la contraseña, se conserva); la ruta de recetas saca los repetidos antes de `armar_recetas_puesto`; "Armar las 20 recetas" avisa (y abre la alerta) si una receta que ya estaba leída cambia.
 
+## 23. Respuestas de Bautista (21/10/2026, 6) — mandan sobre lo anterior
+
+1. **Formulario Entrega más grande y compacto:** la ventana es más ancha (960 px), con letra de 12–13 px, campos de 30 px de alto en 3 columnas, y Fibra y Muestra lado a lado, para completarla sin scrollear.
+2. **Viajes programados:** la hora y el atraso pasan a un indicador chico (franja roja, punto y "+15'" en letra chica; ámbar si es "ahora"). Destacan **obra, cliente, fórmula y m³**; la finalidad y la bomba siguen a la vista, en chico.
+3. **Agua extra:**
+   - Se saca "Agua extra en planta (litros)" de la Entrega **solo** en la pantalla nueva y en plantas con puesto de carga que recibe órdenes. `registrar_despacho` sigue recibiendo `extra_water_liters` = 0 (no cambia). La pantalla de siempre y el despacho manual no cambian.
+   - El agua extra se registra **en la carga**: el botón "Extra agua" de la pantalla de Carga funciona **manteniendo apretado**. Mientras se mantiene, el agua cae al camión con caudal constante; al soltar se frena. Se ven los litros de la pulsada en vivo y el total del camión. Cada pulsada es una fila de `cargas_agua_extra`; el total queda en la carga (la línea del agua de `cargas_materiales`, `extra`) y en el reporte y la auditoría.
+   - Simulador: caudal fijo de **2,5 L/s** (`CAUDAL_AGUA_EXTRA_LPS`). Mouse y dedo (pointer events); se frena si el puntero sale del botón, si se pierde el foco o se oculta la pestaña.
+   - **Seguridad:** la pantalla tiene que "mantener" la válvula cada 250 ms; si deja de hacerlo (se soltó, se colgó o se cortó la comunicación con el puente), la planta la cierra sola en 1 s (`VIGIA_AGUA_EXTRA_S`). Si se corta la comunicación, se cierra en el momento.
+4. **"Ya salió" pasa a "Terminar carga".** Cuando la planta termina de pesar, la carga sigue abierta (el camión sigue abajo y se le puede agregar agua). **"Terminar carga"** la cierra: registra el fin y el agua extra total, aparece "¿Se sacó muestra?" y el camión queda "Cargado · esperando salir" hasta que el GPS lo ve salir. La planta no queda libre para la próxima orden hasta terminar la carga. El despacho ya estaba grabado antes (secuencia A).
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)
@@ -1015,6 +1026,8 @@ La pantalla de carga está en el sistema con la **planta SIMULADA** hasta ver el
 
 **Respuestas del punto 22 (21/10, 5):** la muestra al final de la carga ("Sacar muestra a este camión" en la Entrega y "¿Se sacó muestra?" al terminar, con `lib/muestra.ts`, el mismo camino del Historial), la espera en cola en la Auditoría y el reporte, y los detalles de la segunda revisión. **La migración `202610211800_carga_planta.sql` ya está aplicada en producción (21/10, 11:44, puesto en etapa C, 20 recetas armadas)**: lo nuevo va en **`202610212000_carga_muestra_tiempos.sql`** (NO aplicada; `cargas.muestra_pedida`, `cargas.muestra` y `min_espera_cola`), probada dos veces en `BEGIN … ROLLBACK`. Hay que aplicarla junto con este deploy; mientras tanto la orden sale igual sin el aviso de muestra y la pregunta "¿Se sacó muestra?" no aparece (la muestra se agrega desde el Historial).
 
-**Pruebas:** `npm run test:carga` (36: simulador, control de receta, puente con PARAR mientras arranca, reloj, emparejador con tipo y camión, auditoría, cierre, indicador, tiempos con la espera en cola y la muestra al final), más `test:despacho`, `test:gps` y `test:sesion` sin cambios. `tsc` sin errores nuevos (los 17 de siempre) y `next build --webpack` bien.
+**Respuestas del punto 23 (21/10, 6):** Entrega más ancha y compacta; Viajes con el atraso en chico; sin "Agua extra" en la Entrega con puesto de carga; "Extra agua" mantenido con caudal constante y vigía de 1 s (cada pulsada en `cargas_agua_extra`); "Terminar carga" en lugar de "Ya salió". Sin cambios de base.
+
+**Pruebas:** `npm run test:carga` (38: simulador, control de receta, puente con PARAR mientras arranca, reloj, emparejador con tipo y camión, auditoría, cierre, indicador, tiempos con la espera en cola, la muestra al final y el agua extra mantenida), más `test:despacho`, `test:gps` y `test:sesion` sin cambios. `tsc` sin errores nuevos (los 17 de siempre) y `next build --webpack` bien.
 
 **Para después del jueves 23/10:** el adaptador real de Indumix (según el HAR), el servicio del puente en `127.0.0.1:8787` con el permiso de arranque firmado (3.2.3), el alta del puesto con credencial, el latido y "puente caído", la lectura de reportes con hora estimada (10), las 20 recetas reales y su asociación a fórmulas, corregir el despacho de verdad al parar o cancelar, la NP con la rama `loop/zomatik`, y prender el stock con kilos reales cuando lo diga Bautista.

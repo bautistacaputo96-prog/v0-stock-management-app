@@ -63,7 +63,13 @@ export type EstadoPlanta = {
   seleccion: OrdenPlanta | null
   salidas: { salida: Salida; real: number; objetivo: number; acumulado: number; total: number; humedad_pct?: number; nivel_pct: number; pesando: boolean }[]
   balanzas: { id: "aridos" | "cemento" | "aditivo"; valor: number; unidad: string; estado: EstadoBalanza; max: number }[]
+  /** extra = total de agua extra de la carga (lo de antes + lo que corre ahora) */
   agua: { real: number; objetivo: number; extra: number }
+  /** "Extra agua" mantenido: la válvula está abierta y estos litros van en esta pulsada */
+  agua_extra_abierta: boolean
+  agua_extra_pulso: number
+  /** cada pulsada de agua extra de la carga en curso (o la última), en orden */
+  agua_extras: { litros: number; despues_de_terminar: boolean; at_s: number }[]
   /** m³ que ya bajaron al trompo */
   m3_en_trompo: number
   cinta_en_marcha: boolean
@@ -123,8 +129,17 @@ export interface AdaptadorDosificadora {
   suspender(): Promise<void>
   reanudar(): Promise<void>
   bocina(ms: number): Promise<void>
-  /** = "Extra agua" de Indumix (19.5): durante la carga o después de terminar, con el camión en planta */
+  /** = "Extra agua" de Indumix (19.5) con una cantidad fija (lo deja para el adaptador real, si Indumix pide litros) */
   extraAgua(litros: number): Promise<void>
+  /**
+   * "Extra agua" MANTENIDO (21/10 · 6): abre la válvula y el agua cae al camión con caudal constante. Mientras la
+   * pantalla la mantiene apretada llama a `extraAguaMantener` (cada ~250 ms); si deja de llamarla (se soltó, se perdió
+   * el foco o se cortó la comunicación) la planta la cierra sola en ~1 s. `extraAguaCerrar` la cierra ya y devuelve los
+   * litros de la pulsada.
+   */
+  extraAguaAbrir(): Promise<void>
+  extraAguaMantener(): Promise<void>
+  extraAguaCerrar(): Promise<{ litros: number }>
 }
 
 /** La dosificadora no contesta (puente caído o red local cortada). */

@@ -61,6 +61,8 @@ type Guardado = {
   ordenActiva: { cargaId: string; contador: number } | null
   ultima: { cargaId: string; contador: number; fin: number } | null
   diaPlanta: string
+  /** cuántas pulsadas de agua extra de cada carga (por contador de Indumix) ya se subieron */
+  aguaReg?: Record<string, number>
 }
 
 export function usarPuenteSimulado(o: {
@@ -97,6 +99,8 @@ export function usarPuenteSimulado(o: {
   const [listo, setListo] = useState(false)
   // PARAR mientras arranca: la carga que se está arrancando queda cancelada y `cargar` lo mira antes de cada paso
   const cancelarRef = useRef<string | null>(null)
+  const aguaRegRef = useRef<Record<string, number>>({})
+  const aguaMantenerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const prepRef = useRef<Prep | null>(null)
   useEffect(() => { prepRef.current = prep }, [prep])
 
@@ -170,7 +174,7 @@ export function usarPuenteSimulado(o: {
     if (!s) return
     const g: Guardado = {
       v: 1, guardadoMs: Date.now(), recetas: s.recetas, humedades: s.humedades, niveles: s.niveles, contador: s.contador, plcS: s.plcS,
-      carga: s.carga, reportes: s.reportes, alarmas: s.alarmas, seleccion: s.seleccion, ordenActiva: ordenRef.current, ultima: ultimaRef.current, diaPlanta: diaRef.current,
+      carga: s.carga, reportes: s.reportes, alarmas: s.alarmas, seleccion: s.seleccion, ordenActiva: ordenRef.current, ultima: ultimaRef.current, diaPlanta: diaRef.current, aguaReg: aguaRegRef.current,
     }
     guardar(CLAVE_SIM + ":" + (ctxRef.current?.puesto.id || ""), JSON.stringify(g))
   }, [])
@@ -212,6 +216,7 @@ export function usarPuenteSimulado(o: {
       ordenRef.current = g.ordenActiva
       ultimaRef.current = g.ultima
       diaRef.current = g.diaPlanta || diaRef.current
+      aguaRegRef.current = g.aguaReg || {}
       // La planta siguió andando mientras la página estaba cerrada
       prevRef.current = simulador.estado()
       simulador.avanzar(Math.min(3600, (Date.now() - g.guardadoMs) / 1000))
@@ -252,9 +257,9 @@ export function usarPuenteSimulado(o: {
         if (nuestra) {
           const carga = await fetchCarga(ord!.cargaId)
           const mats = materialesDeReporte(rep, c.salidas, formulaDe(carga?.formula_id))
-          await subir(`/api/carga/${ord!.cargaId}`, { accion: ev.tipo === "parar" ? "parar" : "terminar", materiales: mats, m3_cargados: rep.m3_cargados, fin_plc: rep.fin_plc, ciclo: e.ciclo })
-          if (ev.tipo === "fin") { ultimaRef.current = { cargaId: ord!.cargaId, contador: ev.contador, fin: Date.now() }; setUltima(ultimaRef.current); ordenRef.current = null; setOrden(null) }
-          onAviso(ev.tipo === "fin" ? `Carga terminada · ${rep.camion}` : `Carga PARADA · ciclo ${e.ciclo} de ${e.ciclos}`, ev.tipo === "fin" ? "Planta simulada: el stock NO se ajusta (queda apagado hasta el puente real)." : "Lo pesado queda registrado. Elegí qué pasa con el camión.")
+          // Fin del pesaje: el camión sigue abajo (extra agua) hasta que el plantista toca «Terminar carga» (21/10 · 6)
+          await subir(`/api/carga/${ord!.cargaId}`, { accion: ev.tipo === "parar" ? "parar" : "pesaje_fin", materiales: mats, m3_cargados: rep.m3_cargados, fin_plc: rep.fin_plc, ciclo: e.ciclo })
+          onAviso(ev.tipo === "fin" ? `Pesaje terminado · ${rep.camion}` : `Carga PARADA · ciclo ${e.ciclo} de ${e.ciclos}`, ev.tipo === "fin" ? "Si hace falta, Extra agua. Después, «Terminar carga»." : "Lo pesado queda registrado. Elegí qué pasa con el camión.")
         } else if (ev.tipo === "fin") {
           // Carga hecha desde Indumix, sin orden nuestra: la sube el puente y la une el emparejador
           const mats = materialesDeReporte(rep, c.salidas, null)
@@ -288,6 +293,7 @@ export function usarPuenteSimulado(o: {
         prevRef.current = e
         setEstado(e)
         for (const ev of evs) void alEvento(ev, e)
+        registrarPulsos(e)
       }
       if (ahora - ultGuardado > 1000) { ultGuardado = ahora; guardarSim() }
       if (Date.now() - ultRecetas > 5 * 60_000) { ultRecetas = Date.now(); void subirRecetas(false) }
@@ -371,13 +377,68 @@ export function usarPuenteSimulado(o: {
     await conPlanta((p) => p.parar())
   }, [conPlanta])
 
-  const extraAgua = useCallback(async (litros: number, cargaId: string, despues: boolean) => {
-    try { const { p } = exigir(); await p.extraAgua(litros) } catch (e) { onAviso(e instanceof SinConexionError ? "No hay conexión con la planta" : "No se agregó", (e as Error).message); return false }
-    await subir(`/api/carga/${cargaId}`, { accion: "agua_extra", litros, despues_de_terminar: despues })
-    onAviso(`Extra agua: ${litros} L${despues ? " (después de terminar)" : ""}`, "Registrado en la carga y en la auditoría.")
+  // ── Extra agua MANTENIDO (21/10 · 6) ──
+  /** Cada pulsada que la planta anotó (al soltar, por el vigía o por un corte) se sube una sola vez a cargas_agua_extra. */
+  const registrarPulsos = (e: EstadoPlanta) => {
+    const ord = ordenRef.current
+    if (!ord || ord.contador !== e.contador_carga) return
+    const clave = String(e.contador_carga)
+    const ya = aguaRegRef.current[clave] || 0
+    for (let i = ya; i < e.agua_extras.length; i++) {
+      const x = e.agua_extras[i]
+      void subir(`/api/carga/${ord.cargaId}`, { accion: "agua_extra", litros: x.litros, despues_de_terminar: x.despues_de_terminar })
+    }
+    if (e.agua_extras.length > ya) aguaRegRef.current = { ...aguaRegRef.current, [clave]: e.agua_extras.length }
+  }
+  const aguaParar = useCallback(async () => {
+    if (aguaMantenerRef.current) { clearInterval(aguaMantenerRef.current); aguaMantenerRef.current = null }
+    const s = simRef.current, p = puenteRef.current
+    if (!s || !p || !s.aguaAbierta) return 0
+    const { litros } = await p.extraAguaCerrar()
+    registrarPulsos(s.estado())
+    if (litros > 0) onAviso(`Extra agua: ${litros.toLocaleString("es-AR")} L`, "Registrado en la carga y en la auditoría.")
+    return litros
+  }, [onAviso]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Mientras se mantiene apretado: abre la válvula y la mantiene cada 250 ms. Si algo falla (sin conexión), se frena. */
+  const aguaAbrir = useCallback(async () => {
+    try { const { p } = exigir(); await p.extraAguaAbrir() } catch (e) {
+      onAviso(e instanceof SinConexionError ? "No hay conexión con la planta" : "No se pudo abrir el agua", e instanceof SinConexionError ? "Usá el PARAR de Indumix o la parada de emergencia." : (e as Error).message)
+      return false
+    }
+    if (aguaMantenerRef.current) clearInterval(aguaMantenerRef.current)
+    aguaMantenerRef.current = setInterval(() => {
+      const p = puenteRef.current
+      if (!p) return
+      p.extraAguaMantener().catch(() => { void aguaParar() })
+    }, 250)
+    return true
+  }, [onAviso, aguaParar]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (aguaMantenerRef.current) clearInterval(aguaMantenerRef.current) }, [])
+
+  /**
+   * «Terminar carga» (21/10 · 6): cierra la carga con el fin (ahora) y el agua extra total. Después viene la pregunta
+   * de la muestra y el camión queda "Cargado · esperando salir" hasta que el GPS lo ve salir.
+   */
+  const terminarCarga = useCallback(async (cargaId: string, formulaId: string | null) => {
+    const s = simRef.current, c = ctxRef.current
+    if (!s || !c) return false
+    await aguaParar()
+    const ord = ordenRef.current
+    const contador = ord?.cargaId === cargaId ? ord.contador : s.contador
+    const rep = (await s.leerReportes().catch(() => [] as ReportePlanta[])).find((r) => r.numero === contador) || null
+    registrarPulsos(s.estado())
+    const mats = rep ? materialesDeReporte(rep, c.salidas, formulasRef.current.find((f) => f.id === formulaId) || null) : []
+    const total = (rep?.extras || []).reduce((a, x) => a + x.litros, 0)
+    const r = await subir(`/api/carga/${cargaId}`, { accion: "terminar", materiales: mats, m3_cargados: rep?.m3_cargados, fin_plc: rep?.fin_plc, agua_extra_total: total })
+    if (!r.ok) { onAviso("No se pudo terminar la carga", r.error); return false }
+    ultimaRef.current = { cargaId, contador, fin: Date.now() }
+    setUltima(ultimaRef.current)
+    ordenRef.current = null
+    setOrden(null)
+    onAviso("Carga terminada", `${total ? `Agua extra total ${total.toLocaleString("es-AR")} L. ` : ""}Planta simulada: el stock NO se ajusta (queda apagado hasta el puente real).`)
     onCambio()
     return true
-  }, [subir, onAviso, onCambio]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [aguaParar, subir, onAviso, onCambio]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const simular = useCallback(async (f: Falla | { tipo: "cambiar_receta"; numero: number; cambios: Record<string, number> } | { tipo: "internet" } | { tipo: "leer" }) => {
     const s = simRef.current
@@ -400,11 +461,13 @@ export function usarPuenteSimulado(o: {
   return {
     listo, estado, conectado, internet, vel, setVel, porSubir, prep, ultimaLectura, orden, ultima,
     simulador: simRef.current,
-    cargar, parar, extraAgua, simular,
+    cargar, parar, simular, aguaAbrir, aguaParar, terminarCarga,
     suspender: () => conPlanta((p) => p.suspender()),
     reanudar: () => conPlanta((p) => p.reanudar()),
     bocina: () => conPlanta((p) => p.bocina(2000)),
     olvidarUltima: () => { ultimaRef.current = null; setUltima(null) },
+    /** El pesaje de la orden de esta PC terminó y el camión sigue abajo (falta «Terminar carga») */
+    pesajeTerminado: !!orden && !!estado && estado.contador_carga === orden.contador && !estado.en_ciclo && !estado.parada,
     /** Después de resolver una carga parada: la planta queda libre para la próxima orden */
     soltarOrden: () => { ordenRef.current = null; setOrden(null) },
   }

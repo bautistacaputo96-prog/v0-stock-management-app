@@ -50,29 +50,6 @@ export function ConfirmarCamion({ patente, resumen, avisos, onBocina, onConfirma
   )
 }
 
-export function ExtraAguaDialog({ camion, contexto, onAgregar, onCerrar }: { camion: string; contexto: React.ReactNode; onAgregar: (litros: number) => Promise<boolean>; onCerrar: () => void }) {
-  const [l, setL] = useState("20")
-  const [env, setEnv] = useState(false)
-  const n = Number(l.replace(",", "."))
-  const ok = n > 0 && n <= 300
-  return (
-    <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
-      <DialogContent className="sm:max-w-[420px]">
-        <DialogHeader><DialogTitle>Extra agua · {camion}</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          <div className="rounded-md bg-muted/50 px-2 py-1.5">{contexto} Indumix lo agrega con su botón «Extra agua».</div>
-          <div className="flex gap-1">{[10, 20, 30, 50].map((x) => <Btn key={x} onClick={() => setL(String(x))}>{x} L</Btn>)}</div>
-          <label className="block text-[11.5px] font-semibold">Litros *
-            <input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" inputMode="numeric" value={l} onChange={(e) => setL(e.target.value)} />
-          </label>
-          <div className="text-[12px] text-muted-foreground">Queda registrado con la hora y quién lo pidió. La auditoría suma el agua extra por camión, fórmula y plantista.</div>
-        </div>
-        <DialogFooter><Btn onClick={onCerrar} disabled={env}>Cancelar</Btn><Btn tono="pri" disabled={!ok || env} onClick={async () => { setEnv(true); const r = await onAgregar(n); setEnv(false); if (r) onCerrar() }}>Agregar agua</Btn></DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 /** Motivo obligatorio (parada, cancelar, autorizar, descartar). */
 export function MotivoDialog({ titulo, cuerpo, boton, ejemplo, onConfirmar, onCerrar, peligro }: {
   titulo: string; cuerpo: React.ReactNode; boton: string; ejemplo?: string; onConfirmar: (motivo: string) => Promise<boolean | void>; onCerrar: () => void; peligro?: boolean

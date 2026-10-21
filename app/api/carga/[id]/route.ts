@@ -22,7 +22,9 @@ export const dynamic = "force-dynamic"
  * - evento                 ciclo_inicio · suspender · reanudar · bocina · alarma · alarma_fin
  * - agua_extra             el botón "Extra agua" (19.5)
  * - parar                  PARAR: queda "parada" con lo pesado
- * - terminar               fin con el reporte: materiales reales
+ * - pesaje_fin             la planta terminó de pesar y descargar: se guardan los materiales, pero el camión sigue
+ *                          abajo (extra agua) y la carga sigue abierta (21/10 · 6)
+ * - terminar               «Terminar carga»: el fin (ahora), los materiales reales y el agua extra total
  * - resolver_parada        sale con lo cargado · completar con otra carga · se tiró (con motivo)
  * - cancelar               antes de pesar nada, con motivo
  * - revisar                auditoría revisada (carga.editar)
@@ -32,7 +34,7 @@ export const dynamic = "force-dynamic"
 const PERMISO: Record<string, Accion> = {
   // PARAR no pide permiso (alcanza con ver la pantalla). Lo que sube el puente (terminar) pide cargar mientras no
   // exista la credencial del puesto.
-  bajada: "ver", evento: "ver", parar: "ver", no_arranco: "ver", terminar: "cargar",
+  bajada: "ver", evento: "ver", parar: "ver", no_arranco: "ver", terminar: "cargar", pesaje_fin: "cargar",
   arrancar: "cargar", arranco: "cargar", agua_extra: "cargar", resolver_parada: "cargar", cancelar: "cargar",
   // la muestra al terminar la carga pide historial.cargar (como "Agregar muestra" del Historial): se controla aparte
   muestra: "cargar",
@@ -42,7 +44,7 @@ const PERMISO: Record<string, Accion> = {
 const permisoDe = (accion: string, tipo: unknown): Accion =>
   accion === "evento" && ["suspender", "reanudar", "bocina"].includes(String(tipo)) ? "cargar" : PERMISO[accion]
 /** Lo que el puente sube con la etiqueta "sin internet" y que se guarda aunque la orden se haya cancelado mientras */
-const DEL_PUENTE = ["arrancar", "arranco", "evento", "parar", "terminar", "agua_extra"]
+const DEL_PUENTE = ["arrancar", "arranco", "evento", "parar", "pesaje_fin", "terminar", "agua_extra"]
 const EN_COLA = ["pendiente", "bloqueada", "lista", "preparada"]
 const num = (x: unknown) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x))
 
@@ -71,7 +73,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Sin internet la planta cargó una orden que mientras tanto se canceló en la nube: lo que pasó en la planta se
     // guarda igual, en otra carga unida al mismo despacho, con su alerta (no se pierde ni se pisa la cancelación).
     if (sinInternet && ["cancelada", "anulada"].includes(carga.estado) && DEL_PUENTE.includes(accion)) {
-      const otra = await cargaDeOrdenCancelada(carga, ["arrancar", "parar", "terminar"].includes(accion), r.usuario, at)
+      const otra = await cargaDeOrdenCancelada(carga, ["arrancar", "parar", "pesaje_fin", "terminar"].includes(accion), r.usuario, at)
       if (!otra) return NextResponse.json({ ok: true, ignorado: true })
       carga = otra
     }
@@ -169,20 +171,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
 
       case "parar":
+      case "pesaje_fin":
       case "terminar": {
-        if (accion === "terminar" && ["terminada", "cancelada", "anulada"].includes(carga.estado)) return listo({ duplicado: true })
+        if (accion !== "parar" && ["terminada", "cancelada", "anulada"].includes(carga.estado)) return listo({ duplicado: true })
         if (accion === "parar" && carga.estado === "parada") return listo({ duplicado: true })
-        if (!(await evento(accion === "parar" ? "parar" : "fin", { m3_cargados: num(body?.m3_cargados), fin_plc: body?.fin_plc || null }))) return listo({ duplicado: true })
+        const aguaTotal = num(body?.agua_extra_total)
+        if (!(await evento(accion === "parar" ? "parar" : accion === "pesaje_fin" ? "fin_pesaje" : "fin", { m3_cargados: num(body?.m3_cargados), fin_plc: body?.fin_plc || null, ...(accion === "terminar" ? { agua_extra_total: aguaTotal } : {}) }))) return listo({ duplicado: true })
         const mats = (Array.isArray(body?.materiales) ? body.materiales : []) as MaterialBody[]
         const filas = mats.filter((m) => SALIDAS.includes(m.salida)).map((m) => ({
           carga_id: id, ciclo: 0, salida: m.salida, material_id: m.material_id || null, receta_por_m3: num(m.receta_por_m3), formula_por_m3: num(m.formula_por_m3),
-          teorico: num(m.teorico), humedad_pct: num(m.humedad_pct), teorico_corregido: num(m.teorico_corregido), real: num(m.real), extra: num(m.extra) ?? 0, unidad: m.unidad || null,
+          teorico: num(m.teorico), humedad_pct: num(m.humedad_pct), teorico_corregido: num(m.teorico_corregido), real: num(m.real),
+          // el agua extra total de la carga queda en la línea del agua
+          extra: m.salida === "agua" && aguaTotal != null ? aguaTotal : num(m.extra) ?? 0, unidad: m.unidad || null,
         }))
         if (filas.length) {
           const { error: e } = await sb.from("cargas_materiales").upsert(filas, { onConflict: "carga_id,ciclo,salida" })
           if (e) throw e
         }
         const conDesvio = filas.some((f) => desvio({ grupo: grupoDeSalida(f.salida), teorico_corregido: f.teorico_corregido, real: f.real }, puesto.tolerancias.pesaje))
+        if (accion === "pesaje_fin") {
+          await upd({ fin_plc: body?.fin_plc ? String(body.fin_plc).slice(0, 40) : carga.fin_plc, m3_cargados: num(body?.m3_cargados) ?? carga.m3, ciclo_actual: num(body?.ciclo) ?? carga.ciclo_actual })
+          return listo()
+        }
         await upd({
           estado: accion === "parar" ? "parada" : "terminada",
           ...(accion === "parar" ? { parada_at: at } : { fin_at: at }),

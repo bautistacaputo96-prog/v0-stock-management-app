@@ -41,6 +41,9 @@ export interface Puente {
   reanudar(): Promise<void>
   bocina(ms?: number): Promise<void>
   extraAgua(litros: number): Promise<void>
+  extraAguaAbrir(): Promise<void>
+  extraAguaMantener(): Promise<void>
+  extraAguaCerrar(): Promise<{ litros: number }>
 }
 
 /** Se tocó PARAR mientras arrancaba: no se arrancó nada. */
@@ -101,6 +104,9 @@ export class PuenteConAdaptador implements Puente {
   reanudar() { return this.adaptador.reanudar() }
   bocina(ms = 2000) { return this.adaptador.bocina(ms) }
   extraAgua(litros: number) { return this.adaptador.extraAgua(litros) }
+  extraAguaAbrir() { return this.adaptador.extraAguaAbrir() }
+  extraAguaMantener() { return this.adaptador.extraAguaMantener() }
+  extraAguaCerrar() { return this.adaptador.extraAguaCerrar() }
 }
 
 /** El puente de un puesto. Solo existe el simulador: el de Indumix real todavía no está programado. */
