@@ -47,10 +47,15 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
     if (!habilitado) return
     let vivo = true
     cargarZomatik().then((z) => vivo && setZomatik(z))
-    createClient()
-      .from("clients")
-      .select("*") // con unificado_en si ya está la migración de alias
-      .then(({ data }) => vivo && setNuestros(((data as any[]) || []) as Nuestro[]))
+    // Solo las columnas que hacen falta; unificado_en existe recién con la migración de alias (si no, sin ella)
+    const sb = createClient()
+    const COLS = "id, name, razon_social, cuit, zomatik_codigo, active"
+    sb.from("clients")
+      .select(`${COLS}, unificado_en`)
+      .then(async ({ data, error }) => {
+        const filas = error ? (await sb.from("clients").select(COLS)).data : data
+        if (vivo) setNuestros(((filas as any[]) || []) as Nuestro[])
+      })
     return () => {
       vivo = false
     }

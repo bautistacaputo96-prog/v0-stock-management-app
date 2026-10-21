@@ -25,7 +25,10 @@ export async function traerCliente(opts: { codigo: number; plantId?: string | nu
   const { codigo } = opts
   if (!Number.isInteger(codigo) || codigo <= 0) return { ok: false, status: 400, error: "Código de Zomatik inválido" }
 
-  const { data: nuestros, error: eN } = await sb.from("clients").select("*")
+  const COLS = "id, name, razon_social, cuit, zomatik_codigo, active"
+  // unificado_en existe recién con la migración de alias: si no está, sin ella
+  let { data: nuestros, error: eN } = await sb.from("clients").select(`${COLS}, unificado_en`)
+  if (eN) ({ data: nuestros, error: eN } = await sb.from("clients").select(COLS))
   if (eN) throw eN
   const lista = ((nuestros as any[]) || []) as { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null; unificado_en?: string | null }[]
   const porId = new Map(lista.map((c) => [c.id, c]))

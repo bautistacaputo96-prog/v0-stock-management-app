@@ -6,8 +6,9 @@
 --   client_alias         nombres alternativos de un cliente ("MERVA" y "MERVA SA"): el buscador lo encuentra por
 --                        cualquiera. Se guardan al confirmar "es este" en el alta, al unificar y a mano.
 --   clients.unificado_*  el cliente dado de baja por unificar apunta al que quedó (para no perder el rastro).
---   unificar_clientes    en UNA transacción: mueve obras (las de mismo nombre en los dos se juntan: todo lo que
---                        apuntaba a la repetida pasa a la del que queda), pedidos, despachos y respuestas R/X del día
+--   unificar_clientes    en UNA transacción: mueve obras (las de mismo nombre en los dos se juntan: a la que queda se
+--                        le copia lo que tenga vacío de la repetida, todo lo que apuntaba a la repetida pasa a ella y
+--                        la repetida se borra; en Actividad quedan las obras juntadas y los campos copiados), pedidos, despachos y respuestas R/X del día
 --                        al cliente que queda, pasa el código de Zomatik si el que queda no tiene, guarda los nombres del otro
 --                        como alias, da de baja el otro y deja la Actividad. Si algo no cierra, no cambia nada.
 --
@@ -53,6 +54,10 @@ DECLARE
   n_rx int;
   n_rx_borrados int;
   r record;
+  os construction_sites%ROWTYPE;
+  oq construction_sites%ROWTYPE;
+  campos text[];
+  juntadas jsonb := '[]'::jsonb;
 BEGIN
   IF p_queda IS NULL OR p_sale IS NULL OR p_queda = p_sale THEN
     RETURN jsonb_build_object('error', 'Elegí dos clientes distintos.');
@@ -82,15 +87,50 @@ BEGIN
     -- Obras con el mismo nombre en los dos (sin mayúsculas ni espacios de más): todo lo de la obra repetida pasa a
     -- la del que queda y la repetida se borra. Así no choca con UNIQUE (name, client_id).
     FOR r IN
-      SELECT os.id AS sale_obra, oq.id AS queda_obra
-        FROM construction_sites os
+      SELECT cs_s.id AS sale_obra, cs_q.id AS queda_obra
+        FROM construction_sites cs_s
         JOIN LATERAL (
           SELECT o.id FROM construction_sites o
-           WHERE o.client_id = p_queda AND lower(trim(o.name)) = lower(trim(os.name))
+           WHERE o.client_id = p_queda AND lower(trim(o.name)) = lower(trim(cs_s.name))
            ORDER BY o.created_at NULLS LAST, o.id LIMIT 1
-        ) oq ON true
-       WHERE os.client_id = p_sale
+        ) cs_q ON true
+       WHERE cs_s.client_id = p_sale
     LOOP
+      -- Antes de borrar la repetida, a la obra que queda se le copia lo que tenga vacío (no se pierde nada)
+      SELECT * INTO os FROM construction_sites WHERE id = r.sale_obra;
+      SELECT * INTO oq FROM construction_sites WHERE id = r.queda_obra FOR UPDATE;
+      campos := '{}';
+      IF nullif(trim(oq.address), '') IS NULL AND nullif(trim(os.address), '') IS NOT NULL THEN oq.address := os.address; campos := campos || 'dirección'::text; END IF;
+      IF nullif(trim(oq.localidad), '') IS NULL AND nullif(trim(os.localidad), '') IS NOT NULL THEN oq.localidad := os.localidad; campos := campos || 'localidad'::text; END IF;
+      IF oq.gps_lat IS NULL AND oq.gps_lng IS NULL AND os.gps_lat IS NOT NULL THEN
+        oq.gps_lat := os.gps_lat; oq.gps_lng := os.gps_lng; oq.gps_source := os.gps_source; oq.gps_updated_at := os.gps_updated_at;
+        campos := campos || 'ubicación GPS'::text;
+      END IF;
+      IF oq.travel_distance_km IS NULL AND os.travel_distance_km IS NOT NULL THEN oq.travel_distance_km := os.travel_distance_km; campos := campos || 'km'::text; END IF;
+      IF oq.travel_time_minutes IS NULL AND os.travel_time_minutes IS NOT NULL THEN oq.travel_time_minutes := os.travel_time_minutes; campos := campos || 'tiempo de viaje'::text; END IF;
+      IF oq.unload_time_minutes IS NULL AND os.unload_time_minutes IS NOT NULL THEN oq.unload_time_minutes := os.unload_time_minutes; campos := campos || 'tiempo de descarga'::text; END IF;
+      IF oq.requires_pump IS NULL AND os.requires_pump IS NOT NULL THEN oq.requires_pump := os.requires_pump; campos := campos || 'bomba'::text; END IF;
+      IF oq.reception_hours_start IS NULL AND os.reception_hours_start IS NOT NULL THEN oq.reception_hours_start := os.reception_hours_start; campos := campos || 'recibe desde'::text; END IF;
+      IF oq.reception_hours_end IS NULL AND os.reception_hours_end IS NOT NULL THEN oq.reception_hours_end := os.reception_hours_end; campos := campos || 'recibe hasta'::text; END IF;
+      IF nullif(trim(oq.site_contact), '') IS NULL AND nullif(trim(os.site_contact), '') IS NOT NULL THEN oq.site_contact := os.site_contact; campos := campos || 'contacto'::text; END IF;
+      IF nullif(trim(oq.site_phone), '') IS NULL AND nullif(trim(os.site_phone), '') IS NOT NULL THEN oq.site_phone := os.site_phone; campos := campos || 'teléfono'::text; END IF;
+      IF nullif(trim(oq.status), '') IS NULL AND nullif(trim(os.status), '') IS NOT NULL THEN oq.status := os.status; campos := campos || 'estado'::text; END IF;
+      IF oq.remito_tipo IS NULL AND os.remito_tipo IS NOT NULL THEN oq.remito_tipo := os.remito_tipo; campos := campos || 'remito R/X'::text; END IF;
+      -- Observaciones: si las dos tienen, se suman las de la repetida (no se pisa ni se pierde ninguna)
+      IF nullif(trim(os.observations), '') IS NOT NULL THEN
+        IF nullif(trim(oq.observations), '') IS NULL THEN oq.observations := os.observations; campos := campos || 'observaciones'::text;
+        ELSIF position(trim(os.observations) IN oq.observations) = 0 THEN
+          oq.observations := oq.observations || E'\n' || format('(de la obra de «%s») %s', s.name, trim(os.observations)); campos := campos || 'observaciones (sumadas)'::text;
+        END IF;
+      END IF;
+      UPDATE construction_sites SET
+        address = oq.address, localidad = oq.localidad, gps_lat = oq.gps_lat, gps_lng = oq.gps_lng, gps_source = oq.gps_source,
+        gps_updated_at = oq.gps_updated_at, travel_distance_km = oq.travel_distance_km, travel_time_minutes = oq.travel_time_minutes,
+        unload_time_minutes = oq.unload_time_minutes, requires_pump = oq.requires_pump, reception_hours_start = oq.reception_hours_start,
+        reception_hours_end = oq.reception_hours_end, site_contact = oq.site_contact, site_phone = oq.site_phone, status = oq.status,
+        remito_tipo = oq.remito_tipo, observations = oq.observations, updated_at = now()
+       WHERE id = oq.id AND cardinality(campos) > 0;
+      juntadas := juntadas || jsonb_build_object('obra', oq.name, 'campos_copiados', to_jsonb(campos));
       UPDATE dispatches SET construction_site_id = r.queda_obra WHERE construction_site_id = r.sale_obra;
       UPDATE scheduled_dispatches SET construction_site_id = r.queda_obra WHERE construction_site_id = r.sale_obra;
       UPDATE viajes_gps SET construction_site_id = r.queda_obra WHERE construction_site_id = r.sale_obra;
@@ -135,7 +175,7 @@ BEGIN
 
     INSERT INTO activity_log (user_name, action, entity, entity_id, reference, details)
     VALUES (v_usuario, 'editar', 'cliente', p_queda, q.name,
-            jsonb_build_object('Unificado con', s.name, 'Motivo', trim(p_motivo), 'Obras movidas', n_obras, 'Obras repetidas juntadas', n_obras_juntadas,
+            jsonb_build_object('Unificado con', s.name, 'Motivo', trim(p_motivo), 'Obras movidas', n_obras, 'Obras repetidas juntadas', n_obras_juntadas, 'Obras juntadas (campos copiados)', juntadas,
                                'Pedidos movidos', n_pedidos, 'Despachos movidos', n_despachos, 'Respuestas R/X movidas', n_rx, 'Respuestas R/X repetidas borradas', n_rx_borrados)),
            (v_usuario, 'editar', 'cliente', p_sale, s.name,
             jsonb_build_object('Unificado en', q.name, 'Motivo', trim(p_motivo), 'Estado', 'dado de baja'));
@@ -144,7 +184,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'No se pudo unificar: quedaría repetido un dato que tiene que ser único (por ejemplo, dos obras o dos clientes con el mismo nombre en la misma planta). No se cambió nada. Corregí el nombre y probá de nuevo.', 'detalle', SQLERRM);
   END;
 
-  RETURN jsonb_build_object('ok', true, 'obras', n_obras, 'obras_juntadas', n_obras_juntadas, 'pedidos', n_pedidos, 'despachos', n_despachos, 'remito_tipo_dia', n_rx);
+  RETURN jsonb_build_object('ok', true, 'obras', n_obras, 'obras_juntadas', n_obras_juntadas, 'juntadas', juntadas, 'pedidos', n_pedidos, 'despachos', n_despachos, 'remito_tipo_dia', n_rx);
 END;
 $$;
 
