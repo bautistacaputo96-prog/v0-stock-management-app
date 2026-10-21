@@ -139,7 +139,7 @@ export function BuscadorCliente({
               {res.rebucret.map((c) => (
                 <Fila key={c.id} deshabilitada={c.dado_de_baja} onClick={() => elegir({ id: c.id, name: c.name })}>
                   <span className="truncate font-medium">{c.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{c.dado_de_baja ? "dado de baja: reactivalo en Clientes" : c.via === "nombre" ? "" : `por ${c.via}`}</span>
+                  <span className="truncate text-xs text-muted-foreground">{c.dado_de_baja ? "dado de baja: reactivalo en Clientes" : c.via === "nombre" ? "" : c.via.startsWith("«") ? c.via : `por ${c.via}`}</span>
                 </Fila>
               ))}
             </Grupo>

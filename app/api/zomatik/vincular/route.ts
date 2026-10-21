@@ -8,6 +8,7 @@
  *             formula   · id = formulas.id           · codigo = código del artículo
  *             proyecto  · id = código del proyecto   · codigo = construction_sites.id (la obra)
  *     accion  vincular · sin_par (no está en Zomatik / no tiene obra) · quitar (vuelve a "sin revisar")
+ *     soloSiLibre  true = grabar solo si todavía no tiene vínculo ("Confirmar todas las de confianza alta")
  */
 import { NextResponse } from "next/server"
 import { exigirGerencial, modoPruebaLocal, respuestaModoLocal, respuestaError, registrarActividad, sbServicio } from "@/lib/auth/servidor"
@@ -15,7 +16,14 @@ import { exigirGerencial, modoPruebaLocal, respuestaModoLocal, respuestaError, r
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null }
+type Item = {
+  tipo: "cliente" | "formula" | "proyecto"
+  id: string
+  accion: "vincular" | "sin_par" | "quitar"
+  codigo?: string | number | null
+  /** "Confirmar todas las de confianza alta": graba solo si todavía no tiene vínculo (no pisa lo que otro confirmó) */
+  soloSiLibre?: boolean
+}
 type Res = { ok: boolean; error?: string }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -44,7 +52,10 @@ async function aplicar(it: Item, usuario: string): Promise<Res> {
       upd = { zomatik_codigo: null, zomatik_vinculo: it.accion === "sin_par" ? "sin_par" : null, zomatik_vinculado_por: usuario, zomatik_vinculado_at: ahora }
       detalle = it.accion === "sin_par" ? "No está en Zomatik" : "Sin revisar"
     }
-    const { error } = await sb.from("clients").update(upd).eq("id", it.id)
+    let qc = sb.from("clients").update(upd).eq("id", it.id)
+    if (it.soloSiLibre) qc = qc.is("zomatik_vinculo", null)
+    const { data: hechos, error } = await qc.select("id")
+    if (!error && it.soloSiLibre && !(hechos || []).length) return { ok: false, error: `«${(c as any).name}» ya tenía vínculo: no se tocó` }
     if (error) return { ok: false, error: (error as any).code === "23505" ? "Ese cliente de Zomatik ya está vinculado a otro" : error.message }
     await registrarActividad({ usuario, action: "editar", entity: "cliente", entityId: it.id, reference: (c as any).name, details: { "Vínculo con Zomatik": detalle } })
     return { ok: true }
@@ -66,8 +77,11 @@ async function aplicar(it: Item, usuario: string): Promise<Res> {
       upd = { zomatik_articulo_codigo: null, zomatik_articulo_nombre: null, zomatik_vinculo: it.accion === "sin_par" ? "sin_par" : null, zomatik_vinculado_por: usuario, zomatik_vinculado_at: ahora }
       detalle = it.accion === "sin_par" ? "Sin artículo en Zomatik" : "Sin revisar"
     }
-    const { error } = await sb.from("formulas").update(upd).eq("id", it.id)
+    let qf = sb.from("formulas").update(upd).eq("id", it.id)
+    if (it.soloSiLibre) qf = qf.is("zomatik_vinculo", null)
+    const { data: hechos, error } = await qf.select("id")
     if (error) return { ok: false, error: error.message }
+    if (it.soloSiLibre && !(hechos || []).length) return { ok: false, error: `«${(f as any).name}» ya tenía vínculo: no se tocó` }
     await registrarActividad({ usuario, action: "editar", entity: "formula", entityId: it.id, reference: (f as any).name, details: { "Artículo de Zomatik": detalle } })
     return { ok: true }
   }
@@ -88,8 +102,11 @@ async function aplicar(it: Item, usuario: string): Promise<Res> {
       upd = { construction_site_id: null, vinculo: it.accion === "sin_par" ? "sin_par" : null, vinculado_por: usuario, vinculado_at: ahora }
       detalle = it.accion === "sin_par" ? "Sin obra en Rebucret" : "Sin revisar"
     }
-    const { error } = await sb.from("zomatik_proyectos").update(upd).eq("codigo", codigo)
+    let qp = sb.from("zomatik_proyectos").update(upd).eq("codigo", codigo)
+    if (it.soloSiLibre) qp = qp.is("vinculo", null)
+    const { data: hechos, error } = await qp.select("codigo")
     if (error) return { ok: false, error: error.message }
+    if (it.soloSiLibre && !(hechos || []).length) return { ok: false, error: `${(p as any).numero} ya tenía vínculo: no se tocó` }
     await registrarActividad({ usuario, action: "editar", entity: "obra", entityId: typeof upd.construction_site_id === "string" ? (upd.construction_site_id as string) : null, reference: (p as any).numero, details: { "Proyecto de Zomatik": `${(p as any).numero} → ${detalle}` } })
     return { ok: true }
   }

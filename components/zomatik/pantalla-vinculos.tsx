@@ -40,7 +40,7 @@ type Dup = { a: ResDup; b: ResDup; motivos: string[] }
 type Conteo = { faltan: number; alta: number; media: number; baja: number; sin: number }
 type Datos = { clientes: FilaC[]; formulas: FilaF[]; proyectos: FilaP[]; zomatik: ZCli[]; zomatikAnio: ZAnio[]; articulos: { codigo: number; nombre: string; linea: string | null }[]; sinCruce: boolean; leido: string | null; duplicados: Dup[]; conteos: { clientes: Conteo; formulas: Conteo; proyectos: Conteo } }
 type Dias = { evidencia: string; nuestros: { fecha: string; m3: number; obra: string | null; formula: string | null; planta: string; cliente?: string | null; coincide: boolean }[]; zomatik: { fecha: string; m3: number; articulo: string; deposito: string; cliente?: string | null; remito?: string | null; coincide: boolean }[] }
-type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null; etiqueta?: string }
+type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null; etiqueta?: string; soloSiLibre?: boolean }
 
 type Pestaña = "clientes" | "formulas" | "proyectos" | "traer" | "duplicados"
 type Filtro = "revisar" | "alta" | "vinculados" | "todos"
@@ -744,7 +744,8 @@ export function PantallaVinculos() {
             <Button
               disabled={trabajando}
               onClick={async () => {
-                const items = resumen || []
+                // Solo si siguen sin vínculo: no pisa lo que se haya confirmado mientras tanto
+                const items = (resumen || []).map((i) => ({ ...i, soloSiLibre: true }))
                 await mandar(items)
                 setResumen(null)
               }}

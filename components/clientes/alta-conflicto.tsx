@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button"
 export type ConflictoC = { tipo: "rebucret" | "zomatik"; id: string; nombre: string; motivo: string; evidencia: string; dado_de_baja?: boolean }
 export type RespuestaAlta =
   | { ok: true; cliente: { id: string; name: string } }
-  | { ok: false; codigo: "documento" | "mismo_documento" | "parecidos" | "nombre" | "otro"; error: string; conflictos?: ConflictoC[] }
+  | { ok: false; codigo: "documento" | "mismo_documento" | "parecidos" | "nombre" | "repetido" | "otro"; error: string; conflictos?: ConflictoC[] }
 
 export async function pedirAlta(datos: Record<string, unknown>, descartados: string[], excepcion?: string): Promise<RespuestaAlta> {
   const r = await fetch("/api/clientes/alta", {

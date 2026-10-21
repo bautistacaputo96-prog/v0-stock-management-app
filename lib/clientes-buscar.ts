@@ -103,6 +103,8 @@ export type NuestroB = {
   phone?: string | null
   active?: boolean | null
   zomatik_codigo?: number | null
+  /** si se unificó: el id del cliente que quedó */
+  unificado_en?: string | null
   alias?: string[]
   obras?: string[]
   despachos?: number
@@ -111,6 +113,13 @@ export type NuestroB = {
 export type ZomatikB = { codigo: number; razon_social: string; cuit?: string | null; telefono?: string | null; localidad?: string | null; remitos_12m?: number; ultimo_remito?: string | null; estado?: string | null }
 
 export type HitRebucret = { id: string; name: string; via: string; dado_de_baja: boolean; zomatik_codigo: number | null }
+
+/** El cliente que vale: si se unificó, el que quedó (siguiendo la cadena, por las dudas). */
+export function clienteVigente<T extends { id: string; unificado_en?: string | null }>(c: T, porId: Map<string, T>): T {
+  let x = c
+  for (let i = 0; i < 5 && x.unificado_en && porId.get(x.unificado_en); i++) x = porId.get(x.unificado_en)!
+  return x
+}
 export type HitZomatik = { codigo: number; razon_social: string; cuit: string | null; localidad: string | null; remitos_12m: number; ultimo_remito: string | null }
 export type Parecido = { tipo: "rebucret" | "zomatik"; id: string; nombre: string; similitud: number; dado_de_baja?: boolean }
 
@@ -150,14 +159,19 @@ export function buscarClientes(q: string, nuestros: NuestroB[], zomatik: Zomatik
   const deZomatik: HitZomatik[] = []
   const parecidos: Parecido[] = []
   if (texto.length < 2) return { rebucret, zomatik: deZomatik, parecidos }
+  const porId = new Map(nuestros.map((c) => [c.id, c]))
   const porCodigo = new Map(nuestros.filter((c) => c.zomatik_codigo != null).map((c) => [c.zomatik_codigo as number, c]))
   const porNombre = new Map<string, NuestroB>()
-  for (const c of nuestros) for (const n of [c.name, c.razon_social, ...(c.alias || [])]) {
+  for (const c0 of nuestros) for (const n of [c0.name, c0.razon_social, ...(c0.alias || [])]) {
+    const c = clienteVigente(c0, porId)
     const k = nombreNormalizado(n)
     if (k && (!porNombre.has(k) || (porNombre.get(k)!.active === false && c.active !== false))) porNombre.set(k, c)
   }
   const vistos = new Set<string>()
-  const agregarNuestro = (c: NuestroB, via: string) => {
+  const agregarNuestro = (c0: NuestroB, via0: string) => {
+    // Un cliente unificado no se ofrece: se ofrece el que quedó
+    const c = clienteVigente(c0, porId)
+    const via = c.id !== c0.id ? `«${c0.name}» se unificó en este` : via0
     if (vistos.has(c.id)) return
     vistos.add(c.id)
     rebucret.push({ id: c.id, name: c.name, via, dado_de_baja: c.active === false, zomatik_codigo: c.zomatik_codigo ?? null })
@@ -179,7 +193,7 @@ export function buscarClientes(q: string, nuestros: NuestroB[], zomatik: Zomatik
   // Posibles parecidos (errores de tipeo), si la búsqueda tiene letras
   if (normalizarBusqueda(texto).replace(/[0-9 ]/g, "").length >= 3) {
     for (const c of nuestros) {
-      if (vistos.has(c.id)) continue
+      if (vistos.has(c.id) || c.unificado_en) continue
       const s = Math.max(...[c.name, c.razon_social, ...(c.alias || [])].filter(Boolean).map((n) => similitudBusqueda(texto, n)))
       if (s >= 0.45) parecidos.push({ tipo: "rebucret", id: c.id, nombre: c.name, similitud: Math.round(s * 100) / 100, dado_de_baja: c.active === false })
     }
@@ -230,7 +244,16 @@ export function verificarAlta(nuevo: { nombre: string; cuit?: string | null }, n
   const porCodigo = new Set(nuestros.filter((c) => c.zomatik_codigo != null).map((c) => c.zomatik_codigo as number))
   if (documentoValido(nuevo.cuit)) {
     for (const c of nuestros) if (mismoDocumento(nuevo.cuit, c.cuit)) mismoDoc.push({ tipo: "rebucret", id: c.id, nombre: c.name, motivo: "mismo CUIT/DNI", evidencia: ev(c), dado_de_baja: c.active === false })
-    for (const z of zomatik) if (activoZ(z) && !porCodigo.has(z.codigo) && mismoDocumento(nuevo.cuit, z.cuit)) mismoDoc.push({ tipo: "zomatik", id: String(z.codigo), nombre: z.razon_social, motivo: "mismo CUIT/DNI en Zomatik", evidencia: evZ(z) })
+    // También los CUIT de Zomatik (activos o no). Si ese cliente de Zomatik ya está vinculado, el conflicto es con el nuestro
+    const vinculadoA = new Map(nuestros.filter((c) => c.zomatik_codigo != null).map((c) => [c.zomatik_codigo as number, c]))
+    for (const z of zomatik) {
+      if (!mismoDocumento(nuevo.cuit, z.cuit)) continue
+      const c = vinculadoA.get(z.codigo)
+      if (c) {
+        if (!mismoDoc.some((m) => m.tipo === "rebucret" && m.id === c.id))
+          mismoDoc.push({ tipo: "rebucret", id: c.id, nombre: c.name, motivo: `mismo CUIT que su cliente de Zomatik «${z.razon_social}»`, evidencia: ev(c), dado_de_baja: c.active === false })
+      } else mismoDoc.push({ tipo: "zomatik", id: String(z.codigo), nombre: z.razon_social, motivo: activoZ(z) ? "mismo CUIT/DNI en Zomatik" : "mismo CUIT/DNI en Zomatik (inactivo allá)", evidencia: evZ(z) })
+    }
   }
   const yaEsta = new Set(mismoDoc.map((m) => `${m.tipo}:${m.id}`))
   for (const c of nuestros) {
@@ -244,7 +267,19 @@ export function verificarAlta(nuevo: { nombre: string; cuit?: string | null }, n
     if (s >= 0.6) parecidos.push({ tipo: "zomatik", id: String(z.codigo), nombre: z.razon_social, motivo: s >= 0.99 ? "mismo nombre en Zomatik" : `nombre parecido en Zomatik (${Math.round(s * 100)} %)`, evidencia: evZ(z) })
   }
   parecidos.sort((a, b) => (a.motivo.startsWith("mismo") ? -1 : 0) - (b.motivo.startsWith("mismo") ? -1 : 0))
-  return { mismoDoc, parecidos: parecidos.slice(0, 8) }
+  // Los unificados se muestran como el que quedó ("«A» se unificó en «X»"), sin repetir
+  const porId = new Map(nuestros.map((c) => [c.id, c]))
+  const vigentes = (xs: Conflicto[]) => {
+    const out: Conflicto[] = []
+    for (const x of xs) {
+      const c0 = x.tipo === "rebucret" ? porId.get(x.id) : undefined
+      const c = c0 ? clienteVigente(c0, porId) : undefined
+      const y = c && c0 && c.id !== c0.id ? { ...x, id: c.id, nombre: c.name, motivo: `${x.motivo} («${c0.name}» se unificó en «${c.name}»)`, evidencia: ev(c), dado_de_baja: c.active === false } : x
+      if (!out.some((o) => o.tipo === y.tipo && o.id === y.id)) out.push(y)
+    }
+    return out
+  }
+  return { mismoDoc: vigentes(mismoDoc), parecidos: vigentes(parecidos).slice(0, 8) }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +303,7 @@ export type ParDuplicado = { a: string; b: string; motivos: string[] }
 
 /** Pares de clientes nuestros (activos) que parecen el mismo: mismo CUIT/DNI, nombre muy parecido, mismas obras. */
 export function detectarDuplicados(clientes: NuestroB[]): ParDuplicado[] {
-  const act = clientes.filter((c) => c.active !== false)
+  const act = clientes.filter((c) => c.active !== false && !c.unificado_en)
   const out: ParDuplicado[] = []
   for (let i = 0; i < act.length; i++)
     for (let j = i + 1; j < act.length; j++) {

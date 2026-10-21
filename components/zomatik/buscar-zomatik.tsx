@@ -17,7 +17,7 @@ import { tokensNombre, soloDigitos } from "@/lib/zomatik/parseo"
 import { toast } from "sonner"
 
 type ZCliente = { codigo: number; razon_social: string; cuit: string | null; tipo_iva: string | null; localidad: string | null; vendedor: string | null; remitos_12m: number; ultimo_remito: string | null; activo: boolean }
-type Nuestro = { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null }
+type Nuestro = { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null; unificado_en?: string | null }
 
 // Una sola carga por pestaña (se comparte entre los diálogos)
 let cacheZ: Promise<ZCliente[] | null> | null = null
@@ -49,7 +49,7 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
     cargarZomatik().then((z) => vivo && setZomatik(z))
     createClient()
       .from("clients")
-      .select("id, name, razon_social, cuit, zomatik_codigo, active")
+      .select("*") // con unificado_en si ya está la migración de alias
       .then(({ data }) => vivo && setNuestros(((data as any[]) || []) as Nuestro[]))
     return () => {
       vivo = false
@@ -107,7 +107,11 @@ export function BuscarZomatik({ texto, plantId, onTraido }: { texto: string; pla
           {enRebucret.map((c) => (
             <div key={c.id} className="flex gap-2 truncate">
               <span className="font-medium truncate">{c.name}</span>
-              {c.active === false && <span className="text-red-700">dado de baja: reactivalo en Clientes</span>}
+              {c.active === false && (c.unificado_en ? (
+                <span className="text-amber-700">unificado en «{nuestros.find((x) => x.id === c.unificado_en)?.name || "otro cliente"}»: usá ese</span>
+              ) : (
+                <span className="text-red-700">dado de baja: reactivalo en Clientes</span>
+              ))}
               {c.cuit && <span className="text-muted-foreground">CUIT {c.cuit}</span>}
             </div>
           ))}

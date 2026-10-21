@@ -1377,3 +1377,16 @@ Después de la prueba se anula todo lo de prueba **a mano**, por Bautista.
 - **Regla 21.6 (buscador unificado, alta con CUIT, alias, duplicados):** `lib/clientes-buscar.ts` (puro), `/api/clientes/{buscar,alta,alias,unificar}`, `components/clientes/{buscador-cliente,alta-conflicto}.tsx`. El buscador reemplaza el de Programación y el del despacho manual; el alta rápida y el "Nuevo cliente" pasan por `/api/clientes/alta`. Con los datos reales, el detector marca 15 pares de posibles duplicados.
 - **Migración `202610212100_clientes_alias_unificar.sql`** (no aplicada): `client_alias`, `clients.unificado_*` y `unificar_clientes()`. Probada dos veces en ROLLBACK (2,4 s cada una, `lock_timeout` 2s): mueve obras y respuestas R/X, pasa el código de Zomatik, guarda alias, da de baja y deja Actividad; no deja unificar dos veces ni un cliente consigo mismo. Sin esta migración, el buscador y el alta andan igual (sin alias) y "Unificar" avisa que falta.
 - Verificación: tsc sin errores nuevos (17, los de main) · build bien · `test:zomatik` 41/41, despacho 27, gps 44, sesión 21.
+
+#### Ajustes de la revisión de `bcfd309` / `a313440` (21/10/2026)
+- **Lectura de Zomatik desde local** (un login, solo lectura; transacciones de 0,8 a 1,4 s, solo tablas `zomatik_*`): `zomatik_remitos_dia` quedó con 463 renglones; copias refrescadas (467 clientes, 81 artículos, 33 proyectos, 147 movimientos del año, 43 NP pendientes).
+- `unificar_clientes` (migración `202610212100`, sin aplicar):
+  - obras con el mismo nombre en los dos (sin mayúsculas ni espacios de más): despachos, pedidos, `viajes_gps` y `zomatik_proyectos` pasan a la obra del que queda y la repetida se borra (son las únicas referencias a `construction_sites.id` en el esquema);
+  - no deja unificar hacia un cliente dado de baja o ya unificado (sin ciclos), y los que apuntaban al que sale pasan a apuntar al que queda;
+  - un `unique_violation` se devuelve como mensaje claro y no cambia nada; Actividad en los dos clientes;
+  - probada dos veces en ROLLBACK (1,4 s y 0,7 s, `lock_timeout` 2s, todo en una sola ida a la base, sin transacciones abiertas) con el par real Fideicomiso La Tercera ← LA TERCERA: 2 obras juntadas (CANCHA PADEL y LA TERCERA), 15 pedidos y 43 despachos movidos, 0 referencias colgadas; más ciclos, hacia una baja y el choque de un índice único.
+- `client_alias` sin lectura del navegador. El alta controla también el CUIT de Zomatik de los clientes ya vinculados (conflicto con el nuestro) y de los inactivos de Zomatik; con la excepción sin CUIT igual controla que el documento escrito no esté repetido; un nombre repetido en la misma planta (23505) sale como 409 claro.
+- Un cliente unificado se muestra como "unificado en «X»" y se ofrece X (buscador, alta y "Traer de Zomatik").
+- "Confirmar todas las de confianza alta" manda `soloSiLibre`: el servidor graba solo si todavía no hay vínculo.
+- Verificación: tsc sin errores nuevos (17) · build bien · `test:zomatik` 43/43, despacho 27, gps 44, sesión 21.
+- Pendiente para la 0c-2: `clients` sigue escribible con la clave anon.

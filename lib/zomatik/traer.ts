@@ -25,14 +25,17 @@ export async function traerCliente(opts: { codigo: number; plantId?: string | nu
   const { codigo } = opts
   if (!Number.isInteger(codigo) || codigo <= 0) return { ok: false, status: 400, error: "Código de Zomatik inválido" }
 
-  const { data: nuestros, error: eN } = await sb.from("clients").select("id, name, razon_social, cuit, zomatik_codigo, active")
+  const { data: nuestros, error: eN } = await sb.from("clients").select("*")
   if (eN) throw eN
-  const lista = ((nuestros as any[]) || []) as { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null }[]
-  const deBaja = (c: { name: string }) => ({
-    ok: false as const,
-    status: 409,
-    error: `Ya está en Rebucret como «${c.name}», pero está dado de baja: reactivalo en Clientes en vez de crear otro.`,
-  })
+  const lista = ((nuestros as any[]) || []) as { id: string; name: string; razon_social: string | null; cuit: string | null; zomatik_codigo: number | null; active: boolean | null; unificado_en?: string | null }[]
+  const porId = new Map(lista.map((c) => [c.id, c]))
+  const deBaja = (c: { name: string; unificado_en?: string | null }) => {
+    // Si se unificó en otro, se ofrece el que quedó
+    const destino = c.unificado_en ? porId.get(c.unificado_en) : undefined
+    if (destino)
+      return { ok: false as const, status: 409, error: `«${c.name}» se unificó en «${destino.name}»: se usa ese.`, cliente: { id: destino.id, name: destino.name } }
+    return { ok: false as const, status: 409, error: `Ya está en Rebucret como «${c.name}», pero está dado de baja: reactivalo en Clientes en vez de crear otro.` }
+  }
   const vinculado = lista.find((c) => c.zomatik_codigo === codigo)
   if (vinculado) {
     if (vinculado.active === false) return deBaja(vinculado)

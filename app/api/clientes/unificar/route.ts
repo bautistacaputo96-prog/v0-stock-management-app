@@ -25,7 +25,11 @@ export async function POST(req: Request) {
     if (!UUID.test(queda) || !UUID.test(sale)) return NextResponse.json({ error: "Elegí los dos clientes." }, { status: 400 })
     const { data, error } = await sbServicio().rpc("unificar_clientes", { p_queda: queda, p_sale: sale, p_usuario: r.sesion.usuario.name, p_motivo: motivo })
     if (error) {
-      if (/unificar_clientes/.test(error.message || "")) return NextResponse.json({ error: "Falta aplicar la migración 202610212100 (unificar_clientes)." }, { status: 500 })
+      // La función no existe todavía (PGRST202 / "Could not find the function"): falta la migración
+      if ((error as any).code === "PGRST202" || /could not find the function|function .*unificar_clientes.* does not exist/i.test(error.message || ""))
+        return NextResponse.json({ error: "Falta aplicar la migración 202610212100 (unificar_clientes)." }, { status: 500 })
+      if ((error as any).code === "23505")
+        return NextResponse.json({ error: "No se pudo unificar: quedaría repetido un dato que tiene que ser único. No se cambió nada." }, { status: 409 })
       throw error
     }
     if ((data as any)?.error) return NextResponse.json({ error: (data as any).error }, { status: 400 })

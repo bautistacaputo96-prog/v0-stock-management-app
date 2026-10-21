@@ -29,7 +29,7 @@ export function olvidarClientes() {
 export async function cargarClientesParaBuscar(sb: SupabaseClient): Promise<{ nuestros: NuestroB[]; zomatik: ZomatikB[] }> {
   if (cache && cache.hasta > Date.now()) return cache.datos
   const [clientes, obras, desp, zcli] = await Promise.all([
-    todas(sb, "clients", "id, name, razon_social, cuit, phone, active, zomatik_codigo"),
+    todas(sb, "clients", "id, name, razon_social, cuit, phone, active, zomatik_codigo, unificado_en").catch(() => todas(sb, "clients", "id, name, razon_social, cuit, phone, active, zomatik_codigo")),
     todas(sb, "construction_sites", "client_id, name"),
     todas(sb, "dispatches", "id, client_id, dispatch_date, is_test_dispatch", (q) => q.not("client_id", "is", null).order("id")),
     todas(sb, "zomatik_clientes", "codigo, razon_social, cuit, telefono, localidad, remitos_r_12m, remitos_x_12m, ultimo_remito, estado").catch(() => []),

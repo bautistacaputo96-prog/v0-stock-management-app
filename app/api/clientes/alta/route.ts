@@ -54,14 +54,19 @@ export async function POST(req: Request) {
 
     olvidarClientes()
     const { nuestros, zomatik } = await cargarClientesParaBuscar(sbServicio())
-    const v = verificarAlta({ nombre, cuit: doc ? String(datos.cuit) : null }, nuestros, zomatik)
+    // Con la excepción (sin CUIT) igual se controla que el documento escrito (por ejemplo, un DNI) no esté repetido
+    const v = verificarAlta({ nombre, cuit: d0 ? String(datos.cuit) : null }, nuestros, zomatik)
     if (v.mismoDoc.length) return NextResponse.json({ codigo: "mismo_documento", error: "Ya existe un cliente con ese CUIT.", conflictos: v.mismoDoc }, { status: 409 })
     const descartados = new Set<string>(Array.isArray(body?.descartados) ? body.descartados.map(String) : [])
     const pendientes = v.parecidos.filter((p) => !descartados.has(`${p.tipo}:${p.id}`))
     if (pendientes.length) return NextResponse.json({ codigo: "parecidos", error: "¿Es alguno de estos?", conflictos: pendientes }, { status: 409 })
 
     const { data: creado, error } = await sbServicio().from("clients").insert({ ...datos, active: true }).select("id, name").single()
-    if (error) throw error
+    if (error) {
+      if ((error as any).code === "23505")
+        return NextResponse.json({ codigo: "repetido", error: "Ya hay un cliente con ese mismo nombre en esa planta. Buscalo y usá ese, o cambiá el nombre." }, { status: 409 })
+      throw error
+    }
     olvidarClientes()
     await registrarActividad({
       usuario: u.name,
@@ -71,7 +76,7 @@ export async function POST(req: Request) {
       reference: (creado as any).name,
       details: {
         Cliente: nombre,
-        CUIT: doc ? String(datos.cuit) : "sin CUIT válido",
+        CUIT: doc ? String(datos.cuit) : d0 ? `sin CUIT (${d0.tipo} ${String(datos.cuit)})` : "sin CUIT válido",
         ...(doc ? {} : { "Excepción de gerencial": motivoExc }),
         ...(descartados.size ? { "Dijo que no es": v.parecidos.filter((p) => descartados.has(`${p.tipo}:${p.id}`)).map((p) => `${p.nombre}${p.tipo === "zomatik" ? " (Zomatik)" : ""}`).join(", ") } : {}),
         "Condición IVA": String(datos.cond_iva || "-"),
