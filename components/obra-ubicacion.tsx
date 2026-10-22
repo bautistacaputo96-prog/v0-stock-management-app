@@ -190,8 +190,8 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   }
 
   const marcadores = [
-    ...(planta?.gps_lat != null ? [{ id: "planta", lat: Number(planta.gps_lat), lng: Number(planta.gps_lng), html: iconos.planta(planta.name), tamano: [90, 20] as [number, number] }] : []),
-    ...(valor.lat != null && valor.lng != null ? [{ id: "obra", lat: valor.lat, lng: valor.lng, html: iconos.obra(), arrastrable: true, tamano: [22, 22] as [number, number] }] : []),
+    ...(planta?.gps_lat != null ? [{ id: "planta", lat: Number(planta.gps_lat), lng: Number(planta.gps_lng), html: iconos.planta(planta.name), tamano: iconos.tamPlanta }] : []),
+    ...(valor.lat != null && valor.lng != null ? [{ id: "obra", lat: valor.lat, lng: valor.lng, html: iconos.obra(), arrastrable: true, tamano: iconos.tamObra, ancla: iconos.anclaObra }] : []),
   ]
 
   return (

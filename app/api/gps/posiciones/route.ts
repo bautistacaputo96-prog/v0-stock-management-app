@@ -1,19 +1,26 @@
 import { NextResponse } from "next/server"
 import { posiciones, sbAdmin } from "@/lib/wialon"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { distanciaKm, minutosEstimados } from "@/lib/geo"
+import { estadoGps } from "@/lib/gps-vivo"
 
 export const dynamic = "force-dynamic"
-
-/** Radio para considerar que un camión está "en planta" (las geocercas de Wialon son de ~50 m). */
-const RADIO_PLANTA_KM = 0.25
-/** Radio para considerar que está "en la obra" a la que va. */
-const RADIO_OBRA_KM = 0.4
 
 /**
  * Posición actual de los mixers, cruzada con nuestros datos:
  * patente → mixer, último despacho del día (obra, remito, hora de salida) y un estado simple.
  */
 export async function GET() {
+  // Solo con sesión iniciada en la app (las posiciones de los camiones no son públicas). La usan Logística › En vivo
+  // y Despacho; ningún cron ni Concretus la llama.
+  let soloLectura = false
+  try {
+    const r = await exigirSesion()
+    if (r.respuesta) return r.respuesta
+    soloLectura = r.sesion.local
+  } catch (e) {
+    return respuestaError(e)
+  }
   try {
     const unidades = await posiciones()
     if (!unidades) return NextResponse.json({ conectado: false, camiones: [] })
@@ -37,8 +44,8 @@ export async function GET() {
 
     const camiones = unidades.map((u) => {
       const mixer = (mixers || []).find((m) => m.gps_unit_id === u.id || norm(m.license_plate) === norm(u.nombre))
-      // Guardar el vínculo patente ↔ unidad la primera vez
-      if (mixer && !mixer.gps_unit_id) sb.from("mixers").update({ gps_unit_id: u.id }).eq("id", mixer.id).then(() => {})
+      // Guardar el vínculo patente ↔ unidad la primera vez (lo hace el servidor; en el modo prueba local, no)
+      if (mixer && !mixer.gps_unit_id && !soloLectura) sb.from("mixers").update({ gps_unit_id: u.id }).eq("id", mixer.id).then(() => {})
 
       const pos = u.lat != null && u.lng != null ? { lat: u.lat, lng: u.lng } : null
       const plantaCerca = pos
@@ -53,18 +60,14 @@ export async function GET() {
       const obraPos = obra?.gps_lat != null ? { lat: Number(obra.gps_lat), lng: Number(obra.gps_lng) } : null
       const kmObra = pos && obraPos ? distanciaKm(pos, obraPos) : null
       const kmPlanta = plantaCerca?.km ?? null
-      const enMovimiento = (u.velocidad || 0) > 5
       const minutosDesdeSalida = despacho ? Math.round((ahora - new Date(despacho.dispatch_date).getTime()) / 60000) : null
 
-      let estado: "en_planta" | "hacia_obra" | "en_obra" | "volviendo" | "detenido" | "sin_senal" = "detenido"
-      if (!pos || (u.t && ahora - u.t > 3 * 60 * 60 * 1000)) estado = "sin_senal"
-      else if (kmPlanta != null && kmPlanta <= RADIO_PLANTA_KM) estado = "en_planta"
-      else if (kmObra != null && kmObra <= RADIO_OBRA_KM) estado = "en_obra"
-      else if (despacho && enMovimiento) {
-        // Si ya estuvo más tiempo afuera que la ida estimada y se acerca a la planta, está volviendo
-        const ida = obra?.travel_time_minutes || 30
-        estado = minutosDesdeSalida != null && minutosDesdeSalida > ida + 15 ? "volviendo" : "hacia_obra"
-      }
+      // Reglas en lib/gps-vivo.ts (probadas): radios de planta y obra, y en movimiento el rumbo si la obra está ubicada
+      const estado = estadoGps({
+        pos, t: u.t, velocidad: u.velocidad, rumbo: u.rumbo, kmPlanta,
+        plantaPos: plantaCerca ? { lat: Number(plantaCerca.p.gps_lat), lng: Number(plantaCerca.p.gps_lng) } : null,
+        conDespacho: !!despacho, obraPos, minutosDesdeSalida, idaMin: obra?.travel_time_minutes || 30, ahora,
+      })
 
       // Fase 3: parado fuera de planta con remito de hoy y la obra sin ubicar = probable obra
       const probableObra = estado === "detenido" && !!despacho && !obraPos
@@ -80,6 +83,7 @@ export async function GET() {
         rumbo: u.rumbo,
         ultima_posicion: u.t ? new Date(u.t).toISOString() : null,
         motor: u.motor,
+        satelites: u.satelites,
         estado,
         probable_obra: probableObra,
         planta_id: plantaId,
