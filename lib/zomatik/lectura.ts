@@ -334,6 +334,19 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
   const partes: Record<string, unknown> = {}
   const errores: string[] = []
   const sb = sbAdmin()
+  // Z2: el mismo turno que el robot de la NP (una sola sesión trabajando en Zomatik a la vez, 23.3 e).
+  // Sin la migración de Z2 la función no existe y se lee como antes.
+  const quien = `lectura·${t0.toString(36)}`
+  let conTurno = false
+  try {
+    const { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
+    if (!error) {
+      if (data !== true) return { ok: false, partes, errores: ["El robot de las NP está trabajando en Zomatik: la lectura se hace en un rato."], ms: Date.now() - t0 }
+      conTurno = true
+    }
+  } catch {
+    /* sin la migración de Z2 */
+  }
   try {
     const previo = await leerPrevio(sb)
     const s = await obtenerSesion()
@@ -346,6 +359,8 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
     if (foto) partes.grabado = await guardarFoto(sb, foto, previo)
   } catch (e) {
     errores.push(textoError(e))
+  } finally {
+    if (conTurno) await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
   }
   return { ok: errores.length === 0, partes, errores, ms: Date.now() - t0 }
 }

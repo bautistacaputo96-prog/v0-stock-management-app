@@ -1483,14 +1483,14 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
 | `supabase/migrations/202610222200_zomatik_np.sql` | Migración (**sin aplicar**) |
 | `lib/__tests__/zomatik-np.test.mjs` + `lib/__fixtures__/zomatik-np/` | `npm run test:zomatik-np` |
 
-### 24.3 Tablas (migración `202610222200_zomatik_np.sql`, sin aplicar)
-- `plants`: `zomatik_np_activo` (false), `zomatik_np_desde`, `zomatik_deposito` (Canning 116, Hudson 113, se completa), `exigir_np` (aviso/duro), `aviso_hasta`.
-- `scheduled_dispatches`: `zomatik_np_tipo`, `zomatik_proyecto_codigo`, `zomatik_proyecto_tope_m3` (las escribe solo el servidor). `construction_sites.zomatik_proyecto_codigo`.
+### 24.3 Tablas (migración `202610222200_zomatik_np.sql`, sin aplicar; correrla fuera de horario)
+- `zomatik_np_config` (por planta): `activo` (false), `desde`, `deposito` (Canning 116, Hudson 113), `exigir_np` (aviso/duro), `aviso_hasta`. **Solo la escribe el servidor**: no va en `plants` porque `plants` la puede escribir la clave anon.
+- `zomatik_np_pedido` (por pedido): `tipo`, `proyecto_codigo`, `tope_m3`. Solo el servidor, que valida que el proyecto esté abierto y sea del cliente. `construction_sites.zomatik_proyecto_codigo` es solo una sugerencia para el formulario.
 - `zomatik_articulos.codigo_sistema`; `zomatik_proyectos.disponible_m3 / _articulo / _at`.
-- `zomatik_np` (una fila por NP: marca única, estado, paso, mensaje, número, código, sucursal, reintento) y `zomatik_np_excepciones`. El navegador solo las lee.
-- Funciones `zomatik_np_tomar`, `zomatik_robot_tomar/soltar` y el trigger `trg_dispatches_zomatik_np` (BEFORE INSERT en `dispatches`). **`registrar_despacho` no se toca**: el error del modo duro sale del trigger en la misma transacción.
-- **Datos ya cargados:** no cambia ninguno. Llave apagada en las dos plantas, columnas nuevas vacías, tablas nuevas vacías; el trigger solo mira despachos nuevos con la llave prendida.
-- Probada dos veces en `BEGIN … ROLLBACK` (lock_timeout 2 s, statement_timeout 60 s; 8 s y 5 s con la conexión): aplicada dos veces seguidas, depósitos 116/113, turno del robot (uno a la vez), tomar una NP (la segunda vez no; colgada más de 3 min, sí), modo duro rechaza el despacho sin NP con el mensaje, modo aviso lo deja y anota en Actividad.
+- `zomatik_np` (una fila por NP: marca única, estado, paso, mensaje, número, código, sucursal, reintento) y `zomatik_np_excepciones` (si se borra el pedido queda, con una copia). El navegador solo lee `zomatik_np` y las excepciones.
+- Funciones `zomatik_np_tomar`, `zomatik_robot_tomar/soltar` (también las usa la lectura Z0) y el trigger `trg_dispatches_zomatik_np` (BEFORE INSERT en `dispatches`). **`registrar_despacho` no se toca**.
+- **Datos ya cargados:** no cambia ninguno; `plants` y `scheduled_dispatches` no se tocan. Una fila de config por planta con la llave apagada; el resto, vacío. El trigger solo mira despachos nuevos con la llave prendida.
+- Probada en `BEGIN … ROLLBACK` (lock_timeout 2 s): aplicada dos veces seguidas; anon no puede leer ni escribir la config ni la elección; modo duro frena; el despacho de prueba y el autorizado quedan en Actividad.
 
 ### 24.4 Estados de la NP
 `pendiente` (reintento cada 10 min) → `generando` → `ok` · `revisar` (otra sucursal, no aparece después de grabar, cancelado con remitos o cortado al grabar) · `error` (falta un dato o Zomatik dijo que no: no se reintenta sola hasta que cambie el pedido o se apriete "Generar NP ahora"). Cancelado: `vaciar` → `vaciando` → `vaciada`; lo que nunca llegó a Zomatik, `anulada`. "Generando" colgado más de 3 min = corte: primero se busca la marca.
@@ -1503,7 +1503,7 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
 5. Corte en "Grabar": nunca hay dos NP del mismo pedido y número de NP.
 6. Cancelar: NP sin ítems (vaciada) o, con remitos, "revisar" y aviso. Agrandar: NP adicional por la diferencia.
 7. Despacho: en aviso deja y anota; en duro no deja sin NP ni excepción; la excepción la da un gerencial con motivo.
-8. `npm run test:zomatik-np` (34), las demás pruebas, tsc sin errores nuevos y build bien.
+8. `npm run test:zomatik-np` (47), las demás pruebas, tsc sin errores nuevos y build bien.
 
 ### 24.6 Reintento cada 10 min
 `/api/zomatik/np/procesar`: GET solo con `Authorization: Bearer <CRON_SECRET>`; POST con sesión. **Vercel Hobby no deja crons de 10 min** (un `*/10` en `vercel.json` haría fallar el deploy): por eso `vercel.json` tiene uno diario (07:00) y, además, Programación abierta pide la pasada cada 10 min (el servidor hace como mucho una cada 9 min). Para cada 10 min sin nadie mirando, ver 24.8.3.
@@ -1528,3 +1528,19 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
 - `npm run test:zomatik-np`: 34/34 (robot con fixtures, serie, sucursal equivocada, corte en Grabar, reintento al otro día, proyecto, vaciar, plan, modos y lista cerrada). Las demás: gps 51, sesión 26, despacho 28, carga 39, fórmulas 22, zomatik 45.
 - tsc: 17 errores, los mismos de la base; ninguno nuevo. `next build --webpack` bien (`.next` borrado).
 - No se llamó a Zomatik ni se usaron las credenciales. La base solo se leyó; la migración se probó en ROLLBACK.
+
+### 24.10 Cambios de la revisión (22/10)
+- **B1:** la llave y el modo pasan a `zomatik_np_config`, y la elección del pedido a `zomatik_np_pedido`. Las dos tablas son solo del servidor (la clave anon no las ve ni las cambia). El proyecto se valida contra el cliente.
+- **B2:** la marca se busca por depósito y fechas (y `bus_sucursal=18` en REBUCRET), abriendo **todas** las NP, sin filtrar por nombre: la NP se graba con la razón social de Zomatik. No es concluyente si la página vino de otra sucursal, tiene más de una página, hay más de 25 NP o alguna no abre. En ese caso queda **revisar** y no se vuelve a generar.
+- **I1:** el tiempo se cuenta desde que empieza el request. No se arranca una NP con menos de 30 s. Primero se sincroniza la base (la pasada, como mucho 20 s) y después trabaja el robot. El turno dura 60 s y se renueva en cada paso.
+- **I2:** anular y revisar solo si la NP sigue pendiente o con error. El robot guarda cada paso y el resultado solo si la NP sigue "generando"/"vaciando". Si cambió, se corta antes de grabar; si ya grabó, se avisa y no se pisa.
+- **I3:** el proyecto de la obra se propone solo en el alta, o si el pedido no tiene elección guardada.
+- **I4:** la lectura Z0 pide el mismo turno del robot y vuelve a elegir la sucursal 18 antes de cada búsqueda o export.
+- **Menores:**
+  - M1: `bus_sucursal=18`.
+  - M2: vaciar solo graba sobre esa NP (nunca `codigo=0`).
+  - M3: el despacho de prueba sin NP queda en Actividad.
+  - M4: la excepción vale por el día de `dispatch_date` y no se borra con el pedido.
+  - M6: aviso de correr la migración fuera de horario.
+  - M7: `lib/__tests__/zomatik-np-servidor.test.mjs`, con una base y un navegador simulados: llave apagada, carreras, elección, tiempo y lógica del trigger.
+- Pruebas: `test:zomatik-np` 47/47. Las preguntas de 24.8 siguen sin respuesta y no se tocaron.

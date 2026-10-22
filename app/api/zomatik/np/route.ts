@@ -39,6 +39,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // El tiempo de la función se cuenta desde acá (el robot no arranca una NP si quedan menos de 30 s)
+  const inicio = Date.now()
   try {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
@@ -55,7 +57,7 @@ export async function POST(req: Request) {
       if (!id || !decision) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
       const out = await revisarNp(id, decision, u.name)
       if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
-      after(() => procesarNp({ usuario: u.name }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
+      after(() => procesarNp({ usuario: u.name, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
       return NextResponse.json({ ok: true })
     }
 
@@ -78,12 +80,13 @@ export async function POST(req: Request) {
       if (faltaMigracion(err)) return NextResponse.json({ activo: false, motivo: "NP: se carga a mano en Zomatik", sinMigracion: true })
       throw err
     }
-    if (!sync.activo) return NextResponse.json(sync)
+    if (!sync.activo || sync.error) return NextResponse.json(sync, { status: sync.activo && sync.error ? 400 : 200 })
     if (accion === "generar") {
-      const proc = await procesarNp({ usuario: u.name, pedidoId, presupuestoMs: 45_000 })
+      const proc = await procesarNp({ usuario: u.name, pedidoId, inicio })
       return NextResponse.json({ ...sync, proceso: proc })
     }
-    if (sync.creadas || sync.vaciar) after(() => procesarNp({ usuario: u.name, pedidoId }).catch((err) => console.error("[zomatik-np] procesar", err?.message)))
+    // Primero se responde (la base ya quedó sincronizada); el robot trabaja después, dentro del tiempo que queda
+    if (sync.creadas || sync.vaciar) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => console.error("[zomatik-np] procesar", err?.message)))
     return NextResponse.json(sync)
   } catch (e) {
     return respuestaError(e)

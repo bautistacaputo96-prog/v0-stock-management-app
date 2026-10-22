@@ -17,7 +17,7 @@
 import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
-  numeroZomatik, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
+  numeroZomatik, paginasDeListado, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 
@@ -140,23 +140,37 @@ async function manage(nav: NavegadorNp, c: Record<string, string>, extra: [strin
   return renglonesDetalle(r.html)
 }
 
-/** Busca una NP por su número en el listado de la sucursal activa. */
-async function porNumero(nav: NavegadorNp, numero: string): Promise<{ codigo: number; numero: string } | null> {
-  const filas = await listado(nav, { bus_numero: numero })
-  const n = numeroNormalizado(numero)
-  const f = filas.find((x) => numeroNormalizado(x.numero) === n)
-  return f ? { codigo: f.codigo, numero: f.numero } : null
-}
+/** Como mucho, cuántas NP se abren para buscar la marca. Si hay más, la búsqueda no es concluyente. */
+const MAX_ABRIR = 25
 
-/** Listado de pedidos con los filtros del buscador (descubre los campos como Z0). */
-async function listado(nav: NavegadorNp, filtros: Record<string, string>) {
+/** Resultado de buscar la marca: está, seguro que no está, o no se puede asegurar (entonces NO se genera otra). */
+type Busqueda = { estado: "esta"; sucursal: string; codigo: number; numero: string } | { estado: "no_esta" } | { estado: "dudosa"; motivo: string }
+
+/**
+ * Listado de pedidos con los filtros del buscador (descubre los campos como Z0). Devuelve también la sucursal que
+ * muestra la página (si otro sistema la cambió en el medio, se nota) y cuántas páginas tiene.
+ */
+async function listado(nav: NavegadorNp, filtros: Record<string, string>, sucursal: string) {
   const pag = await nav.get("listado_pedidos.php")
   const f = camposFormulario(pag.html, /listado_pedidos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("buscador de pedidos")
-  const campos = { ...f.campos, exportar: "0", ...filtros }
-  const body = queryLatin1(Object.entries(campos))
-  const r = await nav.post("listado_pedidos.php?enviado=1", bytes(body), "application/x-www-form-urlencoded")
-  return pedidosDeListado(r.html)
+  // En REBUCRET se filtra la sucursal 18 (el select trae 18, 20 y 22); en RUTA 25 se deja vacío
+  const campos = { ...f.campos, exportar: "0", bus_sucursal: sucursal === SUCURSAL_REBUCRET ? SUCURSAL_REBUCRET : "", ...filtros }
+  const r = await nav.post("listado_pedidos.php?enviado=1", bytes(queryLatin1(Object.entries(campos))), "application/x-www-form-urlencoded")
+  return {
+    filas: pedidosDeListado(r.html),
+    paginas: paginasDeListado(r.html),
+    sucursalPagina: camposFormulario(r.html, /frm_selsuc/i)?.campos.selsuc ?? null,
+  }
+}
+
+/** Busca una NP por su número en el listado de REBUCRET. */
+async function porNumero(nav: NavegadorNp, numero: string): Promise<{ codigo: number; numero: string } | null> {
+  const l = await listado(nav, { bus_numero: numero }, SUCURSAL_REBUCRET)
+  if (l.sucursalPagina !== SUCURSAL_REBUCRET) return null
+  const n = numeroNormalizado(numero)
+  const f = l.filas.find((x) => numeroNormalizado(x.numero) === n)
+  return f ? { codigo: f.codigo, numero: f.numero } : null
 }
 
 const bytes = (ascii: string) => {
@@ -165,46 +179,50 @@ const bytes = (ascii: string) => {
   return out
 }
 
-/** Abre una NP y dice si tiene la marca. */
+/** Abre una NP (sin importar la sucursal activa, 23.3). */
 async function abrir(nav: NavegadorNp, codigo: number) {
   const r = await nav.get(`modificar_pedidos.php?codigo=${codigo}`)
   const f = camposFormulario(r.html, /frm_pedido|grabar_pedidos/i)
   return { html: r.html, form: f, renglones: renglonesDetalle(r.html) }
 }
 
-const normal = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w]+/g, " ").toUpperCase().trim()
-
 /**
- * Busca la NP por la marca entre las NP del cliente desde el día en que se creó hasta hoy, en una sucursal (abre como
- * mucho 12, de la más nueva a la más vieja). `modificar_pedidos.php?codigo=N` abre la NP sin importar la sucursal activa (23.3).
+ * Busca la marca en una sucursal: todas las NP del depósito desde el día en que se creó la nuestra hasta hoy, sin
+ * filtrar por nombre (la NP se graba con la razón social de Zomatik, no con nuestro nombre). Se abre cada una.
+ * No es concluyente si la página muestra otra sucursal, si el listado tiene más de una página, si hay demasiadas o si
+ * alguna no se puede abrir.
  */
-async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string): Promise<{ codigo: number; numero: string } | null> {
+async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string): Promise<Busqueda> {
   const desde = d.creadaEl && d.creadaEl < hoy ? d.creadaEl : hoy
-  const filas = await listado(nav, { bus_fechad: desde, bus_fechah: hoy })
-  const cli = normal(d.clienteNombre)
-  const candidatos = filas
-    .filter((f) => !cli || normal(f.cliente).includes(cli) || cli.includes(normal(f.cliente)))
-    .sort((a, b) => b.codigo - a.codigo)
-    .slice(0, 12)
-  for (const c of candidatos) {
+  const l = await listado(nav, { bus_fechad: desde, bus_fechah: hoy, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
+  const nombre = sucursal === SUCURSAL_REBUCRET ? "REBUCRET" : "RUTA 25"
+  if (l.sucursalPagina !== sucursal) return { estado: "dudosa", motivo: `el listado de ${nombre} vino de otra sucursal (otro sistema la cambió)` }
+  if ((l.paginas ?? 1) > 1) return { estado: "dudosa", motivo: `el listado de ${nombre} tiene ${l.paginas} páginas` }
+  if (l.filas.length > MAX_ABRIR) return { estado: "dudosa", motivo: `hay ${l.filas.length} NP en ${nombre} para revisar` }
+  for (const c of [...l.filas].sort((a, b) => b.codigo - a.codigo)) {
     const a = await abrir(nav, c.codigo)
-    if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { codigo: c.codigo, numero: c.numero }
+    if (!a.form) return { estado: "dudosa", motivo: `no se pudo abrir la ${c.numero}` }
+    if (tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "esta", sucursal, codigo: c.codigo, numero: c.numero }
   }
-  return null
+  return { estado: "no_esta" }
 }
 
-/** Dónde quedó la NP con esta marca: primero REBUCRET; si no, RUTA 25 (y se vuelve a REBUCRET). */
-async function dondeQuedo(nav: NavegadorNp, d: DatosNp, hoy: string): Promise<{ sucursal: string; codigo: number; numero: string } | null> {
+/** Dónde quedó la NP con esta marca: primero REBUCRET; si no está, RUTA 25 (y se vuelve a REBUCRET). */
+async function dondeQuedo(nav: NavegadorNp, d: DatosNp, hoy: string): Promise<Busqueda> {
   await aRebucret(nav)
-  const r = await porMarca(nav, d, hoy)
-  if (r) return { sucursal: SUCURSAL_REBUCRET, ...r }
+  const r = await porMarca(nav, d, hoy, SUCURSAL_REBUCRET)
+  if (r.estado !== "no_esta") return r
   try {
-    if (!(await nav.sucursal(SUCURSAL_RUTA25))) return null
-    const o = await porMarca(nav, d, hoy)
-    return o ? { sucursal: SUCURSAL_RUTA25, ...o } : null
+    if (!(await nav.sucursal(SUCURSAL_RUTA25))) return { estado: "dudosa", motivo: "no se pudo pasar a RUTA 25" }
+    return await porMarca(nav, d, hoy, SUCURSAL_RUTA25)
   } finally {
     await nav.sucursal(SUCURSAL_REBUCRET)
   }
+}
+
+/** Búsqueda no concluyente: queda "revisar" y no se vuelve a generar (podría duplicar). */
+function dudosa(b: { motivo: string }, paso: string, disponible?: number | null): ResultadoNp {
+  return { estado: "revisar", mensaje: `No se pudo confirmar si la NP quedó grabada (${b.motivo}). No se genera otra: buscala en Zomatik por la marca.`, paso, disponible, grabado: true }
 }
 
 /** Resultado al encontrar la NP con la marca. */
@@ -252,7 +270,8 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.buscarAntes) {
       await marcar("buscar_marca")
       const x = await dondeQuedo(nav, d, o.hoy)
-      if (x) return encontrada(x, paso)
+      if (x.estado === "esta") return encontrada(x, paso)
+      if (x.estado === "dudosa") return dudosa(x, paso)
     }
     // Controles antes de tocar Zomatik
     if (!d.clienteCodigo) throw dato("El cliente no está vinculado con Zomatik (Vínculos con Zomatik).")
@@ -341,7 +360,8 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
     if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero!), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true }
   }
   const otra = await dondeQuedo(nav, d, o.hoy)
-  if (otra) return encontrada(otra, "verificar")
+  if (otra.estado === "esta") return encontrada(otra, "verificar")
+  if (otra.estado === "dudosa") return dudosa(otra, "verificar")
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false }
   return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true }
 }
@@ -398,7 +418,8 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   // El número lo asigna Zomatik al grabar: se busca por la marca entre las NP de hoy del cliente
   await marcar("verificar")
   const x = await dondeQuedo(nav, d, o.hoy)
-  if (x) return encontrada(x, "verificar", disponible)
+  if (x.estado === "esta") return encontrada(x, "verificar", disponible)
+  if (x.estado === "dudosa") return dudosa(x, "verificar", disponible)
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false }
   return { estado: "revisar", mensaje: "Zomatik grabó pero la NP del proyecto no aparece con la marca. Revisala en Zomatik.", paso: "verificar", disponible, grabado: true }
 }
@@ -416,13 +437,15 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     await o.alPaso?.(p)
   }
   try {
+    if (!Number.isInteger(d.codigo) || d.codigo <= 0) return { estado: "revisar", mensaje: "No se sabe el código de la NP en Zomatik: vaciala a mano.", paso }
     await marcar("abrir")
     const a = await abrir(nav, d.codigo)
     if (!a.form) throw formato("no se abrió la NP")
     if (!tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "revisar", mensaje: "La NP no tiene la marca del sistema: no se toca. Revisala en Zomatik.", paso }
     if (!a.renglones.length) return { estado: "vaciada", mensaje: null, paso } // ya estaba vacía (un grabar anterior llegó)
     const accion = a.form.action || ""
-    if (!/^grabar_pedidos\.php\?codigo=\d+$/i.test(accion)) throw formato("la NP graba en otro lado")
+    // Tiene que grabar sobre ESTA NP (nunca codigo=0, que sería una NP nueva)
+    if (accion.toLowerCase() !== `grabar_pedidos.php?codigo=${d.codigo}`) throw formato("la NP graba en otro lado")
     const c = a.form.campos
     const proyecto = Number(c.proyecto || 0) || null
     const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio || "0"], ["forigen", (c.origen as string) || "1"]]

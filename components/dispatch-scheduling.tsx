@@ -523,8 +523,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setViajeOrigen(dispatch.viaje_min != null ? "pedido" : null)
     setEditingDispatch(dispatch)
     setCuitPrompt("")
-    const dz = dispatch as ScheduledDispatch & { zomatik_np_tipo?: string | null; zomatik_proyecto_codigo?: number | null; zomatik_proyecto_tope_m3?: number | null }
-    setNpEleccion(dz.zomatik_np_tipo === "proyecto" && dz.zomatik_proyecto_codigo ? { tipo: "proyecto", proyecto_codigo: dz.zomatik_proyecto_codigo, tope_m3: dz.zomatik_proyecto_tope_m3 ?? null } : NP_NUEVA)
+    // La elección guardada vive en el servidor (zomatik_np_pedido): al editar no se cambia sola
+    const el = np.porPedido[dispatch.id]?.eleccion
+    setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3 } : NP_NUEVA)
     setIsDialogOpen(true)
   }
 
@@ -1497,6 +1498,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 onM3={(v) => setForm({ ...form, quantity_m3: String(v) })}
                 soloLectura={soloLectura}
                 estado={editingDispatch ? np.porPedido[editingDispatch.id] : null}
+                proponer={!editingDispatch || !np.porPedido[editingDispatch.id]?.eleccion}
               />
             </SeccionPedido>
 

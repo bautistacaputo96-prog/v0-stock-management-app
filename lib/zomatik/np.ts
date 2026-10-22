@@ -384,6 +384,12 @@ export function pedidosDeListado(html: string): FilaPedido[] {
   return out
 }
 
+/** "Pagina 1 de 10" al pie del listado → 10 (null si no lo dice: una sola página). */
+export function paginasDeListado(html: string): number | null {
+  const m = texto(sinComentarios(html)).match(/P[aá]gina\s+\d+\s+de\s+(\d+)/i)
+  return m ? Number(m[1]) : null
+}
+
 // ---------------------------------------------------------------------------
 // ISO-8859-1
 // ---------------------------------------------------------------------------
@@ -605,6 +611,41 @@ export function controlDespacho(o: { modo: ModoNp; entra: boolean; nps: { estado
   if (o.nps.some((x) => x.estado === "ok")) return { bloquea: false, aviso: null }
   if (o.excepcion) return { bloquea: false, aviso: "Sin NP: despacho autorizado por un gerencial" }
   return { bloquea: o.modo === "duro", aviso: "NP pendiente: avisale a Programación" }
+}
+
+// ---------------------------------------------------------------------------
+// Robot: qué trabajar y cuánto tiempo queda
+// ---------------------------------------------------------------------------
+
+/**
+ * ¿Hay que trabajar esta NP ahora? Pendientes y "vaciar" cuyo reintento llegó (sin fecha = no se reintenta sola: llave
+ * apagada o falta un dato), y las "generando"/"vaciando" colgadas más de 3 min (un corte). Con el botón (`manual`),
+ * todas las del pedido, también las de error.
+ */
+export function trabajoPendiente(x: { estado: string; proximo_intento?: string | null; en_curso_desde?: string | null }, ahora: number, manual: boolean): boolean {
+  if (x.estado === "generando" || x.estado === "vaciando") return !!x.en_curso_desde && ahora - Date.parse(x.en_curso_desde) > MIN_CORTADA * 60_000
+  if (manual) return ["pendiente", "error", "vaciar"].includes(x.estado)
+  if (x.estado !== "pendiente" && x.estado !== "vaciar") return false
+  return !!x.proximo_intento && Date.parse(x.proximo_intento) <= ahora
+}
+
+/** ¿Alcanza el tiempo para arrancar otra NP? (`total` útil de la función desde que empezó el request). */
+export function quedaTiempo(inicio: number, ahora: number, total = 55_000, minimo = 30_000): boolean {
+  return total - (ahora - inicio) >= minimo
+}
+
+/**
+ * Lo que hace el trigger del despacho (`zomatik_np_control_despacho`, migración 202610222200), para probarlo:
+ * pasa (sin anotar), pasa y anota en Actividad, o frena.
+ */
+export function decisionTrigger(o: {
+  llave: boolean; manual: boolean; pedidoAntesDeLaLlave: boolean; tieneOk: boolean; prueba: boolean; excepcion: boolean; modo: "aviso" | "duro"
+}): "pasa" | "anota" | "frena" {
+  if (!o.llave) return "pasa"
+  if (o.manual) return "anota"
+  if (o.pedidoAntesDeLaLlave || o.tieneOk) return "pasa"
+  if (o.prueba || o.excepcion) return "anota"
+  return o.modo === "duro" ? "frena" : "anota"
 }
 
 /** Hoy en Argentina (aaaa-mm-dd). */

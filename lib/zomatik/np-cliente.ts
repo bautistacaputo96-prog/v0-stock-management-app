@@ -14,6 +14,8 @@ export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
   control: ControlDespacho
+  /** NP nueva o de un proyecto, guardada en el servidor (null = todavía no se eligió). */
+  eleccion: { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null } | null
 }
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
 export type EleccionNp = { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null }

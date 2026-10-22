@@ -28,9 +28,14 @@ export async function POST(req: Request) {
     if (!pedidoId || !MOTIVOS[tipo]) return NextResponse.json({ error: "Elegí el motivo." }, { status: 400 })
     if (tipo === "otro" && motivo.replace(/\s/g, "").length < 5) return NextResponse.json({ error: "Contá el motivo (mínimo 5 letras)." }, { status: 400 })
     const sb = sbServicio()
-    const { data: ped } = await sb.from("scheduled_dispatches").select("id, plant_id").eq("id", pedidoId).maybeSingle()
+    const { data: ped } = await sb.from("scheduled_dispatches").select("id, plant_id, clients(name)").eq("id", pedidoId).maybeSingle()
     if (!ped) return NextResponse.json({ error: "El pedido no existe." }, { status: 404 })
-    const fila = { scheduled_dispatch_id: pedidoId, fecha: hoyAR(), motivo_tipo: tipo, motivo: motivo || null, autorizado_por: u.name, pedido_por: u.name }
+    // Vale para el día del despacho (hoy en Argentina, el mismo que mira el trigger con dispatch_date). Con copia del
+    // pedido: si el pedido se borra, la excepción queda.
+    const fila = {
+      scheduled_dispatch_id: pedidoId, fecha: hoyAR(), motivo_tipo: tipo, motivo: motivo || null, autorizado_por: u.name, pedido_por: u.name,
+      pedido_ref: pedidoId.slice(0, 8), cliente: (ped as { clients?: { name?: string } | null }).clients?.name || null, plant_id: (ped as { plant_id: string }).plant_id,
+    }
     const { error } = await sb.from("zomatik_np_excepciones").upsert(fila as never, { onConflict: "scheduled_dispatch_id,fecha" })
     if (error) throw error
     await actividadNp(sb, {

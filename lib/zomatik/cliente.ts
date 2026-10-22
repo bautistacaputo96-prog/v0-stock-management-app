@@ -300,8 +300,17 @@ function filasDeXlsx(buf: Buffer): Fila[] {
 
 const esXlsx = (b: Buffer) => b.length > 2 && b[0] === 0x50 && b[1] === 0x4b
 
+/**
+ * La sucursal la comparte el usuario, no la sesión (23.3): el sistema de Concretus puede pasarla a RUTA 25 en cualquier
+ * momento. Antes de cada búsqueda o export se vuelve a elegir REBUCRET.
+ */
+async function reafirmarRebucret(s: ZomatikSesion) {
+  if (!(await elegirSucursal(s.cookie, SUCURSAL_REBUCRET))) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+}
+
 /** Export XLSX de un listado con los filtros dados. Si Zomatik devuelve HTML, se lee la tabla. */
 export async function fetchExport(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda = {}): Promise<Fila[]> {
+  await reafirmarRebucret(s)
   const buf = await fetchRaw(s, `${path}?enviado=1`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -315,6 +324,7 @@ export async function fetchExport(s: ZomatikSesion, path: string, form: FormInfo
 
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */
 export async function fetchHtml(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda = {}): Promise<string> {
+  await reafirmarRebucret(s)
   return fetchText(s, `${path}?enviado=1`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

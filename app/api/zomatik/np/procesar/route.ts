@@ -20,7 +20,7 @@ export const maxDuration = 60
 const CLAVE = "zomatik_np_pasada"
 const ENTRE_PASADAS_MS = 9 * 60_000
 
-async function correr(usuario: string, frenar: boolean) {
+async function correr(usuario: string, frenar: boolean, inicio: number) {
   const sb = sbServicio()
   if (frenar) {
     const { data } = await sb.from("integraciones").select("actualizado").eq("clave", CLAVE).maybeSingle()
@@ -29,8 +29,9 @@ async function correr(usuario: string, frenar: boolean) {
   }
   await sb.from("integraciones").upsert({ clave: CLAVE, valor: usuario, actualizado: new Date().toISOString(), conectado_por: "sistema" } as never, { onConflict: "clave" })
   try {
-    const pasada = await pasadaNp(usuario)
-    const proceso = await procesarNp({ usuario, presupuestoMs: 40_000 })
+    // Primero la base (como mucho 20 s); el robot, con lo que quede (no arranca una NP con menos de 30 s)
+    const pasada = await pasadaNp(usuario, { inicio, hastaMs: 20_000 })
+    const proceso = await procesarNp({ usuario, inicio })
     return NextResponse.json({ ok: true, pasada, proceso })
   } catch (e) {
     if (faltaMigracion(e)) return NextResponse.json({ ok: false, sinMigracion: true })
@@ -39,21 +40,23 @@ async function correr(usuario: string, frenar: boolean) {
 }
 
 export async function GET(req: Request) {
+  const inicio = Date.now()
   try {
     if (!process.env.CRON_SECRET || !esLlamadaDeCron(req)) return NextResponse.json({ error: "Solo el cron (con CRON_SECRET)." }, { status: 401 })
-    return await correr("sistema (pasada de NP)", false)
+    return await correr("sistema (pasada de NP)", false, inicio)
   } catch (e) {
     return respuestaError(e)
   }
 }
 
 export async function POST() {
+  const inicio = Date.now()
   try {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
     if (r.sesion.local) return respuestaModoLocal()
     if (!puedeCon(r.sesion.usuario, "programacion", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
-    return await correr(r.sesion.usuario.name, true)
+    return await correr(r.sesion.usuario.name, true, inicio)
   } catch (e) {
     return respuestaError(e)
   }

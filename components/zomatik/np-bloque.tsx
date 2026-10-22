@@ -27,7 +27,7 @@ export function disponibleProyecto(p: Proyecto | undefined | null): { m3: number
 }
 
 export function NpBloque({
-  planta, clientId, siteId, m3, valor, onCambio, onM3, soloLectura, estado,
+  planta, clientId, siteId, m3, valor, onCambio, onM3, soloLectura, estado, proponer,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -39,6 +39,8 @@ export function NpBloque({
   soloLectura?: boolean
   /** Al editar: las NP que ya tiene el pedido. */
   estado?: EstadoPedidoNp | null
+  /** Proponer solo el proyecto guardado en la obra: en el alta, o si el pedido todavía no tiene elección guardada. */
+  proponer: boolean
 }) {
   const [proyectos, setProyectos] = useState<Proyecto[] | null>(null)
   const [sinVinculo, setSinVinculo] = useState(false)
@@ -58,7 +60,7 @@ export function NpBloque({
         setProyectos(j?.proyectos || [])
         setSinVinculo(!!j?.sinVinculo)
         // El proyecto guardado en la obra se propone solo (si el pedido todavía no eligió)
-        if (j?.obraProyecto && valor.tipo === "nueva" && !valor.proyecto_codigo && !estado?.nps?.length) onCambio({ tipo: "proyecto", proyecto_codigo: j.obraProyecto, tope_m3: null })
+        if (proponer && j?.obraProyecto && valor.tipo === "nueva" && !valor.proyecto_codigo) onCambio({ tipo: "proyecto", proyecto_codigo: j.obraProyecto, tope_m3: null })
       })
       .catch(() => vivo && setProyectos([]))
     return () => {

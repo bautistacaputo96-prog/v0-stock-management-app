@@ -7,13 +7,19 @@
  *                      `np-robot.ts`, guardando cada paso. Lo llaman "Programar y generar NP" (después de responder),
  *                      "Generar NP ahora" y la pasada cada 10 min.
  *
- * LLAVE: con `plants.zomatik_np_activo` apagado (por defecto) no se crea ninguna NP ni se llama a Zomatik para
- * escribir: `llaveDe()` es el único lugar que arma la llave que pide `navegadorNp()`.
+ * LLAVE: con `zomatik_np_config.activo` apagado (por defecto) no se crea ninguna NP ni se llama a Zomatik para
+ * escribir: `llaveDe()` es el único lugar que arma la llave que pide `navegadorNp()`. La llave, el modo y la elección
+ * del pedido (`zomatik_np_pedido`) viven en tablas que solo escribe el servidor (la clave anon no las toca).
+ *
+ * Tiempo: cada función de Vercel tiene 60 s. `procesarNp` mide desde que empezó el request (`inicio`) y no arranca una
+ * NP si quedan menos de 30 s; el turno del robot se renueva en cada paso. Cada guardado del robot pide que la NP siga
+ * "generando"/"vaciando" (si otro la cambió en el medio, no se pisa y se avisa).
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoNp } from "@/lib/zomatik/np-robot"
+import { quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
   pedidoConNp, planificarNp, controlDespacho, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type TipoNp,
@@ -42,28 +48,38 @@ export const COLUMNAS_NP =
   "id, scheduled_dispatch_id, n, marca, tipo, es_adicional, proyecto_codigo, plant_id, client_id, formula_id, fecha, m3, estado, paso, mensaje, numero, zomatik_codigo, sucursal, disponible_m3, intentos, proximo_intento, en_curso_desde, created_at, updated_at"
 
 const COLUMNAS_PEDIDO =
-  "id, status, quantity_m3, plant_id, client_id, construction_site_id, formula_id, scheduled_arrival_time, created_at, created_by, zomatik_np_tipo, zomatik_proyecto_codigo, zomatik_proyecto_tope_m3"
+  "id, status, quantity_m3, plant_id, client_id, construction_site_id, formula_id, scheduled_arrival_time, created_at, created_by"
 
 export type PlantaNpDB = PlantaNp & { id: string; name: string; zomatik_deposito: number | null }
 
 /** ¿Falta la migración de Z2? (las rutas responden "apagado" en vez de romper). */
-export const faltaMigracion = (e: unknown) => /zomatik_np|zomatik_deposito|exigir_np|aviso_hasta|zomatik_proyecto|does not exist|schema cache/i.test(String((e as { message?: string })?.message || ""))
+export const faltaMigracion = (e: unknown) => /zomatik_np|zomatik_proyecto|codigo_sistema|disponible_m3|zomatik_robot|does not exist|schema cache|Could not find/i.test(String((e as { message?: string })?.message || ""))
 
 // ---------------------------------------------------------------------------
 // Plantas y llave
 // ---------------------------------------------------------------------------
 
+type ConfigDB = { plant_id: string; activo: boolean; desde: string | null; deposito: number | null; exigir_np: string | null; aviso_hasta: string | null }
+
+/** Plantas con su llave (de `zomatik_np_config`; sin fila = apagada). Sin la migración: vacío (todo apagado). */
 export async function plantasNp(sb: SB = sbServicio()): Promise<Record<string, PlantaNpDB>> {
-  const { data, error } = await sb.from("plants").select("id, name, zomatik_np_activo, zomatik_np_desde, zomatik_deposito, exigir_np, aviso_hasta")
-  if (error) {
-    if (faltaMigracion(error)) return {}
-    throw error
+  const [pl, cfg] = await Promise.all([sb.from("plants").select("id, name"), sb.from("zomatik_np_config").select("plant_id, activo, desde, deposito, exigir_np, aviso_hasta")])
+  if (cfg.error) {
+    if (faltaMigracion(cfg.error)) return {}
+    throw cfg.error
   }
-  return Object.fromEntries(((data as PlantaNpDB[]) || []).map((p) => [p.id, p]))
+  if (pl.error) throw pl.error
+  const porPlanta = new Map(((cfg.data as ConfigDB[]) || []).map((c) => [c.plant_id, c]))
+  return Object.fromEntries(
+    ((pl.data as { id: string; name: string }[]) || []).map((p) => {
+      const c = porPlanta.get(p.id)
+      return [p.id, { id: p.id, name: p.name, zomatik_np_activo: c?.activo === true, zomatik_np_desde: c?.desde ?? null, zomatik_deposito: c?.deposito ?? null, exigir_np: c?.exigir_np ?? "aviso", aviso_hasta: c?.aviso_hasta ?? null }]
+    }),
+  )
 }
 
 /** El ÚNICO lugar que arma la llave para escribir en Zomatik: solo con la llave de la planta prendida en la base. */
-function llaveDe(planta: PlantaNpDB | undefined): LlaveNp | null {
+export function llaveDe(planta: PlantaNpDB | undefined): LlaveNp | null {
   return planta?.zomatik_np_activo === true ? { activo: true, plantId: planta.id } : null
 }
 
@@ -122,12 +138,34 @@ export type Eleccion = { tipo: TipoNp; proyecto_codigo?: number | null; tope_m3?
 
 export type ResultadoSync =
   | { activo: false; motivo: string }
-  | { activo: true; fuera?: boolean; creadas: number; vaciar: number; anuladas: number; avisos: string[]; nps: FilaNpDB[] }
+  | { activo: true; fuera?: boolean; error?: string; creadas: number; vaciar: number; anuladas: number; avisos: string[]; nps: FilaNpDB[] }
 
 type PedidoDB = {
   id: string; status: string; quantity_m3: number; plant_id: string; client_id: string; construction_site_id: string | null; formula_id: string
   scheduled_arrival_time: string; created_at: string; created_by: string | null
-  zomatik_np_tipo: TipoNp | null; zomatik_proyecto_codigo: number | null; zomatik_proyecto_tope_m3: number | null
+}
+
+export type EleccionDB = { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null }
+
+export async function eleccionesDe(sb: SB, ids: string[]): Promise<Record<string, EleccionDB>> {
+  if (!ids.length) return {}
+  const { data, error } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3").in("scheduled_dispatch_id", ids)
+  if (error) throw error
+  return Object.fromEntries(((data as (EleccionDB & { scheduled_dispatch_id: string })[]) || []).map((e) => [e.scheduled_dispatch_id, { tipo: e.tipo, proyecto_codigo: e.proyecto_codigo ?? null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined ? null : Number(e.tope_m3) }]))
+}
+
+/** El proyecto tiene que estar abierto y ser del cliente (no se confía en lo que manda el navegador). */
+async function validarProyecto(sb: SB, clientId: string, codigo: number): Promise<string | null> {
+  const [{ data: c }, { data: p }] = await Promise.all([
+    sb.from("clients").select("zomatik_codigo").eq("id", clientId).maybeSingle(),
+    sb.from("zomatik_proyectos").select("codigo, cliente_codigo, estado").eq("codigo", codigo).maybeSingle(),
+  ])
+  const zc = (c as { zomatik_codigo?: number | null } | null)?.zomatik_codigo
+  const pr = p as { cliente_codigo: number | null; estado: string } | null
+  if (!pr) return "Ese proyecto no está en la copia de Zomatik."
+  if (pr.estado !== "abierto") return "Ese proyecto ya no está abierto en Zomatik."
+  if (!zc || pr.cliente_codigo !== zc) return "Ese proyecto es de otro cliente en Zomatik."
+  return null
 }
 
 export async function npsDePedidos(sb: SB, ids: string[]): Promise<FilaNpDB[]> {
@@ -149,34 +187,36 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   // Un pedido de antes de prender la llave no tiene NP automática (salvo que ya tenga alguna del sistema)
   if (!pedidoConNp(planta, ped.created_at) && !nps.length) return { activo: true, fuera: true, creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
 
-  // Elección del formulario: NP nueva o de un proyecto (y el proyecto queda en la obra)
+  // Elección del formulario (NP nueva o de un proyecto): se valida y se guarda en zomatik_np_pedido (solo el servidor)
+  let el: EleccionDB = (await eleccionesDe(sb, [ped.id]))[ped.id] || { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
   if (eleccion && (eleccion.tipo === "nueva" || eleccion.tipo === "proyecto")) {
     const proy = eleccion.tipo === "proyecto" && Number(eleccion.proyecto_codigo) > 0 ? Number(eleccion.proyecto_codigo) : null
     const tipo: TipoNp = proy ? "proyecto" : "nueva"
     const tope = proy && eleccion.tope_m3 !== null && eleccion.tope_m3 !== undefined && Number(eleccion.tope_m3) >= 0 ? Number(eleccion.tope_m3) : null
-    if (tipo !== (ped.zomatik_np_tipo || "nueva") || proy !== (ped.zomatik_proyecto_codigo ?? null) || tope !== (ped.zomatik_proyecto_tope_m3 === null ? null : Number(ped.zomatik_proyecto_tope_m3))) {
-      const { error: e1 } = await sb.from("scheduled_dispatches").update({ zomatik_np_tipo: tipo, zomatik_proyecto_codigo: proy, zomatik_proyecto_tope_m3: tope } as never).eq("id", ped.id)
+    if (eleccion.tipo === "proyecto" && !proy) return { activo: true, error: "Elegí el proyecto.", creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
+    const invalido = proy ? await validarProyecto(sb, ped.client_id, proy) : null
+    if (invalido) return { activo: true, error: invalido, creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
+    if (tipo !== el.tipo || proy !== el.proyecto_codigo || tope !== el.tope_m3) {
+      const { error: e1 } = await sb.from("zomatik_np_pedido").upsert({ scheduled_dispatch_id: ped.id, tipo, proyecto_codigo: proy, tope_m3: tope, updated_by: usuario, updated_at: new Date().toISOString() } as never, { onConflict: "scheduled_dispatch_id" })
       if (e1) throw e1
-      ped.zomatik_np_tipo = tipo
-      ped.zomatik_proyecto_codigo = proy
-      ped.zomatik_proyecto_tope_m3 = tope
+      el = { tipo, proyecto_codigo: proy, tope_m3: tope }
     }
     if (proy && ped.construction_site_id) await sb.from("construction_sites").update({ zomatik_proyecto_codigo: proy } as never).eq("id", ped.construction_site_id)
   }
 
   const fecha = diaAR(ped.scheduled_arrival_time)
   const plan = planificarNp(
-    { id: ped.id, status: ped.status, quantity_m3: Number(ped.quantity_m3), plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha, np_tipo: ped.zomatik_np_tipo, proyecto_codigo: ped.zomatik_proyecto_codigo, proyecto_tope_m3: ped.zomatik_proyecto_tope_m3 },
+    { id: ped.id, status: ped.status, quantity_m3: Number(ped.quantity_m3), plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha, np_tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, proyecto_tope_m3: el.tope_m3 },
     nps,
   )
   const ahora = new Date().toISOString()
   const ref = `Pedido ${ped.id.slice(0, 8)}`
   if (plan.anular.length) {
-    await sb.from("zomatik_np").update({ estado: "anulada", mensaje: ped.status === "cancelled" ? "El pedido se canceló antes de generarla" : "Se rehízo con los datos nuevos del pedido", proximo_intento: null, updated_at: ahora } as never).in("id", plan.anular)
+    await sb.from("zomatik_np").update({ estado: "anulada", mensaje: ped.status === "cancelled" ? "El pedido se canceló antes de generarla" : "Se rehízo con los datos nuevos del pedido", proximo_intento: null, updated_at: ahora } as never).in("id", plan.anular).in("estado", ["pendiente", "error"])
   }
   if (plan.revisar.length) {
     const msg = "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala."
-    await sb.from("zomatik_np").update({ estado: "revisar", mensaje: msg, proximo_intento: null, updated_at: ahora } as never).in("id", plan.revisar)
+    await sb.from("zomatik_np").update({ estado: "revisar", mensaje: msg, proximo_intento: null, updated_at: ahora } as never).in("id", plan.revisar).in("estado", ["pendiente", "error"])
     await avisarGerenciales(sb, "NP para revisar (pedido cancelado)", [msg, ...nps.filter((x) => plan.revisar.includes(x.id)).map((x) => `Marca: ${x.marca}`)])
   }
   if (plan.vaciar.length) {
@@ -209,29 +249,34 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
 // Procesar con el robot
 // ---------------------------------------------------------------------------
 
-export type ResultadoProceso = { ocupado?: boolean; hechas: { id: string; estado: string; mensaje: string | null; numero?: string | null }[]; quedan: number; error?: string }
+export type ResultadoProceso = { ocupado?: boolean; sinTiempo?: boolean; hechas: { id: string; estado: string; mensaje: string | null; numero?: string | null }[]; quedan: number; error?: string }
 
 const despuesDe = (min: number) => new Date(Date.now() + min * 60_000).toISOString()
 
-/** NP para trabajar ahora: pendientes y para vaciar cuyo reintento ya llegó, y las colgadas. Con `pedidoId`, también las de error (botón). */
+/** NP para trabajar ahora (ver `trabajoPendiente`, np.ts). Con `pedidoId`, también las de error (el botón). */
 async function aTrabajar(sb: SB, pedidoId?: string | null): Promise<FilaNpDB[]> {
   let q = sb.from("zomatik_np").select(COLUMNAS_NP).in("estado", ["pendiente", "generando", "vaciar", "vaciando", ...(pedidoId ? ["error"] : [])]).order("created_at").limit(30)
   if (pedidoId) q = q.eq("scheduled_dispatch_id", pedidoId)
   const { data, error } = await q
   if (error) throw error
   const ahora = Date.now()
-  return ((data as unknown as FilaNpDB[]) || []).filter((x) => {
-    if (x.estado === "generando" || x.estado === "vaciando") return !!x.en_curso_desde && ahora - Date.parse(x.en_curso_desde) > 3 * 60_000
-    if (pedidoId) return true
-    // Sin fecha de reintento = no se reintenta sola (llave apagada, falta un dato)
-    return !!x.proximo_intento && Date.parse(x.proximo_intento) <= ahora
-  })
+  return ((data as unknown as FilaNpDB[]) || []).filter((x) => trabajoPendiente(x, ahora, !!pedidoId))
+}
+
+/** Lo que el robot necesita de afuera (en las pruebas se reemplaza). */
+export type Dependencias = {
+  navegador: (llave: LlaveNp) => Promise<NavegadorNp>
+  remitos: (numero: string | null, desde: string) => Promise<boolean | null>
+  avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
 }
 
 type Contexto = {
   plantas: Record<string, PlantaNpDB>
   nav: NavegadorNp | null
   usuario: string
+  dep: Dependencias
+  /** Renueva el turno del robot (como mucho cada 10 s). */
+  renovar: () => Promise<void>
 }
 
 /** Datos del pedido que necesita el robot (cliente, fórmula, depósito, R/X y obra). */
@@ -288,16 +333,34 @@ async function tieneRemitos(numero: string | null, desde: string): Promise<boole
   }
 }
 
-async function guardar(sb: SB, id: string, cambios: Record<string, unknown>) {
-  const { error } = await sb.from("zomatik_np").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id)
+export const DEPENDENCIAS: Dependencias = { navegador: navegadorNp, remitos: tieneRemitos, avisar: avisarGerenciales }
+
+/**
+ * Guarda SOLO si la NP sigue en `esperado` ("generando" / "vaciando"): si otro proceso o un gerencial la cambió en el
+ * medio (anulada, revisada), no se pisa. Devuelve si se guardó.
+ */
+async function guardarSi(sb: SB, id: string, esperado: EstadoNp, cambios: Record<string, unknown>): Promise<boolean> {
+  const { data, error } = await sb.from("zomatik_np").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", esperado).select("id")
   if (error) throw error
+  return ((data as unknown[]) || []).length > 0
+}
+
+/** Error para cortar el robot ANTES de grabar si la NP cambió mientras trabajaba. */
+class NpCambio extends Error {}
+
+/** Si el robot terminó pero la NP ya no estaba "generando"/"vaciando": no se pisa, queda en Actividad y se avisa. */
+async function noSePudoGuardar(sb: SB, np: FilaNpDB, ctx: Contexto, que: string) {
+  const detalle = `La NP ${np.n} cambió mientras el robot trabajaba (${que}). No se pisó: revisala en Zomatik.`
+  await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { "Qué pasó": detalle, Marca: np.marca } })
+  await ctx.dep.avisar(sb, "NP para revisar (cambió mientras se generaba)", [detalle, `Marca: ${np.marca}`])
 }
 
 async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { estado: string; paso: string | null }) {
+  const G: EstadoNp = "generando"
   const planta = ctx.plantas[np.plant_id || ""]
   const llave = llaveDe(planta)
   if (!llave) {
-    await guardar(sb, np.id, { estado: "pendiente", en_curso_desde: null, mensaje: "La NP automática está apagada para esta planta: cargala a mano en Zomatik.", proximo_intento: null })
+    await guardarSi(sb, np.id, G, { estado: "pendiente", en_curso_desde: null, mensaje: "La NP automática está apagada para esta planta: cargala a mano en Zomatik.", proximo_intento: null })
     return { estado: "pendiente", mensaje: "llave apagada" }
   }
   const buscarAntes = previo.estado === "generando" || puedeEstarGrabada({ paso: previo.paso })
@@ -306,109 +369,141 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
   const status = (est as { status?: string } | null)?.status
   if (!status || status === "cancelled") {
     if (buscarAntes) {
-      await guardar(sb, np.id, { estado: "revisar", en_curso_desde: null, mensaje: "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala.", proximo_intento: null })
+      await guardarSi(sb, np.id, G, { estado: "revisar", en_curso_desde: null, mensaje: "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala.", proximo_intento: null })
       return { estado: "revisar", mensaje: null }
     }
-    await guardar(sb, np.id, { estado: "anulada", en_curso_desde: null, mensaje: "El pedido se canceló antes de generarla", proximo_intento: null })
+    await guardarSi(sb, np.id, G, { estado: "anulada", en_curso_desde: null, mensaje: "El pedido se canceló antes de generarla", proximo_intento: null })
     return { estado: "anulada", mensaje: null }
   }
   const datos = await datosParaRobot(sb, np, planta, buscarAntes)
-  if (!ctx.nav) ctx.nav = await navegadorNp(llave)
+  if (!ctx.nav) ctx.nav = await ctx.dep.navegador(llave)
   const r: ResultadoNp = await generarNp(ctx.nav, datos, {
     hoy: hoyAR(),
     alPaso: async (paso) => {
-      await guardar(sb, np.id, { paso })
+      await ctx.renovar()
+      // Antes de cada paso (y sobre todo antes de "grabar") la NP tiene que seguir siendo nuestra
+      if (!(await guardarSi(sb, np.id, G, { paso }))) throw new NpCambio("La NP cambió mientras se generaba")
     },
   })
   const ahora = new Date().toISOString()
   const comunes = { en_curso_desde: null, mensaje: r.mensaje, disponible_m3: r.disponible ?? np.disponible_m3 ?? null }
   const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
+  let guardo = true
   if (r.estado === "ok") {
-    await guardar(sb, np.id, { ...comunes, estado: "ok", numero: r.numero, zomatik_codigo: r.codigo, sucursal: r.sucursal, paso: "ok", ok_at: ahora, proximo_intento: null })
-    if (np.scheduled_dispatch_id) await sb.from("zomatik_np_excepciones").update({ regularizado_at: ahora } as never).eq("scheduled_dispatch_id", np.scheduled_dispatch_id).is("regularizado_at", null)
-    await actividadNp(sb, { usuario: ctx.usuario, action: "crear", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP generada en Zomatik: ${r.numero}`, "m³": np.m3, Tipo: np.tipo === "proyecto" ? `Proyecto ${np.proyecto_codigo}` : "NP nueva" } })
+    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "ok", numero: r.numero, zomatik_codigo: r.codigo, sucursal: r.sucursal, paso: "ok", ok_at: ahora, proximo_intento: null })
+    if (guardo) {
+      if (np.scheduled_dispatch_id) await sb.from("zomatik_np_excepciones").update({ regularizado_at: ahora } as never).eq("scheduled_dispatch_id", np.scheduled_dispatch_id).is("regularizado_at", null)
+      await actividadNp(sb, { usuario: ctx.usuario, action: "crear", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP generada en Zomatik: ${r.numero}`, "m³": np.m3, Tipo: np.tipo === "proyecto" ? `Proyecto ${np.proyecto_codigo}` : "NP nueva" } })
+    }
   } else if (r.estado === "revisar") {
-    await guardar(sb, np.id, { ...comunes, estado: "revisar", numero: r.numero ?? null, zomatik_codigo: r.codigo ?? null, sucursal: r.sucursal ?? null, paso: r.paso, proximo_intento: null })
-    await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP para revisar", Mensaje: r.mensaje } })
-    const aviso = await avisarGerenciales(sb, `NP para revisar${r.numero ? `: ${r.numero}` : ""}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`, `Marca en observaciones: ${np.marca}`])
-    if (!aviso.enviado) console.error("[zomatik-np] aviso a gerenciales:", aviso.motivo)
+    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "revisar", numero: r.numero ?? null, zomatik_codigo: r.codigo ?? null, sucursal: r.sucursal ?? null, paso: r.paso, proximo_intento: null })
+    if (guardo) {
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP para revisar", Mensaje: r.mensaje } })
+      const aviso = await ctx.dep.avisar(sb, `NP para revisar${r.numero ? `: ${r.numero}` : ""}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`, `Marca en observaciones: ${np.marca}`])
+      if (!aviso.enviado) console.error("[zomatik-np] aviso a gerenciales:", aviso.motivo)
+    }
   } else if (r.estado === "pendiente") {
-    await guardar(sb, np.id, { ...comunes, estado: "pendiente", paso: r.grabado ? "grabar_cortado" : r.paso, proximo_intento: despuesDe(MIN_REINTENTO) })
+    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "pendiente", paso: r.grabado ? "grabar_cortado" : r.paso, proximo_intento: despuesDe(MIN_REINTENTO) })
   } else {
-    await guardar(sb, np.id, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
-    await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje } })
+    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
+    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje } })
   }
+  if (!guardo && (r.estado === "ok" || r.estado === "revisar" || r.grabado)) await noSePudoGuardar(sb, np, ctx, r.numero ? `quedó ${r.numero}` : r.mensaje || r.estado)
   if (np.tipo === "proyecto" && np.proyecto_codigo && r.disponible !== undefined && r.disponible !== null)
     await sb.from("zomatik_proyectos").update({ disponible_m3: r.disponible, disponible_articulo: datos.articuloNombre || null, disponible_at: ahora } as never).eq("codigo", np.proyecto_codigo)
-  return { estado: r.estado, mensaje: r.mensaje, numero: r.numero }
+  return { estado: guardo ? r.estado : "cambió", mensaje: r.mensaje, numero: r.numero }
 }
 
 async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
+  const V: EstadoNp = "vaciando"
   const planta = ctx.plantas[np.plant_id || ""]
   const llave = llaveDe(planta)
   const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
   if (!llave) {
-    await guardar(sb, np.id, { estado: "vaciar", en_curso_desde: null, mensaje: `La NP automática está apagada: vaciá la ${np.numero || "NP"} a mano en Zomatik.`, proximo_intento: null })
+    await guardarSi(sb, np.id, V, { estado: "vaciar", en_curso_desde: null, mensaje: `La NP automática está apagada: vaciá la ${np.numero || "NP"} a mano en Zomatik.`, proximo_intento: null })
     return { estado: "vaciar", mensaje: "llave apagada" }
   }
   if (!np.zomatik_codigo) {
-    await guardar(sb, np.id, { estado: "revisar", en_curso_desde: null, mensaje: "No se sabe el código de la NP en Zomatik: vaciala a mano.", proximo_intento: null })
+    await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: "No se sabe el código de la NP en Zomatik: vaciala a mano.", proximo_intento: null })
     return { estado: "revisar", mensaje: null }
   }
   // Con remitos no se toca (23.4 / decisión 22/10): se avisa
-  const conRemitos = await tieneRemitos(np.numero, String(np.fecha))
+  const conRemitos = await ctx.dep.remitos(np.numero, String(np.fecha))
   if (conRemitos === null) {
-    await guardar(sb, np.id, { estado: "vaciar", en_curso_desde: null, mensaje: "No se pudo leer si la NP tiene remitos: se reintenta en 10 min.", proximo_intento: despuesDe(MIN_REINTENTO) })
+    await guardarSi(sb, np.id, V, { estado: "vaciar", en_curso_desde: null, mensaje: "No se pudo leer si la NP tiene remitos: se reintenta en 10 min.", proximo_intento: despuesDe(MIN_REINTENTO) })
     return { estado: "vaciar", mensaje: null }
   }
   if (conRemitos) {
     const msg = `La ${np.numero} ya tiene remitos: no se vació. Revisala en Zomatik.`
-    await guardar(sb, np.id, { estado: "revisar", en_curso_desde: null, mensaje: msg, proximo_intento: null })
-    await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Pedido cancelado con NP remitida: no se vació", NP: np.numero } })
-    await avisarGerenciales(sb, `Pedido cancelado con remitos: ${np.numero}`, [msg, `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`])
+    if (await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: msg, proximo_intento: null })) {
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Pedido cancelado con NP remitida: no se vació", NP: np.numero } })
+      await ctx.dep.avisar(sb, `Pedido cancelado con remitos: ${np.numero}`, [msg, `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`])
+    }
     return { estado: "revisar", mensaje: msg }
   }
-  if (!ctx.nav) ctx.nav = await navegadorNp(llave)
-  const r = await vaciarNp(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, { hoy: hoyAR(), alPaso: async (paso) => guardar(sb, np.id, { paso }) })
+  if (!ctx.nav) ctx.nav = await ctx.dep.navegador(llave)
+  const r = await vaciarNp(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, {
+    hoy: hoyAR(),
+    alPaso: async (paso) => {
+      await ctx.renovar()
+      if (!(await guardarSi(sb, np.id, V, { paso }))) throw new NpCambio("La NP cambió mientras se vaciaba")
+    },
+  })
   const ahora = new Date().toISOString()
+  let guardo: boolean
   if (r.estado === "vaciada") {
-    await guardar(sb, np.id, { estado: "vaciada", en_curso_desde: null, mensaje: null, vaciada_at: ahora, proximo_intento: null, paso: "vaciada" })
-    await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (pedido cancelado): ${np.numero}` } })
+    guardo = await guardarSi(sb, np.id, V, { estado: "vaciada", en_curso_desde: null, mensaje: null, vaciada_at: ahora, proximo_intento: null, paso: "vaciada" })
+    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (pedido cancelado): ${np.numero}` } })
   } else if (r.estado === "vaciar") {
-    await guardar(sb, np.id, { estado: "vaciar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: despuesDe(MIN_REINTENTO) })
+    guardo = await guardarSi(sb, np.id, V, { estado: "vaciar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: despuesDe(MIN_REINTENTO) })
   } else {
-    await guardar(sb, np.id, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
-    await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero } })
-    await avisarGerenciales(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
+    guardo = await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
+    if (guardo) {
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero } })
+      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
+    }
   }
-  return { estado: r.estado, mensaje: r.mensaje }
+  if (!guardo) await noSePudoGuardar(sb, np, ctx, r.estado)
+  return { estado: guardo ? r.estado : "cambió", mensaje: r.mensaje }
 }
 
 /**
- * Trabaja las NP que esperan, con una sola sesión del robot a la vez (23.3 e) y dentro de `presupuestoMs`.
- * Cada NP se "toma" en la base antes de tocar Zomatik: dos procesos nunca trabajan la misma.
+ * Trabaja las NP que esperan, con una sola sesión del robot a la vez (23.3 e). `inicio` = cuándo empezó el request:
+ * no se arranca una NP si quedan menos de 30 s de los 55 s útiles de la función. El turno dura 60 s y se renueva en
+ * cada paso. Cada NP se "toma" en la base antes de tocar Zomatik: dos procesos nunca trabajan la misma.
  */
-export async function procesarNp(o: { usuario: string; pedidoId?: string | null; presupuestoMs?: number }): Promise<ResultadoProceso> {
-  const sb = sbServicio()
-  const inicio = Date.now()
-  const presupuesto = o.presupuestoMs ?? 40_000
-  const quien = `${o.usuario}·${inicio.toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`
-  const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: Math.ceil(presupuesto / 1000) + 20 })
+export async function procesarNp(o: { usuario: string; pedidoId?: string | null; inicio: number; totalMs?: number; minimoMs?: number; sb?: SB; dep?: Dependencias }): Promise<ResultadoProceso> {
+  const sb = o.sb ?? sbServicio()
+  const dep = o.dep ?? DEPENDENCIAS
+  const total = o.totalMs ?? 55_000
+  const minimo = o.minimoMs ?? 30_000
+  if (!quedaTiempo(o.inicio, Date.now(), total, minimo)) return { sinTiempo: true, hechas: [], quedan: 0 }
+  const quien = `${o.usuario}·${o.inicio.toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`
+  const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
   if (et) throw et
   if (turno !== true) return { ocupado: true, hechas: [], quedan: 0 }
-  const ctx: Contexto = { plantas: await plantasNp(sb), nav: null, usuario: o.usuario }
+  let ultimaRenovacion = Date.now()
+  const ctx: Contexto = {
+    plantas: await plantasNp(sb), nav: null, usuario: o.usuario, dep,
+    renovar: async () => {
+      if (Date.now() - ultimaRenovacion < 10_000) return
+      ultimaRenovacion = Date.now()
+      await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
+    },
+  }
   const hechas: ResultadoProceso["hechas"] = []
   let quedan = 0
   try {
     const lista = await aTrabajar(sb, o.pedidoId)
     for (let i = 0; i < lista.length; i++) {
-      if (Date.now() - inicio > presupuesto) {
+      if (!quedaTiempo(o.inicio, Date.now(), total, minimo)) {
         quedan = lista.length - i
         break
       }
       const np = lista[i]
       const vaciando = np.estado === "vaciar" || np.estado === "vaciando"
-      const { data: tom, error: e1 } = await sb.rpc("zomatik_np_tomar", { p_id: np.id, p_desde: vaciando ? ["vaciar"] : ["pendiente", ...(o.pedidoId ? ["error"] : [])], p_a: vaciando ? "vaciando" : "generando" })
+      const a: EstadoNp = vaciando ? "vaciando" : "generando"
+      const { data: tom, error: e1 } = await sb.rpc("zomatik_np_tomar", { p_id: np.id, p_desde: vaciando ? ["vaciar"] : ["pendiente", ...(o.pedidoId ? ["error"] : [])], p_a: a })
       if (e1) throw e1
       const t = (tom as { np_id: string; estado_anterior: string; paso_anterior: string | null }[] | null)?.[0]
       if (!t) continue
@@ -416,9 +511,14 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
         const r = vaciando ? await trabajarVaciar(sb, np, ctx) : await trabajarGenerar(sb, np, ctx, { estado: t.estado_anterior, paso: t.paso_anterior })
         hechas.push({ id: np.id, ...r })
       } catch (e) {
+        if (e instanceof NpCambio) {
+          await noSePudoGuardar(sb, np, ctx, e.message)
+          hechas.push({ id: np.id, estado: "cambió", mensaje: e.message })
+          continue
+        }
         // Falla de nuestro lado o de la sesión (antes de que el robot devuelva): se deja para el reintento
         const m = mensajeZomatik(e) || (e as Error)?.message || "Error"
-        await guardar(sb, np.id, { estado: vaciando ? "vaciar" : "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(MIN_REINTENTO) })
+        await guardarSi(sb, np.id, a, { estado: vaciando ? "vaciar" : "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(MIN_REINTENTO) })
         hechas.push({ id: np.id, estado: vaciando ? "vaciar" : "pendiente", mensaje: m })
         if (/sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break // no se insiste con la sesión caída
       }
@@ -430,12 +530,16 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
-// La pasada (cron cada 10 min, botón y Programación abierta)
+// La pasada (cron cada 10 min, botón y Programación abierta): solo la base, sin Zomatik
 // ---------------------------------------------------------------------------
 
-/** Sincroniza los pedidos de hoy en adelante de las plantas con la llave prendida y los que tienen NP vivas. */
-export async function pasadaNp(usuario: string): Promise<{ pedidos: number; huerfanas: number }> {
-  const sb = sbServicio()
+/**
+ * Sincroniza los pedidos de hoy en adelante de las plantas con la llave prendida y los que tienen NP vivas. Para si se
+ * le termina el tiempo (`hastaMs` desde `inicio`), así el robot todavía tiene lugar.
+ */
+export async function pasadaNp(usuario: string, o: { inicio: number; hastaMs?: number; sb?: SB } = { inicio: Date.now() }): Promise<{ pedidos: number; sincronizados: number; huerfanas: number }> {
+  const sb = o.sb ?? sbServicio()
+  const hasta = o.hastaMs ?? 20_000
   const plantas = Object.values(await plantasNp(sb)).filter((p) => p.zomatik_np_activo)
   const ids = new Set<string>()
   if (plantas.length) {
@@ -445,9 +549,12 @@ export async function pasadaNp(usuario: string): Promise<{ pedidos: number; huer
   }
   const { data: vivas } = await sb.from("zomatik_np").select("scheduled_dispatch_id").in("estado", ["ok", "pendiente", "error"] as EstadoNp[]).not("scheduled_dispatch_id", "is", null).limit(1000)
   for (const v of (vivas as { scheduled_dispatch_id: string }[]) || []) ids.add(v.scheduled_dispatch_id)
+  let sincronizados = 0
   for (const id of ids) {
+    if (Date.now() - o.inicio > hasta) break
     try {
       await sincronizarPedido(id, usuario, null, sb)
+      sincronizados++
     } catch (e) {
       console.error("[zomatik-np] sincronizar", id, (e as Error)?.message)
     }
@@ -455,8 +562,8 @@ export async function pasadaNp(usuario: string): Promise<{ pedidos: number; huer
   // NP de pedidos borrados: como un pedido cancelado
   const { data: huer } = await sb.from("zomatik_np").select("id").is("scheduled_dispatch_id", null).eq("estado", "ok")
   const h = ((huer as { id: string }[]) || []).map((x) => x.id)
-  if (h.length) await sb.from("zomatik_np").update({ estado: "vaciar", mensaje: "El pedido se borró: falta vaciar la NP", proximo_intento: new Date().toISOString() } as never).in("id", h)
-  return { pedidos: ids.size, huerfanas: h.length }
+  if (h.length) await sb.from("zomatik_np").update({ estado: "vaciar", mensaje: "El pedido se borró: falta vaciar la NP", proximo_intento: new Date().toISOString() } as never).in("id", h).eq("estado", "ok")
+  return { pedidos: ids.size, sincronizados, huerfanas: h.length }
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +578,8 @@ export type EstadoPedidoNp = {
   nps: FilaNpDB[]
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
   control: { bloquea: boolean; aviso: string | null }
+  /** NP nueva o de un proyecto (null = todavía no se eligió). */
+  eleccion: EleccionDB | null
 }
 
 export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<string, EstadoPedidoNp>; plantas: Record<string, { activo: boolean; modo: ModoNp; aviso_hasta: string | null }> }> {
@@ -480,10 +589,11 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
   if (!ids.length || !Object.values(plantas).some((p) => p.zomatik_np_activo)) {
     return { porPedido: {}, plantas: resumen }
   }
-  const [{ data: peds }, nps, { data: exc }] = await Promise.all([
+  const [{ data: peds }, nps, { data: exc }, elecciones] = await Promise.all([
     sb.from("scheduled_dispatches").select("id, plant_id, created_at").in("id", ids),
     npsDePedidos(sb, ids),
     sb.from("zomatik_np_excepciones").select("scheduled_dispatch_id, autorizado_por, motivo_tipo, motivo").in("scheduled_dispatch_id", ids).eq("fecha", hoyAR()),
+    eleccionesDe(sb, ids),
   ])
   const porPedido: Record<string, EstadoPedidoNp> = {}
   for (const p of (peds as { id: string; plant_id: string; created_at: string }[]) || []) {
@@ -499,23 +609,23 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
       nps: suyas,
       excepcion: e ? { autorizado_por: e.autorizado_por, motivo_tipo: e.motivo_tipo, motivo: e.motivo } : null,
       control: controlDespacho({ modo, entra, nps: suyas.filter((x) => VIGENTES.includes(x.estado)), excepcion: !!e }),
+      eleccion: elecciones[p.id] || null,
     }
   }
   return { porPedido, plantas: resumen }
 }
 
 /** Revisión de un gerencial de una NP en "revisar": generar otra (la errónea ya se vació a mano) o dejar esta como buena. */
-export async function revisarNp(npId: string, decision: "otra" | "buena", usuario: string): Promise<{ ok: boolean; error?: string }> {
-  const sb = sbServicio()
+export async function revisarNp(npId: string, decision: "otra" | "buena", usuario: string, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
   const { data } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("id", npId).maybeSingle()
   const np = data as unknown as FilaNpDB | null
   if (!np) return { ok: false, error: "La NP no existe" }
   if (np.estado !== "revisar") return { ok: false, error: "La NP ya no está para revisar. Actualizá la pantalla." }
   if (decision === "buena") {
     if (!np.numero || !np.zomatik_codigo || np.sucursal !== "18" || !esSerieRebucret(np.numero)) return { ok: false, error: "Esta NP no es de REBUCRET: no se puede dejar como buena." }
-    await guardar(sb, np.id, { estado: "ok", mensaje: `Revisada por ${usuario}`, ok_at: new Date().toISOString() })
+    if (!(await guardarSi(sb, np.id, "revisar", { estado: "ok", mensaje: `Revisada por ${usuario}`, ok_at: new Date().toISOString() }))) return { ok: false, error: "La NP cambió. Actualizá la pantalla." }
   } else {
-    await guardar(sb, np.id, { estado: "anulada", mensaje: `${np.mensaje || ""} · Revisada por ${usuario}: se genera otra`.replace(/^ · /, "") })
+    if (!(await guardarSi(sb, np.id, "revisar", { estado: "anulada", mensaje: `${np.mensaje || ""} · Revisada por ${usuario}: se genera otra`.replace(/^ · /, "") }))) return { ok: false, error: "La NP cambió. Actualizá la pantalla." }
     if (np.scheduled_dispatch_id) await sincronizarPedido(np.scheduled_dispatch_id, usuario, null, sb)
   }
   await actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { "Qué pasó": decision === "buena" ? `NP revisada: queda ${np.numero}` : "NP revisada: se genera otra", NP: np.numero, Antes: np.mensaje } })

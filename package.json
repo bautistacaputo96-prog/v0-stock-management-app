@@ -13,7 +13,7 @@
     "test:carga": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/carga.test.mjs",
     "test:formulas": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/formulas-tabla.test.mjs lib/__tests__/formulas-nombre.test.mjs",
     "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs",
-    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs"
+    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs lib/__tests__/zomatik-np-servidor.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

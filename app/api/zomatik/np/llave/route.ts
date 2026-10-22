@@ -3,6 +3,7 @@
  *
  *   GET  /api/zomatik/np/llave        plantas con su llave y modo, y las NP para revisar o con error
  *   POST /api/zomatik/np/llave {plant_id, activo, duro?}
+ *        Se guarda en zomatik_np_config (no en plants: plants la puede escribir la clave anon).
  *        Prender: desde ahora los pedidos nuevos de la planta tienen NP automática (los de antes no). La primera vez
  *        arranca el modo aviso por 2 semanas (20.7). Apagar: no se escribe más en Zomatik.
  */
@@ -51,14 +52,15 @@ export async function POST(req: Request) {
     if (!p) return NextResponse.json({ error: "La planta no existe (o falta la migración de Z2)." }, { status: 400 })
     const activo = body?.activo === true
     if (activo && !p.zomatik_deposito) return NextResponse.json({ error: "La planta no tiene depósito de Zomatik." }, { status: 400 })
-    const cambios: Record<string, unknown> = { zomatik_np_activo: activo }
+    // La llave vive en zomatik_np_config (solo el servidor la escribe; la clave anon no)
+    const cambios: Record<string, unknown> = { plant_id: p.id, activo, deposito: p.zomatik_deposito, updated_by: r.sesion.usuario.name, updated_at: new Date().toISOString() }
     if (activo && !p.zomatik_np_activo) {
-      cambios.zomatik_np_desde = new Date().toISOString()
+      cambios.desde = new Date().toISOString()
       if (!p.aviso_hasta) cambios.aviso_hasta = mas14()
     }
     if (body?.duro === true) cambios.exigir_np = "duro"
     if (body?.duro === false) cambios.exigir_np = "aviso"
-    const { error } = await sb.from("plants").update(cambios as never).eq("id", p.id)
+    const { error } = await sb.from("zomatik_np_config").upsert(cambios as never, { onConflict: "plant_id" })
     if (error) throw error
     await actividadNp(sb, {
       usuario: r.sesion.usuario.name, pedidoId: null, plantId: p.id, referencia: `NP automática · ${p.name}`,

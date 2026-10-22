@@ -2,84 +2,82 @@
 --
 -- Especificación: docs/migracion-loop/zomatik.md, secciones 22, 23 y 24 (mandan sobre las anteriores).
 --
+-- CORRERLA FUERA DE HORARIO (sin despachos en curso): pide candados cortos sobre construction_sites, zomatik_articulos,
+-- zomatik_proyectos y dispatches (el trigger). Con lock_timeout de 3 s: si no los consigue, falla sin cambiar nada.
+--
 -- Qué agrega (todo se agrega; no se borra ni se cambia nada de lo cargado):
---   plants.zomatik_np_activo      LLAVE de apagado por planta. APAGADA por defecto: mientras esté apagada el sistema
---                                 no le escribe nunca a Zomatik y la NP se carga a mano, como hoy. La prende Bautista
---                                 desde "Vínculos con Zomatik".
---   plants.zomatik_np_desde       cuándo se prendió: solo los pedidos cargados después tienen NP automática (los de
---                                 antes ya tienen su NP a mano y no se controlan).
---   plants.zomatik_deposito       depósito de Zomatik de la planta (Canning 116, Hudson = REBUCRET 113).
---   plants.exigir_np / aviso_hasta modo aviso (2 semanas desde que se prende la llave, 20.7) y después duro.
---   scheduled_dispatches.zomatik_np_tipo / zomatik_proyecto_codigo / zomatik_proyecto_tope_m3
---                                 "NP nueva" o "NP de un proyecto", qué proyecto y (opcional) hasta cuántos m³ contra
---                                 el proyecto (el resto, en una NP nueva: 20.4). Las escribe solo el servidor.
---   construction_sites.zomatik_proyecto_codigo  el proyecto elegido queda guardado en la obra para los días siguientes.
---   zomatik_articulos.codigo_sistema  el código que usa el pedido (`farticulo`, columna "Codigo Sistema" del export;
---                                 23.1: no es el `codigo` de la copia). Lo llena la lectura de Zomatik.
---   zomatik_proyectos.disponible_* lo disponible del proyecto según "Continuar" del MATERIAL (23.2), la última vez.
---   zomatik_np                    cada NP que genera el sistema: estado (pendiente, generando, ok, revisar, error,
---                                 vaciar, vaciando, vaciada, anulada), mensaje de Zomatik, número y código.
---   zomatik_np_excepciones        "Despachar sin NP" autorizado por un gerencial, con motivo, para un pedido y un día.
---   zomatik_np_tomar()            toma una NP para el robot en una sola sentencia (dos procesos nunca la toman los dos).
---   zomatik_robot_tomar/soltar()  una sola sesión del robot a la vez (23.3 e).
+--   zomatik_np_config             por planta: LLAVE de la NP automática (`activo`, APAGADA por defecto), desde cuándo,
+--                                 depósito de Zomatik (Canning 116, Hudson = REBUCRET 113), modo (aviso/duro) y hasta
+--                                 cuándo dura el aviso (2 semanas, 20.7). SOLO la escribe el servidor (service_role):
+--                                 `plants` la puede escribir la clave anon, por eso la llave no vive ahí.
+--   zomatik_np_pedido             por pedido: "NP nueva" o "NP de un proyecto", qué proyecto y (opcional) hasta cuántos
+--                                 m³ contra el proyecto (el resto en una NP nueva, 20.4). Solo el servidor, que valida que
+--                                 el proyecto esté abierto y sea del cliente.
+--   construction_sites.zomatik_proyecto_codigo  el último proyecto elegido en la obra: solo una SUGERENCIA para el
+--                                 formulario (el servidor la vuelve a validar al guardar el pedido).
+--   zomatik_articulos.codigo_sistema  el código que usa el pedido (`farticulo`, columna "Codigo Sistema", 23.1).
+--   zomatik_proyectos.disponible_* lo disponible del proyecto según "Continuar" del MATERIAL (23.2).
+--   zomatik_np                    cada NP que genera el sistema (estado, mensaje, número, código). Navegador: solo lee.
+--   zomatik_np_excepciones        "Despachar sin NP" de un gerencial, para un pedido y un día. Si se borra el pedido, la
+--                                 excepción queda (con una copia del pedido) para Actividad.
+--   zomatik_np_tomar()            toma una NP para el robot en una sola sentencia.
+--   zomatik_robot_tomar/soltar()  una sola sesión del robot (y de la lectura de Zomatik) a la vez (23.3 e).
 --   zomatik_np_control_despacho   trigger BEFORE INSERT en dispatches: con la llave prendida, en modo duro no deja
---                                 despachar un pedido sin NP ok (salvo excepción); en modo aviso deja y lo anota en
---                                 Actividad; el despacho manual no se controla y se anota en Actividad. Con la llave
---                                 apagada no hace nada. registrar_despacho NO se toca: el error sale del trigger
---                                 dentro de la misma transacción y no se graba nada, como cualquier otro control.
+--                                 despachar un pedido sin NP ok (salvo excepción); en modo aviso deja y lo anota; el
+--                                 despacho manual y el de prueba no se controlan y se anotan. Llave apagada: nada.
+--                                 registrar_despacho NO se toca: el error sale del trigger en la misma transacción.
 --
 -- Qué pasa con los datos ya cargados:
---   - plants: la llave queda apagada en las dos plantas; se completa el depósito de Canning (116) y Hudson (113).
---   - scheduled_dispatches, construction_sites, zomatik_articulos y zomatik_proyectos: columnas nuevas vacías.
---     Ningún pedido, obra ni despacho cambia. Los pedidos de antes de prender la llave nunca se controlan.
+--   - plants y scheduled_dispatches: no se tocan.
+--   - zomatik_np_config: una fila por planta con la llave APAGADA (Canning 116, Hudson 113).
+--   - construction_sites, zomatik_articulos y zomatik_proyectos: columnas nuevas vacías.
 --   - dispatches: el trigger solo actúa en despachos NUEVOS y solo con la llave prendida. Los cargados no cambian.
---   - Tablas nuevas vacías.
---
--- Bloqueos: los ALTER TABLE ADD COLUMN sin default (o con default constante) son instantáneos, pero piden un candado
--- corto sobre plants, scheduled_dispatches, construction_sites y dispatches (trigger). Con lock_timeout de 3 s: si
--- la planta está despachando y no lo consigue, falla sin cambiar nada y se vuelve a correr.
+--   - Las demás tablas nuevas, vacías. Los pedidos de antes de prender la llave nunca se controlan.
 
 SET lock_timeout = '3s';
 SET statement_timeout = '60s';
 
 -- ---------------------------------------------------------------------------
--- Plantas: llave, depósito y modo
+-- Llave y modo por planta (solo el servidor)
 -- ---------------------------------------------------------------------------
-ALTER TABLE public.plants
-  ADD COLUMN IF NOT EXISTS zomatik_np_activo boolean NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS zomatik_np_desde timestamptz,
-  ADD COLUMN IF NOT EXISTS zomatik_deposito integer,
-  ADD COLUMN IF NOT EXISTS exigir_np text NOT NULL DEFAULT 'aviso',
-  ADD COLUMN IF NOT EXISTS aviso_hasta date;
+CREATE TABLE IF NOT EXISTS public.zomatik_np_config (
+  plant_id      uuid PRIMARY KEY REFERENCES public.plants(id) ON DELETE CASCADE,
+  activo        boolean NOT NULL DEFAULT false,
+  desde         timestamptz,                    -- cuándo se prendió: solo los pedidos cargados después
+  deposito      integer,                        -- depósito de Zomatik
+  exigir_np     text NOT NULL DEFAULT 'aviso' CHECK (exigir_np IN ('aviso', 'duro')),
+  aviso_hasta   date,                           -- modo aviso hasta este día (incluido); después, duro
+  updated_by    text,
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE public.zomatik_np_config IS 'Zomatik Z2: llave de la NP automática por planta (activo=false: no se escribe nunca en Zomatik). Solo la escribe el servidor.';
 
-ALTER TABLE public.plants DROP CONSTRAINT IF EXISTS plants_exigir_np_check;
-ALTER TABLE public.plants ADD CONSTRAINT plants_exigir_np_check CHECK (exigir_np IN ('aviso', 'duro'));
+REVOKE ALL ON TABLE public.zomatik_np_config FROM anon, authenticated;
+GRANT ALL ON TABLE public.zomatik_np_config TO service_role;
 
-UPDATE public.plants SET zomatik_deposito = CASE code WHEN 'CAN' THEN 116 WHEN 'HUD' THEN 113 END
-WHERE zomatik_deposito IS NULL AND code IN ('CAN', 'HUD');
-
-COMMENT ON COLUMN public.plants.zomatik_np_activo IS 'Zomatik Z2: llave de la NP automática. false (por defecto) = no se escribe nunca en Zomatik; la NP se carga a mano.';
-COMMENT ON COLUMN public.plants.zomatik_np_desde IS 'Zomatik Z2: cuándo se prendió la llave. Solo los pedidos cargados después tienen NP automática y control en el despacho.';
-COMMENT ON COLUMN public.plants.exigir_np IS 'Zomatik Z2: aviso (deja despachar sin NP y lo anota) hasta aviso_hasta; después, o con duro, no deja.';
+INSERT INTO public.zomatik_np_config (plant_id, deposito)
+SELECT id, CASE code WHEN 'CAN' THEN 116 WHEN 'HUD' THEN 113 END FROM public.plants WHERE code IN ('CAN', 'HUD')
+ON CONFLICT (plant_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- Pedido y obra: NP nueva o de un proyecto
+-- NP nueva o de un proyecto, por pedido (solo el servidor)
 -- ---------------------------------------------------------------------------
-ALTER TABLE public.scheduled_dispatches
-  ADD COLUMN IF NOT EXISTS zomatik_np_tipo text,
-  ADD COLUMN IF NOT EXISTS zomatik_proyecto_codigo integer,
-  ADD COLUMN IF NOT EXISTS zomatik_proyecto_tope_m3 numeric(10,3);
+CREATE TABLE IF NOT EXISTS public.zomatik_np_pedido (
+  scheduled_dispatch_id  uuid PRIMARY KEY REFERENCES public.scheduled_dispatches(id) ON DELETE CASCADE,
+  tipo                   text NOT NULL DEFAULT 'nueva' CHECK (tipo IN ('nueva', 'proyecto')),
+  proyecto_codigo        integer,
+  tope_m3                numeric(10,3) CHECK (tope_m3 IS NULL OR tope_m3 >= 0),
+  updated_by             text,
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT zomatik_np_pedido_proyecto_check CHECK (tipo = 'nueva' OR proyecto_codigo IS NOT NULL)
+);
+COMMENT ON TABLE public.zomatik_np_pedido IS 'Zomatik Z2: NP nueva o contra un proyecto (y tope de m³ contra el proyecto, 20.4). Solo la escribe el servidor.';
 
-ALTER TABLE public.scheduled_dispatches DROP CONSTRAINT IF EXISTS scheduled_dispatches_zomatik_np_tipo_check;
-ALTER TABLE public.scheduled_dispatches ADD CONSTRAINT scheduled_dispatches_zomatik_np_tipo_check CHECK (
-  zomatik_np_tipo IS NULL OR zomatik_np_tipo = 'nueva' OR (zomatik_np_tipo = 'proyecto' AND zomatik_proyecto_codigo IS NOT NULL)
-) NOT VALID;
-
-COMMENT ON COLUMN public.scheduled_dispatches.zomatik_np_tipo IS 'Zomatik Z2: nueva (NP común) o proyecto (NP contra un proyecto, como MATERIAL). Nulo = nueva.';
-COMMENT ON COLUMN public.scheduled_dispatches.zomatik_proyecto_tope_m3 IS 'Zomatik Z2: m³ que van contra el proyecto; el resto del pedido va en una NP nueva (20.4). Nulo = todo contra el proyecto.';
+REVOKE ALL ON TABLE public.zomatik_np_pedido FROM anon, authenticated;
+GRANT ALL ON TABLE public.zomatik_np_pedido TO service_role;
 
 ALTER TABLE public.construction_sites ADD COLUMN IF NOT EXISTS zomatik_proyecto_codigo integer;
-COMMENT ON COLUMN public.construction_sites.zomatik_proyecto_codigo IS 'Zomatik Z2: el último proyecto elegido para la obra (se propone en los pedidos siguientes).';
+COMMENT ON COLUMN public.construction_sites.zomatik_proyecto_codigo IS 'Zomatik Z2: el último proyecto elegido en la obra. Solo sugerencia: el servidor lo valida al guardar el pedido.';
 
 -- ---------------------------------------------------------------------------
 -- Copias de Zomatik
@@ -140,8 +138,12 @@ GRANT ALL ON TABLE public.zomatik_np TO service_role;
 
 CREATE TABLE IF NOT EXISTS public.zomatik_np_excepciones (
   id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  scheduled_dispatch_id  uuid NOT NULL REFERENCES public.scheduled_dispatches(id) ON DELETE CASCADE,
-  fecha                  date NOT NULL,
+  -- Si se borra el pedido queda nulo y la copia (pedido_ref, cliente, planta) sigue para Actividad
+  scheduled_dispatch_id  uuid REFERENCES public.scheduled_dispatches(id) ON DELETE SET NULL,
+  pedido_ref             text,
+  cliente                text,
+  plant_id               uuid,
+  fecha                  date NOT NULL,                          -- día del despacho (dispatch_date en Argentina)
   motivo_tipo            text NOT NULL CHECK (motivo_tipo IN ('zomatik_caido', 'cliente_sin_alta', 'otro')),
   motivo                 text,
   autorizado_por         text NOT NULL,                          -- el gerencial
@@ -191,7 +193,8 @@ $$;
 REVOKE ALL ON FUNCTION public.zomatik_np_tomar(uuid, text[], text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.zomatik_np_tomar(uuid, text[], text) TO service_role;
 
--- Una sola sesión del robot a la vez (23.3 e): un turno en integraciones ('zomatik_robot') que vence solo.
+-- Una sola sesión del robot a la vez (23.3 e): un turno en integraciones ('zomatik_robot') que vence solo. Quien ya lo
+-- tiene lo renueva llamando de nuevo con el mismo p_quien. La lectura de Zomatik (Z0) pide el mismo turno.
 CREATE OR REPLACE FUNCTION public.zomatik_robot_tomar(p_quien text, p_segundos integer)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -237,17 +240,14 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_pl   public.plants;
+  v_cfg  public.zomatik_np_config;
   v_ped  public.scheduled_dispatches;
   v_dia  date := (coalesce(NEW.dispatch_date, now()) AT TIME ZONE 'America/Argentina/Buenos_Aires')::date;
-  v_hoy  date := (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date;
   v_quien text := coalesce(nullif(btrim(NEW.created_by), ''), 'sistema');
+  v_ok   boolean;
 BEGIN
-  IF coalesce(NEW.is_test_dispatch, false) THEN
-    RETURN NEW;
-  END IF;
-  SELECT * INTO v_pl FROM plants WHERE id = NEW.plant_id;
-  IF NOT FOUND OR NOT coalesce(v_pl.zomatik_np_activo, false) THEN
+  SELECT * INTO v_cfg FROM zomatik_np_config WHERE plant_id = NEW.plant_id;
+  IF NOT FOUND OR NOT v_cfg.activo THEN
     RETURN NEW;                                  -- llave apagada: como hoy
   END IF;
 
@@ -262,10 +262,18 @@ BEGIN
   IF NOT FOUND THEN
     RETURN NEW;
   END IF;
-  IF v_pl.zomatik_np_desde IS NOT NULL AND v_ped.created_at < v_pl.zomatik_np_desde THEN
+  IF v_cfg.desde IS NOT NULL AND v_ped.created_at < v_cfg.desde THEN
     RETURN NEW;                                  -- pedido de antes de prender la llave: su NP es a mano
   END IF;
-  IF EXISTS (SELECT 1 FROM zomatik_np WHERE scheduled_dispatch_id = v_ped.id AND estado = 'ok') THEN
+  v_ok := EXISTS (SELECT 1 FROM zomatik_np WHERE scheduled_dispatch_id = v_ped.id AND estado = 'ok');
+  IF v_ok THEN
+    RETURN NEW;
+  END IF;
+
+  IF coalesce(NEW.is_test_dispatch, false) THEN  -- despacho de prueba: no se frena, queda anotado
+    INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
+    VALUES (v_quien, 'crear', 'zomatik_np', v_ped.id::text, 'Despacho de prueba sin NP', NEW.plant_id,
+            jsonb_build_object('Qué pasó', 'Despacho de prueba de un pedido sin NP (no se controla)', 'Remito', NEW.remito, 'm³', NEW.quantity_m3));
     RETURN NEW;
   END IF;
 
@@ -276,7 +284,7 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF v_pl.exigir_np = 'duro' OR (v_pl.aviso_hasta IS NOT NULL AND v_hoy > v_pl.aviso_hasta) THEN
+  IF v_cfg.exigir_np = 'duro' OR (v_cfg.aviso_hasta IS NOT NULL AND v_dia > v_cfg.aviso_hasta) THEN
     RAISE EXCEPTION 'NP pendiente: el pedido no tiene su nota de pedido en Zomatik. Avisale a Programación (o pedile la excepción a un gerencial).';
   END IF;
 
