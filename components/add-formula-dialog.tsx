@@ -33,6 +33,10 @@ interface AddFormulaDialogProps {
   materials: Material[]
   plantId: string
   onSuccess: () => void
+  /** texto del botón (por defecto "Agregar Formula") */
+  etiqueta?: string
+  /** botón chico, para el encabezado de la tabla de Fórmulas */
+  compacto?: boolean
 }
 
 const RESISTENCIAS_COMUNES = ["H4", "H8", "H13", "H17", "H21", "H25", "H30", "H35", "H40", "H45", "H50"]
@@ -41,7 +45,7 @@ const METODOS = [
   { value: "B", label: "Bombeable" },
 ]
 
-export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDialogProps) {
+export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Agregar Formula", compacto = false }: AddFormulaDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [resistenciaOpen, setResistenciaOpen] = useState(false)
@@ -191,9 +195,9 @@ export function AddFormulaDialog({ materials, plantId, onSuccess }: AddFormulaDi
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm() }}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          Agregar Formula
+        <Button size={compacto ? "sm" : "default"} className={compacto ? "h-8" : undefined}>
+          <Plus className={compacto ? "h-4 w-4 mr-1" : "h-4 w-4 mr-2"} />
+          {etiqueta}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
