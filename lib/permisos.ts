@@ -6,9 +6,12 @@
  *
  * - Cada persona tiene un `tipo` (gerencial / operario / consulta) y una matriz `permisos`
  *   sección × acción (ver · cargar · editar · borrar).
- * - Gerencial puede todo: `puedeCon` no mira la matriz.
- * - `usuarios` sale solo del tipo (solo gerencial): no se habilita por persona.
- * - Lo que falta o no es booleano vale `false`. Las acciones que no existen en la sección, también.
+ * - Gerencial puede todo SALVO lo que se le saque a mano en Usuarios (22/10/2026): en su matriz, solo un `false`
+ *   explícito le quita la acción; lo que falta vale `true`.
+ * - `usuarios` sale solo del tipo (solo gerencial): no se habilita por persona ni se le saca a un gerencial (así
+ *   nunca queda nadie afuera de Usuarios).
+ * - Para operario y consulta, lo que falta o no es booleano vale `false`. Las acciones que no existen en la sección,
+ *   `false` siempre.
  */
 
 export type Tipo = "gerencial" | "operario" | "consulta"
@@ -211,16 +214,18 @@ export function plantilla(tipo: unknown): Permisos {
 }
 
 /**
- * Matriz completa y limpia: todas las secciones y acciones; lo que falta o no es booleano, `false`; las
- * acciones que no existen en la sección, `false`. Además: si carga, edita o borra, ve (regla 5).
+ * Matriz completa y limpia: todas las secciones y acciones; las acciones que no existen en la sección, `false`.
+ * Lo que falta o no es booleano vale `false`, salvo para un gerencial (`tipo`), que vale `true`: a un gerencial solo
+ * lo frena un `false` explícito, y `usuarios` no se le puede sacar. Además: si carga, edita o borra, ve (regla 5).
  */
-export function normalizarPermisos(raw: unknown): Permisos {
+export function normalizarPermisos(raw: unknown, tipo?: unknown): Permisos {
+  const ger = tipo === "gerencial"
   const p = vacia()
   const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   for (const s of SECCIONES) {
     const r = obj[s.clave]
     const rs = r && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>) : {}
-    for (const a of s.acciones) p[s.clave][a] = rs[a] === true
+    for (const a of s.acciones) p[s.clave][a] = ger ? s.clave === "usuarios" || rs[a] !== false : rs[a] === true
     if (s.acciones.includes("ver") && (p[s.clave].cargar || p[s.clave].editar || p[s.clave].borrar)) p[s.clave].ver = true
   }
   return p
@@ -230,9 +235,10 @@ export function normalizarPermisos(raw: unknown): Permisos {
  * Tildar o destildar una casilla en la pantalla Usuarios (regla 5): tildar cargar, editar o borrar tilda
  * "ver"; destildar "ver" destilda las demás. Devuelve una matriz nueva.
  */
-export function cambiarPermiso(permisos: Permisos, seccion: SeccionClave, accion: Accion, valor: boolean): Permisos {
-  const p = normalizarPermisos(permisos)
+export function cambiarPermiso(permisos: Permisos, seccion: SeccionClave, accion: Accion, valor: boolean, tipo?: unknown): Permisos {
+  const p = normalizarPermisos(permisos, tipo)
   if (!existeAccion(seccion, accion)) return p
+  if (seccion === "usuarios") return p // sale del tipo
   p[seccion][accion] = valor
   const tieneVer = existeAccion(seccion, "ver")
   if (valor && accion !== "ver" && tieneVer) p[seccion].ver = true
@@ -253,9 +259,8 @@ export function puedeCon(usuario: UsuarioPermisos, seccion: SeccionClave, accion
   if (!usuario) return false
   if (!existeAccion(seccion, accion)) return false
   const tipo = tipoDe(usuario)
-  if (tipo === "gerencial") return true
-  if (seccion === "usuarios") return false // solo del tipo
-  return normalizarPermisos(usuario.permisos)[seccion][accion] === true
+  if (seccion === "usuarios") return tipo === "gerencial" // solo del tipo: no se da ni se saca por persona
+  return normalizarPermisos(usuario.permisos, tipo)[seccion][accion] === true
 }
 
 /** Igual que el login: minúsculas, sin tildes, sin espacios a los costados ni dobles. */
@@ -282,12 +287,11 @@ export function puedeAjustarPedido(usuario: UsuarioPermisos, pedido: { created_b
 
 export type Diferencia = { seccion: SeccionClave; accion: Accion; valor: boolean; plantilla: boolean }
 
-/** Casillas distintas de la plantilla del tipo ("agregado a mano" / "quitado a mano"). */
+/** Casillas distintas de la plantilla del tipo ("agregado a mano" / "quitado a mano"; en gerencial, solo quitado). */
 export function diferenciasConPlantilla(tipo: unknown, permisos: unknown): Diferencia[] {
   const base = plantilla(tipo)
-  const p = normalizarPermisos(permisos)
+  const p = normalizarPermisos(permisos, tipo)
   const out: Diferencia[] = []
-  if (esTipo(tipo) && tipo === "gerencial") return out
   for (const s of SECCIONES)
     for (const a of s.acciones) if (p[s.clave][a] !== base[s.clave][a]) out.push({ seccion: s.clave, accion: a, valor: p[s.clave][a], plantilla: base[s.clave][a] })
   return out
@@ -308,9 +312,9 @@ export function nombreSeccion(clave: SeccionClave): string {
 /**
  * Cambios de permisos para la Actividad de la pantalla Usuarios: {"Historial · editar": "no → sí"}.
  */
-export function cambiosDePermisos(antes: unknown, despues: unknown): Record<string, string> {
-  const a = normalizarPermisos(antes)
-  const d = normalizarPermisos(despues)
+export function cambiosDePermisos(antes: unknown, despues: unknown, tipoAntes?: unknown, tipoDespues?: unknown): Record<string, string> {
+  const a = normalizarPermisos(antes, tipoAntes)
+  const d = normalizarPermisos(despues, tipoDespues)
   const out: Record<string, string> = {}
   for (const s of SECCIONES)
     for (const ac of s.acciones)

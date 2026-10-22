@@ -14,9 +14,9 @@ import {
 } from "@/lib/permisos"
 
 /**
- * Matriz sección × acción de una persona. Donde la acción no existe va "—". Para gerencial, todo
- * tildado y gris. Cada casilla distinta de la plantilla del tipo lleva la marca "a mano".
- * Usuarios no se habilita por persona (sale del tipo).
+ * Matriz sección × acción de una persona. Donde la acción no existe va "—". Cada casilla distinta de la
+ * plantilla del tipo lleva la marca "a mano". Gerencial arranca con todo tildado y se le puede sacar lo que sea
+ * (22/10), salvo Usuarios, que sale del tipo y no se habilita ni se saca por persona.
  */
 export function MatrizPermisos({ tipo, permisos, onChange }: { tipo: Tipo; permisos: Permisos; onChange: (p: Permisos) => void }) {
   const gerencial = tipo === "gerencial"
@@ -43,16 +43,16 @@ export function MatrizPermisos({ tipo, permisos, onChange }: { tipo: Tipo; permi
                 </td>
                 {ACCIONES.map((a) => {
                   if (!existeAccion(s.clave, a)) return <td key={a} className="text-center text-muted-foreground">—</td>
-                  const valor = gerencial || (!soloTipo && permisos[s.clave][a])
-                  const aMano = !gerencial && !soloTipo && permisos[s.clave][a] !== base[s.clave][a]
+                  const valor = soloTipo ? gerencial : permisos[s.clave][a]
+                  const aMano = !soloTipo && permisos[s.clave][a] !== base[s.clave][a]
                   return (
                     <td key={a} className="text-center py-1.5" title={s.descripcion[a] || ""}>
                       <div className="flex flex-col items-center gap-0.5">
                         <Checkbox
-                          className={cn("h-6 w-6", (gerencial || soloTipo) && "opacity-50")}
+                          className={cn("h-6 w-6", soloTipo && "opacity-50")}
                           checked={valor}
-                          disabled={gerencial || soloTipo}
-                          onCheckedChange={(v) => onChange(cambiarPermiso(permisos, s.clave, a, v === true))}
+                          disabled={soloTipo}
+                          onCheckedChange={(v) => onChange(cambiarPermiso(permisos, s.clave, a, v === true, tipo))}
                         />
                         {aMano && (
                           <span className={cn("text-[10px] leading-none", permisos[s.clave][a] ? "text-emerald-700" : "text-red-700")}>
@@ -68,7 +68,11 @@ export function MatrizPermisos({ tipo, permisos, onChange }: { tipo: Tipo; permi
           })}
         </tbody>
       </table>
-      {gerencial && <p className="px-3 py-2 text-xs text-muted-foreground border-t">Gerencial puede todo.</p>}
+      {gerencial && (
+        <p className="px-3 py-2 text-xs text-muted-foreground border-t">
+          Gerencial puede todo, salvo lo que le destildes acá. Usuarios no se le puede sacar.
+        </p>
+      )}
     </div>
   )
 }

@@ -45,7 +45,7 @@ export function armarUsuario(raw: any): CurrentUser | null {
     id: raw.id,
     name: String(raw.name),
     tipo,
-    permisos: normalizarPermisos(raw.permisos),
+    permisos: normalizarPermisos(raw.permisos, tipo),
     veFuncionesNuevas: raw.veFuncionesNuevas === true,
     role: tipo === "gerencial" ? "supervisor" : "operario",
   }

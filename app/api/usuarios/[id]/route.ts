@@ -48,12 +48,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (!esTipo(body.tipo)) return NextResponse.json({ error: "Tipo inválido." }, { status: 400 })
       tipoNuevo = body.tipo
     }
-    let permisosNuevos = normalizarPermisos(antes.permisos)
-    if (tipoNuevo !== tipoAntes) permisosNuevos = body?.permisos !== undefined ? normalizarPermisos(body.permisos) : plantilla(tipoNuevo)
-    else if (body?.permisos !== undefined) permisosNuevos = normalizarPermisos(body.permisos)
-    if (tipoNuevo === "gerencial") permisosNuevos = plantilla("gerencial") // gerencial puede todo
+    // Gerencial: puede todo salvo lo que se le saque a mano (un false explícito); Usuarios no se le saca (22/10)
+    let permisosNuevos = normalizarPermisos(antes.permisos, tipoNuevo)
+    if (tipoNuevo !== tipoAntes) permisosNuevos = body?.permisos !== undefined ? normalizarPermisos(body.permisos, tipoNuevo) : plantilla(tipoNuevo)
+    else if (body?.permisos !== undefined) permisosNuevos = normalizarPermisos(body.permisos, tipoNuevo)
 
-    const difPermisos = cambiosDePermisos(antes.permisos, permisosNuevos)
+    const difPermisos = cambiosDePermisos(antes.permisos, permisosNuevos, tipoAntes, tipoNuevo)
     if (tipoNuevo !== tipoAntes) {
       cambios.tipo = tipoNuevo
       cambios.role = tipoNuevo === "gerencial" ? "supervisor" : "operario" // por si algún script viejo la mira

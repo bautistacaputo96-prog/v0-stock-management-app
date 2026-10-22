@@ -93,7 +93,7 @@ export function usuarioParaElNavegador(u: FilaUsuario): UsuarioNavegador {
     id: u.id,
     name: u.name,
     tipo,
-    permisos: normalizarPermisos(u.permisos),
+    permisos: normalizarPermisos(u.permisos, tipo),
     veFuncionesNuevas: u.ve_funciones_nuevas === true,
   }
 }
@@ -114,7 +114,7 @@ export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null |
     email: u.email,
     active: u.active !== false,
     tipo: tipoDe(u),
-    permisos: normalizarPermisos(u.permisos),
+    permisos: normalizarPermisos(u.permisos, tipoDe(u)),
     veFuncionesNuevas: u.ve_funciones_nuevas === true,
     estadoClave: estadoClave(c),
     ultimoIngreso: c?.ultimo_ingreso_at || null,
@@ -177,6 +177,11 @@ export async function exigirSesion(opts: { permitirDebeCambiar?: boolean } = {})
   return { sesion }
 }
 
+/**
+ * Solo para lo que es de Usuarios (alta, cambios, blanqueos): el tipo gerencial. Usuarios no se le puede sacar a un
+ * gerencial, así que no mira la matriz. Lo que es de una sección (fórmulas, carga…) se chequea con `puedeCon`, que
+ * respeta lo que se le sacó a mano.
+ */
 export async function exigirGerencial(): Promise<Exigido> {
   const r = await exigirSesion()
   if (r.respuesta) return r
