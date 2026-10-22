@@ -63,7 +63,7 @@ export function PanelFormula({
   const editado = fecha(formula.updated_at)
 
   return (
-    <aside className="w-[288px] shrink-0 overflow-y-auto rounded-md border bg-card text-[12px]">
+    <aside className="w-[270px] shrink-0 overflow-y-auto rounded-md border bg-card text-xs">
       <div className="flex items-start justify-between gap-2 border-b px-3 py-2">
         <div className="min-w-0">
           <div className="truncate font-mono text-[13px] font-medium" title={formula.code}>{formula.code}</div>
@@ -348,7 +348,7 @@ function CopiarDialog({ formula, origen, destinos, onClose }: { formula: Formula
             Se crea la misma fórmula, con los mismos materiales y cantidades. El artículo de Zomatik no se copia.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3 text-sm">
+        <div className="space-y-2 text-xs">
           {destinos.length > 1 && (
             <Select value={destinoId} onValueChange={setDestinoId}>
               <SelectTrigger className="h-8"><SelectValue placeholder="Planta" /></SelectTrigger>

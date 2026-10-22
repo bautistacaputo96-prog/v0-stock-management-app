@@ -220,7 +220,7 @@ function FormulasContenido() {
       {/* Tabla + panel */}
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-md border bg-card">
-          <table className="w-max min-w-full border-separate border-spacing-0 text-[12px]">
+          <table className="w-max min-w-full border-separate border-spacing-0 text-xs">
             <thead>
               <tr>
                 <th onClick={() => ordenarPor("code")} className={cn(th, "left-0 z-20 min-w-[140px] border-r text-left")}>Fórmula {flecha("code")}</th>
