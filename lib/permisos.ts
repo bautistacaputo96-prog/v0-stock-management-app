@@ -231,6 +231,25 @@ export function normalizarPermisos(raw: unknown, tipo?: unknown): Permisos {
   return p
 }
 
+/** Lo que se guarda en `app_users.permisos` para un gerencial: solo lo que se le sacó a mano. */
+export type Restricciones = Partial<Record<SeccionClave, Partial<Record<Accion, false>>>>
+
+/**
+ * Cómo se guarda la matriz en la base. Gerencial: solo los `false` de acciones que existen (lo que se le sacó a
+ * mano; `{}` = todo), así una acción nueva le queda habilitada sola y no se le sacan cosas que nadie destildó.
+ * Operario y consulta: la matriz completa, como siempre.
+ */
+export function permisosParaGuardar(permisos: unknown, tipo: unknown): Permisos | Restricciones {
+  if (tipo !== "gerencial") return normalizarPermisos(permisos, tipo)
+  const n = normalizarPermisos(permisos, "gerencial")
+  const out: Restricciones = {}
+  for (const s of SECCIONES) {
+    if (s.clave === "usuarios") continue
+    for (const a of s.acciones) if (n[s.clave][a] === false) out[s.clave] = { ...(out[s.clave] || {}), [a]: false }
+  }
+  return out
+}
+
 /**
  * Tildar o destildar una casilla en la pantalla Usuarios (regla 5): tildar cargar, editar o borrar tilda
  * "ver"; destildar "ver" destilda las demás. Devuelve una matriz nueva.

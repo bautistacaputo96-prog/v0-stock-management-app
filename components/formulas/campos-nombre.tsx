@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import {
-  PIEDRAS, RESISTENCIAS_NOMBRE, armarNombre, sufijoDePlanta, validarPartes, type PartesNombre, type Piedra,
+  MAX_LIBRE, PIEDRAS, RESISTENCIAS_NOMBRE, armarNombre, sufijoDePlanta, validarLibre, validarPartes, type PartesNombre, type Piedra,
 } from "@/lib/formulas-nombre"
 
 export type ValorNombre = { modo: "partes" | "libre"; partes: PartesNombre; libre: string }
@@ -18,7 +18,8 @@ export type ValorNombre = { modo: "partes" | "libre"; partes: PartesNombre; libr
 export function codigoDe(v: ValorNombre, planta: string | null | undefined): { codigo: string; error: string | null } {
   if (v.modo === "libre") {
     const c = v.libre.replace(/\s+/g, " ").trim()
-    return { codigo: c, error: c.length < 2 ? "Escribí el nombre" : null }
+    const error = validarLibre(c)
+    return { codigo: error ? "" : c, error }
   }
   const error = validarPartes(v.partes)
   return { codigo: error ? "" : armarNombre(v.partes, planta), error }
@@ -27,7 +28,7 @@ export function codigoDe(v: ValorNombre, planta: string | null | undefined): { c
 const NADA = "_"
 
 export function CamposNombre({
-  valor, onChange, planta, permiteLibre, libreSoloLectura,
+  valor, onChange, planta, permiteLibre, libreSoloLectura, sinCambios,
 }: {
   valor: ValorNombre
   onChange: (v: ValorNombre) => void
@@ -36,6 +37,8 @@ export function CamposNombre({
   permiteLibre: boolean
   /** la fórmula ya tiene nombre libre y la persona no es gerencial: se ve, no se cambia */
   libreSoloLectura?: boolean
+  /** edición sin tocar el nombre: queda este código tal cual */
+  sinCambios?: string
 }) {
   const p = valor.partes
   const set = (x: Partial<PartesNombre>) => onChange({ ...valor, partes: { ...p, ...x } })
@@ -69,6 +72,7 @@ export function CamposNombre({
             onChange={(e) => onChange({ ...valor, libre: e.target.value })}
             placeholder={`Ej: RDC-300 ${sufijoDePlanta(planta)}`}
             disabled={libreSoloLectura}
+            maxLength={MAX_LIBRE + 10}
             className="h-8"
           />
           <p className="text-xs text-muted-foreground">
@@ -94,7 +98,7 @@ export function CamposNombre({
             <Select value={p.piedra || NADA} onValueChange={(v) => set({ piedra: v === NADA ? null : (v as Piedra) })}>
               <SelectTrigger className="h-8"><SelectValue placeholder="—" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={NADA}>Sin piedra</SelectItem>
+                <SelectItem value={NADA}>—</SelectItem>
                 {PIEDRAS.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -132,7 +136,13 @@ export function CamposNombre({
 
       <div className="flex items-baseline gap-2 rounded bg-muted px-2 py-1.5">
         <span className="text-xs text-muted-foreground">Queda:</span>
-        {codigo ? <span className="font-mono text-sm font-medium">{codigo}</span> : <span className="text-xs text-muted-foreground">{error}</span>}
+        {sinCambios ? (
+          <span className="font-mono text-sm font-medium">{sinCambios} <span className="font-sans text-xs font-normal text-muted-foreground">(sin cambios)</span></span>
+        ) : codigo ? (
+          <span className="font-mono text-sm font-medium">{codigo}</span>
+        ) : (
+          <span className="text-xs text-destructive">{error}</span>
+        )}
       </div>
     </div>
   )

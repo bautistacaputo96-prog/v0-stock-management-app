@@ -14,7 +14,7 @@ import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { logCambio } from "@/lib/activity-log"
 import { cn } from "@/lib/utils"
-import { proponerRenombres, type EstadoRenombre, type Renombre } from "@/lib/formulas-nombre"
+import { chocaCon, proponerRenombres, validarLibre, type EstadoRenombre, type Renombre } from "@/lib/formulas-nombre"
 
 const MOTIVO = "Normalizar nombres (formato H30-620-15 B (CAN) PELQUE)"
 const PESTANAS: { clave: EstadoRenombre; nombre: string }[] = [
@@ -51,10 +51,19 @@ export function NormalizarNombres({ plantas, onClose }: { plantas: { id: string;
   }, [filas, hechos])
   const visibles = (filas || []).filter((f) => f.estado === pestana)
   const nuevoDe = (f: Renombre) => (f.estado === "revisar" ? (editado[f.id] ?? f.propuesto) : f.propuesto).replace(/\s+/g, " ").trim()
+  /** Lo que impide aplicar este nombre: largo, o que choque con otra de la planta (sin distinguir mayúsculas). */
+  const problemaDe = (f: Renombre, nuevo: string): string | null => {
+    const e = validarLibre(nuevo)
+    if (e) return e
+    const otros = Object.fromEntries(Object.entries(editado).filter(([id]) => id !== f.id && !hechos[id]))
+    const c = chocaCon(nuevo, f, filas || [], hechos, otros)
+    return c ? `Chocaría con ${c}` : null
+  }
 
   /** Renombra una fórmula (código y nombre). Devuelve el error, o null. */
   async function renombrar(f: Renombre, nuevo: string): Promise<string | null> {
-    if (nuevo.length < 2) return "Escribí el nombre"
+    const prob = problemaDe(f, nuevo)
+    if (prob) return prob
     const sb = createClient()
     const { data: antes } = await sb.from("formulas").select("code, name").eq("id", f.id).maybeSingle()
     if (!antes) return "La fórmula ya no existe"
@@ -145,6 +154,7 @@ export function NormalizarNombres({ plantas, onClose }: { plantas: { id: string;
               <tbody>
                 {visibles.map((f) => {
                   const hecho = hechos[f.id]
+                  const problema = !hecho && f.estado === "revisar" && editado[f.id] != null ? problemaDe(f, nuevoDe(f)) : null
                   return (
                     <tr key={f.id} className={cn("border-t align-top", hecho && "bg-emerald-50 dark:bg-emerald-950")}>
                       <td className="px-2 py-1.5 text-muted-foreground">{f.planta}</td>
@@ -162,7 +172,10 @@ export function NormalizarNombres({ plantas, onClose }: { plantas: { id: string;
                         ) : (
                           <span className="font-mono font-medium">{f.propuesto}</span>
                         )}
-                        {f.motivo && !hecho && <p className="mt-0.5 text-amber-800 dark:text-amber-300">{f.motivo}</p>}
+                        {f.motivo && !hecho && (
+                          <p className={cn("mt-0.5", f.estado === "revisar" ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>{f.motivo}</p>
+                        )}
+                        {problema && <p className="mt-0.5 text-destructive">{problema}</p>}
                         {errores[f.id] && <p className="mt-0.5 text-destructive">{errores[f.id]}</p>}
                       </td>
                       <td className="px-2 py-1.5 text-right">
@@ -175,7 +188,7 @@ export function NormalizarNombres({ plantas, onClose }: { plantas: { id: string;
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 text-xs"
-                            disabled={trabajando || (f.estado === "revisar" && nuevoDe(f) === f.actual)}
+                            disabled={trabajando || !!problema || (f.estado === "revisar" && nuevoDe(f) === f.actual && (f.nombre == null || f.nombre === f.actual))}
                             onClick={() => setAConfirmar(f.id)}
                           >
                             Aplicar

@@ -58,3 +58,15 @@ Editar y borrar siguen con motivo y registro en Actividad (fase 0c-1), con los m
 - Las altas, ediciones y borrados de fórmulas se escriben desde el navegador con la clave anon (como antes): el freno es la pantalla, no la base.
 - **Pendiente de Bautista:** en Usuarios, a Fernando Maldonado destildarle Fórmulas · cargar, editar y borrar. No se tocó en la base.
 
+## Correcciones del revisor (22/10)
+
+- **Permisos guardados de un gerencial:** se guarda solo lo que se le saca a mano (`{"formulas": {"cargar": false, …}}`; `{}` = todo). Las rutas de Usuarios (alta y cambio) ya no guardan la matriz completa para un gerencial (`permisosParaGuardar` en `lib/permisos.ts`). Los `false` que hoy tienen guardados los 3 gerenciales son todos de acciones que no existen (carga.borrar, despacho.editar/borrar, usuarios.cargar/editar/borrar, recuentos.ver/editar/borrar, mantenimiento.editar): verificado con los datos de la base, con la matriz de hoy ninguno pierde nada, y con `{}` tampoco (prueba en `sesion-permisos.test.mjs`).
+- **Script** `scripts/2026-10-22-gerenciales-sin-restricciones.sql` (sin correr): deja `{}` en los gerenciales y lo asienta en Actividad. **Orden:** 1) publicar la rama (el script también se puede correr antes: con la regla vieja el gerencial no mira la matriz); 2) correr el script; 3) recién ahí, en Usuarios, sacarle a Fernando Fórmulas · cargar, editar y borrar. Si el script se corre después del paso 3, le devuelve Fórmulas a Fernando.
+- **Normalizar, a "revisar a mano":** sin asentamiento o sin C/B (H17-6/20 B, H40-6/12-15, H8-620-15), las que dicen NO USAR, una B o C suelta después de la planta y las que pierden algo del comentario al limpiarlo (símbolos o recorte a 20; las tildes no cuentan). También las que dan un nombre igual a otra de su planta.
+- **Piedra, asentamiento y C/B obligatorios en el alta** (lo más simple): todo nombre armado se vuelve a leer igual. Lo que no los tiene va con nombre libre (gerencial).
+- **Edición:** si no se tocan los campos del nombre, el código queda tal cual ("sin cambios"); renombrar es tocarlo o usar "Normalizar nombres".
+- **Solo cambia el `name`:** la fila lo dice ("Solo cambia el nombre: «…» → «…»").
+- **Nombres corregidos a mano:** se comparan con los de su planta (los de hoy, los ya aplicados y los que se están escribiendo) sin distinguir mayúsculas; si chocan, no se puede aplicar.
+- **Nombre libre:** hasta 50 letras, con el aviso "El nombre libre puede tener hasta 50 letras (tiene N)".
+- Con los datos de hoy: 27 para renombrar, 17 a revisar a mano, 19 ya bien.
+

@@ -68,7 +68,11 @@ export function EditFormulaDialog({
     const partes = interpretarNombre(formula.code)
     return partes ? { modo: "partes", partes, libre: "" } : { modo: "libre", partes: PARTES_VACIAS, libre: formula.code }
   })
-  const { codigo, error: errorNombre } = codigoDe(nombre, plantName)
+  // Si no se tocó el nombre, queda el código de hoy tal cual (renombrar es tocarlo o "Normalizar nombres")
+  const [nombreTocado, setNombreTocado] = useState(false)
+  const armado = codigoDe(nombre, plantName)
+  const codigo = nombreTocado ? armado.codigo : formula.code
+  const errorNombre = nombreTocado ? armado.error : null
   const [formData, setFormData] = useState({
     description: formula.description || "",
     yield_m3: formula.yield_m3.toString(),
@@ -239,10 +243,14 @@ export function EditFormulaDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <CamposNombre
             valor={nombre}
-            onChange={setNombre}
+            onChange={(v) => {
+              setNombre(v)
+              setNombreTocado(true)
+            }}
             planta={plantName}
             permiteLibre={esGerencial}
             libreSoloLectura={nombre.modo === "libre" && !esGerencial}
+            sinCambios={nombreTocado ? undefined : formula.code}
           />
           {codigo && codigo !== formula.code && (
             <p className="text-xs text-amber-800">Al guardar, el código pasa de {formula.code} a {codigo}.</p>

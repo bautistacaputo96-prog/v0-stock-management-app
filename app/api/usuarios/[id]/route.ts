@@ -12,7 +12,7 @@ import {
   COLUMNAS_USUARIO,
   type FilaUsuario,
 } from "@/lib/auth/servidor"
-import { esTipo, tipoDe, normalizarPermisos, plantilla, cambiosDePermisos, NOMBRE_TIPO, type Tipo } from "@/lib/permisos"
+import { esTipo, tipoDe, normalizarPermisos, permisosParaGuardar, plantilla, cambiosDePermisos, NOMBRE_TIPO, type Tipo } from "@/lib/permisos"
 
 export const dynamic = "force-dynamic"
 
@@ -59,8 +59,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       cambios.role = tipoNuevo === "gerencial" ? "supervisor" : "operario" // por si algún script viejo la mira
       detalle.Tipo = `${NOMBRE_TIPO[tipoAntes]} → ${NOMBRE_TIPO[tipoNuevo]}`
     }
-    if (Object.keys(difPermisos).length > 0) {
-      cambios.permisos = permisosNuevos
+    if (Object.keys(difPermisos).length > 0 || (tipoNuevo !== tipoAntes)) {
+      // gerencial: solo lo que se le saca a mano ({} = todo); los demás, la matriz completa
+      cambios.permisos = permisosParaGuardar(permisosNuevos, tipoNuevo)
     }
     Object.assign(detalle, difPermisos)
     if (cambios.tipo !== undefined || cambios.permisos !== undefined) {
