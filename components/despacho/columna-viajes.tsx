@@ -9,7 +9,7 @@
  * Sin botón Despachar: se despacha arrastrando la tarjeta al camión, tocando la tarjeta y después el camión, o desde
  * ⋮ › Despachar. Con el mouse se arrastra apretada; con el dedo, dejándola apretada un momento.
  */
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChevronDown, ClipboardList, ThumbsUp, Truck } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { atraso, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
@@ -54,8 +54,17 @@ export function ColumnaViajes({
 }) {
   const [buscar, setBuscar] = useState("")
   // Detalle desplegable de cada viaje (Bautista 22/10): bomba, fibra si la lleva, tiempo hasta la obra y observaciones
+  // El detalle se abre solo con el viaje elegido (tocar la tarjeta lo elige) y se cierra al elegir otro (22/10).
+  // La flecha sigue andando a mano: abre uno que no está elegido o cierra el elegido.
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
-  const alternar = (clave: string) => setAbiertos((s) => { const n = new Set(s); if (n.has(clave)) n.delete(clave); else n.add(clave); return n })
+  const [cerrados, setCerrados] = useState<Set<string>>(new Set())
+  useEffect(() => { setAbiertos(new Set()); setCerrados(new Set()) }, [elegido])
+  const estaAbierto = (clave: string) => abiertos.has(clave) || (elegido === clave && !cerrados.has(clave))
+  const alternar = (clave: string) => {
+    const abrir = !estaAbierto(clave)
+    setAbiertos((s) => { const n = new Set(s); if (abrir) n.add(clave); else n.delete(clave); return n })
+    setCerrados((s) => { const n = new Set(s); if (abrir) n.delete(clave); else n.add(clave); return n })
+  }
   const atrasados = esHoy ? viajes.filter((v) => atraso(v.hora_carga, ahora).tipo === "atrasado").length : 0
   const sel = elegido ? viajes.find((v) => v.clave === elegido) : null
   const lista = viajes.filter((v) => {
@@ -131,12 +140,12 @@ export function ColumnaViajes({
                 <span className="tabular-nums">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>
                 <button
                   className="-mr-1 flex h-4 w-4 items-center justify-center rounded text-slate-500 hover:bg-slate-200"
-                  title={abiertos.has(v.clave) ? "Ocultar el detalle" : "Ver el detalle"}
-                  aria-expanded={abiertos.has(v.clave)}
+                  title={estaAbierto(v.clave) ? "Ocultar el detalle" : "Ver el detalle"}
+                  aria-expanded={estaAbierto(v.clave)}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); alternar(v.clave) }}
                 >
-                  <ChevronDown className={cn("h-3 w-3 transition-transform", abiertos.has(v.clave) && "rotate-180")} />
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", estaAbierto(v.clave) && "rotate-180")} />
                 </button>
               </div>
               {/* Fila 2: cliente · m³ › hora de carga */}
@@ -159,7 +168,7 @@ export function ColumnaViajes({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              {abiertos.has(v.clave) && (
+              {estaAbierto(v.clave) && (
                 <div className="mt-0.5 space-y-0.5 border-t border-slate-200 pt-0.5 text-[11px] text-slate-600" onPointerDown={(e) => e.stopPropagation()}>
                   <div>{bomba ? textoBomba(p, empresas, "Con bomba") : "Sin bomba (descarga directa)"}</div>
                   {Number(p.fiber_kg_per_m3) > 0 && <div>Fibra: {m3txt(p.fiber_kg_per_m3)} kg/m³</div>}

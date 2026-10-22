@@ -27,9 +27,10 @@ import { efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
 import { banderas, type FilaAuditoria } from "@/lib/carga/auditoria"
 import { recetasIniciales } from "@/lib/carga/recetas-sim"
 import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
+import { cantidadPorM3 } from "@/lib/carga/receta"
 import { Btn, CartelSimulada, Chip, Tag, hhmm, hms, m3t, mmss } from "./comun"
 import { PlantaVivo, TablaPesajes, nombreCorto } from "./planta-vivo"
-import { ConfirmarCamion, MotivoDialog, PruebaDialog, ReporteDialog, TablaComparacion, TolvaDialog, type FilaReporte } from "./dialogos-carga"
+import { ConfirmarCamion, MotivoDialog, PruebaDialog, ReporteDialog, TolvaDialog, type FilaReporte } from "./dialogos-carga"
 import { AlertasCarga, ResolverDialog } from "./alertas-carga"
 import { RecetasPlanta } from "./recetas-planta"
 import { usarDatosCarga, ESTADOS_COLA, ESTADOS_PLANTA, type AlertaFila, type CargaFila } from "./usar-datos-carga"
@@ -234,11 +235,12 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
   const grilla = useRef<HTMLDivElement>(null)
   const medio = useRef<HTMLElement>(null)
   const [alto, setAlto] = useState(560)
-  const [grande, setGrande] = useState(true)
+  const [anchoMedio, setAnchoMedio] = useState(900)
   useEffect(() => {
     const m = medio.current
     if (!m) return
-    const ro = new ResizeObserver(() => setGrande(m.clientWidth >= 780))
+    // menos el relleno de la columna (12) y el borde y relleno del dibujo de la planta (14)
+    const ro = new ResizeObserver(() => setAnchoMedio(m.clientWidth - 26))
     ro.observe(m)
     return () => ro.disconnect()
   }, [tab, puesto?.id, ctx?.puesto.id])
@@ -361,7 +363,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       )}
 
       {puesto && ctx && tab === "carga" && (
-        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "200px minmax(0,1fr) 420px", height: alto }}>
+        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "200px minmax(0,1fr) 300px", height: alto }}>
           {/* Cola */}
           <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
             <div className="flex min-h-[31px] items-center gap-1.5 border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Cola de carga</h2><span className="text-xs text-slate-500">{colaVisible.length}</span><span className="flex-1" /><span className="text-[11px] text-slate-500">llega de Despacho</span></div>
@@ -410,7 +412,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
                 <>
                   <PlantaVivo estado={e} salidas={ctx.salidas} materiales={ctx.materiales} conectado={conectado}
                     patente={(activa || elegida)?.mixers?.license_plate || (activa || elegida)?.patente_planta || null} m3Total={(activa || elegida)?.m3 ?? null}
-                    previa={previa} grande={grande} onCambiarTolva={puedeTolva && tolva1 ? () => setTolva(true) : null} humedadAcopio={humAcopio} />
+                    previa={previa} ancho={anchoMedio} onCambiarTolva={puedeTolva && tolva1 ? () => setTolva(true) : null} humedadAcopio={humAcopio} />
                   <TablaPesajes estado={e} salidas={ctx.salidas} materiales={ctx.materiales} />
                 </>
               ) : (
@@ -429,7 +431,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
 
           {/* Orden, control y botones */}
           <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
-            <div className={cn("flex min-h-0 flex-1 flex-col gap-[5px] overflow-auto px-2 py-1.5", enPlanta && "pb-[72px]")}>
+            <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-[5px] overflow-y-auto overflow-x-hidden px-2 py-1.5", enPlanta && "pb-[72px]")}>
               <PanelDerecho
                 ctx={ctx} enPlanta={enPlanta} puedeCargar={puedeCargar} puedeResolver={puedeResolver} simulada={simulada}
                 prep={P.prep} activa={activa} elegida={elegida} chequeo={chequeo} estado={e} ordenEnPlanta={!!P.orden}
@@ -551,13 +553,30 @@ function PanelDerecho(p: {
     return ex.length ? <div className="text-xs">Agua extra: {ex.map((x, i) => <span key={i}><b className="font-medium">{x.litros} L</b> {hhmm(x.at)}{x.despues_de_terminar ? " (después de terminar)" : ""}{i < ex.length - 1 ? " · " : ""}</span>)}</div> : null
   }
   const pat = (k: CargaFila) => k.mixers?.license_plate || k.patente_planta || "—"
+  // Cabecera en 2 renglones (22/10): patente · remito / fórmula · m³. El cliente y lo demás, plegado en "Más datos".
   const cab = (k: CargaFila) => (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-sm font-medium tracking-[.04em]">{pat(k)}</span>
-      <Tag tono={k.remito_tipo === "X" ? "X" : "R"}>{k.origen === "prueba" ? "PRUEBA" : `${k.remito_tipo || ""} ${k.remito || ""}`}</Tag>
-      {k.simulada && <Tag tono="warn">simulada</Tag>}
-      <span className="truncate text-xs"><b className="font-medium">{k.despacho?.cliente || k.cliente_planta}</b>{k.despacho?.obra ? ` · ${k.despacho.obra}` : ""}</span>
+    <div className="min-w-0 leading-tight" title={`${k.despacho?.cliente || k.cliente_planta || ""}${k.despacho?.obra ? ` · ${k.despacho.obra}` : ""}`}>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate text-sm font-medium tracking-[.04em]">{pat(k)}</span>
+        <span className="flex-1" />
+        {k.simulada && <Tag tono="warn">sim.</Tag>}
+        <Tag tono={k.remito_tipo === "X" ? "X" : "R"}>{k.origen === "prueba" ? "PRUEBA" : `${k.remito_tipo || ""} ${k.remito || ""}`}</Tag>
+      </div>
+      <div className="flex min-w-0 items-center gap-1 text-xs text-slate-500">
+        <span className="min-w-0 flex-1 truncate">{k.formulas?.code}</span>
+        <span className="shrink-0 tabular-nums text-foreground">{m3t(k.m3)} m³ · {k.ciclos || Math.ceil(k.m3 / ctx.puesto.m3_max_ciclo)} ciclos</span>
+      </div>
     </div>
+  )
+  const masDatos = (k: CargaFila, extra?: React.ReactNode) => (
+    <details className="text-[11px] text-slate-500">
+      <summary className="cursor-pointer select-none">Más datos</summary>
+      <div className="mt-0.5 space-y-px break-words">
+        <div>{k.despacho?.cliente || k.cliente_planta}{k.despacho?.obra ? ` · ${k.despacho.obra}` : ""}</div>
+        <div>Despachó {hhmm(k.despacho?.created_at || k.created_at)} {k.created_by || ""} · bajó {hms(k.bajada_at)}</div>
+        {extra}
+      </div>
+    </details>
   )
 
   if (prep) {
@@ -583,8 +602,8 @@ function PanelDerecho(p: {
     return (
       <>
         {cab(k)}
-        <div className="text-xs">{k.formulas?.code} · receta {k.receta_numero ?? "—"} · <b className="font-medium">{m3t(k.m3)} m³</b> en {k.ciclos || "—"} ciclos</div>
-        <div className="text-xs text-slate-500">Despachado {hhmm(k.despacho?.created_at || k.created_at)} · <b className="font-medium text-foreground">inicio de carga {hms(k.inicio_at)}</b>{k.inicio_at ? ` · llevamos ${mmss((Date.now() - new Date(k.inicio_at).getTime()) / 1000)}` : ""}{k.contador_planta ? ` · N° ${k.contador_planta} en Indumix` : ""}</div>
+        <div className="truncate text-xs text-slate-500">Inicio <span className="text-foreground">{hms(k.inicio_at)}</span>{k.inicio_at ? ` · llevamos ${mmss((Date.now() - new Date(k.inicio_at).getTime()) / 1000)}` : ""} · receta {k.receta_numero ?? "—"}</div>
+        {masDatos(k, k.contador_planta ? <div>N° {k.contador_planta} en Indumix</div> : null)}
         {k.autorizacion && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">Autorizada con receta distinta · {k.autorizacion.por}: «{k.autorizacion.motivo}»</div>}
         {k.agua_distinta && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">Agua de la receta distinta de la fórmula: no frena, queda en la auditoría.</div>}
         {k.sin_internet && <div className="text-[11px] text-amber-800">Arrancó sin internet: la orden ya había bajado.</div>}
@@ -653,42 +672,98 @@ function PanelDerecho(p: {
   const f = p.formulaDe(k.formula_id)
   const ctl = controlDeFormula(ctx, f, k.autorizacion)
   const alerta = p.alertas.find((a) => a.tipo === "receta_no_coincide" && a.formula_id === k.formula_id && ["abierta", "esperando_planta"].includes(a.estado))
+  const malos = ch.items.filter((i) => !i.ok)
+  const avisos = ch.items.filter((i) => i.ok && i.aviso)
+  const bien = ch.items.filter((i) => i.ok && !i.aviso)
+  const chip = (i: Item) => (
+    <span key={i.clave + i.corto} title={i.texto} className={cn("inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded border px-1 text-[11px]", i.neutro ? "border-dashed text-slate-500" : !i.ok ? "border-red-300 bg-red-50 text-red-700" : i.aviso ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 text-slate-600")}>
+      {i.neutro ? "·" : !i.ok ? "✕" : i.aviso ? "!" : "✓"} {i.corto}
+    </span>
+  )
   return (
     <>
       {ult}
       {cab(k)}
-      <div className="text-xs text-slate-500">{k.formulas?.code} · <b className="font-medium text-foreground">{m3t(k.m3)} m³</b> ({k.ciclos || Math.ceil(k.m3 / ctx.puesto.m3_max_ciclo)} ciclos) · despachó {hhmm(k.created_at)} {k.created_by || ""} · bajó {hms(k.bajada_at)}</div>
-      <div className="flex flex-wrap gap-[3px]">
-        {ch.items.map((i) => (
-          <span key={i.clave + i.corto} title={i.texto} className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-[5px] border px-1.5 text-[11px]", i.neutro ? "border-dashed text-slate-500" : !i.ok ? "border-red-300 bg-red-50 text-red-700" : i.aviso ? "border-amber-300 bg-amber-50 text-amber-800" : "")}>
-            <b className={cn("font-medium", i.ok && !i.aviso && !i.neutro && "text-green-600")}>{i.neutro ? "·" : !i.ok ? "✕" : i.aviso ? "!" : "✓"}</b>{i.corto}
-          </span>
-        ))}
+      {/* Controles: los que fallan (y los avisos) sueltos; los que están bien, en un resumen que se abre */}
+      <div className="flex flex-wrap items-center gap-[3px]">
+        {malos.map(chip)}
+        {avisos.map(chip)}
+        <details className="text-[11px] text-slate-500">
+          <summary className="cursor-pointer select-none whitespace-nowrap"><span className="text-green-700">✓</span> {bien.filter((i) => !i.neutro).length} controles OK</summary>
+          <div className="mt-0.5 flex flex-wrap gap-[3px]">{bien.map(chip)}</div>
+        </details>
       </div>
-      <div className="text-[11px] text-slate-500">NP: se controla cuando esté Zomatik.</div>
       {ctl.cmp && ctl.frenaReceta ? (
-        <div className="rounded-md border border-l-[3px] border-l-red-600 px-2 py-1.5 text-xs">
-          <h3 className="mb-1 text-xs font-medium">No se puede cargar: la receta {ctl.numero} no es igual a la fórmula</h3>
-          <TablaComparacion cmp={ctl.cmp} />
-          {p.puedeResolver && alerta ? <Btn tono="pri" className="mt-1 h-[26px] text-xs" onClick={() => p.onResolver(alerta)}>Resolver</Btn>
-            : <div className="mt-1 text-xs">Lo resuelve quien tiene Fórmulas · editar (Bautista, Fernando y Juan){k.frenada_confirmada_por ? `. Se despachó igual (${k.frenada_confirmada_por}): ya le llegó el mail a Juan Oreguy.` : "."}</div>}
+        <div className="rounded-md border border-l-[3px] border-slate-200 border-l-red-600 px-1.5 py-1 text-xs">
+          <div className="truncate font-medium text-red-700" title={ctl.motivo || ""}>Receta {ctl.numero} distinta de la fórmula</div>
+          <ComparacionCompacta cmp={ctl.cmp} numero={ctl.numero} />
+          {p.puedeResolver && alerta ? <Btn tono="pri" className="mt-1" onClick={() => p.onResolver(alerta)}>Resolver</Btn>
+            : <details className="mt-0.5 text-[11px] text-slate-500"><summary className="cursor-pointer select-none">¿Quién lo resuelve?</summary>Quien tiene Fórmulas · editar (Bautista, Fernando y Juan){k.frenada_confirmada_por ? `. Se despachó igual (${k.frenada_confirmada_por}): ya le llegó el mail a Juan Oreguy.` : "."}</details>}
         </div>
-      ) : ctl.aguaDistinta ? (
-        <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1.5 text-xs">
-          <h3 className="text-xs font-medium">Agua de la receta distinta de la fórmula · no frena</h3>
-          <div>{ctl.items.find((i) => i.clave === "agua")?.texto}. Antes de tocar el agua en la planta conviene que lo confirme Grow.</div>
+      ) : ctl.cmp ? (
+        <div className="text-xs">
+          <ComparacionCompacta cmp={ctl.cmp} numero={ctl.numero} />
+          {ctl.aguaDistinta && <details className="text-[11px] text-amber-800"><summary className="cursor-pointer select-none">Agua distinta · no frena</summary>{ctl.items.find((i) => i.clave === "agua")?.texto}. Antes de tocar el agua en la planta conviene que lo confirme Grow.</details>}
         </div>
       ) : null}
       {enPlanta ? (
         <>
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex items-center gap-1">
             <button className="h-[34px] rounded-md bg-green-600 px-[18px] text-[13.5px] font-bold tracking-[.03em] text-white disabled:bg-slate-300 disabled:text-slate-600" disabled={!ch.ok || !puedeCargar} onClick={() => p.onCargar(k)}>CARGAR</button>
             <Btn onClick={p.onBocina}>Bocina</Btn>
             <Btn tono="ghost" disabled={!puedeCargar} onClick={() => p.onCancelar(k)}>Cancelar…</Btn>
           </div>
-          {ch.motivo ? <div className="text-[11px] text-red-700">{ch.motivo}</div> : <div className="text-[11px] text-slate-500">Antes de arrancar se confirma que el camión está abajo.</div>}
+          {ch.motivo
+            ? <details className="text-[11px] text-red-700"><summary className="cursor-pointer select-none truncate" title={ch.motivo}>{ch.motivo}</summary><div className="break-words">{ch.motivo}</div></details>
+            : <div className="truncate text-[11px] text-slate-500">Antes de arrancar se confirma que el camión está abajo.</div>}
         </>
-      ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-xs text-slate-600">CARGAR y PARAR se accionan solo desde la computadora de la planta.</div>}
+      ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-[11px] text-slate-600">CARGAR y PARAR se accionan solo desde la computadora de la planta.</div>}
+      {masDatos(k, <div>NP: se controla cuando esté Zomatik.</div>)}
+    </>
+  )
+}
+
+/**
+ * Fórmula contra planta en 300 px (22/10): si coincide, una línea que se abre; si no, solo las filas que fallan y
+ * "Ver los N materiales". La tolerancia va en el tooltip de la diferencia; el % solo si falla.
+ */
+function ComparacionCompacta({ cmp, numero }: { cmp: NonNullable<ReturnType<typeof controlDeFormula>["cmp"]>; numero: number | null }) {
+  const fila = (f: (typeof cmp.filas)[number]) => (
+    <tr key={f.material_id} className={cn(!f.ok && (f.agua ? "bg-amber-50" : "bg-red-50"))}>
+      <td className="truncate border-b border-slate-200 px-1 py-px" title={f.nombre}>{nombreCorto(f.nombre)}</td>
+      <td className="border-b border-slate-200 px-1 py-px text-right tabular-nums">{cantidadPorM3(f.grupo, f.formula)}</td>
+      <td className="border-b border-slate-200 px-1 py-px text-right tabular-nums">{cantidadPorM3(f.grupo, f.receta)}</td>
+      <td className={cn("border-b border-slate-200 px-1 py-px text-right tabular-nums", f.ok ? "text-green-700" : f.agua ? "text-amber-800" : "text-red-700")} title={`Tolerancia ±${cantidadPorM3(f.grupo, f.tol)}`}>
+        {f.ok ? "✓" : <>{f.dif > 0 ? "+" : ""}{cantidadPorM3(f.grupo, f.dif)}{f.pct != null && <div className="text-[10px]">{f.dif > 0 ? "+" : ""}{nf(f.pct * 100, 1)} %</div>}</>}
+      </td>
+    </tr>
+  )
+  const tabla = (filas: typeof cmp.filas) => (
+    <table className="mt-0.5 w-full table-fixed border-collapse text-[11px]">
+      <colgroup><col className="w-[32%]" /><col className="w-[22%]" /><col className="w-[22%]" /><col className="w-[24%]" /></colgroup>
+      <thead><tr className="text-left text-[10.5px] text-slate-500"><th className="px-1 font-normal">Material</th><th className="px-1 text-right font-normal">Fórmula</th><th className="px-1 text-right font-normal">Planta</th><th className="px-1 text-right font-normal">Dif.</th></tr></thead>
+      <tbody>
+        {filas.map(fila)}
+        {cmp.sueltas.map((s2) => <tr key={s2} className="bg-red-50"><td colSpan={4} className="border-b border-slate-200 px-1 py-px">Pesa en {INFO_SALIDA[s2].nombre}, sin material</td></tr>)}
+      </tbody>
+    </table>
+  )
+  if (cmp.ok) return (
+    <details className="text-[11px] text-slate-500">
+      <summary className="cursor-pointer select-none"><span className="text-green-700">✓</span> Receta {numero} igual a la fórmula</summary>
+      {tabla(cmp.filas)}
+    </details>
+  )
+  const mal = cmp.filas.filter((f) => !f.ok)
+  return (
+    <>
+      {tabla(mal)}
+      {cmp.filas.length > mal.length && (
+        <details className="text-[11px] text-slate-500">
+          <summary className="cursor-pointer select-none">Ver los {cmp.filas.length} materiales</summary>
+          {tabla(cmp.filas)}
+        </details>
+      )}
     </>
   )
 }

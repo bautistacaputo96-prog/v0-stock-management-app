@@ -5,10 +5,19 @@
  * Real y Objetivo; las balanzas; la cinta al camión y el trompo llenándose. Más la tabla de pesajes del ciclo.
  */
 import { cn } from "@/lib/utils"
-import { ARIDOS, INFO_SALIDA, SALIDAS, nf, type EstadoPlanta, type Salida, type SalidaMapa } from "@/lib/carga/tipos"
+import { ARIDOS, INFO_SALIDA, SALIDAS, anchoSalida, nf, type EstadoPlanta, type Salida, type SalidaMapa } from "@/lib/carga/tipos"
 import { m3t, mmss } from "./comun"
 
 export const nombreCorto = (n: string | null | undefined) => String(n || "—").replace("Piedra Partida", "Piedra").replace("Arena Trituración", "Arena").replace(" (obra)", "")
+/** Para las tolvas angostas: "6/12", "0/6", "A. fina", "Sika 90E", "CPC 40" (que no se parta en dos renglones) */
+export const nombreMinimo = (n: string | null | undefined) => {
+  const t = String(n || "—")
+  const g = t.match(/\d+\/\d+/)
+  if (/piedra|arena tritur/i.test(t) && g) return g[0]
+  if (/arena fina/i.test(t)) return "A. fina"
+  if (/sikament/i.test(t)) return t.replace(/sikament/i, "Sika")
+  return t.length > 9 ? t.slice(0, 8) + "." : t
+}
 const colorDe = (n: string | null | undefined) => {
   const t = String(n || "").toLowerCase()
   if (t.includes("fina")) return "#e9c46a"
@@ -24,7 +33,7 @@ const colorDe = (n: string | null | undefined) => {
 }
 
 export function PlantaVivo({
-  estado, salidas, materiales, conectado, patente, m3Total, previa, grande = true, onCambiarTolva, humedadAcopio,
+  estado, salidas, materiales, conectado, patente, m3Total, previa, ancho = 900, onCambiarTolva, humedadAcopio,
 }: {
   estado: EstadoPlanta | null
   salidas: SalidaMapa[]
@@ -34,7 +43,8 @@ export function PlantaVivo({
   m3Total: number | null
   /** objetivo por ciclo de la orden elegida, antes de arrancar */
   previa?: Partial<Record<Salida, number>> | null
-  grande?: boolean
+  /** ancho disponible para la fila de salidas (px): las 9 se reparten ese ancho, entre 50 y 78 px cada una */
+  ancho?: number
   onCambiarTolva?: (() => void) | null
   /** humedad del acopio de la Arena Fina (para avisar si difiere de la de Indumix más de 1,5 puntos) */
   humedadAcopio?: number | null
@@ -44,7 +54,11 @@ export function PlantaVivo({
     return id ? materiales.find((m) => m.id === id)?.name || "?" : null
   }
   const enCurso = !!estado?.en_ciclo
-  const vw = grande ? 78 : 54, th = grande ? 60 : 34
+  // 9 salidas + 78 px de los 4 grupos (bordes, márgenes y separaciones): cada salida entre 50 y 78 px, para que
+  // entren en un solo renglón. A 1366 (con el menú) quedan ~543 px → 51 px cada una; a 1920, 78. Con menos de 70, nombres cortos.
+  const vw = anchoSalida(ancho)
+  const grande = vw >= 70
+  const th = Math.round(34 + ((vw - 50) / 28) * 26)
   const fila = (s: Salida) => {
     const info = INFO_SALIDA[s]
     const e = estado?.salidas.find((x) => x.salida === s)
@@ -62,7 +76,7 @@ export function PlantaVivo({
           <span>{grande ? info.nombre : info.corto}</span>
           {h != null && <span className={cn("text-[9.5px]", humW ? "font-medium text-amber-800" : "text-cyan-800")} title={humW ? `Indumix ${h} % · acopio ${humedadAcopio} %` : "H% que usa Indumix"}>H{nf(h)}</span>}
         </div>
-        <div className="min-h-[23px] text-[10.5px] leading-tight">{nombreCorto(m)}</div>
+        <div className="min-h-[13px] truncate text-[10.5px] leading-tight" title={m || ""}>{grande ? nombreCorto(m) : nombreMinimo(m)}</div>
         {s === "arido_1" && onCambiarTolva && <button className="mt-px h-[17px] rounded border bg-card px-1 text-[10px]" onClick={onCambiarTolva}>Cambiar</button>}
         <div className={cn("relative mt-0.5 overflow-hidden border-[1.5px] border-b-0 border-slate-400 bg-white", forma)} style={{ height: info.grupo === "cemento" ? th + 12 : th }}>
           <div className="absolute inset-x-0 bottom-0" style={{ height: `${lvl}%`, background: colorDe(m) }} />
@@ -117,7 +131,7 @@ export function PlantaVivo({
           <div className={cn("k3c-cinta mt-0.5 h-[10px] rounded-[5px] border-[1.5px] border-slate-400", cinta && "k3c-cinta-run")} />
           <div className="mt-[3px]">{estado?.en_ciclo || estado?.parada ? <>Trompo <b className="font-medium text-foreground">{nf(trompo, 2)}</b> de {m3t(m3Total)} m³</> : m3Total ? `Esperando · ${m3t(m3Total)} m³ a cargar` : ""}</div>
         </div>
-        <div className={cn("relative shrink-0 text-center", estado?.bocina && "k3c-bocina")} style={{ width: grande ? 170 : 110 }}>
+        <div className={cn("relative shrink-0 text-center", estado?.bocina && "k3c-bocina")} style={{ width: Math.round(vw * 1.9) + 10 }}>
           <Camion frac={frac} gira={!!estado?.en_ciclo && !estado?.suspendida} />
           <div className="text-xs font-medium tracking-wider">{patente || ""}</div>
         </div>
