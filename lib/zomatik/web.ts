@@ -5,7 +5,7 @@
  *   1. Solo lectura (Z0): login, sucursal, los buscadores de 5 listados, la ficha del cliente y el XLS del acopio.
  *      Cualquier otra ruta (manage_*, grabar_*, generar_*, set_*, _get*…) se rechaza ANTES de salir.
  *   2. Nota de pedido (Z2, aparte): lo justo para generar y vaciar una NP como en la prueba del 22/10 (spec 23).
- *      Solo se habilita con la llave de la planta prendida (`plants.zomatik_np_activo`): el cliente lo pide con
+ *      Solo se habilita con la llave de la planta prendida (`zomatik_np_config.activo`): el cliente lo pide con
  *      `{ escrituraNp: true }`, que solo arma `lib/zomatik/np-servidor.ts` después de leer la llave en la base.
  */
 

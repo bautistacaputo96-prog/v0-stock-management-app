@@ -361,7 +361,7 @@ export function mensajeZomatik(e: unknown): string {
 /**
  * Navegador para `np-robot.ts`: no sigue redirecciones (el robot mira a dónde va "Grabar") y cada request pasa por la
  * lista cerrada, con el grupo de la NP habilitado. `llave` la arma `np-servidor.ts` después de leer
- * `plants.zomatik_np_activo = true` en la base: sin ella no hay forma de pedir una ruta que escriba.
+ * `zomatik_np_config.activo = true` en la base: sin ella no hay forma de pedir una ruta que escriba.
  */
 export async function navegadorNp(llave: LlaveNp): Promise<NavegadorNp> {
   if (!llave || llave.activo !== true) throw new ZomatikError("ruta_no_permitida", "La NP automática está apagada para esta planta")

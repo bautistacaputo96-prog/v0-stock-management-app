@@ -53,7 +53,7 @@ const COLUMNAS_PEDIDO =
 export type PlantaNpDB = PlantaNp & { id: string; name: string; zomatik_deposito: number | null }
 
 /** ¿Falta la migración de Z2? (las rutas responden "apagado" en vez de romper). */
-export const faltaMigracion = (e: unknown) => /zomatik_np|zomatik_proyecto|codigo_sistema|disponible_m3|zomatik_robot|does not exist|schema cache|Could not find/i.test(String((e as { message?: string })?.message || ""))
+export const faltaMigracion = (e: unknown) => /\b(zomatik_np(_config|_pedido|_excepciones)?|zomatik_np_tomar|zomatik_robot_tomar|zomatik_robot_soltar|codigo_sistema|disponible_m3|disponible_articulo|disponible_at|zomatik_proyecto_codigo)\b/i.test(String((e as { message?: string })?.message || ""))
 
 // ---------------------------------------------------------------------------
 // Plantas y llave
@@ -211,9 +211,16 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   )
   const ahora = new Date().toISOString()
   const ref = `Pedido ${ped.id.slice(0, 8)}`
+  // Anular lo que no llegó a Zomatik. Si el robot tomó alguna en el medio (ya no está pendiente/error), se anulan
+  // menos de las planeadas: entonces NO se crea la nueva; la próxima sincronización vuelve a planear con lo que haya.
+  let anuladas = 0
   if (plan.anular.length) {
-    await sb.from("zomatik_np").update({ estado: "anulada", mensaje: ped.status === "cancelled" ? "El pedido se canceló antes de generarla" : "Se rehízo con los datos nuevos del pedido", proximo_intento: null, updated_at: ahora } as never).in("id", plan.anular).in("estado", ["pendiente", "error"])
+    const { data: an, error: ea } = await sb.from("zomatik_np").update({ estado: "anulada", mensaje: ped.status === "cancelled" ? "El pedido se canceló antes de generarla" : "Se rehízo con los datos nuevos del pedido", proximo_intento: null, updated_at: ahora } as never).in("id", plan.anular).in("estado", ["pendiente", "error"]).select("id")
+    if (ea) throw ea
+    anuladas = ((an as unknown[]) || []).length
   }
+  const rehacerIncompleto = anuladas < plan.anular.length
+  if (rehacerIncompleto) plan.avisos.push("Una NP se estaba generando mientras se cambiaba el pedido: se vuelve a mirar en la próxima pasada.")
   if (plan.revisar.length) {
     const msg = "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala."
     await sb.from("zomatik_np").update({ estado: "revisar", mensaje: msg, proximo_intento: null, updated_at: ahora } as never).in("id", plan.revisar).in("estado", ["pendiente", "error"])
@@ -224,7 +231,7 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
     await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": `Pedido cancelado: se van a vaciar ${plan.vaciar.length} NP en Zomatik`, NP: nps.filter((x) => plan.vaciar.includes(x.id)).map((x) => x.numero).join(", ") } })
   }
   let creadas = 0
-  for (const c of plan.crear) {
+  for (const c of rehacerIncompleto ? [] : plan.crear) {
     const fila = {
       scheduled_dispatch_id: ped.id, n: c.n, marca: marcaNp(ped.id, c.n), tipo: c.tipo, es_adicional: c.es_adicional, proyecto_codigo: c.proyecto_codigo,
       plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha, m3: c.m3, estado: "pendiente", proximo_intento: ahora, created_by: usuario,
@@ -242,7 +249,7 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   }
   if (plan.avisos.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Aviso de la NP", Aviso: plan.avisos.join(" · ") } })
   if (plan.crear.length || plan.anular.length || plan.vaciar.length || plan.revisar.length) nps = await npsDePedidos(sb, [ped.id])
-  return { activo: true, creadas, vaciar: plan.vaciar.length, anuladas: plan.anular.length, avisos: plan.avisos, nps }
+  return { activo: true, creadas, vaciar: plan.vaciar.length, anuladas, avisos: plan.avisos, nps }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +257,9 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
 // ---------------------------------------------------------------------------
 
 export type ResultadoProceso = { ocupado?: boolean; sinTiempo?: boolean; hechas: { id: string; estado: string; mensaje: string | null; numero?: string | null }[]; quedan: number; error?: string }
+
+/** Más de estas veces colgada en "generando"/"vaciando" = trabada: queda "revisar". */
+const MAX_INTENTOS_TRABADA = 3
 
 const despuesDe = (min: number) => new Date(Date.now() + min * 60_000).toISOString()
 
@@ -507,6 +517,16 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
       if (e1) throw e1
       const t = (tom as { np_id: string; estado_anterior: string; paso_anterior: string | null }[] | null)?.[0]
       if (!t) continue
+      // Trabada: quedó colgada en "generando"/"vaciando" más de 3 veces → la mira un gerencial (no se insiste)
+      if (["generando", "vaciando"].includes(t.estado_anterior) && Number(np.intentos || 0) + 1 > MAX_INTENTOS_TRABADA) {
+        const msg = `Se cortó ${Number(np.intentos || 0) + 1} veces en el medio (último paso: ${t.paso_anterior || "?"}). No se reintenta: revisala en Zomatik buscando la marca.`
+        if (await guardarSi(sb, np.id, a, { estado: "revisar", en_curso_desde: null, mensaje: msg, proximo_intento: null })) {
+          await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { "Qué pasó": "NP trabada: para revisar", Mensaje: msg, Marca: np.marca } })
+          await dep.avisar(sb, "NP trabada: para revisar", [msg, `Marca: ${np.marca}`])
+        }
+        hechas.push({ id: np.id, estado: "revisar", mensaje: msg })
+        continue
+      }
       try {
         const r = vaciando ? await trabajarVaciar(sb, np, ctx) : await trabajarGenerar(sb, np, ctx, { estado: t.estado_anterior, paso: t.paso_anterior })
         hechas.push({ id: np.id, ...r })

@@ -17,7 +17,7 @@
 import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
-  numeroZomatik, paginasDeListado, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
+  numeroZomatik, hayPaginado, paginasDeListado, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 
@@ -25,7 +25,7 @@ import {
 // Tipos
 // ---------------------------------------------------------------------------
 
-/** Solo la arma np-servidor.ts después de leer `plants.zomatik_np_activo = true`. */
+/** Solo la arma np-servidor.ts después de leer `zomatik_np_config.activo = true`. */
 export type LlaveNp = { readonly activo: true; readonly plantId: string }
 
 export type RespuestaNav = { status: number; location: string | null; html: string }
@@ -160,6 +160,7 @@ async function listado(nav: NavegadorNp, filtros: Record<string, string>, sucurs
   return {
     filas: pedidosDeListado(r.html),
     paginas: paginasDeListado(r.html),
+    paginado: hayPaginado(r.html),
     sucursalPagina: camposFormulario(r.html, /frm_selsuc/i)?.campos.selsuc ?? null,
   }
 }
@@ -192,14 +193,16 @@ async function abrir(nav: NavegadorNp, codigo: number) {
  * No es concluyente si la página muestra otra sucursal, si el listado tiene más de una página, si hay demasiadas o si
  * alguna no se puede abrir.
  */
-async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string): Promise<Busqueda> {
+async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string, latir: () => Promise<void>): Promise<Busqueda> {
   const desde = d.creadaEl && d.creadaEl < hoy ? d.creadaEl : hoy
   const l = await listado(nav, { bus_fechad: desde, bus_fechah: hoy, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
   const nombre = sucursal === SUCURSAL_REBUCRET ? "REBUCRET" : "RUTA 25"
   if (l.sucursalPagina !== sucursal) return { estado: "dudosa", motivo: `el listado de ${nombre} vino de otra sucursal (otro sistema la cambió)` }
   if ((l.paginas ?? 1) > 1) return { estado: "dudosa", motivo: `el listado de ${nombre} tiene ${l.paginas} páginas` }
+  if (l.paginado) return { estado: "dudosa", motivo: `el listado de ${nombre} parece tener más páginas` }
   if (l.filas.length > MAX_ABRIR) return { estado: "dudosa", motivo: `hay ${l.filas.length} NP en ${nombre} para revisar` }
   for (const c of [...l.filas].sort((a, b) => b.codigo - a.codigo)) {
+    await latir() // renueva el turno y confirma que la NP sigue siendo nuestra
     const a = await abrir(nav, c.codigo)
     if (!a.form) return { estado: "dudosa", motivo: `no se pudo abrir la ${c.numero}` }
     if (tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "esta", sucursal, codigo: c.codigo, numero: c.numero }
@@ -208,13 +211,13 @@ async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: str
 }
 
 /** Dónde quedó la NP con esta marca: primero REBUCRET; si no está, RUTA 25 (y se vuelve a REBUCRET). */
-async function dondeQuedo(nav: NavegadorNp, d: DatosNp, hoy: string): Promise<Busqueda> {
+async function dondeQuedo(nav: NavegadorNp, d: DatosNp, hoy: string, latir: () => Promise<void>): Promise<Busqueda> {
   await aRebucret(nav)
-  const r = await porMarca(nav, d, hoy, SUCURSAL_REBUCRET)
+  const r = await porMarca(nav, d, hoy, SUCURSAL_REBUCRET, latir)
   if (r.estado !== "no_esta") return r
   try {
     if (!(await nav.sucursal(SUCURSAL_RUTA25))) return { estado: "dudosa", motivo: "no se pudo pasar a RUTA 25" }
-    return await porMarca(nav, d, hoy, SUCURSAL_RUTA25)
+    return await porMarca(nav, d, hoy, SUCURSAL_RUTA25, latir)
   } finally {
     await nav.sucursal(SUCURSAL_REBUCRET)
   }
@@ -265,11 +268,15 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     paso = p
     await o.alPaso?.(p)
   }
+  /** Durante la búsqueda: el mismo paso otra vez (renueva el turno del robot). */
+  const latir = async () => {
+    await o.alPaso?.(paso)
+  }
   try {
     // Un corte anterior: primero se busca la marca (spec 10). Si está, listo; si no, se genera de nuevo.
     if (d.buscarAntes) {
       await marcar("buscar_marca")
-      const x = await dondeQuedo(nav, d, o.hoy)
+      const x = await dondeQuedo(nav, d, o.hoy, latir)
       if (x.estado === "esta") return encontrada(x, paso)
       if (x.estado === "dudosa") return dudosa(x, paso)
     }
@@ -281,7 +288,7 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.tipo === "nueva" && !d.comprobante) throw dato("Falta el tipo de remito (R o X): define si es NP o NP2.")
     if (d.tipo === "proyecto" && !d.proyectoCodigo) throw dato("Falta elegir el proyecto.")
 
-    return d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true)) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true))
+    return d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
   } catch (e) {
     if (e instanceof Corte) return { estado: e.estado, mensaje: e.message, paso, reintentar: e.reintentar, grabado }
     // Red o sesión. Antes de Grabar: se reintenta en 10 min. Durante o después: queda para buscar la marca primero.
@@ -291,7 +298,7 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
   }
 }
 
-async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void): Promise<ResultadoNp> {
+async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
   const comp = d.comprobante as "15" | "16"
   await marcar("formulario")
   await aRebucret(nav)
@@ -359,14 +366,14 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
     const a = await abrir(nav, x.codigo)
     if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero!), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true }
   }
-  const otra = await dondeQuedo(nav, d, o.hoy)
+  const otra = await dondeQuedo(nav, d, o.hoy, latir)
   if (otra.estado === "esta") return encontrada(otra, "verificar")
   if (otra.estado === "dudosa") return dudosa(otra, "verificar")
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false }
   return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true }
 }
 
-async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void): Promise<ResultadoNp> {
+async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
   await marcar("material")
   await aRebucret(nav)
   const mat = await nav.get(`modificar_pedidos.php?proyecto=${d.proyectoCodigo}&tipo=1`)
@@ -417,7 +424,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
 
   // El número lo asigna Zomatik al grabar: se busca por la marca entre las NP de hoy del cliente
   await marcar("verificar")
-  const x = await dondeQuedo(nav, d, o.hoy)
+  const x = await dondeQuedo(nav, d, o.hoy, latir)
   if (x.estado === "esta") return encontrada(x, "verificar", disponible)
   if (x.estado === "dudosa") return dudosa(x, "verificar", disponible)
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false }

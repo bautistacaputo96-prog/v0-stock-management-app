@@ -1463,7 +1463,7 @@ Manda la sección 23, después la 22 y después el resto. **Sin aplicar y sin pr
 3. **Robot** (`lib/zomatik/np-robot.ts`), exactamente como la sección 23: sucursal 18 antes del número y antes de grabar; el número tiene que ser de la serie de REBUCRET; después de grabar se busca por número en el listado y se confirma la marca "Sistema Rebucret · pedido N · NP n" en observaciones; si no está, se busca la marca en RUTA 25 y queda **revisar** con aviso por mail a Bautista, Juan y Fernando. Una sola sesión del robot a la vez. Un "Grabar" cortado nunca se repite a ciegas: primero se busca la marca desde el día en que se creó la NP.
 4. **Estados** en el pedido (tarjeta de la grilla Semana y despacho), con el mensaje de Zomatik a la vista. **"Generar NP ahora"** en el menú ⋯ del pedido (`programacion.cargar`). Reintento automático cada 10 min (24.6).
 5. **Despacho**: pedido sin NP en rojo, "NP pendiente: avisale a Programación". **Modo aviso** 2 semanas desde que se prende la llave (deja despachar y lo anota); después **modo duro** (no deja). Excepción de un gerencial con motivo, para ese pedido y ese día. Despacho manual sin control, anotado en Actividad.
-6. **Llave por planta** (`zomatik_np_activo`, apagada por defecto) en "Vínculos con Zomatik" › "NP automática", con la lista de NP para revisar. Solo los pedidos cargados **después** de prenderla tienen NP automática.
+6. **Llave por planta** (`zomatik_np_config.activo`, apagada por defecto) en "Vínculos con Zomatik" › "NP automática", con la lista de NP para revisar. Solo los pedidos cargados **después** de prenderla tienen NP automática.
 7. Todo queda en **Actividad** (entidad "Nota de pedido (Zomatik)").
 
 No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP para un proyecto" del Dashboard (18.2), el botón de WhatsApp de 21.3 y el chip en la vista Día.
@@ -1503,14 +1503,17 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
 5. Corte en "Grabar": nunca hay dos NP del mismo pedido y número de NP.
 6. Cancelar: NP sin ítems (vaciada) o, con remitos, "revisar" y aviso. Agrandar: NP adicional por la diferencia.
 7. Despacho: en aviso deja y anota; en duro no deja sin NP ni excepción; la excepción la da un gerencial con motivo.
-8. `npm run test:zomatik-np` (47), las demás pruebas, tsc sin errores nuevos y build bien.
+8. `npm run test:zomatik-np` (51), las demás pruebas, tsc sin errores nuevos y build bien.
 
 ### 24.6 Reintento cada 10 min
 `/api/zomatik/np/procesar`: GET solo con `Authorization: Bearer <CRON_SECRET>`; POST con sesión. **Vercel Hobby no deja crons de 10 min** (un `*/10` en `vercel.json` haría fallar el deploy): por eso `vercel.json` tiene uno diario (07:00) y, además, Programación abierta pide la pasada cada 10 min (el servidor hace como mucho una cada 9 min). Para cada 10 min sin nadie mirando, ver 24.8.3.
 
 ### 24.7 Antes de prender la llave (con Bautista)
 1. Aplicar la migración y correr "Actualizar" en Vínculos (para el "Codigo Sistema" de los artículos).
-2. **La primera NP real, con Bautista mirando**: las respuestas de `manage_pedidos.php` no se guardaron el 22/10 y el robot las lee como se supone (`codigo…`, `costo…`, `cantidad…`, `verificar(id)`). Si no coinciden, para con "Zomatik cambió el formulario" sin grabar nada. Después se vacía a mano.
+2. **La primera NP real, con Bautista mirando**: las respuestas de `manage_pedidos.php` no se guardaron el 22/10 y el robot las lee como se supone (`codigo…`, `costo…`, `cantidad…`, `verificar(id)`). Si no coinciden, para con "Zomatik cambió el formulario" sin grabar nada. Después se vacía a mano. Verificar también, en el resultado de `listado_pedidos.php?enviado=1`:
+   - que la página trae el selector `frm_selsuc` con la sucursal activa marcada (si no lo trae, toda búsqueda por la marca da "no concluyente" y la NP queda "revisar");
+   - que `bus_deposito` filtra por depósito (116 / 113) y `bus_fechad`/`bus_fechah` por la fecha de la NP;
+   - cómo se ve el paginado (link "Siguiente", `pagina=`) y cuántas filas trae una página (se supone 300).
 3. Prender la llave de una planta (arranca el modo aviso de 2 semanas).
 
 ### 24.8 Preguntas para Bautista (con recomendación)
@@ -1544,3 +1547,14 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
   - M6: aviso de correr la migración fuera de horario.
   - M7: `lib/__tests__/zomatik-np-servidor.test.mjs`, con una base y un navegador simulados: llave apagada, carreras, elección, tiempo y lógica del trigger.
 - Pruebas: `test:zomatik-np` 47/47. Las preguntas de 24.8 siguen sin respuesta y no se tocaron.
+
+### 24.11 Cambios de la segunda revisión (22/10)
+- **I-A:** al rehacer una NP que todavía no llegó a Zomatik, si el robot la tomó en el medio, se anulan menos de las planeadas. En ese caso no se crea la nueva: la próxima sincronización vuelve a planear.
+- **I-B:** la búsqueda es dudosa ante cualquier señal de paginado: "Página X de Y", link "Siguiente", `pagina=` o 300 filas.
+- **I-C:** una NP colgada en "generando"/"vaciando" más de 3 veces queda "revisar", con aviso a los gerenciales. La búsqueda por la marca renueva el turno en cada NP que abre.
+- **Menores:**
+  - comentarios viejos de `plants` corregidos;
+  - `faltaMigracion` mira solo los nombres nuevos;
+  - al editar un pedido, la elección no se manda hasta leer la guardada (y el proyecto de la obra no se propone antes);
+  - la lectura Z0 renueva su turno cada 20 s.
+- `test:zomatik-np` 51/51.

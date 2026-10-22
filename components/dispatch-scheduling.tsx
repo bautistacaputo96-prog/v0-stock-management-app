@@ -248,6 +248,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   // Zomatik Z2: NP nueva o de un proyecto (la guarda el servidor al avisar el pedido)
   const NP_NUEVA: EleccionNp = { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
   const [npEleccion, setNpEleccion] = useState<EleccionNp>(NP_NUEVA)
+  // Al editar: la elección guardada llega con el estado de la NP. Hasta que llegue no se manda (no se pisa lo guardado)
+  const [npEleccionLista, setNpEleccionLista] = useState(true)
   // Formulario abierto en modo lectura (pedido ajeno sin permiso de editar)
   const soloLectura = !!editingDispatch && !ajustaPedido(editingDispatch)
   // Fase 2: viajes, solo para los usuarios con el interruptor de funciones nuevas
@@ -257,6 +259,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const np = useNp(idsSemana)
   const hayNpActiva = Object.values(np.plantas).some((p) => p.activo)
   usePasadaNp(puedeCrear && hayNpActiva, np.recargar)
+  // Si el estado de la NP llega después de abrir un pedido para editar, se toma la elección guardada
+  useEffect(() => {
+    if (!isDialogOpen || !editingDispatch || npEleccionLista) return
+    const est = np.porPedido[editingDispatch.id]
+    if (!est) return
+    const el = est.eleccion
+    setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3 } : { tipo: "nueva", proyecto_codigo: null, tope_m3: null })
+    setNpEleccionLista(true)
+  }, [np.porPedido, isDialogOpen, editingDispatch, npEleccionLista])
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
   const [paramsPorPlanta, setParamsPorPlanta] = useState<Record<string, Parametros>>({})
   // Fase 2b: ubicación de la obra y viaje real desde la planta del pedido
@@ -487,6 +498,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setEditingDispatch(null)
     setCuitPrompt("")
     setNpEleccion(NP_NUEVA)
+    setNpEleccionLista(true)
     setIsDialogOpen(true)
   }
 
@@ -524,8 +536,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setEditingDispatch(dispatch)
     setCuitPrompt("")
     // La elección guardada vive en el servidor (zomatik_np_pedido): al editar no se cambia sola
-    const el = np.porPedido[dispatch.id]?.eleccion
+    const est = np.porPedido[dispatch.id]
+    const el = est?.eleccion
     setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3 } : NP_NUEVA)
+    setNpEleccionLista(!!est || !np.plantas[dispatch.plant_id]?.activo)
     setIsDialogOpen(true)
   }
 
@@ -728,7 +742,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
 
       // Zomatik Z2: la NP del pedido (solo con la llave de la planta prendida)
       if (pedidoId && np.plantas[plantToUse]?.activo) {
-        const rnp = await avisarNp(pedidoId, npEleccion)
+        // Al editar, la elección solo se manda si ya se había leído la guardada (si no, el servidor deja la que tenía)
+        const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
         else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
         else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
@@ -1498,7 +1513,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 onM3={(v) => setForm({ ...form, quantity_m3: String(v) })}
                 soloLectura={soloLectura}
                 estado={editingDispatch ? np.porPedido[editingDispatch.id] : null}
-                proponer={!editingDispatch || !np.porPedido[editingDispatch.id]?.eleccion}
+                proponer={!editingDispatch || (npEleccionLista && !np.porPedido[editingDispatch.id]?.eleccion)}
               />
             </SeccionPedido>
 

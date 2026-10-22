@@ -338,11 +338,16 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
   // Sin la migración de Z2 la función no existe y se lee como antes.
   const quien = `lectura·${t0.toString(36)}`
   let conTurno = false
+  let renovar: ReturnType<typeof setInterval> | null = null
   try {
     const { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
     if (!error) {
       if (data !== true) return { ok: false, partes, errores: ["El robot de las NP está trabajando en Zomatik: la lectura se hace en un rato."], ms: Date.now() - t0 }
       conTurno = true
+      // Mientras se lee, el turno se renueva cada 20 s (vence a los 90 s si el proceso se corta)
+      renovar = setInterval(() => {
+        sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 }).then(() => {}, () => {})
+      }, 20_000)
     }
   } catch {
     /* sin la migración de Z2 */
@@ -360,6 +365,7 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
   } catch (e) {
     errores.push(textoError(e))
   } finally {
+    if (renovar) clearInterval(renovar)
     if (conTurno) await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
   }
   return { ok: errores.length === 0, partes, errores, ms: Date.now() - t0 }

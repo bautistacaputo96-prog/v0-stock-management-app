@@ -390,6 +390,20 @@ export function paginasDeListado(html: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** Tamaño de página del listado de pedidos (el 20/10 se vieron ~300 filas en "Pagina 1 de 10"). */
+export const FILAS_POR_PAGINA = 300
+
+/**
+ * ¿Hay señales de que el listado sigue en otra página? Link "Siguiente", un parámetro `pagina=` o tantas filas como
+ * una página entera. Con cualquiera, la búsqueda por la marca no es concluyente.
+ */
+export function hayPaginado(html: string): boolean {
+  const h = sinComentarios(html)
+  if (/[?&]pagina=\d+/i.test(h)) return true
+  if (/>\s*Siguiente\b/i.test(h)) return true
+  return pedidosDeListado(h).length >= FILAS_POR_PAGINA
+}
+
 // ---------------------------------------------------------------------------
 // ISO-8859-1
 // ---------------------------------------------------------------------------
@@ -582,6 +596,7 @@ export function planificarNp(p: PedidoNp, nps: FilaNp[]): PlanNp {
 // Control del despacho
 // ---------------------------------------------------------------------------
 
+/** La llave y el modo de una planta (vienen de `zomatik_np_config`: activo, desde, exigir_np, aviso_hasta). */
 export type PlantaNp = { zomatik_np_activo?: boolean | null; exigir_np?: string | null; aviso_hasta?: string | null; zomatik_np_desde?: string | null }
 export type ModoNp = "apagado" | "aviso" | "duro"
 
