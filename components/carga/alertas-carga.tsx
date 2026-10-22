@@ -13,6 +13,7 @@ import { fichaParaIndumix } from "@/lib/carga/receta"
 import { INFO_SALIDA, nf, type FormulaSistema } from "@/lib/carga/tipos"
 import { Btn, Tag, hhmm } from "./comun"
 import { MotivoDialog, TablaComparacion } from "./dialogos-carga"
+import { Buscador, coincide } from "@/components/despacho/buscador"
 import type { AlertaFila, CargaFila } from "./usar-datos-carga"
 
 const ORDEN: Record<string, number> = { abierta: 0, esperando_planta: 1, resuelta: 2, cerrada_sola: 3 }
@@ -25,8 +26,9 @@ export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, pu
   const [resolver, setResolver] = useState<AlertaFila | null>(null)
   const [descartar, setDescartar] = useState<AlertaFila | null>(null)
   const [verCerradas, setVerCerradas] = useState(false)
-  const lista = useMemo(() => [...alertas].filter((a) => verCerradas || ["abierta", "esperando_planta"].includes(a.estado))
-    .sort((a, b) => (ORDEN[a.estado] - ORDEN[b.estado]) || b.created_at.localeCompare(a.created_at)), [alertas, verCerradas])
+  const [buscar, setBuscar] = useState("")
+  const lista = useMemo(() => [...alertas].filter((a) => (verCerradas || ["abierta", "esperando_planta"].includes(a.estado)) && coincide(buscar, a.titulo, a.detalle?.motivo, a.detalle?.diferencias, a.receta_numero))
+    .sort((a, b) => (ORDEN[a.estado] - ORDEN[b.estado]) || b.created_at.localeCompare(a.created_at)), [alertas, verCerradas, buscar])
   const cerradas = alertas.filter((a) => !["abierta", "esperando_planta"].includes(a.estado)).length
 
   async function enviar(a: AlertaFila, body: Record<string, unknown>) {
@@ -39,36 +41,37 @@ export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, pu
 
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2 text-[12px]">
-        <span className="text-muted-foreground">Una alerta por receta y fórmula (no una por lectura). La resuelve quien tiene Fórmulas · editar{simulada ? "; las de la planta simulada no mandan mail" : ""}.</span>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-slate-500">Una alerta por receta y fórmula (no una por lectura). La resuelve quien tiene Fórmulas · editar{simulada ? "; las de la planta simulada no mandan mail" : ""}.</span>
         <span className="flex-1" />
         <label className="inline-flex items-center gap-1"><input type="checkbox" checked={verCerradas} onChange={(e) => setVerCerradas(e.target.checked)} /> Ver también las cerradas ({cerradas})</label>
       </div>
-      {!lista.length && <div className="py-8 text-center text-[12px] text-muted-foreground">No hay alertas abiertas.</div>}
+      <div className="-mx-1.5 max-w-md"><Buscador valor={buscar} onCambio={setBuscar} /></div>
+      {!lista.length && <div className="py-8 text-center text-xs text-slate-500">No hay alertas abiertas.</div>}
       {lista.map((a) => {
         const frena = a.detalle?.frena !== false && a.tipo === "receta_no_coincide"
         const tono = a.estado === "resuelta" || a.estado === "cerrada_sola" ? "border-l-emerald-500 opacity-80" : a.tipo === "receta_cambiada" || (a.tipo === "receta_no_coincide" && !frena) ? "border-l-amber-500" : a.tipo === "carga_desde_indumix" || a.tipo === "receta_nueva" ? "border-l-slate-500" : "border-l-red-600"
         return (
-          <div key={a.id} className={cn("d3c-card flex flex-wrap items-start gap-2 rounded-md border border-l-[3px] bg-card px-2 py-1.5 text-[12.5px]", tono)}>
+          <div key={a.id} className={cn("d3c-card flex flex-wrap items-start gap-2 rounded-md border border-l-[3px] border-slate-200 bg-slate-50 px-2 py-1 text-xs", tono)}>
             <div className="min-w-[240px] flex-1">
-              <b>{a.titulo}</b>
-              {a.detalle?.motivo && <div className="mt-px text-[11.5px] text-muted-foreground">{a.detalle.motivo}</div>}
-              {a.detalle?.diferencias && <div className="mt-px text-[11.5px] text-muted-foreground">{a.detalle.diferencias}{a.detalle.nota ? ` · ${a.detalle.nota}` : ""}</div>}
-              {a.detalle?.despachos_frenados?.length > 0 && <div className="mt-px text-[11.5px] text-red-700">Despachado igual: {a.detalle?.despachos_frenados.map((d: any) => `remito ${d.remito} (${d.camion || "-"}, ${d.por} ${hhmm(d.at)})`).join(" · ")} · mail a Juan Oreguy</div>}
+              <b className="font-medium">{a.titulo}</b>
+              {a.detalle?.motivo && <div className="mt-px text-[11px] text-slate-500">{a.detalle.motivo}</div>}
+              {a.detalle?.diferencias && <div className="mt-px text-[11px] text-slate-500">{a.detalle.diferencias}{a.detalle.nota ? ` · ${a.detalle.nota}` : ""}</div>}
+              {a.detalle?.despachos_frenados?.length > 0 && <div className="mt-px text-[11px] text-red-700">Despachado igual: {a.detalle?.despachos_frenados.map((d: any) => `remito ${d.remito} (${d.camion || "-"}, ${d.por} ${hhmm(d.at)})`).join(" · ")} · mail a Juan Oreguy</div>}
               {a.detalle?.ficha && (
-                <div className="mt-1 rounded-md border border-dashed border-slate-400 px-2 py-1 font-mono text-[11.5px]">
-                  FICHA PARA INDUMIX · RECETAS › <b>{a.detalle.ficha.numero}</b> «{a.detalle.ficha.nombre}»<br />
-                  {a.detalle.ficha.lineas.map((l: any) => <span key={l.salida}>{l.nombre_planta} ({INFO_SALIDA[l.salida as keyof typeof INFO_SALIDA]?.nombre}): {nf(l.antes)} → <b>{nf(l.despues)}</b><br /></span>)}
+                <div className="mt-1 rounded-md border border-dashed border-slate-400 px-2 py-1 font-mono text-[11px]">
+                  FICHA PARA INDUMIX · RECETAS › <b className="font-medium">{a.detalle.ficha.numero}</b> «{a.detalle.ficha.nombre}»<br />
+                  {a.detalle.ficha.lineas.map((l: any) => <span key={l.salida}>{l.nombre_planta} ({INFO_SALIDA[l.salida as keyof typeof INFO_SALIDA]?.nombre}): {nf(l.antes)} → <b className="font-medium">{nf(l.despues)}</b><br /></span>)}
                   {a.detalle.ficha.aguaPendiente && <>Agua: NO tocar hasta que confirme Grow<br /></>}→ GUARDAR · pedida por {a.detalle.ficha.pedida_por} {hhmm(a.detalle.ficha.pedida_at)}
                 </div>
               )}
-              {a.detalle?.autorizadas?.length > 0 && <div className="mt-px text-[11.5px] text-amber-800">Autorizada solo esa carga: {a.detalle?.autorizadas.map((x: any) => `remito ${x.remito || "—"} por ${x.por} («${x.motivo}»)`).join(" · ")}</div>}
-              {(a.resuelta_por || a.motivo) && <div className="mt-px text-[11.5px] text-muted-foreground"><b>Hecho:</b> {[a.motivo, a.resuelta_por].filter(Boolean).join(" · ")}</div>}
-              <div className="mt-px text-[11px] text-muted-foreground">{hhmm(a.created_at)}{a.detalle?.simulada ? " · planta simulada" : ""}</div>
+              {a.detalle?.autorizadas?.length > 0 && <div className="mt-px text-[11px] text-amber-800">Autorizada solo esa carga: {a.detalle?.autorizadas.map((x: any) => `remito ${x.remito || "—"} por ${x.por} («${x.motivo}»)`).join(" · ")}</div>}
+              {(a.resuelta_por || a.motivo) && <div className="mt-px text-[11px] text-slate-500"><b className="font-medium">Hecho:</b> {[a.motivo, a.resuelta_por].filter(Boolean).join(" · ")}</div>}
+              <div className="mt-px text-[11px] text-slate-500">{hhmm(a.created_at)}{a.detalle?.simulada ? " · planta simulada" : ""}</div>
             </div>
             <Tag tono={a.estado === "resuelta" || a.estado === "cerrada_sola" ? "ok" : a.estado === "esperando_planta" ? "blue" : frena || a.tipo !== "receta_no_coincide" ? "bad" : "warn"}>{ETQ[a.estado]}</Tag>
-            {a.tipo === "receta_no_coincide" && ["abierta", "esperando_planta"].includes(a.estado) && puedeResolver && <Btn tono="pri" className="h-[26px] text-[12px]" onClick={() => setResolver(a)}>Resolver</Btn>}
-            {["abierta", "esperando_planta"].includes(a.estado) && puedeDescartar && <Btn tono="ghost" className="h-[26px] text-[12px]" onClick={() => setDescartar(a)}>Descartar…</Btn>}
+            {a.tipo === "receta_no_coincide" && ["abierta", "esperando_planta"].includes(a.estado) && puedeResolver && <Btn tono="pri" className="h-[26px] text-xs" onClick={() => setResolver(a)}>Resolver</Btn>}
+            {["abierta", "esperando_planta"].includes(a.estado) && puedeDescartar && <Btn tono="ghost" className="h-[26px] text-xs" onClick={() => setDescartar(a)}>Descartar…</Btn>}
           </div>
         )
       })}
@@ -117,44 +120,44 @@ export function ResolverDialog({ alerta, ctx, formula, cargas, simulada, onEnvia
     <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[820px]">
         <DialogHeader><DialogTitle>Resolver · receta {alerta.receta_numero} contra {formula?.code || "?"}</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          <div className="rounded-md bg-muted/50 px-2 py-1.5 text-[12.5px]"><b>La que vale es la fórmula del sistema</b>: Indumix se adapta a ella (Bautista, 20/10). El cemento, los áridos y el aditivo frenan; el agua resalta y no frena.</div>
+        <div className="space-y-2 text-xs">
+          <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs"><b className="font-medium">La que vale es la fórmula del sistema</b>: Indumix se adapta a ella (Bautista, 20/10). El cemento, los áridos y el aditivo frenan; el agua resalta y no frena.</div>
           {ctl?.cmp && <TablaComparacion cmp={ctl.cmp} />}
-          {ctl?.aguaDistinta && ctl.ac && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900"><b>Agua:</b> se compara la receta base, porque Indumix descuenta la humedad de los áridos. Relación agua/cemento {nf(ctl.ac.receta, 2)} en la planta contra {nf(ctl.ac.formula, 2)} de la fórmula: antes de pasarla a la planta conviene que lo confirme Grow.</div>}
+          {ctl?.aguaDistinta && ctl.ac && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900"><b className="font-medium">Agua:</b> se compara la receta base, porque Indumix descuenta la humedad de los áridos. Relación agua/cemento {nf(ctl.ac.receta, 2)} en la planta contra {nf(ctl.ac.formula, 2)} de la fórmula: antes de pasarla a la planta conviene que lo confirme Grow.</div>}
           <div className="flex flex-col gap-1">
             {ops.map(([k, t, d]) => (
               <button key={k} disabled={k === "formula"} onClick={() => setOpt(k)} className={cn("w-full rounded-md border px-2.5 py-1.5 text-left disabled:opacity-60", opt === k && "border-blue-500 ring-2 ring-blue-100")}>
-                <div className="font-semibold">{t}</div><div className="text-[11.5px] text-muted-foreground">{d}</div>
+                <div className="font-medium">{t}</div><div className="text-[11px] text-slate-500">{d}</div>
               </button>
             ))}
           </div>
           {opt === "planta" && ficha && (
             <>
               {ctl?.aguaDistinta && (
-                <label className="flex items-start gap-2 rounded-md border px-2 py-1.5 text-[12.5px]">
+                <label className="flex items-start gap-2 rounded-md border px-2 py-1.5 text-xs">
                   <input type="checkbox" className="mt-0.5 h-4 w-4" checked={grow} onChange={(e) => setGrow(e.target.checked)} />
-                  <span><b>Grow confirmó el agua de la fórmula</b>. Sin esta casilla la ficha no lleva el agua (que igual no frena la carga).
-                    {grow && <input className="mt-1 block h-[28px] w-full rounded-md border px-2 text-[12.5px]" placeholder="¿Quién de Grow confirmó?" value={growQuien} onChange={(e) => setGrowQuien(e.target.value)} />}
+                  <span><b className="font-medium">Grow confirmó el agua de la fórmula</b>. Sin esta casilla la ficha no lleva el agua (que igual no frena la carga).
+                    {grow && <input className="mt-1 block h-[28px] w-full rounded-md border px-2 text-xs" placeholder="¿Quién de Grow confirmó?" value={growQuien} onChange={(e) => setGrowQuien(e.target.value)} />}
                   </span>
                 </label>
               )}
-              <div className="rounded-md border border-dashed border-slate-400 px-2 py-1.5 font-mono text-[12px]">
-                FICHA PARA INDUMIX · RECETAS › <b>{receta?.numero}</b> «{receta?.nombre}»<br />
-                {ficha.lineas.length ? ficha.lineas.map((l) => <span key={l.salida}>{l.nombre_planta} ({INFO_SALIDA[l.salida].nombre}): {nf(l.antes)} → <b>{nf(l.despues)}</b><br /></span>) : <>(sin cambios de cemento, áridos ni aditivo)<br /></>}
+              <div className="rounded-md border border-dashed border-slate-400 px-2 py-1.5 font-mono text-xs">
+                FICHA PARA INDUMIX · RECETAS › <b className="font-medium">{receta?.numero}</b> «{receta?.nombre}»<br />
+                {ficha.lineas.length ? ficha.lineas.map((l) => <span key={l.salida}>{l.nombre_planta} ({INFO_SALIDA[l.salida].nombre}): {nf(l.antes)} → <b className="font-medium">{nf(l.despues)}</b><br /></span>) : <>(sin cambios de cemento, áridos ni aditivo)<br /></>}
                 {ficha.aguaPendiente && <>Agua: NO tocar hasta que confirme Grow<br /></>}→ GUARDAR
               </div>
-              <div className="text-[11.5px] text-muted-foreground">Se puede imprimir o mandar por WhatsApp a mano. {simulada ? "En la planta simulada, la corrección se prueba con «Simular… › Aplicar la ficha en Indumix»." : ""}</div>
+              <div className="text-[11px] text-slate-500">Se puede imprimir o mandar por WhatsApp a mano. {simulada ? "En la planta simulada, la corrección se prueba con «Simular… › Aplicar la ficha en Indumix»." : ""}</div>
             </>
           )}
           {opt === "autorizar" && (
             <>
               {cargas.length ? (
-                <label className="block text-[11.5px] font-semibold">Carga
-                  <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-[13px]" value={cargaId} onChange={(e) => setCargaId(e.target.value)}>
+                <label className="block text-[11px] font-medium">Carga
+                  <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-xs" value={cargaId} onChange={(e) => setCargaId(e.target.value)}>
                     {cargas.map((k) => <option key={k.id} value={k.id} disabled={tolvaMal(k)}>{k.mixers?.license_plate || k.patente_planta || "—"} · remito {k.remito || "—"} · {k.m3} m³{tolvaMal(k) ? " (Tolva 1 equivocada: no se autoriza)" : ""}</option>)}
                   </select>
                 </label>
-              ) : <div className="text-[12px] text-muted-foreground">No hay cargas de esta fórmula esperando en la cola.</div>}
+              ) : <div className="text-xs text-slate-500">No hay cargas de esta fórmula esperando en la cola.</div>}
               <CampoMotivo value={motivo} onChange={setMotivo} ejemplo="Ej.: camión esperando y la ficha ya pedida" />
             </>
           )}

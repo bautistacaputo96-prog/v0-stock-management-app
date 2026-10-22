@@ -210,10 +210,11 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     cargarTiemposGps(sb).then(setTiempos)
   }, [])
 
-  // GPS cada 60 s (posiciones() tiene caché en el servidor)
+  // GPS cada 30 s (posiciones() tiene caché de 8 s en el servidor; gps-vivo.md)
   const cargarGps = useCallback(async () => {
     try {
       const r = await fetch("/api/gps/posiciones", { cache: "no-store" })
+      if (r.status === 401 || r.status === 403) return // sesión cerrada: queda lo último (el login lo resuelve)
       const j = await r.json()
       const m: Record<string, GpsCamion> = {}
       for (const c of j?.camiones || []) if (c.mixer_id) m[c.mixer_id] = { estado: c.estado, ultima_posicion: c.ultima_posicion, planta_id: c.planta_id || null, probable_obra: !!c.probable_obra }
@@ -222,7 +223,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   }, [])
   useEffect(() => {
     cargarGps()
-    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 60_000)
+    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 30_000)
     return () => clearInterval(t)
   }, [cargarGps])
 
@@ -678,7 +679,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         </div>
       )}
 
-      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-[12px]">
+      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-xs">
         <summary className="flex min-h-[32px] cursor-pointer items-center text-xs text-muted-foreground">¿Qué quiere decir cada color del camión y de dónde sale?</summary>
         <table className="mb-1 w-full border-collapse">
           <tbody>

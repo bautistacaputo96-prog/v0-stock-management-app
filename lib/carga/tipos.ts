@@ -241,3 +241,11 @@ export function patenteParaPlanta(p: string | null | undefined): string {
   const m = n.match(/^([A-Z]{2})(\d{3})([A-Z]{2})$/) || n.match(/^([A-Z]{3})(\d{3})$/)
   return m ? m.slice(1).join(" ") : n
 }
+
+/**
+ * Ancho de cada salida en el dibujo de la planta (22/10): las 9 se reparten el ancho disponible, menos 78 px de los
+ * 4 grupos (bordes, rellenos y separaciones), entre 50 y 78 px, para que entren en un solo renglón.
+ */
+export function anchoSalida(anchoDisponible: number): number {
+  return Math.max(50, Math.min(78, Math.floor((anchoDisponible - 78) / 9)))
+}

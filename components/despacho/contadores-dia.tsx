@@ -25,7 +25,7 @@ export function ContadoresDia({ c, adicional = 0, className }: { c: Contadores; 
       {items.map(({ Icono, v, t }) => (
         <span key={t} className="flex flex-col items-center leading-tight" title={t}>
           <Icono className="h-3 w-3 text-orange-500" aria-label={t} />
-          <span className="text-[12px] tabular-nums">{v}</span>
+          <span className="text-xs tabular-nums">{v}</span>
         </span>
       ))}
     </div>

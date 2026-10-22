@@ -74,7 +74,7 @@ export function ColumnaCamiones({
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 border-b px-2.5 py-1">
-        <h2 className="text-[12px] font-medium">Camiones</h2>
+        <h2 className="text-xs font-medium">Camiones</h2>
         <span className="text-xs text-muted-foreground">{libresAca} libre{libresAca === 1 ? "" : "s"} en {nombre(planta)}</span>
         <span className="flex-1" />
         <div className="flex">
@@ -141,21 +141,25 @@ export function ColumnaCamiones({
                 {puedeDespachar && !e.preguntarVolvio && e.fuente === "estimado" && enViaje && (
                   <button className="h-6 shrink-0 rounded border px-2 text-[11px]" onClick={() => onVolvio(c.id)} title="Volvió a planta · disponible">Volvió</button>
                 )}
-                {puedeDespachar && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="h-6 w-6 shrink-0 rounded text-base leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[220px]">
-                      {e.clave === "taller"
-                        ? <DropdownMenuItem className="min-h-[32px]" onClick={() => onDisponible(c.id)}>✅ Disponible (salió del taller)</DropdownMenuItem>
-                        : e.clave !== "fuera" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onTaller(c.id)}>🔧 Mandar a taller</DropdownMenuItem>}
-                      {c.status === "in_transit" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onVolvio(c.id)}>🏁 Volvió a planta</DropdownMenuItem>}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="min-h-[32px]" onClick={() => window.open("/logistica", "_blank")}>📍 Ver en el mapa</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                {/* "Ver en el mapa" también en modo consulta; lo demás solo para quien despacha */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="h-6 w-6 shrink-0 rounded text-base leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[220px]">
+                    {puedeDespachar && (
+                      <>
+                        {e.clave === "taller"
+                          ? <DropdownMenuItem className="min-h-[32px]" onClick={() => onDisponible(c.id)}>✅ Disponible (salió del taller)</DropdownMenuItem>
+                          : e.clave !== "fuera" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onTaller(c.id)}>🔧 Mandar a taller</DropdownMenuItem>}
+                        {c.status === "in_transit" && <DropdownMenuItem className="min-h-[32px]" onClick={() => onVolvio(c.id)}>🏁 Volvió a planta</DropdownMenuItem>}
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {/* Abre Logística › En vivo con el camión centrado y resaltado */}
+                    <DropdownMenuItem className="min-h-[32px]" onClick={() => window.open(`/logistica?camion=${encodeURIComponent(c.patente)}`, "_blank")}>📍 Ver en el mapa</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               {cargas?.[c.id] && (
                 <div className="flex items-center gap-1.5 border-t border-slate-200 px-2 py-0.5 text-[11px]">
