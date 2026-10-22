@@ -29,10 +29,10 @@ export function ConfirmarCamion({ patente, resumen, avisos, onBocina, onConfirma
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader><DialogTitle>¿El camión está abajo de la planta?</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          <div className="rounded-lg border-2 border-foreground py-0.5 text-center text-[30px] font-extrabold tracking-[.08em]">{patente || "—"}</div>
+        <div className="space-y-2 text-xs">
+          <div className="rounded-lg border-2 border-foreground py-0.5 text-center text-[30px] font-medium tracking-[.08em]">{patente || "—"}</div>
           <div className="rounded-md bg-muted/50 px-2 py-1.5">{resumen}</div>
-          {avisos.length > 0 && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">{avisos.join(" · ")}. Queda marcado en la auditoría.</div>}
+          {avisos.length > 0 && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">{avisos.join(" · ")}. Queda marcado en la auditoría.</div>}
           <Btn onClick={onBocina}>Tocar bocina</Btn>
           <button
             className="relative h-[42px] w-full select-none overflow-hidden rounded-[7px] bg-green-600 text-[14px] font-bold text-white"
@@ -43,7 +43,7 @@ export function ConfirmarCamion({ patente, resumen, avisos, onBocina, onConfirma
             <i className="absolute inset-y-0 left-0 bg-white/30" style={{ width: `${p * 100}%` }} />
             <span className="relative">Sí, está abajo · mantené apretado</span>
           </button>
-          <div className="text-[12px] text-muted-foreground">1 segundo apretado, así no arranca sin querer. Las seguridades de la planta siguen mandando.</div>
+          <div className="text-xs text-slate-500">1 segundo apretado, así no arranca sin querer. Las seguridades de la planta siguen mandando.</div>
         </div>
       </DialogContent>
     </Dialog>
@@ -60,7 +60,7 @@ export function MotivoDialog({ titulo, cuerpo, boton, ejemplo, onConfirmar, onCe
     <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader><DialogTitle>{titulo}</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
+        <div className="space-y-2 text-xs">
           <div className="rounded-md bg-muted/50 px-2 py-1.5">{cuerpo}</div>
           <CampoMotivo value={m} onChange={setM} ejemplo={ejemplo} />
         </div>
@@ -78,11 +78,11 @@ export function TolvaDialog({ opciones, actual, onElegir, onCerrar }: { opciones
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader><DialogTitle>¿Qué hay en la Tolva 1?</DialogTitle></DialogHeader>
-        <div className="space-y-1.5 text-[13px]">
-          <div className="text-[12px] text-muted-foreground">En Indumix se llama «PIE 6/20 O 6/12». Queda en Actividad y vale para el control de receta y la auditoría.</div>
+        <div className="space-y-1.5 text-xs">
+          <div className="text-xs text-slate-500">En Indumix se llama «PIE 6/20 O 6/12». Queda en Actividad y vale para el control de receta y la auditoría.</div>
           {opciones.map((o) => (
             <button key={o.id} onClick={() => onElegir(o.id)} className={cn("w-full rounded-md border px-2.5 py-1.5 text-left", actual === o.id && "border-blue-500 ring-2 ring-blue-100")}>
-              <div className="font-semibold">{o.name}</div>{actual === o.id && <div className="text-[11.5px] text-muted-foreground">es la que está ahora</div>}
+              <div className="font-medium">{o.name}</div>{actual === o.id && <div className="text-[11px] text-slate-500">es la que está ahora</div>}
             </button>
           ))}
         </div>
@@ -105,17 +105,17 @@ export function PruebaDialog({ formulas, mixers, onCrear, onCerrar }: {
     <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader><DialogTitle>Orden de prueba (planta simulada)</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          <div className="rounded-md bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">Una carga sin despacho, para probar la pantalla sin mandar un camión de verdad. Queda marcada «prueba» y «simulada».</div>
-          <label className="block text-[11.5px] font-semibold">Fórmula (con su receta en la planta)
-            <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-[13px]" value={f} onChange={(e) => setF(e.target.value)}>
+        <div className="space-y-2 text-xs">
+          <div className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">Una carga sin despacho, para probar la pantalla sin mandar un camión de verdad. Queda marcada «prueba» y «simulada».</div>
+          <label className="block text-[11px] font-medium">Fórmula (con su receta en la planta)
+            <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-xs" value={f} onChange={(e) => setF(e.target.value)}>
               {conNum.map((x) => <option key={x.id} value={x.id}>{x.numero} · {x.code}</option>)}
             </select>
           </label>
           <div className="grid grid-cols-2 gap-2">
-            <label className="block text-[11.5px] font-semibold">m³<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" inputMode="decimal" value={m3} onChange={(e) => setM3(e.target.value)} /></label>
-            <label className="block text-[11.5px] font-semibold">Camión (opcional)
-              <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-[13px]" value={mx} onChange={(e) => setMx(e.target.value)}>
+            <label className="block text-[11px] font-medium">m³<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-xs" inputMode="decimal" value={m3} onChange={(e) => setM3(e.target.value)} /></label>
+            <label className="block text-[11px] font-medium">Camión (opcional)
+              <select className="mt-0.5 block h-[30px] w-full rounded-md border bg-card px-1.5 text-xs" value={mx} onChange={(e) => setMx(e.target.value)}>
                 <option value="">— sin camión —</option>{mixers.map((x) => <option key={x.id} value={x.id}>{x.license_plate}</option>)}
               </select>
             </label>
@@ -131,23 +131,23 @@ export function PruebaDialog({ formulas, mixers, onCrear, onCerrar }: {
 export function TablaComparacion({ cmp }: { cmp: Comparacion }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[12px]">
-        <thead><tr className="bg-muted/50 text-left text-[11px] text-muted-foreground">
-          <th className="border-b px-1.5 py-0.5 font-semibold">Material</th><th className="border-b px-1.5 py-0.5 text-right font-semibold">Fórmula</th>
-          <th className="border-b px-1.5 py-0.5 text-right font-semibold">Planta</th><th className="border-b px-1.5 py-0.5 text-right font-semibold">Dif.</th>
-          <th className="border-b px-1.5 py-0.5 font-semibold">Tol.</th><th className="border-b px-1.5 py-0.5" />
+      <table className="w-full border-collapse text-xs">
+        <thead><tr className="bg-muted/50 text-left text-[11px] text-slate-500">
+          <th className="border-b px-1.5 py-0.5 font-medium">Material</th><th className="border-b px-1.5 py-0.5 text-right font-medium">Fórmula</th>
+          <th className="border-b px-1.5 py-0.5 text-right font-medium">Planta</th><th className="border-b px-1.5 py-0.5 text-right font-medium">Dif.</th>
+          <th className="border-b px-1.5 py-0.5 font-medium">Tol.</th><th className="border-b px-1.5 py-0.5" />
         </tr></thead>
         <tbody>
           {cmp.filas.map((f) => (
             <tr key={f.material_id} className={cn(!f.ok && (f.agua ? "bg-amber-50" : "bg-red-50"))}>
-              <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)}{f.agua && <span className="text-muted-foreground"> (base)</span>}</td>
+              <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)}{f.agua && <span className="text-slate-500"> (base)</span>}</td>
               <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.formula)}</td>
               <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.receta)}</td>
-              <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", !f.ok && (f.agua ? "font-semibold text-amber-800" : "font-semibold text-red-700"))}>
+              <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", !f.ok && (f.agua ? "font-medium text-amber-800" : "font-medium text-red-700"))}>
                 {f.dif > 0 ? "+" : ""}{cantidadPorM3(f.grupo, f.dif)}{f.pct != null && !f.ok ? ` (${f.dif > 0 ? "+" : ""}${nf(f.pct * 100, 1)} %)` : ""}
               </td>
-              <td className="border-b px-1.5 py-0.5 text-muted-foreground">±{cantidadPorM3(f.grupo, f.tol)}</td>
-              <td className="border-b px-1.5 py-0.5">{f.ok ? <span className="font-semibold text-green-700">✓</span> : f.agua ? <span className="font-semibold text-amber-800">agua</span> : <span className="font-semibold text-red-700">✕</span>}</td>
+              <td className="border-b px-1.5 py-0.5 text-slate-500">±{cantidadPorM3(f.grupo, f.tol)}</td>
+              <td className="border-b px-1.5 py-0.5">{f.ok ? <span className="font-medium text-green-700">✓</span> : f.agua ? <span className="font-medium text-amber-800">agua</span> : <span className="font-medium text-red-700">✕</span>}</td>
             </tr>
           ))}
           {cmp.sueltas.map((s) => <tr key={s} className="bg-red-50"><td colSpan={6} className="border-b px-1.5 py-0.5">La receta pesa en {INFO_SALIDA[s].nombre}, sin material asignado</td></tr>)}
@@ -176,23 +176,23 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[880px]">
         <DialogHeader><DialogTitle>{titulo}</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          <div className="rounded-md bg-muted/50 px-2 py-1.5 text-[12.5px]">{cabecera}</div>
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 rounded-md border px-2.5 py-1 text-[12px]">
-            <span><span className="text-muted-foreground">Despacho (hora fija del remito) </span><b>{hhmm(tiempos.despachado)}</b></span>
-            <span><span className="text-muted-foreground">Espera en cola </span><b>{desp != null && ini != null && ini >= desp - 60000 ? minTxt((ini - desp) / 60000) : "—"}</b></span>
-            <span><span className="text-muted-foreground">Inicio de carga </span><b>{hms(tiempos.inicio)}</b></span>
-            <span><span className="text-muted-foreground">Fin </span><b>{hms(tiempos.fin)}</b></span>
-            <span><span className="text-muted-foreground">Tiempo de carga </span><b>{ini != null && fin != null ? mmss((fin - ini) / 1000) : "—"}</b></span>
-            <span><span className="text-muted-foreground">Salió de planta (GPS) </span><b>{sal ? hhmm(sal) : "esperando GPS"}</b></span>
-            <span><span className="text-muted-foreground">Espera hasta salir </span><b>{sal && fin ? minTxt((sal - fin) / 60000) : "—"}</b></span>
+        <div className="space-y-2 text-xs">
+          <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs">{cabecera}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 rounded-md border px-2.5 py-1 text-xs">
+            <span><span className="text-slate-500">Despacho (hora fija del remito) </span><b className="font-medium">{hhmm(tiempos.despachado)}</b></span>
+            <span><span className="text-slate-500">Espera en cola </span><b className="font-medium">{desp != null && ini != null && ini >= desp - 60000 ? minTxt((ini - desp) / 60000) : "—"}</b></span>
+            <span><span className="text-slate-500">Inicio de carga </span><b className="font-medium">{hms(tiempos.inicio)}</b></span>
+            <span><span className="text-slate-500">Fin </span><b className="font-medium">{hms(tiempos.fin)}</b></span>
+            <span><span className="text-slate-500">Tiempo de carga </span><b className="font-medium">{ini != null && fin != null ? mmss((fin - ini) / 1000) : "—"}</b></span>
+            <span><span className="text-slate-500">Salió de planta (GPS) </span><b className="font-medium">{sal ? hhmm(sal) : "esperando GPS"}</b></span>
+            <span><span className="text-slate-500">Espera hasta salir </span><b className="font-medium">{sal && fin ? minTxt((sal - fin) / 60000) : "—"}</b></span>
           </div>
-          <div className="flex flex-wrap gap-1">{banderas.length ? banderas.map((b) => <span key={b} className={cn("d3c-tag rounded px-1 text-[10.5px] font-semibold", b === "simulada" ? "bg-amber-100 text-amber-900" : b === "aguaExtra" ? "bg-blue-50 text-blue-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[b]}</span>) : <span className="d3c-tag rounded bg-emerald-50 px-1 text-[10.5px] font-semibold text-emerald-800">Sin problemas</span>}</div>
-          {nota && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">{nota}</div>}
+          <div className="flex flex-wrap gap-1">{banderas.length ? banderas.map((b) => <span key={b} className={cn("d3c-tag rounded px-1 text-[10.5px] font-medium", b === "simulada" ? "bg-amber-100 text-amber-900" : b === "aguaExtra" ? "bg-blue-50 text-blue-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[b]}</span>) : <span className="d3c-tag rounded bg-emerald-50 px-1 text-[10.5px] font-medium text-emerald-800">Sin problemas</span>}</div>
+          {nota && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">{nota}</div>}
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[12px]">
-              <thead><tr className="bg-muted/50 text-left text-[11px] text-muted-foreground">
-                {["Material", "Fórmula /m³", "Receta /m³", "Teórico", "Humedad", "Teórico corregido", "Real", "Real − teórico"].map((h, i) => <th key={h} className={cn("border-b px-1.5 py-0.5 font-semibold", i > 0 && "text-right")}>{h}</th>)}
+            <table className="w-full border-collapse text-xs">
+              <thead><tr className="bg-muted/50 text-left text-[11px] text-slate-500">
+                {["Material", "Fórmula /m³", "Receta /m³", "Teórico", "Humedad", "Teórico corregido", "Real", "Real − teórico"].map((h, i) => <th key={h} className={cn("border-b px-1.5 py-0.5 font-medium", i > 0 && "text-right")}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {filas.map((f) => {
@@ -201,27 +201,27 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
                   const bad = desvio({ grupo: g, teorico_corregido: f.teorico_corregido, real: f.real })
                   return (
                     <tr key={f.salida} className={cn(bad && "bg-red-50")}>
-                      <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)} <span className="text-muted-foreground">{INFO_SALIDA[f.salida].nombre}</span></td>
+                      <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)} <span className="text-slate-500">{INFO_SALIDA[f.salida].nombre}</span></td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{f.formula_por_m3 == null ? "—" : nf(f.formula_por_m3, f.formula_por_m3 % 1 ? 1 : 0)}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.receta_por_m3)}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.teorico)}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{f.humedad_pct != null ? `${nf(f.humedad_pct)} %` : f.salida === "agua" && f.teorico != null && f.teorico_corregido != null ? `−${nf(f.teorico - f.teorico_corregido)}` : ""}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.teorico_corregido)}</td>
-                      <td className="border-b px-1.5 py-0.5 text-right font-semibold tabular-nums">{nf(f.real)} {f.unidad}</td>
-                      <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", bad && "font-semibold text-red-700")}>{d > 0 ? "+" : ""}{nf(d * 100, 1)} %</td>
+                      <td className="border-b px-1.5 py-0.5 text-right font-medium tabular-nums">{nf(f.real)} {f.unidad}</td>
+                      <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", bad && "font-medium text-red-700")}>{d > 0 ? "+" : ""}{nf(d * 100, 1)} %</td>
                     </tr>
                   )
                 })}
                 <tr>
                   <td className="border-b px-1.5 py-0.5">Agua extra</td>
-                  <td colSpan={5} className="border-b px-1.5 py-0.5 text-muted-foreground">{extras.map((e) => `${nf(e.litros)} L ${hhmm(e.at)}${e.despues_de_terminar ? " (después de terminar)" : ""} · ${e.usuario || "—"}`).join(" · ") || "no se agregó"}</td>
-                  <td className="border-b px-1.5 py-0.5 text-right font-semibold tabular-nums">{nf(ex)} L</td>
-                  <td className="border-b px-1.5 py-0.5 text-right text-[11px] text-muted-foreground">agua total {nf(agua + ex)} L · a/c {cem ? nf((agua + ex) / cem, 2) : "—"}</td>
+                  <td colSpan={5} className="border-b px-1.5 py-0.5 text-slate-500">{extras.map((e) => `${nf(e.litros)} L ${hhmm(e.at)}${e.despues_de_terminar ? " (después de terminar)" : ""} · ${e.usuario || "—"}`).join(" · ") || "no se agregó"}</td>
+                  <td className="border-b px-1.5 py-0.5 text-right font-medium tabular-nums">{nf(ex)} L</td>
+                  <td className="border-b px-1.5 py-0.5 text-right text-[11px] text-slate-500">agua total {nf(agua + ex)} L · a/c {cem ? nf((agua + ex) / cem, 2) : "—"}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <div className="text-[11px] text-muted-foreground">Teórico corregido: árido húmedo = seco × (1 + H%) y agua descontada la de los áridos, como hace Indumix. Tolerancias de pesaje: cemento ±1 %, áridos ±2 %, agua ±3 %, aditivos ±3 %. Las horas son las del puente (la PC). Aditivo en g.</div>
+          <div className="text-[11px] text-slate-500">Teórico corregido: árido húmedo = seco × (1 + H%) y agua descontada la de los áridos, como hace Indumix. Tolerancias de pesaje: cemento ±1 %, áridos ±2 %, agua ±3 %, aditivos ±3 %. Las horas son las del puente (la PC). Aditivo en g.</div>
           {pie}
         </div>
         <DialogFooter><Btn tono="pri" onClick={onCerrar}>Cerrar</Btn></DialogFooter>

@@ -1004,6 +1004,10 @@ Bautista pidió copiar exactamente cómo lo hace Loop (capturas `despacho_pantal
 - **Buscador** ("Buscar:") arriba de las tres columnas: filtra en la pantalla por número, cliente, obra, fórmula, patente o chofer.
 - **Contadores** como Loop: una caja chica con íconos (programado, despachado, %, pendiente, suspendido, cancelado y adicional = lo despachado sin pedido programado), al lado del título, en lugar de la franja de texto.
 
+## 26. Respuestas de Bautista (22/10/2026, 3) — Carga y Auditoría con el criterio del despacho
+
+La pantalla de Carga (`/carga`) y la Auditoría usan el mismo criterio visual que el despacho con tarjetas estilo Loop: 12 px de base (`text-xs`) y 10,5–11 px lo secundario; sin negritas salvo los datos clave en peso 500; grises suaves (`slate-500`) para lo secundario; tarjetas gris claro con borde fino (la cola de carga como los tickets del despacho, con la barra de color a la derecha, roja si está frenada); color solo en franjas, barras y etiquetas suaves (las balanzas, el estado de la planta y las categorías de la auditoría pasaron a etiquetas suaves); botones chicos de 26 px con borde o fantasma, salvo **CARGAR, PARAR y "mantener apretado"**, que siguen grandes; encabezados de columna en 13 px y peso 500 con el contador en gris; buscador arriba de la cola, las alertas y la tabla de la auditoría. En alto contraste, los grises suaves, los bordes finos y los fondos gris claro se refuerzan. Se usa `text-xs` en lugar de `text-[12px]` (también en el despacho).
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)

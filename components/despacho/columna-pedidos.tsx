@@ -133,7 +133,7 @@ export function ColumnaPedidos({
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-[12px] font-medium">Pedidos</h2>
+        <h2 className="text-xs font-medium">Pedidos</h2>
         <span className="text-xs text-muted-foreground">{activos.length}</span>
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>

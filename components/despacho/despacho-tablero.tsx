@@ -678,7 +678,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         </div>
       )}
 
-      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-[12px]">
+      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-xs">
         <summary className="flex min-h-[32px] cursor-pointer items-center text-xs text-muted-foreground">¿Qué quiere decir cada color del camión y de dónde sale?</summary>
         <table className="mb-1 w-full border-collapse">
           <tbody>

@@ -140,7 +140,7 @@ export function ColumnaViajes({
                 </button>
               </div>
               {/* Fila 2: cliente · m³ › hora de carga */}
-              <div className="flex items-baseline gap-2 text-[12px] font-medium">
+              <div className="flex items-baseline gap-2 text-xs font-medium">
                 <span className="min-w-0 flex-1 truncate">{p.clients?.name || "Cliente"}</span>
                 <span className="shrink-0 tabular-nums">{m3txt(v.m3)} m³ <span className="font-normal text-slate-400">›</span> {hhmm(v.hora_carga)}</span>
               </div>
@@ -150,12 +150,12 @@ export function ColumnaViajes({
                 {p.observations && <span title={p.observations} className="shrink-0"><ClipboardList className="h-3.5 w-3.5" aria-label="observaciones" /></span>}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="h-4 w-4 shrink-0 rounded text-[12px] leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
+                    <button className="h-4 w-4 shrink-0 rounded text-xs leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[200px]">
                     {puedeDespachar && <DropdownMenuItem className="min-h-[30px]" onClick={() => onDespachar(v.clave)}>Despachar</DropdownMenuItem>}
                     {mapa && <DropdownMenuItem className="min-h-[30px]" onClick={() => window.open(mapa, "_blank")}>Ver la obra en el mapa</DropdownMenuItem>}
-                    {p.observations && <DropdownMenuItem disabled className="whitespace-normal text-[12px]">Obs.: {p.observations}</DropdownMenuItem>}
+                    {p.observations && <DropdownMenuItem disabled className="whitespace-normal text-xs">Obs.: {p.observations}</DropdownMenuItem>}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

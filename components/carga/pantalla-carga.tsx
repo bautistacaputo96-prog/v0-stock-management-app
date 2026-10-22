@@ -34,6 +34,7 @@ import { AlertasCarga, ResolverDialog } from "./alertas-carga"
 import { RecetasPlanta } from "./recetas-planta"
 import { usarDatosCarga, ESTADOS_COLA, ESTADOS_PLANTA, type AlertaFila, type CargaFila } from "./usar-datos-carga"
 import { usarPuenteSimulado } from "./usar-puente-simulado"
+import { Buscador, coincide } from "@/components/despacho/buscador"
 import { agregarMuestraDespacho, asentamientoValido } from "@/lib/muestra"
 import { logActivity } from "@/lib/activity-log"
 
@@ -79,6 +80,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
   const [reporte, setReporte] = useState<{ carga: CargaFila; filas: FilaReporte[] } | null>(null)
   const [humAcopio, setHumAcopio] = useState<number | null>(null)
   const [muestra, setMuestra] = useState<CargaFila | null>(null)
+  const [buscarCola, setBuscarCola] = useState("")
 
   // Humedad del acopio de la Arena Fina (aviso si difiere de la de Indumix más de 1,5 puntos; no frena)
   useEffect(() => {
@@ -253,7 +255,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
     return () => { window.removeEventListener("resize", medir); clearTimeout(t) }
   }, [tab, D.cargando, enPlanta, sinInternet, P.conectado])
 
-  if (!planta) return <div className="p-6 text-muted-foreground">No hay plantas.</div>
+  if (!planta) return <div className="p-6 text-slate-500">No hay plantas.</div>
   const plantaNombre = plants.find((p) => p.id === planta)?.name || ""
   const abiertas = D.alertas.filter((a) => a.estado === "abierta").length
   const cambiosReceta = D.alertas.filter((a) => a.estado === "abierta" && a.tipo === "receta_cambiada")
@@ -261,65 +263,65 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
   const conectado = enPlanta ? P.conectado : true
 
   // Estado de la planta (franja de arriba de la columna del medio)
-  let st = "SIN CARGAS", stc = "bg-muted text-muted-foreground"
+  let st = "SIN CARGAS", stc = "bg-muted text-slate-500"
   if (P.prep) { st = "PREPARANDO"; stc = "bg-blue-50 text-blue-800" }
-  else if (activa?.estado === "parada" || (enPlanta && e?.parada && P.orden)) { st = "PARADA"; stc = "bg-slate-900 text-white" }
+  else if (activa?.estado === "parada" || (enPlanta && e?.parada && P.orden)) { st = "PARADA"; stc = "bg-slate-200 text-slate-900" }
   else if ((enPlanta && e?.suspendida) || activa?.estado === "suspendida") { st = "SUSPENDIDA"; stc = "bg-amber-50 text-amber-800" }
-  else if ((enPlanta && e?.en_ciclo) || activa?.estado === "en_curso") { st = e?.alarmas.length ? "ALARMA" : "EN CICLO"; stc = e?.alarmas.length ? "bg-red-50 text-red-700" : "bg-green-600 text-white" }
+  else if ((enPlanta && e?.en_ciclo) || activa?.estado === "en_curso") { st = e?.alarmas.length ? "ALARMA" : "EN CICLO"; stc = e?.alarmas.length ? "bg-red-50 text-red-700" : "bg-green-50 text-green-800" }
   else if (elegida) { const ch = chequeo(elegida); st = ch.ok ? "LISTA" : "BLOQUEADA"; stc = ch.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700" }
 
   return (
-    <div className="d3c space-y-1.5 text-[13px]">
+    <div className="d3c space-y-1.5 text-xs">
       {/* Barra de arriba */}
       <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b bg-background/95 px-3 py-1 backdrop-blur">
-        <h1 className="text-base font-semibold">Carga de planta</h1>
+        <h1 className="text-base font-medium">Carga de planta</h1>
         <NuevoBadge />
         <div className="inline-flex rounded-md border p-0.5">
-          {plants.map((p) => <button key={p.id} onClick={() => setPlanta(p.id)} className={cn("h-7 rounded px-2.5 text-[13px]", planta === p.id ? "bg-muted font-semibold" : "text-muted-foreground")}>{p.name}</button>)}
+          {plants.map((p) => <button key={p.id} onClick={() => setPlanta(p.id)} className={cn("h-[26px] rounded px-2.5 text-xs", planta === p.id ? "bg-muted font-medium" : "text-slate-500")}>{p.name}</button>)}
         </div>
-        <span className="text-sm font-semibold tabular-nums">{hms(ahora)}</span>
+        <span className="text-xs font-medium tabular-nums">{hms(ahora)}</span>
         {enPlanta ? (
           <>
             <Chip ok={P.internet}>{P.internet ? "Internet" : "Sin internet"}</Chip>
             <Chip ok>{"Puente (simulador)"}</Chip>
             <Chip ok={P.conectado}>{P.conectado ? "Indumix" : "Sin red con Indumix"}</Chip>
-            {P.porSubir > 0 && <span className="text-[11.5px] font-semibold text-red-700">{P.porSubir} por subir</span>}
-            {e && <span className="text-[11.5px] text-muted-foreground" title="El reloj de Indumix vuelve a 1/1/1970 cada día: todas las horas son las del puente">Indumix {e.reloj_plc} → hora del puente</span>}
+            {P.porSubir > 0 && <span className="text-[11px] font-medium text-red-700">{P.porSubir} por subir</span>}
+            {e && <span className="text-[11px] text-slate-500" title="El reloj de Indumix vuelve a 1/1/1970 cada día: todas las horas son las del puente">Indumix {e.reloj_plc} → hora del puente</span>}
           </>
-        ) : <span className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground"><i className="inline-block h-[7px] w-[7px] rounded-full bg-cyan-500" />Vista remota (cada 5 s, por la nube)</span>}
+        ) : <span className="inline-flex items-center gap-1 text-[11px] text-slate-500"><i className="inline-block h-[7px] w-[7px] rounded-full bg-cyan-500" />Vista remota (cada 5 s, por la nube)</span>}
         <span className="flex-1" />
         <div className="inline-flex rounded-md border p-0.5">
           {([["carga", "Carga"], ["recetas", "Recetas de la planta"], ["alertas", "Alertas"]] as [Tab, string][]).map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} className={cn("h-7 rounded px-2.5 text-[12.5px]", tab === k ? "bg-muted font-semibold" : "text-muted-foreground")}>
+            <button key={k} onClick={() => setTab(k)} className={cn("h-[26px] rounded px-2.5 text-xs", tab === k ? "bg-muted font-medium" : "text-slate-500")}>
               {l}{k === "alertas" && abiertas > 0 && <Tag tono="bad" className="ml-1">{abiertas}</Tag>}
             </button>
           ))}
         </div>
-        <Link href="/carga/auditoria" className="text-[12.5px] text-blue-800 underline">Auditoría de carga</Link>
-        <button className="h-7 w-7 rounded-md border" title="Actualizar" onClick={() => D.leer()}><RefreshCw className="mx-auto h-3.5 w-3.5" /></button>
+        <Link href="/carga/auditoria" className="text-xs text-blue-800 underline">Auditoría de carga</Link>
+        <button className="h-[26px] w-[26px] rounded border border-slate-300" title="Actualizar" onClick={() => D.leer()}><RefreshCw className="mx-auto h-3.5 w-3.5" /></button>
       </div>
 
       {simulada && <CartelSimulada />}
 
       {/* Este equipo + controles del simulador */}
       {puesto && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           {puedeCargar ? (
             <div className="inline-flex rounded-md border p-0.5">
               {([["planta", "Esta es la PC de la planta"], ["otro", "Otro equipo (solo mirar)"]] as const).map(([k, l]) => (
-                <button key={k} onClick={() => { setEquipo(k); guardarLS(CLAVE_EQUIPO, k) }} className={cn("h-[26px] rounded px-2 text-[12px]", equipo === k ? "bg-muted font-semibold" : "text-muted-foreground")}>{l}</button>
+                <button key={k} onClick={() => { setEquipo(k); guardarLS(CLAVE_EQUIPO, k) }} className={cn("h-[26px] rounded px-2 text-xs", equipo === k ? "bg-muted font-medium" : "text-slate-500")}>{l}</button>
               ))}
             </div>
-          ) : <span className="text-muted-foreground">Vista remota: CARGAR y PARAR se accionan solo desde la computadora de la planta.</span>}
+          ) : <span className="text-slate-500">Vista remota: CARGAR y PARAR se accionan solo desde la computadora de la planta.</span>}
           {enPlanta && simulada && (
             <>
-              <span className="text-muted-foreground">Simulador:</span>
+              <span className="text-slate-500">Simulador:</span>
               <label className="inline-flex items-center gap-1">velocidad
-                <select className="h-[26px] rounded-md border bg-card px-1 text-[12px]" value={P.vel} onChange={(ev) => P.setVel(Number(ev.target.value))}>
+                <select className="h-[26px] rounded-md border bg-card px-1 text-xs" value={P.vel} onChange={(ev) => P.setVel(Number(ev.target.value))}>
                   {[1, 5, 10, 20].map((v) => <option key={v} value={v}>x{v}</option>)}
                 </select>
               </label>
-              <select className="h-[26px] rounded-md border bg-card px-1 text-[12px]" value="" onChange={(ev) => { simular(ev.target.value); ev.target.value = "" }}>
+              <select className="h-[26px] rounded-md border bg-card px-1 text-xs" value="" onChange={(ev) => { simular(ev.target.value); ev.target.value = "" }}>
                 <option value="">Simular…</option>
                 <option value="prueba">Orden de prueba (sin despacho)</option>
                 <option value="ficha">Aplicar en Indumix la ficha pedida (corrigieron la receta)</option>
@@ -341,11 +343,11 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       <div className="space-y-1">
         {D.sinMigracion && <Ban tono="red">Falta aplicar en la base la migración de la carga de planta (202610211800_carga_planta.sql). Hasta entonces esta pantalla no tiene datos. Avisale a Bautista.</Ban>}
         {!D.sinMigracion && !D.cargando && !puesto && <Ban tono="dark">{plantaNombre} no tiene un puesto de carga. Por ahora solo Canning tiene la planta simulada.</Ban>}
-        {puesto && puesto.etapa === "apagado" && <Ban>El puesto de carga está apagado: Despachar no manda órdenes a esta cola (las órdenes de prueba sí andan).{puedeEditar ? <> Se prende en <button className="ml-1 text-[12px] text-blue-800 underline" onClick={() => setTab("recetas")}>Recetas de la planta › Etapa</button>.</> : " Lo prende Bautista."}</Ban>}
+        {puesto && puesto.etapa === "apagado" && <Ban>El puesto de carga está apagado: Despachar no manda órdenes a esta cola (las órdenes de prueba sí andan).{puedeEditar ? <> Se prende en <button className="ml-1 text-xs text-blue-800 underline" onClick={() => setTab("recetas")}>Recetas de la planta › Etapa</button>.</> : " Lo prende Bautista."}</Ban>}
         {enPlanta && !P.conectado && <Ban tono="dark">Se cortó la red local entre esta PC y la planta. El PLC sigue solo con la carga en curso. Para parar: parada de emergencia (y el PARAR de Indumix, si su pantalla no corre en esta PC). Al volver se lee el estado real; no arranca nada solo.</Ban>}
         {sinInternet && <Ban>Sin internet. Andan igual: la carga en curso, el PARAR, la planta en vivo y las órdenes que ya bajaron (se cargan igual, sin pedir nada extra). No bajan órdenes nuevas{sinBajar ? ` (${sinBajar} esperando)` : ""}: se carga a mano en Indumix con el remito en Observación y el emparejador las une después.</Ban>}
         {e?.alarmas?.[0] && <Ban tono="red">ALARMA DE INDUMIX: {e.alarmas[0].texto}{e.en_ciclo ? " · la planta se detuvo (lo decide el PLC)" : ""}</Ban>}
-        {cambiosReceta.slice(0, 2).map((a) => <Ban key={a.id}>{a.titulo}: {a.detalle?.diferencias}. <button className="ml-1 text-[12px] text-blue-800 underline" onClick={() => setTab("alertas")}>Ver alertas</button></Ban>)}
+        {cambiosReceta.slice(0, 2).map((a) => <Ban key={a.id}>{a.titulo}: {a.detalle?.diferencias}. <button className="ml-1 text-xs text-blue-800 underline" onClick={() => setTab("alertas")}>Ver alertas</button></Ban>)}
       </div>
 
       {puesto && ctx && tab === "recetas" && (
@@ -362,28 +364,29 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
         <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "230px minmax(0,1fr) 300px", height: alto }}>
           {/* Cola */}
           <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
-            <div className="flex min-h-[31px] items-center gap-1.5 border-b px-2.5 py-1"><h2 className="text-sm font-semibold">Cola de carga</h2><span className="text-[12px] text-muted-foreground">{colaVisible.length}</span><span className="flex-1" /><span className="text-[11px] text-muted-foreground">llega de Despacho</span></div>
-            <div className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-auto p-1.5">
-              {!ctx.recetas.length && <div className="rounded-md bg-amber-50 px-2 py-1 text-[12px] text-amber-900">La planta simulada no tiene recetas todavía. <button className="underline" onClick={() => setTab("recetas")}>Armarlas</button></div>}
-              {colaVisible.map((k) => <FilaCola key={k.id} k={k} sel={elegida?.id === k.id} ch={chequeo(k)} corriendo={activa?.id === k.id || P.prep?.cargaId === k.id} onClick={() => setSel(k.id)} />)}
-              {!colaVisible.length && <div className="py-6 text-center text-[12px] text-muted-foreground">No hay cargas. Llegan desde Despacho al tocar «Despachar»{simulada && enPlanta ? ", o con «Simular… › Orden de prueba»" : ""}.</div>}
-              {sinBajar > 0 && <div className="rounded-md bg-amber-50 px-2 py-1 text-[12px] text-amber-900">{sinBajar} despacho{sinBajar > 1 ? "s" : ""} todavía no bajó (sin internet). Cargalo a mano en Indumix con el remito en Observación: el emparejador lo une después.</div>}
+            <div className="flex min-h-[31px] items-center gap-1.5 border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Cola de carga</h2><span className="text-xs text-slate-500">{colaVisible.length}</span><span className="flex-1" /><span className="text-[11px] text-slate-500">llega de Despacho</span></div>
+            <Buscador valor={buscarCola} onCambio={setBuscarCola} />
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto p-1.5">
+              {!ctx.recetas.length && <div className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">La planta simulada no tiene recetas todavía. <button className="underline" onClick={() => setTab("recetas")}>Armarlas</button></div>}
+              {colaVisible.filter((k) => coincide(buscarCola, k.mixers?.license_plate, k.patente_planta, k.despacho?.cliente, k.cliente_planta, k.despacho?.obra, k.remito, k.formulas?.code)).map((k) => <FilaCola key={k.id} k={k} sel={elegida?.id === k.id} ch={chequeo(k)} corriendo={activa?.id === k.id || P.prep?.cargaId === k.id} onClick={() => setSel(k.id)} />)}
+              {!colaVisible.length && <div className="py-6 text-center text-xs text-slate-500">No hay cargas. Llegan desde Despacho al tocar «Despachar»{simulada && enPlanta ? ", o con «Simular… › Orden de prueba»" : ""}.</div>}
+              {sinBajar > 0 && <div className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">{sinBajar} despacho{sinBajar > 1 ? "s" : ""} todavía no bajó (sin internet). Cargalo a mano en Indumix con el remito en Observación: el emparejador lo une después.</div>}
               {faltaMuestra.filter((k) => k.id !== ultimaCarga?.id).length > 0 && (
-                <div className="mt-1 rounded-md border border-dashed px-2 py-1 text-[11.5px]">
-                  <b>Falta responder la muestra</b>
+                <div className="mt-1 rounded-md border border-dashed px-2 py-1 text-[11px]">
+                  <b className="font-medium">Falta responder la muestra</b>
                   {faltaMuestra.filter((k) => k.id !== ultimaCarga?.id).map((k) => (
                     <div key={k.id} className="mt-0.5 flex items-center gap-1">
-                      <span className={cn("truncate", k.muestra_pedida && "font-semibold text-amber-800")}>{k.mixers?.license_plate || k.patente_planta} · {k.remito_tipo || ""} {k.remito} · {hhmm(k.fin_at)}{k.muestra_pedida ? " · pidieron muestra" : ""}</span>
+                      <span className={cn("truncate", k.muestra_pedida && "font-medium text-amber-800")}>{k.mixers?.license_plate || k.patente_planta} · {k.remito_tipo || ""} {k.remito} · {hhmm(k.fin_at)}{k.muestra_pedida ? " · pidieron muestra" : ""}</span>
                       <span className="flex-1" />
-                      {puedeMuestra && <><button className="text-blue-800 underline" onClick={() => setMuestra(k)}>Sí</button><button className="text-muted-foreground underline" onClick={() => void responderMuestra(k, false)}>No</button></>}
+                      {puedeMuestra && <><button className="text-blue-800 underline" onClick={() => setMuestra(k)}>Sí</button><button className="text-slate-500 underline" onClick={() => void responderMuestra(k, false)}>No</button></>}
                     </div>
                   ))}
                 </div>
               )}
               {yaCargadas.map((k) => (
-                <div key={k.id} className="d3c-card rounded-md border border-l-[3px] border-l-slate-500 bg-card px-2 py-1 text-[12px] opacity-80">
-                  <b>{k.mixers?.license_plate || k.patente_planta}</b> · remito {k.remito} <Tag tono="slate">Ya cargada en Indumix</Tag>
-                  <div className="text-[11px] text-muted-foreground">N° {k.contador_planta} · {k.union_remito} · no se vuelve a cargar</div>
+                <div key={k.id} className="d3c-card rounded-md border border-r-[3px] border-slate-200 border-r-slate-400 bg-slate-50 px-2 py-1 text-xs opacity-80">
+                  <b className="font-medium">{k.mixers?.license_plate || k.patente_planta}</b> · remito {k.remito} <Tag tono="slate">Ya cargada en Indumix</Tag>
+                  <div className="text-[11px] text-slate-500">N° {k.contador_planta} · {k.union_remito} · no se vuelve a cargar</div>
                 </div>
               ))}
             </div>
@@ -392,12 +395,12 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
           {/* Planta en vivo */}
           <section ref={medio} className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-2 py-1">
-              <span className={cn("rounded px-1.5 text-[11px] font-semibold", stc)}>{st}</span>
+              <span className={cn("rounded px-1.5 text-[11px] font-medium", stc)}>{st}</span>
               {enPlanta && e && (e.en_ciclo || e.parada) && P.orden && <>
-                <span className="text-[12px]">Ciclo <b>{e.ciclo}/{e.ciclos}</b> · {m3t(e.m3_ciclo)} m³ · {e.tiempo_ciclo_s < 50 ? "pesando" : e.tiempo_ciclo_s < 98 ? "descargando al camión" : "fin de ciclo"}</span>
-                <span className="text-[12px] text-muted-foreground">ciclo <b className="tabular-nums text-foreground">{mmss(e.tiempo_ciclo_s)}</b> · total {mmss(e.tiempo_total_s)}</span>
+                <span className="text-xs">Ciclo <b className="font-medium">{e.ciclo}/{e.ciclos}</b> · {m3t(e.m3_ciclo)} m³ · {e.tiempo_ciclo_s < 50 ? "pesando" : e.tiempo_ciclo_s < 98 ? "descargando al camión" : "fin de ciclo"}</span>
+                <span className="text-xs text-slate-500">ciclo <b className="font-medium tabular-nums text-foreground">{mmss(e.tiempo_ciclo_s)}</b> · total {mmss(e.tiempo_total_s)}</span>
               </>}
-              {!enPlanta && activa && <span className="text-[12px]">{activa.mixers?.license_plate || activa.patente_planta} · ciclo {activa.ciclo_actual || "—"}/{activa.ciclos || "—"} · desde {hhmm(activa.inicio_at)}</span>}
+              {!enPlanta && activa && <span className="text-xs">{activa.mixers?.license_plate || activa.patente_planta} · ciclo {activa.ciclo_actual || "—"}/{activa.ciclos || "—"} · desde {hhmm(activa.inicio_at)}</span>}
               {enPlanta && e && (e.en_ciclo || e.parada) && P.orden && (
                 <div className="flex w-full gap-[3px]">{Array.from({ length: e.ciclos }, (_, i) => <div key={i} className="h-[5px] flex-1 overflow-hidden rounded-full bg-slate-200"><i className="block h-full bg-green-600" style={{ width: `${i + 1 < e.ciclo ? 100 : i + 1 === e.ciclo ? Math.min(100, (e.tiempo_ciclo_s / 108) * 100) : 0}%` }} /></div>)}</div>
               )}
@@ -411,12 +414,12 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
                   <TablaPesajes estado={e} salidas={ctx.salidas} materiales={ctx.materiales} />
                 </>
               ) : (
-                <div className="space-y-2 p-2 text-[12.5px] text-muted-foreground">
+                <div className="space-y-2 p-2 text-xs text-slate-500">
                   <p>Los pesos en vivo se ven en la PC de la planta. Desde acá se ve la cola, el estado de cada carga y las alertas, leído de la base cada 5 segundos.</p>
                   <div className="rounded-md border p-2 text-foreground">
-                    <b>Qué hay en cada salida</b>
-                    <div className="mt-1 grid grid-cols-3 gap-x-3 gap-y-0.5 text-[12px]">
-                      {ctx.salidas.map((s) => <span key={s.salida}><span className="text-muted-foreground">{INFO_SALIDA[s.salida].nombre}:</span> {nombreCorto(ctx.materiales.find((m) => m.id === s.material_id)?.name)}</span>)}
+                    <b className="font-medium">Qué hay en cada salida</b>
+                    <div className="mt-1 grid grid-cols-3 gap-x-3 gap-y-0.5 text-xs">
+                      {ctx.salidas.map((s) => <span key={s.salida}><span className="text-slate-500">{INFO_SALIDA[s.salida].nombre}:</span> {nombreCorto(ctx.materiales.find((m) => m.id === s.material_id)?.name)}</span>)}
                     </div>
                   </div>
                 </div>
@@ -450,14 +453,14 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
           onClick={() => { if (P.conectado && !P.prep && !P.estado?.en_ciclo) aviso("PARAR enviado a Indumix", "No había carga en curso. Está siempre, para cualquiera en esta PC."); void P.parar() }}
           className="k3c-parar fixed bottom-3 right-3.5 z-40 h-[60px] w-[132px] rounded-[10px] border-[3px] border-white bg-red-600 text-[22px] font-extrabold leading-none tracking-[.06em] text-white shadow-[0_6px_18px_rgba(220,38,38,.4),0_0_0_1.5px_#dc2626]"
         >
-          PARAR<small className="mt-0.5 block text-[10px] font-semibold tracking-normal opacity-95">siempre · sin permiso</small>
+          PARAR<small className="mt-0.5 block text-[10px] font-medium tracking-normal opacity-95">siempre · sin permiso</small>
         </button>
       )}
 
       {confirmar && (
         <ConfirmarCamion
           patente={confirmar.mixers?.license_plate || confirmar.patente_planta || "—"}
-          resumen={<><b>{confirmar.despacho?.cliente || confirmar.cliente_planta}</b> · {confirmar.despacho?.obra || ""} · {confirmar.formulas?.code} · <b>{m3t(confirmar.m3)} m³</b> · Remito {confirmar.remito_tipo || ""} {confirmar.remito}</>}
+          resumen={<><b className="font-medium">{confirmar.despacho?.cliente || confirmar.cliente_planta}</b> · {confirmar.despacho?.obra || ""} · {confirmar.formulas?.code} · <b className="font-medium">{m3t(confirmar.m3)} m³</b> · Remito {confirmar.remito_tipo || ""} {confirmar.remito}</>}
           avisos={chequeo(confirmar).items.filter((i) => i.ok && i.aviso).map((i) => i.texto)}
           onBocina={() => void P.bocina()} onCerrar={() => setConfirmar(null)}
           onConfirmar={() => {
@@ -477,7 +480,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       })()}
       {cancelar && (
         <MotivoDialog titulo={`Cancelar la carga de ${cancelar.mixers?.license_plate || cancelar.patente_planta || ""}`} boton="Cancelar la carga" peligro ejemplo="Ej.: se rompió el camión, la obra suspendió"
-          cuerpo={<>Todavía no se pesó nada. {cancelar.dispatch_id ? `El despacho ya está grabado (remito ${cancelar.remito_tipo || ""} ${cancelar.remito}).` : "Es una orden de prueba."} {cancelar.simulada ? <b>Planta simulada: se cancela solo la orden; el despacho real no se toca (si hay que anularlo o cambiar el camión, se hace desde Historial, como siempre).</b> : null}</>}
+          cuerpo={<>Todavía no se pesó nada. {cancelar.dispatch_id ? `El despacho ya está grabado (remito ${cancelar.remito_tipo || ""} ${cancelar.remito}).` : "Es una orden de prueba."} {cancelar.simulada ? <b className="font-medium">Planta simulada: se cancela solo la orden; el despacho real no se toca (si hay que anularlo o cambiar el camión, se hace desde Historial, como siempre).</b> : null}</>}
           onConfirmar={async (m) => !!(await api(`/api/carga/${cancelar.id}`, { accion: "cancelar", motivo: m }))} onCerrar={() => setCancelar(null)} />
       )}
       {tolva && tolva1 && <TolvaDialog opciones={(tolva1.alternativas || []).map((id) => ({ id, name: ctx?.materiales.find((m) => m.id === id)?.name || "?" }))} actual={tolva1.material_id} onElegir={elegirTolva} onCerrar={() => setTolva(false)} />}
@@ -501,27 +504,27 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
 }
 
 function Ban({ tono, children }: { tono?: "red" | "dark"; children: React.ReactNode }) {
-  return <div className={cn("d3c-card flex flex-wrap items-center gap-2 rounded-md border border-l-[3px] px-2.5 py-1 text-[12px]", tono === "red" ? "border-l-red-600 bg-red-50 font-semibold text-red-700" : tono === "dark" ? "border-l-slate-900 bg-slate-100 font-semibold text-slate-900" : "border-l-amber-500 bg-card")}>{children}</div>
+  return <div className={cn("d3c-card flex flex-wrap items-center gap-2 rounded-md border border-l-[3px] border-slate-200 px-2.5 py-0.5 text-xs", tono === "red" ? "border-l-red-600 bg-red-50 text-red-700" : tono === "dark" ? "border-l-slate-900 bg-slate-50 text-slate-900" : "border-l-amber-500 bg-slate-50")}>{children}</div>
 }
 
 function FilaCola({ k, sel, ch, corriendo, onClick }: { k: CargaFila; sel: boolean; ch: { ok: boolean; aviso: boolean; items: Item[] }; corriendo: boolean; onClick: () => void }) {
   const mal = ch.items.find((i) => !i.ok)
   const [tono, txt] = corriendo ? (["blue", "cargando"] as const) : !ch.ok ? (["bad", `${mal?.corto} ✕`] as const) : ch.aviso ? (["warn", "lista · agua !"] as const) : (["ok", "lista"] as const)
+  // Tarjeta como los tickets del despacho: gris clara, borde fino, barra de color a la derecha (roja si está frenada)
   return (
-    <button onClick={onClick} className={cn("d3c-card flex w-full items-center gap-1.5 rounded-md border border-l-[3px] bg-card px-2 py-[3px] text-left", corriendo ? "border-l-blue-500" : !ch.ok ? "border-l-red-600" : "border-l-violet-600", sel && "ring-2 ring-blue-500")}>
-      <div className="min-w-0 flex-1 leading-tight">
-        <div className="flex items-center gap-1 text-[13px]">
-          <b className="font-semibold">{k.mixers?.license_plate || k.patente_planta || "—"}</b>
-          <span className="truncate">{k.despacho?.cliente || k.cliente_planta}</span>
-          <span className="flex-1" />
-          <b className="font-semibold tabular-nums">{m3t(k.m3)} m³</b>
-          <Tag tono={k.remito_tipo === "X" ? "X" : "R"}>{k.origen === "prueba" ? "PRUEBA" : `${k.remito_tipo || ""} ${k.remito || ""}`}</Tag>
-        </div>
-        <div className="flex items-center gap-1 text-[11.5px] text-muted-foreground">
-          <span className="truncate">{k.formulas?.code} · {k.completa_carga_id ? "completa el remito" : `despachó ${hhmm(k.created_at)} · ${k.created_by || ""}`}</span>
-          <span className="flex-1" />
-          <Tag tono={tono}>{txt}</Tag>
-        </div>
+    <button onClick={onClick} className={cn("d3c-card w-full rounded-md border border-r-[3px] border-slate-200 bg-slate-50 px-2 py-1 text-left leading-tight", corriendo ? "border-r-blue-500" : !ch.ok ? "border-red-300 border-r-red-500" : "border-r-violet-700", sel && "ring-2 ring-blue-500")}>
+      <div className="flex items-center gap-1 border-b border-slate-200 pb-0.5 text-[11px] text-slate-500">
+        <span className="truncate">{k.origen === "prueba" ? "Prueba" : `Remito ${k.remito_tipo || ""} ${k.remito || ""}`}</span>
+        <span className="flex-1" />
+        <span>{k.completa_carga_id ? "completa el remito" : `despachó ${hhmm(k.created_at)}`}</span>
+      </div>
+      <div className="mt-0.5 flex items-baseline gap-2 text-xs font-medium">
+        <span className="min-w-0 flex-1 truncate">{k.mixers?.license_plate || k.patente_planta || "—"} · {k.despacho?.cliente || k.cliente_planta}</span>
+        <span className="shrink-0 tabular-nums">{m3t(k.m3)} m³</span>
+      </div>
+      <div className="flex items-center gap-1 text-[11px] text-slate-500">
+        <span className="min-w-0 flex-1 truncate">{k.formulas?.code}</span>
+        <Tag tono={tono}>{txt}</Tag>
       </div>
     </button>
   )
@@ -545,25 +548,25 @@ function PanelDerecho(p: {
   const { ctx, enPlanta, puedeCargar, prep, activa, elegida, estado: e } = p
   const listaExtras = (id: string) => {
     const ex = p.extras.filter((x) => x.carga_id === id)
-    return ex.length ? <div className="text-[12px]">Agua extra: {ex.map((x, i) => <span key={i}><b>{x.litros} L</b> {hhmm(x.at)}{x.despues_de_terminar ? " (después de terminar)" : ""}{i < ex.length - 1 ? " · " : ""}</span>)}</div> : null
+    return ex.length ? <div className="text-xs">Agua extra: {ex.map((x, i) => <span key={i}><b className="font-medium">{x.litros} L</b> {hhmm(x.at)}{x.despues_de_terminar ? " (después de terminar)" : ""}{i < ex.length - 1 ? " · " : ""}</span>)}</div> : null
   }
   const pat = (k: CargaFila) => k.mixers?.license_plate || k.patente_planta || "—"
   const cab = (k: CargaFila) => (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[15px] font-bold tracking-[.04em]">{pat(k)}</span>
+      <span className="text-sm font-medium tracking-[.04em]">{pat(k)}</span>
       <Tag tono={k.remito_tipo === "X" ? "X" : "R"}>{k.origen === "prueba" ? "PRUEBA" : `${k.remito_tipo || ""} ${k.remito || ""}`}</Tag>
       {k.simulada && <Tag tono="warn">simulada</Tag>}
-      <span className="truncate text-[12px]"><b>{k.despacho?.cliente || k.cliente_planta}</b>{k.despacho?.obra ? ` · ${k.despacho.obra}` : ""}</span>
+      <span className="truncate text-xs"><b className="font-medium">{k.despacho?.cliente || k.cliente_planta}</b>{k.despacho?.obra ? ` · ${k.despacho.obra}` : ""}</span>
     </div>
   )
 
   if (prep) {
     return (
-      <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-[12px]">
-        <h3 className="mb-1 text-[12.5px] font-semibold">Arrancando</h3>
+      <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-xs">
+        <h3 className="mb-1 text-xs font-medium">Arrancando</h3>
         <ul className="flex flex-col gap-[3px]">
           {prep.pasos.map((t, i) => (
-            <li key={i} className={cn("flex gap-1.5", i < prep.i ? "text-foreground" : i === prep.i ? "font-semibold text-blue-800" : "text-muted-foreground")}>
+            <li key={i} className={cn("flex gap-1.5", i < prep.i ? "text-foreground" : i === prep.i ? "font-medium text-blue-800" : "text-slate-500")}>
               <span className={cn("inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[9px]", i < prep.i ? "border-green-600 bg-green-600 text-white" : "border-slate-300")}>{i < prep.i ? "✓" : i + 1}</span>{t}
             </li>
           ))}
@@ -580,35 +583,35 @@ function PanelDerecho(p: {
     return (
       <>
         {cab(k)}
-        <div className="text-[12px]">{k.formulas?.code} · receta {k.receta_numero ?? "—"} · <b>{m3t(k.m3)} m³</b> en {k.ciclos || "—"} ciclos</div>
-        <div className="text-[12px] text-muted-foreground">Despachado {hhmm(k.despacho?.created_at || k.created_at)} · <b className="text-foreground">inicio de carga {hms(k.inicio_at)}</b>{k.inicio_at ? ` · llevamos ${mmss((Date.now() - new Date(k.inicio_at).getTime()) / 1000)}` : ""}{k.contador_planta ? ` · N° ${k.contador_planta} en Indumix` : ""}</div>
-        {k.autorizacion && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-[12px]">Autorizada con receta distinta · {k.autorizacion.por}: «{k.autorizacion.motivo}»</div>}
-        {k.agua_distinta && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-[12px]">Agua de la receta distinta de la fórmula: no frena, queda en la auditoría.</div>}
-        {k.sin_internet && <div className="text-[11.5px] text-amber-800">Arrancó sin internet: la orden ya había bajado.</div>}
+        <div className="text-xs">{k.formulas?.code} · receta {k.receta_numero ?? "—"} · <b className="font-medium">{m3t(k.m3)} m³</b> en {k.ciclos || "—"} ciclos</div>
+        <div className="text-xs text-slate-500">Despachado {hhmm(k.despacho?.created_at || k.created_at)} · <b className="font-medium text-foreground">inicio de carga {hms(k.inicio_at)}</b>{k.inicio_at ? ` · llevamos ${mmss((Date.now() - new Date(k.inicio_at).getTime()) / 1000)}` : ""}{k.contador_planta ? ` · N° ${k.contador_planta} en Indumix` : ""}</div>
+        {k.autorizacion && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">Autorizada con receta distinta · {k.autorizacion.por}: «{k.autorizacion.motivo}»</div>}
+        {k.agua_distinta && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">Agua de la receta distinta de la fórmula: no frena, queda en la auditoría.</div>}
+        {k.sin_internet && <div className="text-[11px] text-amber-800">Arrancó sin internet: la orden ya había bajado.</div>}
         {listaExtras(k.id)}
         {parada ? (
-          <div className="rounded-md border border-l-[3px] border-l-slate-900 px-2 py-1.5 text-[12px]">
-            <h3 className="mb-1 text-[12.5px] font-semibold">Carga parada{k.parada_at ? ` a las ${hhmm(k.parada_at)}` : ""} · en el trompo ~{m3t(Math.round(m3Tr * 10) / 10)} m³</h3>
+          <div className="rounded-md border border-l-[3px] border-l-slate-900 px-2 py-1.5 text-xs">
+            <h3 className="mb-1 text-xs font-medium">Carga parada{k.parada_at ? ` a las ${hhmm(k.parada_at)}` : ""} · en el trompo ~{m3t(Math.round(m3Tr * 10) / 10)} m³</h3>
             {enPlanta && puedeCargar && k.estado === "parada" ? (
               <div className="flex flex-wrap gap-1">
                 <Btn tono="pri" onClick={() => p.onParada(k, "sale")}>Sale con lo cargado</Btn>
-                {k.completa_carga_id ? <span className="text-[11px] text-muted-foreground">Es el resto del remito {k.remito}.</span> : <>
+                {k.completa_carga_id ? <span className="text-[11px] text-slate-500">Es el resto del remito {k.remito}.</span> : <>
                   <Btn onClick={() => p.onParada(k, "completar")}>Completar con otra carga</Btn>
                   <Btn onClick={() => p.onParada(k, "tirada")}>Se tiró · anular despacho</Btn>
                 </>}
               </div>
-            ) : <div className="text-[12px] text-muted-foreground">{k.estado === "parada" ? "Lo decide el plantista en la PC de la planta." : "Registrando…"}</div>}
+            ) : <div className="text-xs text-slate-500">{k.estado === "parada" ? "Lo decide el plantista en la PC de la planta." : "Registrando…"}</div>}
             {p.simulada && <div className="mt-1 text-[11px] text-amber-800">Planta simulada: queda registrado qué se haría con el remito; el despacho real no se toca.</div>}
           </div>
         ) : enPlanta && p.ordenEnPlanta && p.pesajeTerminado ? (
-          <div className="rounded-md border border-l-[3px] border-l-green-600 px-2 py-1.5 text-[12px]">
-            <h3 className="mb-1 text-[12.5px] font-semibold">Pesaje terminado · el camión sigue abajo</h3>
+          <div className="rounded-md border border-l-[3px] border-l-green-600 px-2 py-1.5 text-xs">
+            <h3 className="mb-1 text-xs font-medium">Pesaje terminado · el camión sigue abajo</h3>
             <BotonAgua {...p.agua} disabled={!puedeCargar} />
             <div className="mt-1.5 flex flex-wrap items-center gap-1">
               <Btn tono="ok" disabled={!puedeCargar || p.agua.abierta} onClick={() => p.onTerminar(k)}>Terminar carga</Btn>
               <Btn onClick={p.onBocina}>Bocina</Btn>
             </div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground">«Terminar carga» cierra la carga con el agua extra total; después se pregunta por la muestra y el camión queda «Cargado · esperando salir».</div>
+            <div className="mt-0.5 text-[11px] text-slate-500">«Terminar carga» cierra la carga con el agua extra total; después se pregunta por la muestra y el camión queda «Cargado · esperando salir».</div>
           </div>
         ) : enPlanta && p.ordenEnPlanta ? (
           <>
@@ -617,35 +620,35 @@ function PanelDerecho(p: {
               <Btn disabled={!puedeCargar} onClick={p.onBocina}>Bocina</Btn>
             </div>
             <BotonAgua {...p.agua} disabled={!puedeCargar} />
-            <div className="text-[11px] text-muted-foreground">PARAR: abajo a la derecha, siempre.</div>
+            <div className="text-[11px] text-slate-500">PARAR: abajo a la derecha, siempre.</div>
           </>
-        ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-[12px] text-slate-600">{enPlanta ? "En curso según el sistema, pero esta PC no la está cargando (¿se cargó desde otra PC o se recargó la página?). La planta sigue según Indumix." : "Vista remota: se ve, no se acciona."}</div>}
+        ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-xs text-slate-600">{enPlanta ? "En curso según el sistema, pero esta PC no la está cargando (¿se cargó desde otra PC o se recargó la página?). La planta sigue según Indumix." : "Vista remota: se ve, no se acciona."}</div>}
       </>
     )
   }
 
   const ult = p.ultima ? (
-    <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-[12px]">
-      <h3 className="text-[12.5px] font-semibold">{pat(p.ultima)} · Cargado {hhmm(p.ultima.fin_at)} · esperando salir (GPS)</h3>
+    <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-xs">
+      <h3 className="text-xs font-medium">{pat(p.ultima)} · Cargado {hhmm(p.ultima.fin_at)} · esperando salir (GPS)</h3>
       {listaExtras(p.ultima.id)}
       {"muestra" in p.ultima && p.ultima.dispatch_id && !p.ultima.muestra && (
         <div className={cn("mt-1 flex flex-wrap items-center gap-1 rounded-md px-1.5 py-1", p.ultima.muestra_pedida ? "border-2 border-amber-500 bg-amber-50" : "border")}>
           <b className={cn(p.ultima.muestra_pedida && "text-amber-900")}>¿Se sacó muestra?</b>
-          {p.ultima.muestra_pedida && <span className="text-[11px] font-semibold text-amber-900">Pidieron muestra a este camión.</span>}
+          {p.ultima.muestra_pedida && <span className="text-[11px] font-medium text-amber-900">Pidieron muestra a este camión.</span>}
           <span className="flex-1" />
-          {p.puedeMuestra ? <><Btn tono="pri" className="h-[26px] text-[12px]" onClick={() => p.onMuestra(p.ultima!, true)}>Sí</Btn><Btn className="h-[26px] text-[12px]" onClick={() => p.onMuestra(p.ultima!, false)}>No</Btn></>
-            : <span className="text-[11px] text-muted-foreground">La carga quien tiene Historial · cargar.</span>}
+          {p.puedeMuestra ? <><Btn tono="pri" className="h-[26px] text-xs" onClick={() => p.onMuestra(p.ultima!, true)}>Sí</Btn><Btn className="h-[26px] text-xs" onClick={() => p.onMuestra(p.ultima!, false)}>No</Btn></>
+            : <span className="text-[11px] text-slate-500">La carga quien tiene Historial · cargar.</span>}
         </div>
       )}
-      {p.ultima.muestra && <div className="mt-0.5 text-[11.5px]">{p.ultima.muestra.tomada ? `Muestra ${p.ultima.muestra.numero} · asentamiento ${p.ultima.muestra.asentamiento} cm` : "Sin muestra"} · {p.ultima.muestra.por}</div>}
+      {p.ultima.muestra && <div className="mt-0.5 text-[11px]">{p.ultima.muestra.tomada ? `Muestra ${p.ultima.muestra.numero} · asentamiento ${p.ultima.muestra.asentamiento} cm` : "Sin muestra"} · {p.ultima.muestra.por}</div>}
       <div className="mt-1 flex flex-wrap gap-1">
-        <Btn className="h-[26px] text-[12px]" onClick={() => p.onReporte(p.ultima!)}>Ver reporte</Btn>
+        <Btn className="h-[26px] text-xs" onClick={() => p.onReporte(p.ultima!)}>Ver reporte</Btn>
       </div>
     </div>
   ) : null
 
   const k = elegida
-  if (!k) return <>{ult}<div className="py-6 text-center text-[12px] text-muted-foreground">No hay una carga elegida.</div></>
+  if (!k) return <>{ult}<div className="py-6 text-center text-xs text-slate-500">No hay una carga elegida.</div></>
   const ch = p.chequeo(k)
   const f = p.formulaDe(k.formula_id)
   const ctl = controlDeFormula(ctx, f, k.autorizacion)
@@ -654,25 +657,25 @@ function PanelDerecho(p: {
     <>
       {ult}
       {cab(k)}
-      <div className="text-[12px] text-muted-foreground">{k.formulas?.code} · <b className="text-foreground">{m3t(k.m3)} m³</b> ({k.ciclos || Math.ceil(k.m3 / ctx.puesto.m3_max_ciclo)} ciclos) · despachó {hhmm(k.created_at)} {k.created_by || ""} · bajó {hms(k.bajada_at)}</div>
+      <div className="text-xs text-slate-500">{k.formulas?.code} · <b className="font-medium text-foreground">{m3t(k.m3)} m³</b> ({k.ciclos || Math.ceil(k.m3 / ctx.puesto.m3_max_ciclo)} ciclos) · despachó {hhmm(k.created_at)} {k.created_by || ""} · bajó {hms(k.bajada_at)}</div>
       <div className="flex flex-wrap gap-[3px]">
         {ch.items.map((i) => (
-          <span key={i.clave + i.corto} title={i.texto} className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-[5px] border px-1.5 text-[11.5px]", i.neutro ? "border-dashed text-muted-foreground" : !i.ok ? "border-red-300 bg-red-50 text-red-700" : i.aviso ? "border-amber-300 bg-amber-50 text-amber-800" : "")}>
-            <b className={cn("font-bold", i.ok && !i.aviso && !i.neutro && "text-green-600")}>{i.neutro ? "·" : !i.ok ? "✕" : i.aviso ? "!" : "✓"}</b>{i.corto}
+          <span key={i.clave + i.corto} title={i.texto} className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-[5px] border px-1.5 text-[11px]", i.neutro ? "border-dashed text-slate-500" : !i.ok ? "border-red-300 bg-red-50 text-red-700" : i.aviso ? "border-amber-300 bg-amber-50 text-amber-800" : "")}>
+            <b className={cn("font-medium", i.ok && !i.aviso && !i.neutro && "text-green-600")}>{i.neutro ? "·" : !i.ok ? "✕" : i.aviso ? "!" : "✓"}</b>{i.corto}
           </span>
         ))}
       </div>
-      <div className="text-[11px] text-muted-foreground">NP: se controla cuando esté Zomatik.</div>
+      <div className="text-[11px] text-slate-500">NP: se controla cuando esté Zomatik.</div>
       {ctl.cmp && ctl.frenaReceta ? (
-        <div className="rounded-md border border-l-[3px] border-l-red-600 px-2 py-1.5 text-[12px]">
-          <h3 className="mb-1 text-[12.5px] font-semibold">No se puede cargar: la receta {ctl.numero} no es igual a la fórmula</h3>
+        <div className="rounded-md border border-l-[3px] border-l-red-600 px-2 py-1.5 text-xs">
+          <h3 className="mb-1 text-xs font-medium">No se puede cargar: la receta {ctl.numero} no es igual a la fórmula</h3>
           <TablaComparacion cmp={ctl.cmp} />
-          {p.puedeResolver && alerta ? <Btn tono="pri" className="mt-1 h-[26px] text-[12px]" onClick={() => p.onResolver(alerta)}>Resolver</Btn>
-            : <div className="mt-1 text-[12px]">Lo resuelve quien tiene Fórmulas · editar (Bautista, Fernando y Juan){k.frenada_confirmada_por ? `. Se despachó igual (${k.frenada_confirmada_por}): ya le llegó el mail a Juan Oreguy.` : "."}</div>}
+          {p.puedeResolver && alerta ? <Btn tono="pri" className="mt-1 h-[26px] text-xs" onClick={() => p.onResolver(alerta)}>Resolver</Btn>
+            : <div className="mt-1 text-xs">Lo resuelve quien tiene Fórmulas · editar (Bautista, Fernando y Juan){k.frenada_confirmada_por ? `. Se despachó igual (${k.frenada_confirmada_por}): ya le llegó el mail a Juan Oreguy.` : "."}</div>}
         </div>
       ) : ctl.aguaDistinta ? (
-        <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1.5 text-[12px]">
-          <h3 className="text-[12.5px] font-semibold">Agua de la receta distinta de la fórmula · no frena</h3>
+        <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1.5 text-xs">
+          <h3 className="text-xs font-medium">Agua de la receta distinta de la fórmula · no frena</h3>
           <div>{ctl.items.find((i) => i.clave === "agua")?.texto}. Antes de tocar el agua en la planta conviene que lo confirme Grow.</div>
         </div>
       ) : null}
@@ -683,9 +686,9 @@ function PanelDerecho(p: {
             <Btn onClick={p.onBocina}>Bocina</Btn>
             <Btn tono="ghost" disabled={!puedeCargar} onClick={() => p.onCancelar(k)}>Cancelar…</Btn>
           </div>
-          {ch.motivo ? <div className="text-[11.5px] text-red-700">{ch.motivo}</div> : <div className="text-[11px] text-muted-foreground">Antes de arrancar se confirma que el camión está abajo.</div>}
+          {ch.motivo ? <div className="text-[11px] text-red-700">{ch.motivo}</div> : <div className="text-[11px] text-slate-500">Antes de arrancar se confirma que el camión está abajo.</div>}
         </>
-      ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-[12px] text-slate-600">CARGAR y PARAR se accionan solo desde la computadora de la planta.</div>}
+      ) : <div className="rounded-md border border-dashed border-slate-400 px-2 py-1 text-xs text-slate-600">CARGAR y PARAR se accionan solo desde la computadora de la planta.</div>}
     </>
   )
 }
@@ -704,7 +707,7 @@ function ReporteCarga({ k, filas, extras, ahora, onCerrar }: { k: CargaFila; fil
   return (
     <ReporteDialog
       titulo={`Reporte de carga${k.contador_planta ? ` N° ${k.contador_planta}` : ""}${k.remito ? ` · Remito ${k.remito_tipo || ""} ${k.remito}` : ""}`}
-      cabecera={<>{k.despacho?.cliente || k.cliente_planta} · <b>{k.mixers?.license_plate || k.patente_planta}</b> · {k.formulas?.code} · receta {k.receta_numero ?? "—"} · <b>{m3t(k.m3_cargados ?? k.m3)} m³</b> en {k.ciclos} ciclos · {k.origen === "sistema" ? "desde el sistema" : k.origen === "prueba" ? "orden de prueba" : "arrancada en Indumix"} · plantista {k.arrancada_por || "—"}{k.simulada ? " · PLANTA SIMULADA (no mueve stock)" : ""}</>}
+      cabecera={<>{k.despacho?.cliente || k.cliente_planta} · <b className="font-medium">{k.mixers?.license_plate || k.patente_planta}</b> · {k.formulas?.code} · receta {k.receta_numero ?? "—"} · <b className="font-medium">{m3t(k.m3_cargados ?? k.m3)} m³</b> en {k.ciclos} ciclos · {k.origen === "sistema" ? "desde el sistema" : k.origen === "prueba" ? "orden de prueba" : "arrancada en Indumix"} · plantista {k.arrancada_por || "—"}{k.simulada ? " · PLANTA SIMULADA (no mueve stock)" : ""}</>}
       filas={filas} extras={extras}
       tiempos={{ despachado: k.despacho?.created_at || null, inicio: k.inicio_at, fin: k.fin_at || k.parada_at, salida: k.salida_gps || null }}
       banderas={banderas(fila, ahora)} nota={k.resolucion?.efecto?.texto || null} onCerrar={onCerrar}
@@ -727,11 +730,11 @@ function MuestraDialog({ k, onGuardar, onCerrar }: { k: CargaFila; onGuardar: (d
     <Dialog open onOpenChange={(v) => !v && !env && onCerrar()}>
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader><DialogTitle>Muestra · {k.mixers?.license_plate || k.patente_planta} · remito {k.remito_tipo || ""} {k.remito}</DialogTitle></DialogHeader>
-        <div className="space-y-2 text-[13px]">
-          {ultima && <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-[12.5px] font-bold text-blue-800">Última muestra: {ultima}</span>}
-          <label className="block text-[11.5px] font-semibold">Número de muestra *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: M-0413" /></label>
-          <label className="block text-[11.5px] font-semibold">Asentamiento medido (cm) *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-[13px]" inputMode="decimal" value={asent} onChange={(e) => setAsent(e.target.value)} placeholder="Ej: 12,5" /></label>
-          <div className="text-[12px] text-muted-foreground">Se crean 3 probetas (1 a 7 días y 2 a 28) con el moldeo en la fecha del despacho, igual que «Agregar muestra» del Historial.</div>
+        <div className="space-y-2 text-xs">
+          {ultima && <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">Última muestra: {ultima}</span>}
+          <label className="block text-[11px] font-medium">Número de muestra *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-xs" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: M-0413" /></label>
+          <label className="block text-[11px] font-medium">Asentamiento medido (cm) *<input className="mt-0.5 block h-[30px] w-full rounded-md border px-2 text-xs" inputMode="decimal" value={asent} onChange={(e) => setAsent(e.target.value)} placeholder="Ej: 12,5" /></label>
+          <div className="text-xs text-slate-500">Se crean 3 probetas (1 a 7 días y 2 a 28) con el moldeo en la fecha del despacho, igual que «Agregar muestra» del Historial.</div>
         </div>
         <DialogFooter><Btn onClick={onCerrar} disabled={env}>Cancelar</Btn><Btn tono="pri" disabled={!numero.trim() || a == null || env} onClick={async () => { setEnv(true); const ok = await onGuardar({ numero: numero.trim(), asentamiento: a! }); setEnv(false); if (ok) onCerrar() }}>Guardar muestra</Btn></DialogFooter>
       </DialogContent>
@@ -757,7 +760,7 @@ function BotonAgua({ abierta, pulso, total, abrir, soltar, disabled }: { abierta
     <div className="mt-1 flex flex-wrap items-center gap-2">
       <button
         disabled={disabled}
-        className={cn("h-[34px] select-none rounded-md border px-3 text-[13px] font-semibold disabled:opacity-45", abierta ? "border-blue-700 bg-blue-600 text-white" : "border-blue-300 bg-blue-50 text-blue-900")}
+        className={cn("h-[28px] select-none rounded border px-2.5 text-xs disabled:opacity-45", abierta ? "border-blue-700 bg-blue-600 text-white" : "border-blue-300 bg-transparent text-blue-800 hover:bg-blue-50")}
         style={{ touchAction: "none", WebkitUserSelect: "none" } as React.CSSProperties}
         onContextMenu={(ev) => ev.preventDefault()}
         onPointerDown={async (ev) => { ev.preventDefault(); apretado.current = true; const ok = await abrir(); if (!ok) apretado.current = false; else if (!apretado.current) soltar() }}
@@ -768,7 +771,7 @@ function BotonAgua({ abierta, pulso, total, abrir, soltar, disabled }: { abierta
       >
         {abierta ? `Cayendo agua… ${nf(pulso, 1)} L` : "Extra agua · mantené apretado"}
       </button>
-      <span className="text-[12px]">Total de este camión <b className="tabular-nums">{nf(total, 1)} L</b></span>
+      <span className="text-xs">Total de este camión <b className="font-medium tabular-nums">{nf(total, 1)} L</b></span>
     </div>
   )
 }

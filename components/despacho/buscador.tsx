@@ -6,10 +6,10 @@ import { Search, X } from "lucide-react"
 export function Buscador({ valor, onCambio }: { valor: string; onCambio: (v: string) => void }) {
   return (
     <div className="px-1.5 pt-1.5">
-      <label className="flex h-7 items-center gap-1.5 rounded-md bg-slate-100 px-2 text-[12px] text-slate-600">
+      <label className="flex h-7 items-center gap-1.5 rounded-md bg-slate-100 px-2 text-xs text-slate-600">
         <Search className="h-3.5 w-3.5 shrink-0" />
         <input
-          className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-slate-500"
+          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-slate-500"
           placeholder="Buscar:"
           value={valor}
           onChange={(e) => onCambio(e.target.value)}

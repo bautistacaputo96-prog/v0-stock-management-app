@@ -74,7 +74,7 @@ export function ColumnaCamiones({
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 border-b px-2.5 py-1">
-        <h2 className="text-[12px] font-medium">Camiones</h2>
+        <h2 className="text-xs font-medium">Camiones</h2>
         <span className="text-xs text-muted-foreground">{libresAca} libre{libresAca === 1 ? "" : "s"} en {nombre(planta)}</span>
         <span className="flex-1" />
         <div className="flex">

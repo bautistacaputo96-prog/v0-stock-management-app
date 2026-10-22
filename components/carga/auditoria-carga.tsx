@@ -21,6 +21,7 @@ import { NOMBRE_BANDERA, banderas, resumenAguaExtra, tiempos, type Bandera, type
 import { INFO_SALIDA, SALIDAS, nf, type Salida } from "@/lib/carga/tipos"
 import { Btn, CartelSimulada, Tag, hhmm, m3t, minTxt, mmss } from "./comun"
 import { ReporteDialog, type FilaReporte } from "./dialogos-carga"
+import { Buscador, coincide } from "@/components/despacho/buscador"
 
 type Planta = { id: string; name: string }
 const CATS: Bandera[] = ["sinRemito", "sinCarga", "difVol", "desv", "receta", "aguaDist", "aguaExtra", "indumix", "parada"]
@@ -39,6 +40,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
   const [planta, setPlanta] = useState(() => plants.find((p) => p.name === "Canning")?.id || plants[0]?.id || "")
   const [dia, setDia] = useState(diaHoy)
   const [soloProblemas, setSoloProblemas] = useState(false)
+  const [buscar, setBuscar] = useState("")
   const [conSinCarga, setConSinCarga] = useState(false)
   const [cat, setCat] = useState<Bandera | null>(null)
   const [puesto, setPuesto] = useState<Puesto | null>(null)
@@ -142,7 +144,8 @@ function Auditoria({ plants }: { plants: Planta[] }) {
 
   const ahora = Date.now()
   const todas = useMemo(() => (conSinCarga ? [...filas, ...sinCargaFilas] : filas).map((f) => ({ f, b: banderas(f, ahora, puesto?.tolerancias.pesaje) })), [filas, sinCargaFilas, conSinCarga, puesto]) // eslint-disable-line react-hooks/exhaustive-deps
-  const vis = todas.filter((x) => (!cat || x.b.includes(cat)) && (!soloProblemas || x.b.some((b) => b !== "aguaExtra" && b !== "simulada")))
+  const vis = todas.filter((x) => (!cat || x.b.includes(cat)) && (!soloProblemas || x.b.some((b) => b !== "aguaExtra" && b !== "simulada"))
+    && coincide(buscar, x.f.despacho?.remito, x.f.despacho?.patente, x.f.despacho?.cliente, x.f.despacho?.obra, x.f.despacho?.formula, x.f.cargas[0]?.patente_planta, x.f.cargas[0]?.plantista, x.f.cargas[0] ? extraInfo[x.f.cargas[0].id]?.formula : null))
   const cnt = (b: Bandera) => todas.filter((x) => x.b.includes(b)).length
   const agua = useMemo(() => resumenAguaExtra(filas), [filas])
   const conT = filas.map((f) => tiempos(f)).filter((t) => t.cargaMin != null)
@@ -181,53 +184,54 @@ function Auditoria({ plants }: { plants: Planta[] }) {
   }
 
   return (
-    <div className="d3c space-y-2 text-[13px]">
+    <div className="d3c space-y-2 text-xs">
       <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b bg-background/95 px-3 py-1 backdrop-blur">
-        <h1 className="text-base font-semibold">Auditoría de carga</h1>
+        <h1 className="text-base font-medium">Auditoría de carga</h1>
         <NuevoBadge />
         <div className="inline-flex rounded-md border p-0.5">
-          {plants.map((p) => <button key={p.id} onClick={() => setPlanta(p.id)} className={cn("h-7 rounded px-2.5 text-[13px]", planta === p.id ? "bg-muted font-semibold" : "text-muted-foreground")}>{p.name}</button>)}
+          {plants.map((p) => <button key={p.id} onClick={() => setPlanta(p.id)} className={cn("h-[26px] rounded px-2.5 text-xs", planta === p.id ? "bg-muted font-medium" : "text-slate-500")}>{p.name}</button>)}
         </div>
-        <input type="date" className="h-7 rounded-md border bg-card px-1.5 text-[12.5px]" value={dia} onChange={(e) => setDia(e.target.value || diaHoy())} />
-        <label className="inline-flex items-center gap-1 text-[12px]"><input type="checkbox" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} />Solo con problemas</label>
-        <label className="inline-flex items-center gap-1 text-[12px]" title="Despachos del día sin carga unida"><input type="checkbox" checked={conSinCarga} onChange={(e) => setConSinCarga(e.target.checked)} />Incluir despachos sin carga</label>
+        <input type="date" className="h-7 rounded-md border bg-card px-1.5 text-xs" value={dia} onChange={(e) => setDia(e.target.value || diaHoy())} />
+        <label className="inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} />Solo con problemas</label>
+        <label className="inline-flex items-center gap-1 text-xs" title="Despachos del día sin carga unida"><input type="checkbox" checked={conSinCarga} onChange={(e) => setConSinCarga(e.target.checked)} />Incluir despachos sin carga</label>
         <span className="flex-1" />
-        <Link href="/carga" className="text-[12.5px] text-blue-800 underline">Carga de planta</Link>
-        <Btn className="h-7 text-[12px]" onClick={exportar} disabled={!vis.length}>Exportar a Excel</Btn>
+        <Link href="/carga" className="text-xs text-blue-800 underline">Carga de planta</Link>
+        <Btn onClick={exportar} disabled={!vis.length}>Exportar a Excel</Btn>
       </div>
       {puesto?.sistema === "simulador" && <CartelSimulada />}
-      {sinMigracion && <div className="rounded-md border border-l-[3px] border-l-red-600 bg-red-50 px-2.5 py-1 text-[12px] font-semibold text-red-700">Falta aplicar en la base la migración de la carga de planta. Avisale a Bautista.</div>}
-      {!sinMigracion && !cargando && !puesto && <div className="rounded-md border px-2.5 py-1 text-[12px]">Esa planta no tiene un puesto de carga.</div>}
-      {cargando ? <div className="py-10 text-center text-muted-foreground">Cargando…</div> : puesto && (
+      {sinMigracion && <div className="rounded-md border border-l-[3px] border-l-red-600 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">Falta aplicar en la base la migración de la carga de planta. Avisale a Bautista.</div>}
+      {!sinMigracion && !cargando && !puesto && <div className="rounded-md border px-2.5 py-1 text-xs">Esa planta no tiene un puesto de carga.</div>}
+      {cargando ? <div className="py-10 text-center text-slate-500">Cargando…</div> : puesto && (
         <>
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 rounded-md border px-2.5 py-1 text-[12px]">
-            <span><span className="text-muted-foreground">Remitos </span><b>{filas.filter((f) => f.despacho).length}{conSinCarga ? ` (+${sinCargaFilas.length} sin carga)` : ""}</b></span>
-            <span><span className="text-muted-foreground">Cargas </span><b>{nCargas}</b></span>
-            <span><span className="text-muted-foreground">m³ remitos </span><b>{m3t(filas.reduce((s, f) => s + (f.despacho?.m3 || 0), 0))}</b></span>
-            <span><span className="text-muted-foreground">m³ cargas </span><b>{m3t(filas.reduce((s, f) => s + f.cargas.reduce((a, c) => a + Number(c.m3_cargados ?? c.m3 ?? 0), 0), 0))}</b></span>
-            <span><span className="text-muted-foreground">Espera en cola prom. </span><b>{promCola != null ? minTxt(promCola) : "—"}</b></span>
-            <span><span className="text-muted-foreground">Tiempo de carga prom. </span><b>{promCarga != null ? mmss(promCarga * 60) : "—"}</b></span>
-            <span><span className="text-muted-foreground">Espera hasta salir prom. </span><b>{promEspera != null ? `${nf(promEspera, 1)} min` : "—"}</b></span>
-            <span><span className="text-muted-foreground">Con problemas </span><b className="text-red-700">{todas.filter((x) => x.b.some((b) => b !== "aguaExtra" && b !== "simulada")).length}</b></span>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 rounded-md border px-2.5 py-1 text-xs">
+            <span><span className="text-slate-500">Remitos </span><b className="font-medium">{filas.filter((f) => f.despacho).length}{conSinCarga ? ` (+${sinCargaFilas.length} sin carga)` : ""}</b></span>
+            <span><span className="text-slate-500">Cargas </span><b className="font-medium">{nCargas}</b></span>
+            <span><span className="text-slate-500">m³ remitos </span><b className="font-medium">{m3t(filas.reduce((s, f) => s + (f.despacho?.m3 || 0), 0))}</b></span>
+            <span><span className="text-slate-500">m³ cargas </span><b className="font-medium">{m3t(filas.reduce((s, f) => s + f.cargas.reduce((a, c) => a + Number(c.m3_cargados ?? c.m3 ?? 0), 0), 0))}</b></span>
+            <span><span className="text-slate-500">Espera en cola prom. </span><b className="font-medium">{promCola != null ? minTxt(promCola) : "—"}</b></span>
+            <span><span className="text-slate-500">Tiempo de carga prom. </span><b className="font-medium">{promCarga != null ? mmss(promCarga * 60) : "—"}</b></span>
+            <span><span className="text-slate-500">Espera hasta salir prom. </span><b className="font-medium">{promEspera != null ? `${nf(promEspera, 1)} min` : "—"}</b></span>
+            <span><span className="text-slate-500">Con problemas </span><b className="font-medium text-red-700">{todas.filter((x) => x.b.some((b) => b !== "aguaExtra" && b !== "simulada")).length}</b></span>
           </div>
           <div className="flex flex-wrap gap-1">
-            <button onClick={() => setCat(null)} className={cn("h-7 rounded-md border px-2 text-[12px]", !cat && "border-slate-900 bg-slate-900 text-white")}><b>{todas.length}</b> Todas</button>
-            {CATS.map((k) => <button key={k} onClick={() => setCat(cat === k ? null : k)} className={cn("h-7 rounded-md border px-2 text-[12px]", cat === k && "border-slate-900 bg-slate-900 text-white")}><b className={cn(cnt(k) && cat !== k && "text-red-700")}>{cnt(k)}</b> {NOMBRE_BANDERA[k]}</button>)}
+            <button onClick={() => setCat(null)} className={cn("h-[26px] rounded border border-slate-200 px-2 text-xs", !cat && "border-slate-500 bg-slate-100")}><span className="tabular-nums">{todas.length}</span> Todas</button>
+            {CATS.map((k) => <button key={k} onClick={() => setCat(cat === k ? null : k)} className={cn("h-[26px] rounded border border-slate-200 px-2 text-xs", cat === k && "border-slate-500 bg-slate-100")}><span className={cn("tabular-nums", cnt(k) > 0 && "text-red-700")}>{cnt(k)}</span> {NOMBRE_BANDERA[k]}</button>)}
           </div>
           {cemento.length > 0 && (
-            <div className="rounded-md border border-l-[3px] border-orange-200 border-l-orange-500 px-2.5 py-1 text-[12px] text-orange-950">
-              <b>Cemento real contra teórico</b> (fórmula × m³ cargados): {cemento.map((c) => `${c.formula}: ${nf(c.real)} kg contra ${nf(c.teorico)} kg (${c.real - c.teorico >= 0 ? "+" : ""}${nf(c.real - c.teorico)} kg, ${c.n} carga${c.n > 1 ? "s" : ""})`).join(" · ")}.
+            <div className="rounded-md border border-l-[3px] border-slate-200 border-l-orange-500 bg-slate-50 px-2.5 py-0.5 text-xs">
+              <b className="font-medium">Cemento real contra teórico</b> (fórmula × m³ cargados): {cemento.map((c) => `${c.formula}: ${nf(c.real)} kg contra ${nf(c.teorico)} kg (${c.real - c.teorico >= 0 ? "+" : ""}${nf(c.real - c.teorico)} kg, ${c.n} carga${c.n > 1 ? "s" : ""})`).join(" · ")}.
             </div>
           )}
-          <div className="rounded-md border border-l-[3px] border-blue-200 border-l-blue-600 px-2.5 py-1 text-[12px] text-blue-950">
-            <b>Agua extra: {nf(agua.total)} L en {agua.camiones} camión{agua.camiones === 1 ? "" : "es"}</b>{agua.despues ? ` (${nf(agua.despues)} L después de terminar la carga)` : ""}. Por fórmula: {agua.porFormula.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"} · por camión: {agua.porCamion.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"} · por plantista: {agua.porPlantista.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"}.
+          <div className="rounded-md border border-l-[3px] border-slate-200 border-l-blue-600 bg-slate-50 px-2.5 py-0.5 text-xs">
+            <b className="font-medium">Agua extra: {nf(agua.total)} L en {agua.camiones} camión{agua.camiones === 1 ? "" : "es"}</b>{agua.despues ? ` (${nf(agua.despues)} L después de terminar la carga)` : ""}. Por fórmula: {agua.porFormula.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"} · por camión: {agua.porCamion.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"} · por plantista: {agua.porPlantista.map(([k, v]) => `${k} ${nf(v)} L`).join(" · ") || "—"}.
           </div>
-          <div className="d3c-card overflow-hidden rounded-md border bg-card">
+          <div className="-mx-1.5 max-w-md"><Buscador valor={buscar} onCambio={setBuscar} /></div>
+          <div className="d3c-card overflow-hidden rounded-md border border-slate-200 bg-card">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1180px] border-collapse text-[12px]">
-                <thead><tr className="bg-muted/50 text-left text-[11px] text-muted-foreground">
-                  {["Remito", "Camión", "Despacho", "Fórmula", "m³"].map((h) => <th key={h} className={cn("border-b px-1.5 py-0.5 font-semibold", h === "m³" && "text-right")}>{h}</th>)}
-                  {["Carga", "En cola", "Inicio", "Fin", "Carga", "Salió (GPS)", "Espera salir", "m³", "Receta", "Agua extra", "Problemas"].map((h, i) => <th key={h + i} className={cn("border-b px-1.5 py-0.5 font-semibold", i === 0 && "border-l-2", [1, 4, 6, 7, 9].includes(i) && "text-right")}>{h}</th>)}
+              <table className="w-full min-w-[1180px] border-collapse text-xs">
+                <thead><tr className="bg-muted/50 text-left text-[11px] text-slate-500">
+                  {["Remito", "Camión", "Despacho", "Fórmula", "m³"].map((h) => <th key={h} className={cn("border-b px-1.5 py-0.5 font-medium", h === "m³" && "text-right")}>{h}</th>)}
+                  {["Carga", "En cola", "Inicio", "Fin", "Carga", "Salió (GPS)", "Espera salir", "m³", "Receta", "Agua extra", "Problemas"].map((h, i) => <th key={h + i} className={cn("border-b px-1.5 py-0.5 font-medium", i === 0 && "border-l-2", [1, 4, 6, 7, 9].includes(i) && "text-right")}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {vis.map(({ f, b }, i) => {
@@ -236,30 +240,30 @@ function Auditoria({ plants }: { plants: Planta[] }) {
                     const ex = f.extras.reduce((s, e) => s + e.litros, 0)
                     return (
                       <tr key={i} className={cn(c && "cursor-pointer hover:bg-muted/40")} onClick={() => c && setAbierta(f)}>
-                        <td className="border-b px-1.5 py-0.5">{f.despacho ? <><Tag tono={f.despacho.remito_tipo === "X" ? "X" : "R"}>{f.despacho.remito_tipo || "R"}</Tag> {f.despacho.remito}</> : c?.origen === "prueba" ? <Tag tono="slate">PRUEBA</Tag> : <span className="font-semibold text-red-700">sin remito</span>}</td>
+                        <td className="border-b px-1.5 py-0.5">{f.despacho ? <><Tag tono={f.despacho.remito_tipo === "X" ? "X" : "R"}>{f.despacho.remito_tipo || "R"}</Tag> {f.despacho.remito}</> : c?.origen === "prueba" ? <Tag tono="slate">PRUEBA</Tag> : <span className="font-medium text-red-700">sin remito</span>}</td>
                         <td className="border-b px-1.5 py-0.5">{f.despacho?.patente || c?.patente_planta || "—"}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{f.despacho ? hhmm(f.despacho.despachado_at) : "—"}</td>
                         <td className="border-b px-1.5 py-0.5">{f.despacho?.formula || (c ? extraInfo[c.id]?.formula : "") || "—"}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{f.despacho ? m3t(f.despacho.m3) : "—"}</td>
-                        <td className="border-b border-l-2 px-1.5 py-0.5">{c ? (c.contador ? `N° ${c.contador}` : c.estado) : <span className="font-semibold text-red-700">sin carga</span>}{f.cargas.length > 1 ? ` +${f.cargas.length - 1}` : ""}</td>
+                        <td className="border-b border-l-2 px-1.5 py-0.5">{c ? (c.contador ? `N° ${c.contador}` : c.estado) : <span className="font-medium text-red-700">sin carga</span>}{f.cargas.length > 1 ? ` +${f.cargas.length - 1}` : ""}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.colaMin != null ? minTxt(t.colaMin) : ""}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{hhmm(c?.inicio_at)}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{hhmm(c?.fin_at)}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.cargaMin != null ? mmss(t.cargaMin * 60) : "—"}</td>
-                        <td className="border-b px-1.5 py-0.5 tabular-nums">{f.salida_gps ? hhmm(f.salida_gps) : c ? <span className="text-muted-foreground">—</span> : ""}</td>
+                        <td className="border-b px-1.5 py-0.5 tabular-nums">{f.salida_gps ? hhmm(f.salida_gps) : c ? <span className="text-slate-500">—</span> : ""}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.esperaSalidaMin != null ? minTxt(t.esperaSalidaMin) : ""}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{c ? m3t(f.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0)) : "—"}</td>
                         <td className="border-b px-1.5 py-0.5">{c?.receta_numero ?? "—"}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{ex ? `${nf(ex)} L` : ""}</td>
-                        <td className="whitespace-normal border-b px-1.5 py-0.5">{b.length ? b.map((x) => <span key={x} className={cn("d3c-tag mr-0.5 inline-block rounded px-1 text-[10.5px] font-semibold", x === "simulada" ? "bg-amber-100 text-amber-900" : x === "aguaExtra" ? "bg-blue-50 text-blue-800" : x === "indumix" ? "bg-sky-50 text-sky-900" : x === "parada" ? "bg-slate-800 text-white" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[x]}</span>) : <Tag tono="ok">OK</Tag>}{c?.revisada ? <Tag tono="ok" className="ml-0.5">revisada</Tag> : null}</td>
+                        <td className="whitespace-normal border-b px-1.5 py-0.5">{b.length ? b.map((x) => <span key={x} className={cn("d3c-tag mr-0.5 inline-block rounded px-1 text-[10.5px]", x === "simulada" ? "bg-amber-100 text-amber-900" : x === "aguaExtra" ? "bg-blue-50 text-blue-800" : x === "indumix" ? "bg-sky-50 text-sky-900" : x === "parada" ? "bg-slate-200 text-slate-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[x]}</span>) : <Tag tono="ok">OK</Tag>}{c?.revisada ? <Tag tono="ok" className="ml-0.5">revisada</Tag> : null}</td>
                       </tr>
                     )
                   })}
-                  {!vis.length && <tr><td colSpan={16} className="py-8 text-center text-muted-foreground">No hay cargas{cat ? " con esa categoría" : ""} ese día.</td></tr>}
+                  {!vis.length && <tr><td colSpan={16} className="py-8 text-center text-slate-500">No hay cargas{cat ? " con esa categoría" : ""} ese día.</td></tr>}
                 </tbody>
               </table>
             </div>
-            <div className="px-2 py-1 text-[11px] text-muted-foreground">Secuencia A: despacho → cola → carga → salida. «Despacho» es la hora fija del remito (cuando se grabó); «En cola», del despacho al inicio de la carga; «Inicio» y «Fin», las de la carga (hora del puente); «Salió», la salida de la geocerca de la planta por GPS (viajes_gps). Unión: por id (la carga salió del sistema), por remito en «Observación» o por camión y hora. «Sin carga» cuenta solo los días con cargas.</div>
+            <div className="px-2 py-1 text-[11px] text-slate-500">Secuencia A: despacho → cola → carga → salida. «Despacho» es la hora fija del remito (cuando se grabó); «En cola», del despacho al inicio de la carga; «Inicio» y «Fin», las de la carga (hora del puente); «Salió», la salida de la geocerca de la planta por GPS (viajes_gps). Unión: por id (la carga salió del sistema), por remito en «Observación» o por camión y hora. «Sin carga» cuenta solo los días con cargas.</div>
           </div>
         </>
       )}
@@ -269,11 +273,11 @@ function Auditoria({ plants }: { plants: Planta[] }) {
         return (
           <ReporteDialog
             titulo={`Reporte de carga${c.contador ? ` N° ${c.contador}` : ""}${abierta.despacho ? ` · Remito ${abierta.despacho.remito_tipo || ""} ${abierta.despacho.remito}` : ""}`}
-            cabecera={<>{abierta.despacho ? `${abierta.despacho.cliente} · ${abierta.despacho.obra}` : "—"} · <b>{abierta.despacho?.patente || c.patente_planta}</b>{c.patente_planta ? ` (Indumix «${c.patente_planta}»)` : ""} · {abierta.despacho?.formula || extraInfo[c.id]?.formula} · receta {c.receta_numero ?? "—"} · <b>{m3t(abierta.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0))} m³</b>{abierta.cargas.length > 1 ? ` en ${abierta.cargas.length} cargas` : ""} · {c.origen === "sistema" ? "desde el sistema" : c.origen === "prueba" ? "orden de prueba" : "leída del reporte de Indumix"} · plantista {c.plantista || "—"}{abierta.union ? ` · unión ${abierta.union}` : ""}{c.simulada ? " · PLANTA SIMULADA" : ""}</>}
+            cabecera={<>{abierta.despacho ? `${abierta.despacho.cliente} · ${abierta.despacho.obra}` : "—"} · <b className="font-medium">{abierta.despacho?.patente || c.patente_planta}</b>{c.patente_planta ? ` (Indumix «${c.patente_planta}»)` : ""} · {abierta.despacho?.formula || extraInfo[c.id]?.formula} · receta {c.receta_numero ?? "—"} · <b className="font-medium">{m3t(abierta.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0))} m³</b>{abierta.cargas.length > 1 ? ` en ${abierta.cargas.length} cargas` : ""} · {c.origen === "sistema" ? "desde el sistema" : c.origen === "prueba" ? "orden de prueba" : "leída del reporte de Indumix"} · plantista {c.plantista || "—"}{abierta.union ? ` · unión ${abierta.union}` : ""}{c.simulada ? " · PLANTA SIMULADA" : ""}</>}
             filas={filasR} extras={abierta.extras}
             tiempos={{ despachado: abierta.despacho?.despachado_at || null, inicio: c.inicio_at, fin: abierta.cargas[abierta.cargas.length - 1].fin_at, salida: abierta.salida_gps }}
             banderas={banderas(abierta, ahora, puesto?.tolerancias.pesaje)} onCerrar={() => setAbierta(null)}
-            pie={puede("carga", "editar") && !c.revisada ? <Btn onClick={() => revisar(c.id)}>Marcar revisada</Btn> : c.revisada ? <div className="text-[12px] text-emerald-800">Revisada.</div> : null}
+            pie={puede("carga", "editar") && !c.revisada ? <Btn onClick={() => revisar(c.id)}>Marcar revisada</Btn> : c.revisada ? <div className="text-xs text-emerald-800">Revisada.</div> : null}
           />
         )
       })()}

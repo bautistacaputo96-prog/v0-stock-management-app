@@ -283,7 +283,7 @@ export function EntregaDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && !enviando && onClose()}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto p-4 text-[13px] sm:max-w-[960px] [&_label]:text-[12px] [&_button[role=combobox]]:h-[30px] [&_button[role=combobox]]:text-[13px]">
+      <DialogContent className="max-h-[94vh] overflow-y-auto p-4 text-[13px] sm:max-w-[960px] [&_label]:text-xs [&_button[role=combobox]]:h-[30px] [&_button[role=combobox]]:text-[13px]">
         <DialogHeader><DialogTitle className="text-base">Entrega</DialogTitle></DialogHeader>
         <div className="space-y-2">
           <div className="rounded-lg border bg-muted/40 px-3 py-1.5 text-[13px]">
@@ -303,7 +303,7 @@ export function EntregaDialog({
                 <div className="text-xs text-muted-foreground">{ORIGEN_TEXTO(form.origenTipo, form.tipo)}</div>
               </div>
               {puedeCambiarTipo && form.origenTipo !== "manual" && (
-                <Button variant="outline" size="sm" className="h-[28px] text-[12px]" onClick={() => setCambiando(true)}>Cambiar solo en este remito</Button>
+                <Button variant="outline" size="sm" className="h-[28px] text-xs" onClick={() => setCambiando(true)}>Cambiar solo en este remito</Button>
               )}
             </div>
           ) : (
@@ -348,7 +348,7 @@ export function EntregaDialog({
                     <input type="checkbox" className="mt-0.5 h-4 w-4" checked={frenadaOk} onChange={(e) => setFrenadaOk(e.target.checked)} />
                     <span><b>La carga va a quedar frenada en la planta</b>: {c.motivo}. Lo resuelven Bautista, Fernando y Juan; se le avisa por mail a Juan Oreguy. ¿Despachar igual?</span>
                   </label>
-                ) : c.aguaDistinta ? <div className="text-[12px] font-semibold text-amber-800">{c.items.find((i) => i.clave === "agua")?.texto}.</div> : null}
+                ) : c.aguaDistinta ? <div className="text-xs font-semibold text-amber-800">{c.items.find((i) => i.clave === "agua")?.texto}.</div> : null}
               </div>
             )
           })()}
