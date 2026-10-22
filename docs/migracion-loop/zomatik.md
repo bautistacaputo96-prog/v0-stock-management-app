@@ -1418,3 +1418,32 @@ Después de la prueba se anula todo lo de prueba **a mano**, por Bautista.
    - Ejemplo de Bautista: barrio cerrado con un proyecto de 1000 m³ por etapa. Cada día que se programa sale una NP contra el proyecto por lo de ese día.
    - **Una NP por pedido y por día, siempre generada por nuestro sistema.** Se saca la opción "usar una NP existente" de 16.2 c. El proyecto que se elige queda guardado en la obra para los próximos días.
 2. **Los proyectos se siguen creando en Zomatik** (sin cambios respecto de 18.1).
+
+---
+
+## 23. Prueba real de NP con Bautista (22/10/2026) — mandan sobre lo anterior
+
+Bautista cargó y grabó en Zomatik dos NP de prueba. Claude solo leyó la red y la página, porque el permiso del sistema no deja a Claude escribir en Zomatik.
+
+1. **NP nueva:** NP 0001-00001175, código 157702. Cliente OBRA PROPIA REBUCRET (15893), Canning (116), lista 10247 "en 1", vendedor 100, 1 m³ de H21-620-10 C (CAN).
+   - El artículo en el pedido es `farticulo=1000015959` (`articulos.codigo`). **No es** el `codigoint` 10090020 de nuestra copia: hay que guardar los dos.
+   - **"Grabar" no devuelve el código:** redirige a `listado_pedidos.php`. El número sale de `_getnumerofactura.php` antes de grabar, y el código se busca en el listado por número (link `modificar_pedidos.php?codigo=N`).
+   - `pedidos_unico` es la clave del borrador de cada formulario y viaja en cada `manage_pedidos.php`.
+   - Zomatik muestra los errores de validación con `alert()`, por ejemplo "Vendedor debe ser completado". El robot tiene que validar antes de grabar.
+2. **NP de un proyecto (MATERIAL):** `modificar_pedidos.php?proyecto=576&tipo=1`.
+   - Trae cliente, vendedor (el del proyecto, 101), origen 3 y observaciones del proyecto.
+   - El depósito viene en PILAR: hay que cambiarlo.
+   - El comprobante y el número quedan bloqueados (muestra el número del proyecto). El número real lo asigna Zomatik al grabar.
+   - "Continuar" (`manage_pedidos.php?...&fproyecto=576&forigen=3`) **trae el renglón del proyecto con lo disponible**: H30-620-10 C (CAN), cantidad 823,4. Sirve para mostrar el saldo en m³ al programar. Se cambia la cantidad a la del día y se graba.
+3. **La sucursal la comparte el usuario, no la ventana.** El MATERIAL se abrió en REBUCRET, pero la NP se grabó en **RUTA 25 - CONCRETUS** (NP 0001-00007706, código 157703, numeración de Concretus). En esa ventana nadie cambió la sucursal.
+   - Causa probable: el sistema de Concretus entra con el mismo usuario (stock de producto, materia prima, pagos, etc.) y hace `setSucursal(17)`.
+   - **Bautista decidió (22/10) que por ahora no hay usuario aparte**, así que el robot tiene que blindarse:
+     - (a) `setSucursal(18)` justo antes de pedir el número y de nuevo justo antes de grabar, con el menor tiempo posible entre medio;
+     - (b) el número pedido tiene que ser de la serie de REBUCRET (NP 0001-00001xxx / NP2 0001-00002xxx; las de RUTA 25 van por 0001-00007xxx / 0001-00006xxx). Si no, no graba y reintenta;
+     - (c) después de grabar, confirmar en el listado de REBUCRET que la NP existe con ese número. Si no aparece, buscarla en RUTA 25 por la marca en observaciones, dejarla en "revisar" y **avisar al gerencial en el momento** para vaciarla;
+     - (d) cada NP lleva una marca en observaciones ("Sistema Rebucret · pedido N") para encontrarla siempre;
+     - (e) una sola sesión del robot a la vez (cola).
+   - `modificar_pedidos.php?codigo=N` abre la NP sin importar la sucursal activa.
+4. **Cancelar una NP:** no hay "borrar NP". Se borran los renglones (tacho, `verificar(id)` → `manage_pedidos.php?...&fborrar=id`) y se graba. La NP queda con total 0 y sin ítems. Así quedaron 1175 y 7706.
+   - El tacho pide `confirm()`: en un navegador sin diálogos no anda, pero el robot llama directo.
+   - **Falta ver** si al vaciar la NP del proyecto el saldo vuelve a 823,4 (abrir MATERIAL), y qué estado muestra el listado (PEN / REM).
