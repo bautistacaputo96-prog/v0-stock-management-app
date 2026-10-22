@@ -74,7 +74,7 @@ export function ColumnaCamiones({
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 border-b px-2.5 py-1">
-        <h2 className="text-[13px] font-medium">Camiones</h2>
+        <h2 className="text-[12px] font-medium">Camiones</h2>
         <span className="text-xs text-muted-foreground">{libresAca} libre{libresAca === 1 ? "" : "s"} en {nombre(planta)}</span>
         <span className="flex-1" />
         <div className="flex">
@@ -115,17 +115,17 @@ export function ColumnaCamiones({
               <div className="flex items-center gap-2 py-1 pl-2 pr-0.5">
                 <div className="w-[62px] shrink-0 text-center leading-tight">
                   <Truck className="mx-auto h-5 w-5 text-amber-500" aria-hidden />
-                  <div className="truncate text-[12px] font-medium tracking-wide text-blue-700">{c.patente}</div>
+                  <div className="truncate text-[11px] font-medium tracking-wide text-blue-700">{c.patente}</div>
                 </div>
                 <div className="w-[78px] shrink-0 leading-tight">
-                  <div className="flex items-center gap-1 text-[12px] tabular-nums">
+                  <div className="flex items-center gap-1 text-[11px] tabular-nums">
                     <i className={cn("inline-block h-[7px] w-[7px] shrink-0 rounded-full", PUNTO[e.clave])} />
                     {e.desde != null ? tiempoEstado((ahora - e.desde) / 60000) : "—"}
                   </div>
                   <div className="truncate text-[10.5px] text-slate-500">{e.etiqueta}</div>
                 </div>
                 <div className="min-w-0 flex-1 leading-tight">
-                  <div className="flex items-center gap-1 text-[12px]">
+                  <div className="flex items-center gap-1 text-[11px]">
                     <CircleUser className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
                     <span className="truncate">{c.chofer || "sin chofer hoy"}</span>
                   </div>

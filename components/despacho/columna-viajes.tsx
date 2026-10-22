@@ -112,14 +112,14 @@ export function ColumnaViajes({
               onContextMenu={(e) => e.preventDefault()}
               style={{ touchAction: "pan-y", WebkitTouchCallout: "none" } as React.CSSProperties}
               className={cn(
-                "d3c-card relative select-none rounded-md border border-r-[3px] border-slate-200 border-r-violet-700 bg-slate-50 px-2 py-1 leading-tight",
+                "d3c-card relative select-none rounded-md border border-r-[3px] border-slate-200 border-r-violet-700 bg-slate-50 px-2 py-0.5 leading-[1.15]",
                 puedeDespachar && "cursor-pointer",
                 at.tipo === "atrasado" && "border-red-400 border-r-red-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
             >
               {/* Fila 1: número de pedido (y bomba) · 👍 y n/N */}
-              <div className="flex items-center gap-1 border-b border-slate-200 pb-0.5 text-[11px] text-slate-500">
+              <div className="flex items-center gap-1 text-[10.5px] text-slate-500">
                 <span className="tabular-nums">{numeroPedido[p.id] ?? "—"}</span>
                 {bomba && <Truck className="h-3 w-3 text-blue-600" aria-label="bombeado" />}
                 <span className="flex-1" />
@@ -127,19 +127,17 @@ export function ColumnaViajes({
                 <span className="tabular-nums">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>
               </div>
               {/* Fila 2: cliente · m³ › hora de carga */}
-              <div className="mt-0.5 flex items-baseline gap-2 text-[13px] font-medium">
+              <div className="flex items-baseline gap-2 text-[12px] font-medium">
                 <span className="min-w-0 flex-1 truncate">{p.clients?.name || "Cliente"}</span>
                 <span className="shrink-0 tabular-nums">{m3txt(v.m3)} m³ <span className="font-normal text-slate-400">›</span> {hhmm(v.hora_carga)}</span>
               </div>
-              {/* Fila 3: obra */}
-              <div className="truncate text-[12px] text-slate-500">{o?.name || "Obra"}</div>
-              {/* Fila 4: fórmula · 📋 · ⋮ */}
+              {/* Fila 3: obra · fórmula · 📋 · ⋮ (una sola línea, para que entren más viajes) */}
               <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                <span className="min-w-0 flex-1 truncate">{p.formulas?.code}</span>
+                <span className="min-w-0 flex-1 truncate">{o?.name || "Obra"}<span className="text-slate-400"> · {p.formulas?.code}</span></span>
                 {p.observations && <span title={p.observations} className="shrink-0"><ClipboardList className="h-3.5 w-3.5" aria-label="observaciones" /></span>}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="h-5 w-5 shrink-0 rounded text-[13px] leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
+                    <button className="h-4 w-4 shrink-0 rounded text-[12px] leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[200px]">
                     {puedeDespachar && <DropdownMenuItem className="min-h-[30px]" onClick={() => onDespachar(v.clave)}>Despachar</DropdownMenuItem>}

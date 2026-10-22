@@ -73,8 +73,8 @@ export function ColumnaPedidos({
               {p.confirmado_at && <span title="Confirmado" className="text-[11px]">👍</span>}
               {pt && est !== "cancelado" && <span className={cn("shrink-0 text-[10px]", pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "text-slate-400")} title={pt.texto}>●</span>}
             </div>
-            <div className="truncate text-[12px] text-slate-500">{p.clients?.name || "Cliente"}</div>
-            <div className="text-[12px] tabular-nums">{m3txt(desp)} / {m3txt(p.quantity_m3)} m³</div>
+            <div className="truncate text-[11px] text-slate-500">{p.clients?.name || "Cliente"}</div>
+            <div className="text-[11px] tabular-nums">{m3txt(desp)} / {m3txt(p.quantity_m3)} m³</div>
           </div>
           <button
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-200"
@@ -133,7 +133,7 @@ export function ColumnaPedidos({
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-[13px] font-medium">Pedidos</h2>
+        <h2 className="text-[12px] font-medium">Pedidos</h2>
         <span className="text-xs text-muted-foreground">{activos.length}</span>
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>

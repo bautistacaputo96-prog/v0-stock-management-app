@@ -671,7 +671,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         <section ref={grilla} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[tab]}</section>
       ) : (
         // Viajes es la columna principal: más ancha, para leer obra y cliente enteros en 1366 px (22/10)
-        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr)" }}>
+        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr)" }}>
           {(["viajes", "camiones", "pedidos"] as Tab[]).map((t) => (
             <section key={t} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[t]}</section>
           ))}
