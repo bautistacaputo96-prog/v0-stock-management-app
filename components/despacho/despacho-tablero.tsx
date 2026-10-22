@@ -49,6 +49,7 @@ import { CancelarDialog, FinalizarDialog } from "./finalizar-dialog"
 import { HumedadAcopio } from "./humedad-acopio"
 import { usarArrastre } from "./usar-arrastre"
 import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
+import { avisarNp, useNp } from "@/lib/zomatik/np-cliente"
 
 const MIN = 60_000
 const CLAVE_PLANTA = "rebucret_despacho_planta"
@@ -89,6 +90,9 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
   const [gps, setGps] = useState<Record<string, GpsCamion>>({})
   const [cargando, setCargando] = useState(true)
+  // Zomatik Z2: NP de los pedidos del día (con la llave apagada viene vacío)
+  const idsPedidos = useMemo(() => pedidos.map((p) => p.id), [pedidos])
+  const np = useNp(idsPedidos)
 
   // Pantalla
   const [selViaje, setSelViaje] = useState<string | null>(null)
@@ -562,6 +566,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       details: { Estado: `${p.status} → cancelado`, "m³": p.quantity_m3, Enviado: p.dispatched_m3 || 0, Motivo: `${textoMotivo(tipo)} — ${detalle}` },
     })
     toast({ title: "Pedido cancelado", description: `${p.clients?.name} · ${m3txt(Math.max(0, p.quantity_m3 - Number(p.dispatched_m3 || 0)))} m³ al contador «Cancelado»` })
+    // Zomatik Z2: se vacía su NP (si no tiene remitos)
+    if (np.porPedido[p.id]?.activo) avisarNp(p.id).then(() => np.recargarEn())
     setCancelar(null)
     cargar()
     return null
@@ -578,6 +584,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     toast({ title: "Total actualizado", description: `Nueva cantidad: ${m3txt(qty)} m³` })
     if (qty !== Number(p.quantity_m3)) {
       logActivity({ action: "editar", entity: "pedido", entityId: p.id, reference: `${p.clients?.name || "-"} · ${p.construction_sites?.name || "-"}`, plantId: p.plant_id, details: { "m³": `${p.quantity_m3} → ${qty}`, Origen: "Editar total (Despacho en tres columnas)", Motivo: motivoTotal.trim() } })
+      // Zomatik Z2: si se agrandó, NP adicional por la diferencia
+      if (np.porPedido[p.id]?.activo) avisarNp(p.id).then(() => np.recargarEn())
       const rv = await regenerarViajesPedido(sb, p.id, currentUserName(), { soloSiTiene: true, motivo: "cantidad" })
       if (rv.error) toast({ title: "Los viajes no se actualizaron", description: rv.error, variant: "destructive" })
       else if (rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido" })
@@ -612,6 +620,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     pedidos: (
       <ColumnaPedidos
         pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad} numeroPedido={numeroPedido}
+        npPorPedido={np.porPedido}
         permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}
@@ -719,6 +728,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
           viajes={viajesDePedido[entrega.pedido.id] || []} totalViajes={totalPorPedido[entrega.pedido.id] || 0}
           camiones={camiones} choferes={choferes} empresas={empresas} puedeCambiarTipo={puedeCambiarTipo}
           onDespachado={despachado} onRemitoListo={setRemitoListo}
+          np={np.porPedido[entrega.pedido.id]} onNp={np.recargar}
         />
       )}
 

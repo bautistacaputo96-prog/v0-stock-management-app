@@ -32,6 +32,8 @@ export type ActivityEntity =
   | "humedad"
   | "stock"
   | "orden_trabajo"
+  // Zomatik Z2
+  | "zomatik_np"
 
 export const ENTITY_LABEL: Record<ActivityEntity, string> = {
   despacho: "Despacho",
@@ -54,6 +56,7 @@ export const ENTITY_LABEL: Record<ActivityEntity, string> = {
   humedad: "Humedad del acopio",
   stock: "Recuento / ajuste de stock",
   orden_trabajo: "Orden de trabajo",
+  zomatik_np: "Nota de pedido (Zomatik)",
 }
 
 export async function logActivity(opts: {

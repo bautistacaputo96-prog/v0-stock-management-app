@@ -150,7 +150,11 @@ export function filasFichas(foto: Foto): { codigo: number; valores: Record<strin
 export function filasArticulos(foto: Foto): Record<string, unknown>[] {
   if (!foto.articulos) return []
   const unicos = [...new Map(foto.articulos.map((a) => [a.codigo, a])).values()]
-  return unicos.map((a) => ({ codigo: a.codigo, nombre: a.nombre, linea: a.linea || null, visto_at: foto.inicio, actualizado_at: foto.inicio }))
+  return unicos.map((a) => ({
+    codigo: a.codigo, nombre: a.nombre, linea: a.linea || null, visto_at: foto.inicio, actualizado_at: foto.inicio,
+    // Z2: siempre la misma clave en todas las filas (PostgREST rechaza un lote con claves distintas)
+    codigo_sistema: a.codigo_sistema ?? null,
+  }))
 }
 
 export function filasProyectos(foto: Foto): Record<string, unknown>[] {

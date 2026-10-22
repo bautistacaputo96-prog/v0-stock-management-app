@@ -1,0 +1,14 @@
+<html><body>
+<form method="post" action="" name="frm_selsuc"><select name="selsuc"><option value="18" selected>REBUCRET</option></select></form>
+<form enctype="multipart/form-data" action="grabar_pedidos.php?codigo={{CODIGO}}" method="POST" name="frm_pedido" id="frm_pedido" onsubmit="return validar(true);">
+<input type="hidden" name="pedidos_unico" value="0425037001792599999"><input type="hidden" name="pedidos" value="{{CODIGO}}"><input type="hidden" name="fparam" value="">
+<input type="hidden" name="proyecto" value="0"><input type="hidden" name="tipo" value="0">
+<input type="hidden" name="idcliente" value="15893"><input type="text" name="cliente" value="OBRA PROPIA REBUCRET"><input type="TEXT" name="razon_social" value="OBRA PROPIA REBUCRET">
+<input type="TEXT" name="cuit" value="30712345678">
+<select name="deposito"><option value="116" selected>Canning</option></select><input name="fecha_entrega" value="2026-10-23">
+<textarea name="observaciones_entrega">Obra: Planta</textarea><textarea name="observaciones">{{OBS}}</textarea>
+<select name="comprobante" disabled><option value="15" selected>Nota de Pedido</option></select><input type="TEXT" name="numero" value="{{NUMERO}}">
+<input type="radio" name="origen" value="1" checked><input type="radio" name="origen" value="2"><input type="radio" name="origen" value="3">
+<input type="hidden" name="idlista" value="10247"><input type="hidden" name="idvendedor" value="100"><input type="text" name="vendedor" value="MALDONADO FERNANDO"><input type="hidden" name="estado" value="1">
+<div id="listaprecios"><table width="100%"><tr><td class="headerlistado">Articulo</td><td>Cantidad</td></tr>{{RENGLONES}}</table></div>
+</form></body></html>

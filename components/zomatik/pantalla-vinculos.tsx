@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
+import { NpLlave } from "@/components/zomatik/np-llave"
 import { tokensNombre } from "@/lib/zomatik/parseo"
 
 type Conf = "alta" | "media" | "baja"
@@ -398,6 +399,8 @@ export function PantallaVinculos() {
           Confirmar todas las de confianza alta ({altas.length})
         </Button>
       </div>
+      {/* Zomatik Z2: llave de la NP automática por planta y NP para revisar */}
+      <NpLlave />
       <div className="flex flex-wrap items-center gap-1">
         <Tab k="clientes" t="Clientes" />
         <Tab k="formulas" t="Fórmulas" />

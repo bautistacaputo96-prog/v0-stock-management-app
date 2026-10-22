@@ -40,6 +40,9 @@ import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarV
 import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoDescargaObra, m3ParaSugerir, type FuenteTiempo } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
+import { NpBloque } from "@/components/zomatik/np-bloque"
+import { NpChip } from "@/components/zomatik/np-chip"
+import { avisarNp, generarNpAhora, useNp, usePasadaNp, type EleccionNp } from "@/lib/zomatik/np-cliente"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
@@ -242,10 +245,18 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const puedeCrear = puede("programacion", "cargar")
   const [motivo, setMotivo] = useState("")
   const [cancelar, setCancelar] = useState<ScheduledDispatch | null>(null)
+  // Zomatik Z2: NP nueva o de un proyecto (la guarda el servidor al avisar el pedido)
+  const NP_NUEVA: EleccionNp = { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
+  const [npEleccion, setNpEleccion] = useState<EleccionNp>(NP_NUEVA)
   // Formulario abierto en modo lectura (pedido ajeno sin permiso de editar)
   const soloLectura = !!editingDispatch && !ajustaPedido(editingDispatch)
   // Fase 2: viajes, solo para los usuarios con el interruptor de funciones nuevas
   const ve = useFuncionesNuevas()
+  // Zomatik Z2: NP de los pedidos de la semana y la llave de cada planta (apagada = "se carga a mano")
+  const idsSemana = useMemo(() => dispatches.map((d) => d.id), [dispatches])
+  const np = useNp(idsSemana)
+  const hayNpActiva = Object.values(np.plantas).some((p) => p.activo)
+  usePasadaNp(puedeCrear && hayNpActiva, np.recargar)
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
   const [paramsPorPlanta, setParamsPorPlanta] = useState<Record<string, Parametros>>({})
   // Fase 2b: ubicación de la obra y viaje real desde la planta del pedido
@@ -475,6 +486,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setViajeOrigen(null)
     setEditingDispatch(null)
     setCuitPrompt("")
+    setNpEleccion(NP_NUEVA)
     setIsDialogOpen(true)
   }
 
@@ -511,6 +523,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setViajeOrigen(dispatch.viaje_min != null ? "pedido" : null)
     setEditingDispatch(dispatch)
     setCuitPrompt("")
+    const dz = dispatch as ScheduledDispatch & { zomatik_np_tipo?: string | null; zomatik_proyecto_codigo?: number | null; zomatik_proyecto_tope_m3?: number | null }
+    setNpEleccion(dz.zomatik_np_tipo === "proyecto" && dz.zomatik_proyecto_codigo ? { tipo: "proyecto", proyecto_codigo: dz.zomatik_proyecto_codigo, tope_m3: dz.zomatik_proyecto_tope_m3 ?? null } : NP_NUEVA)
     setIsDialogOpen(true)
   }
 
@@ -711,6 +725,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         }
       }
 
+      // Zomatik Z2: la NP del pedido (solo con la llave de la planta prendida)
+      if (pedidoId && np.plantas[plantToUse]?.activo) {
+        const rnp = await avisarNp(pedidoId, npEleccion)
+        if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
+        else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
+        else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        np.recargarEn()
+      }
+
       setIsDialogOpen(false)
       loadData()
     } catch (err) {
@@ -766,6 +789,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       toast({ title: "Error", description: "No se pudo cancelar", variant: "destructive" })
     } else {
       toast({ title: "Despacho cancelado" })
+      // Zomatik Z2: pedido cancelado → se vacía su NP (sin remitos)
+      if (np.plantas[dispatch.plant_id]?.activo) avisarNp(dispatch.id).then(() => np.recargarEn())
       // Sin mail: el pedido no se borra
       await logActivity({
         action: "editar",
@@ -780,6 +805,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   }
 
   /** Menú ⋯ del pedido (remito, editar, viajes, eliminar): en la tarjeta del pedido y en cada viaje de la grilla */
+  async function generarAhora(d: ScheduledDispatch) {
+    toast({ title: "Generando la NP en Zomatik…", description: "Puede tardar hasta medio minuto." })
+    const r = await generarNpAhora(d.id)
+    toast({ title: r.ok ? "NP lista" : "No se generó la NP", description: r.texto, variant: r.ok ? undefined : "destructive" })
+    np.recargar()
+  }
+
   function menuPedido(d: ScheduledDispatch) {
     return (
       <DropdownMenu>
@@ -801,6 +833,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <DropdownMenuItem onClick={() => setGerenciar(d as unknown as PedidoGerenciador)}>
               <Truck className="h-4 w-4 mr-2" />
               Viajes <NuevoBadge className="ml-2" />
+            </DropdownMenuItem>
+          )}
+          {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error) */}
+          {puedeCrear && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
+            <DropdownMenuItem onClick={() => generarAhora(d)}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Generar NP ahora
             </DropdownMenuItem>
           )}
           {puede("programacion", "borrar") && (
@@ -1050,6 +1089,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                                 {d.metodo_descarga && <span>· {d.metodo_descarga === "bomba" ? "bomba" : "directo"}</span>}
                                 {d.mixers && <span>| {d.mixers.license_plate}</span>}
                               </div>
+                              {/* Zomatik Z2: la NP del pedido */}
+                              <NpChip estado={np.porPedido[d.id]} />
                               {/* Fase 2: viajes y confirmación (solo con el interruptor) */}
                               {ve && ((viajesPorPedido[d.id]?.length && !["cancelled", "completed"].includes(d.status)) || d.confirmado_at) ? (
                                 <div className="flex items-center gap-1 text-[10px] text-violet-800">
@@ -1445,6 +1486,20 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               )}
             </SeccionPedido>
 
+            <SeccionPedido titulo="Nota de pedido (Zomatik)">
+              <NpBloque
+                planta={np.plantas[form.plant_id]}
+                clientId={form.client_id}
+                siteId={form.construction_site_id}
+                m3={parseFloat(form.quantity_m3) || 0}
+                valor={npEleccion}
+                onCambio={setNpEleccion}
+                onM3={(v) => setForm({ ...form, quantity_m3: String(v) })}
+                soloLectura={soloLectura}
+                estado={editingDispatch ? np.porPedido[editingDispatch.id] : null}
+              />
+            </SeccionPedido>
+
             {/* Lo menos usado, plegado */}
             <div className="space-y-1.5">
               <button type="button" onClick={() => setMasDatos(!masDatos)} className="flex w-full items-center gap-1 border-b pb-0.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
@@ -1525,7 +1580,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             <Button variant="outline" size="sm" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
             {!soloLectura && (
               <Button size="sm" onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo))}>
-                {saving ? "Guardando..." : editingDispatch ? "Guardar" : "Programar"}
+                {saving ? "Guardando..." : editingDispatch ? "Guardar" : np.plantas[form.plant_id]?.activo ? "Programar y generar NP" : "Programar"}
               </Button>
             )}
           </DialogFooter>

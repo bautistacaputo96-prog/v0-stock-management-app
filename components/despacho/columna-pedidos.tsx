@@ -12,6 +12,8 @@ import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { cn } from "@/lib/utils"
 import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
+import { NpChip } from "@/components/zomatik/np-chip"
+import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
 
 export type PermisosPedido = {
   despachar: boolean
@@ -20,7 +22,7 @@ export type PermisosPedido = {
 }
 
 export function ColumnaPedidos({
-  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido,
+  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido, npPorPedido = {},
   onConfirmar, onGerenciador, onEditarTotal, onVerEntregas, onSuspender, onReabrir, onFinalizar, onCancelar,
 }: {
   pedidos: PedidoT[]
@@ -32,6 +34,8 @@ export function ColumnaPedidos({
   permisos: PermisosPedido
   /** número del pedido en el día */
   numeroPedido: Record<string, number>
+  /** Zomatik Z2: NP de cada pedido (vacío con la llave apagada) */
+  npPorPedido?: Record<string, EstadoPedidoNp>
   onConfirmar: (p: PedidoT) => void
   onGerenciador: (p: PedidoT) => void
   onEditarTotal: (p: PedidoT) => void
@@ -75,6 +79,9 @@ export function ColumnaPedidos({
             </div>
             <div className="truncate text-[11px] text-slate-500">{p.clients?.name || "Cliente"}</div>
             <div className="text-[11px] tabular-nums">{m3txt(desp)} / {m3txt(p.quantity_m3)} m³</div>
+            {(act || susp) && (npPorPedido[p.id]?.control.aviso && !npPorPedido[p.id]?.excepcion
+              ? <div className="text-[11px] font-medium text-red-700" title={npPorPedido[p.id]?.nps.map((x) => x.mensaje).filter(Boolean).join("\n") || undefined}>NP pendiente: avisale a Programación</div>
+              : <NpChip estado={npPorPedido[p.id]} />)}
           </div>
           <button
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-200"

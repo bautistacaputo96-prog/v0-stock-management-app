@@ -17,6 +17,8 @@ import { Switch } from "@/components/ui/switch"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { NpAviso } from "./np-aviso"
+import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { currentUserName } from "@/lib/current-user"
 import { textoBomba, type Chofer, type EmpresaBombeo } from "@/lib/maestros"
@@ -61,7 +63,7 @@ const ORIGEN_TEXTO = (o: OrigenTipo | null, tipo: TipoRemito | null) => {
 }
 
 export function EntregaDialog({
-  abierta, onClose, planta, otraPlanta, viajes, totalViajes, camiones, choferes, empresas, puedeCambiarTipo, onDespachado, onRemitoListo,
+  abierta, onClose, planta, otraPlanta, viajes, totalViajes, camiones, choferes, empresas, puedeCambiarTipo, onDespachado, onRemitoListo, np, onNp,
 }: {
   abierta: EntregaAbierta | null
   onClose: () => void
@@ -78,6 +80,9 @@ export function EntregaDialog({
   onDespachado: (r: ResultadoDespacho) => void
   /** Si el navegador no dejó abrir el PDF, se ofrece imprimirlo desde un aviso */
   onRemitoListo: (r: { id: string; remito: string; tipo: TipoRemito; m3: number; cliente: string; obra: string; patente: string; chofer: string }) => void
+  /** Zomatik Z2: NP del pedido (con la llave apagada no se muestra nada) */
+  np?: EstadoPedidoNp | null
+  onNp?: () => void
 }) {
   const { toast } = useToast()
   const p = abierta?.pedido || null
@@ -278,6 +283,8 @@ export function EntregaDialog({
     }
   }
 
+  // Zomatik Z2: en modo duro, sin NP ni excepción no se despacha (la base lo frena igual)
+  const npFrena = !!np?.control?.bloquea
   const txtCamion = (c: CamionT) =>
     c.e.clave === "planta" ? (c.e.plantaId === planta.id ? "libre" : `libre en ${c.e.plantaId === otraPlanta?.id ? otraPlanta?.name : "otra planta"}`) : c.e.etiqueta.toLowerCase()
 
@@ -292,6 +299,9 @@ export function EntregaDialog({
             <div className="mt-0.5"><b>{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
             <div className="mt-0.5">Total <b>{m3txt(p.quantity_m3)} m³</b> · enviado <b>{m3txt(enviado)}</b> · falta <b className="text-amber-600">{m3txt(falta)}</b></div>
           </div>
+
+          {/* Zomatik Z2: NP pendiente (en rojo) y excepción gerencial */}
+          <NpAviso pedidoId={p.id} estado={np} onCambio={() => onNp?.()} />
 
           {/* Tipo de remito: R (con factura) / X (sin factura) */}
           {cargando && !form.tipo ? (
@@ -477,8 +487,8 @@ export function EntregaDialog({
         </div>
         <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" className="h-[32px] text-[13px]" onClick={onClose} disabled={enviando}>Cancelar</Button>
-          <Button variant="outline" className="h-[32px] text-[13px]" onClick={() => despachar(true)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>🖨 Despachar e imprimir</Button>
-          <Button className="h-[32px] bg-green-600 text-[13px] hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>
+          <Button variant="outline" className="h-[32px] text-[13px]" onClick={() => despachar(true)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta || npFrena}>🖨 Despachar e imprimir</Button>
+          <Button className="h-[32px] bg-green-600 text-[13px] hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta || npFrena}>
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Despachar"}
           </Button>
         </DialogFooter>

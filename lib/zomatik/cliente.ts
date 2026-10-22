@@ -1,5 +1,5 @@
 /**
- * Cliente de Zomatik (concretus.zomatik.com) — SOLO servidor y SOLO LECTURA (etapa Z0).
+ * Cliente de Zomatik (concretus.zomatik.com) — SOLO servidor. Lectura (Z0) y, aparte, la nota de pedido (Z2).
  *
  * Adaptado de `lib/zomatik.ts` del repo de Concretus. Zomatik no tiene API: se usa como un navegador.
  *   1. Login con ZOMATIK_USER / ZOMATIK_PASS (variables de Vercel) → cookie de sesión.
@@ -8,9 +8,10 @@
  *      exportar=1 (XLSX) o sin exportar (HTML, que trae los links con los códigos internos).
  *
  * Reglas (spec, puntos 10, 12 y 17.6):
- *   - Lista cerrada de rutas: solo login, home (sucursal), buscadores de listados y reportes (`?enviado=1`),
+ *   - Lista cerrada de rutas (web.ts): solo login, home (sucursal), buscadores de listados y reportes (`?enviado=1`),
  *     fichas de cliente por GET y el XLS de un acopio. Cualquier otra ruta (manage_*, grabar_*, generar_*, set_*,
- *     _get*) se rechaza ANTES de salir. En esta etapa no hay ninguna función que escriba en Zomatik.
+ *     _get*) se rechaza ANTES de salir. La única excepción es el grupo de la NP (Z2, `navegadorNp`), que pide la
+ *     llave de la planta prendida (`np-servidor.ts`).
  *   - Un login por corrida como máximo (y por proceso, uno cada 10 min). La cookie se reutiliza (en memoria y en `integraciones`, que solo lee
  *     la clave de servicio). Si Zomatik rechaza el usuario, no se vuelve a intentar por 30 min en ningún proceso:
  *     muchos logins fallidos pueden bloquear el usuario (es el de Bautista).
@@ -19,7 +20,8 @@
 import * as XLSX from "xlsx"
 import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, type Fila } from "@/lib/zomatik/parseo"
-import { ZOMATIK_WEB } from "@/lib/zomatik/web"
+import type { LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
+import { ZOMATIK_WEB, LISTADOS, rutaPermitida, rutaDeLocation, rutaEscrituraNp } from "@/lib/zomatik/web"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
 /** Sucursal REBUCRET en el selector global (spec 3). */
@@ -56,33 +58,10 @@ export type FormInfo = {
 }
 
 // ---------------------------------------------------------------------------
-// Lista cerrada de rutas (solo lectura)
+// Lista cerrada de rutas: vive en web.ts (solo lectura + el grupo aparte de la NP, Z2)
 // ---------------------------------------------------------------------------
 
-const PROHIBIDO = /(^|\/)(manage_|grabar_|generar_|set_|_get|_validar|_traer|eliminar|borrar|anular|modificar_(?!clientes\.php\?codigo=\d+$))/i
-
-/** Los únicos listados que lee Z0 (buscador por GET y búsqueda/export por POST `?enviado=1`). */
-export const LISTADOS = ["listado_clientes.php", "listado_articulos.php", "reporte_remitosventa.php", "listado_proyectos.php", "listado_pedidos.php"] as const
-
-/** ¿Se puede pedir esta ruta? `metodo` POST solo para login, sucursal y buscadores (`?enviado=1`). */
-export function rutaPermitida(path: string, metodo: "GET" | "POST"): boolean {
-  const p = path.replace(/^\/+/, "")
-  if (PROHIBIDO.test(p)) return false
-  const listados = LISTADOS as readonly string[]
-  if (metodo === "POST") {
-    if (p === "index.php?a=1" || p === "home.php") return true
-    const m = p.match(/^([a-z_]+\.php)\?enviado=1$/i)
-    return !!m && listados.includes(m[1].toLowerCase())
-  }
-  if (p === "home.php") return true
-  if (listados.includes(p.toLowerCase())) return true
-  if (/^modificar_clientes\.php\?codigo=\d+$/i.test(p)) return true
-  if (/^exportar_acopio\.php\?acopio=\d+$/i.test(p)) return true
-  // Los export redirigen al archivo generado (output/<listado>.xlsx): solo el de los listados de arriba
-  const salida = p.match(/^output\/([a-z_]+)\.xlsx$/i)
-  if (salida) return [...listados, "exportar_acopio.php"].includes(`${salida[1].toLowerCase()}.php`)
-  return false
-}
+export { LISTADOS, rutaPermitida, rutaDeLocation }
 
 // ---------------------------------------------------------------------------
 // HTTP
@@ -97,31 +76,24 @@ async function pausa() {
 
 const MAX_REDIRECCIONES = 3
 
-/** Pasa un `Location` de Zomatik a ruta relativa (o null si va a otro sitio). */
-export function rutaDeLocation(location: string, desde: string): string | null {
-  try {
-    const u = new URL(location, `${ZOMATIK_BASE}/${desde.replace(/^\/+/, "")}`)
-    if (u.origin !== new URL(ZOMATIK_BASE).origin) return null
-    return `${u.pathname.replace(/^\/+/, "")}${u.search}`
-  } catch {
-    return null
-  }
-}
+type InitPedido = RequestInit & { method?: "GET" | "POST"; /** Z2: habilita el grupo de la NP (solo con la llave prendida, ver np-servidor.ts). */ escrituraNp?: boolean }
 
-async function pedir(cookie: string | null, path: string, init: RequestInit & { method?: "GET" | "POST" } = {}): Promise<Response> {
+async function pedir(cookie: string | null, path: string, init: InitPedido = {}): Promise<Response> {
   let metodo = (init.method || "GET") as "GET" | "POST"
   let ruta = path.replace(/^\/+/, "")
   let cuerpo = init.body
   const seguir = init.redirect !== "manual" // el login lee la cookie de la respuesta, sin seguir
   for (let salto = 0; ; salto++) {
-    if (!rutaPermitida(ruta, metodo)) throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida en solo lectura: ${metodo} ${ruta.split("?")[0]}`)
+    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)))
+      throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida: ${metodo} ${ruta.split("?")[0]}`)
     await pausa()
     const ctrl = new AbortController()
     const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
     let r: Response
     try {
+      const { escrituraNp: _e, ...resto } = init
       r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
-        ...init,
+        ...resto,
         method: metodo,
         body: metodo === "GET" ? undefined : cuerpo,
         headers: { ...(cookie ? { Cookie: cookie } : {}), ...(metodo === "GET" ? {} : init.headers || {}) },
@@ -370,4 +342,36 @@ export async function fetchAcopioXls(s: ZomatikSesion, acopio: number): Promise<
 export function mensajeZomatik(e: unknown): string {
   if (e instanceof ZomatikError) return e.message
   return "Error leyendo Zomatik"
+}
+
+// ---------------------------------------------------------------------------
+// Z2 · Navegador del robot de la nota de pedido (solo con la llave prendida)
+// ---------------------------------------------------------------------------
+
+/**
+ * Navegador para `np-robot.ts`: no sigue redirecciones (el robot mira a dónde va "Grabar") y cada request pasa por la
+ * lista cerrada, con el grupo de la NP habilitado. `llave` la arma `np-servidor.ts` después de leer
+ * `plants.zomatik_np_activo = true` en la base: sin ella no hay forma de pedir una ruta que escriba.
+ */
+export async function navegadorNp(llave: LlaveNp): Promise<NavegadorNp> {
+  if (!llave || llave.activo !== true) throw new ZomatikError("ruta_no_permitida", "La NP automática está apagada para esta planta")
+  const s = await obtenerSesion()
+  const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
+    const html = Buffer.from(await r.arrayBuffer()).toString("latin1")
+    const loc = r.status >= 300 && r.status < 400 ? rutaDeLocation(r.headers.get("location") || "", ruta) : null
+    if (loc && /^index\.php/i.test(loc)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    return { status: r.status, location: loc, html }
+  }
+  return {
+    async get(ruta) {
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraNp: true }), ruta)
+    },
+    async post(ruta, cuerpo, contentType) {
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraNp: true }), ruta)
+    },
+    async sucursal(id) {
+      return elegirSucursal(s.cookie, id)
+    },
+  }
 }

@@ -220,7 +220,13 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
 
   // Artículos
   const arts = filasArticulos(foto)
-  await upsert("zomatik_articulos", arts, "codigo")
+  try {
+    await upsert("zomatik_articulos", arts, "codigo")
+  } catch (e) {
+    // Sin la migración de Z2 (202610222200) no existe codigo_sistema: se graba como antes
+    if (!/codigo_sistema/.test((e as { message?: string })?.message || "")) throw e
+    await upsert("zomatik_articulos", arts.map(({ codigo_sistema: _c, ...a }) => a), "codigo")
+  }
   out.articulos = arts.length
   let lineas = new Map<number, string>()
   if (foto.articulos) lineas = new Map(foto.articulos.map((a) => [a.codigo, a.linea]))

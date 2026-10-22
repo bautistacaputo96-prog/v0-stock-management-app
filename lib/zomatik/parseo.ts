@@ -348,7 +348,8 @@ export function clientesDeListado(filas: Fila[]): ClienteListado[] {
 // Artículos (export de listado_articulos.php por línea)
 // ---------------------------------------------------------------------------
 
-export type Articulo = { codigo: number; nombre: string; linea: string }
+/** `codigo_sistema`: la columna "Codigo Sistema" (articulos.codigo), la que va en `farticulo` del pedido (Z2, 23.1). */
+export type Articulo = { codigo: number; nombre: string; linea: string; codigo_sistema?: number | null }
 
 export function articulosDeListado(filas: Fila[]): Articulo[] {
   const out: Articulo[] = []
@@ -356,7 +357,8 @@ export function articulosDeListado(filas: Fila[]): Articulo[] {
     const codigo = Number(col(r, "Codigo"))
     const nombre = col(r, "Nombre").replace(/\s+/g, " ").trim()
     if (!Number.isInteger(codigo) || codigo <= 0 || !nombre) continue
-    out.push({ codigo, nombre, linea: col(r, "Linea") })
+    const sis = Number(r["Codigo Sistema"] ?? "")
+    out.push({ codigo, nombre, linea: col(r, "Linea"), codigo_sistema: Number.isInteger(sis) && sis > 0 ? sis : null })
   }
   return out
 }

@@ -1,0 +1,33 @@
+<html><head><title>Zomatik</title>
+<script language="JavaScript">
+function validar(f){ var error=''; if(error!=''){ alert('El formulario está incompleto o contiene errores: \n\n'+error); return(false);} return(true); }
+function verificar(fcodigo){ respuesta = confirm('¿Está seguro que desea eliminar?'); return(false); }
+</script></head><body>
+<form method="post" action="" name="frm_selsuc"><select name="selsuc"><option value="18" selected>REBUCRET</option><option value="17">RUTA 25 - CONCRETUS</option></select></form>
+<form enctype="multipart/form-data" action="grabar_pedidos.php?codigo=0" method="POST" name="frm_pedido" id="frm_pedido" onsubmit="return validar(true);">
+<input type="hidden" name="pedidos_unico" id="pedidos_unico" value="0425037001792526529">
+<input type="hidden" name="pedidos" id="pedidos" value="0">
+<input type="hidden" name="fparam" id="fparam" value="">
+<input type="hidden" name="proyecto" value="0"><input type="hidden" name="tipo" value="0">
+<input type="hidden" name="idcliente" id="idcliente" value="0"><input type="text" name="cliente" id="cliente" value="">
+<input type="TEXT" name="razon_social" id="razon_social" value=""><input type="TEXT" name="direccion" value=""><input type="TEXT" name="localidad" value="">
+<select name="provincia" id="provincia"><option value="">--</option><option value="1">Buenos Aires</option></select>
+<input type="TEXT" name="cp" value="">
+<select name="tipo_iva" id="tipo_iva"><option value="">--</option><option value="1">Consumidor Final</option><option value="3">Responsable Inscripto</option></select>
+<input type="TEXT" name="cuit" id="cuit" value=""><input type="TEXT" name="email" value="">
+<select name="condicion_pago"><option value="">--</option><option value="1">Cuenta Corriente</option><option value="2">Contado</option></select>
+<input type="hidden" name="idobra" value="0"><input type="text" name="obra" value=""><input type="TEXT" name="entregaren" value="">
+<select name="deposito" id="deposito"><option value="">--</option><option value="104" selected>PILAR</option><option value="113">REBUCRET</option><option value="116">Canning</option></select>
+<input name="fecha_entrega" id="fecha_entrega" value="0000-00-00">
+<textarea name="observaciones_entrega"></textarea><textarea name="observaciones"></textarea>
+<select name="comprobante" id="comprobante" onchange="GetNumeroFactura()"><option value="">--</option><option value="15">Nota de Pedido</option><option value="16">Nota de Pedido 2</option></select>
+<input type="TEXT" name="numero" id="numero" value="" readonly>
+<input type="radio" name="origen" value="1"><input type="radio" name="origen" value="2"><input type="radio" name="origen" value="3">
+<input type="hidden" name="idlista" id="idlista" value="0"><input type="text" name="lista" value="">
+<select name="acopio"><option value="">--</option></select><select name="concolocacion"><option value="0">No</option></select>
+<input type="hidden" name="vendedor_manual" value="0"><input type="hidden" name="idvendedor" id="idvendedor" value="0"><input type="text" name="vendedor" value="">
+<input type="TEXT" name="fletemonto" value="0"><input type="hidden" name="estado" value="1">
+<input type="hidden" name="idarticulo" value=""><input type="text" name="articulo" value="">
+<div id="listaprecios"></div>
+<input type="submit" value="Grabar">
+</form></body></html>
