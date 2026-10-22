@@ -121,6 +121,18 @@ export function viajesEnPausa(viajes: ViajeDia[], pedidos: PedidoDia[]): number 
 // Atraso (misma regla de la fase 2: ya pasó la hora de carga y no salió)
 // ---------------------------------------------------------------------------
 export type Atraso = { tipo: "atrasado" | "ahora" | null; min: number; texto: string | null }
+/**
+ * Atraso en chico para la columna Viajes (22/10): "+15'" hasta la hora; desde 60 min, en horas ("+7 h"); pasadas 3 h,
+ * "pendiente" y en gris (seguramente es un viaje que no se despachó en el sistema).
+ */
+export function atrasoCorto(min: number): { texto: string; tono: "rojo" | "suave" | "gris" } {
+  const m = Math.max(1, Math.round(min))
+  if (m < 60) return { texto: `+${m}'`, tono: "rojo" }
+  const h = Math.floor(m / 60)
+  if (m <= 180) return { texto: `+${h} h`, tono: "suave" }
+  return { texto: `+${h} h, pendiente`, tono: "gris" }
+}
+
 export function atraso(horaCarga: string, ahora: number, ventanaAhoraMin = 15): Atraso {
   const dif = (ahora - t(horaCarga)) / MIN
   if (!Number.isFinite(dif)) return { tipo: null, min: 0, texto: null }

@@ -27,7 +27,7 @@ export type PedidoT = PedidoDia & {
   clients?: { id: string; name: string; remito_tipo?: TipoRemito | null } | null
   construction_sites?: {
     id: string; name: string; address?: string | null; travel_time_minutes?: number | null; requires_pump?: boolean | null
-    gps_lat?: number | null; remito_tipo?: TipoRemito | null
+    gps_lat?: number | null; gps_lng?: number | null; localidad?: string | null; site_contact?: string | null; site_phone?: string | null; remito_tipo?: TipoRemito | null
   } | null
   formulas?: { id: string; name: string; code: string } | null
 }

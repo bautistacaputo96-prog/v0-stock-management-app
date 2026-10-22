@@ -13,7 +13,7 @@ import {
   type FilaUsuario,
   type FilaCredencial,
 } from "@/lib/auth/servidor"
-import { esTipo, normalizarPermisos, normalizarNombre, plantilla, seccionesCon, NOMBRE_TIPO } from "@/lib/permisos"
+import { esTipo, normalizarNombre, permisosParaGuardar, plantilla, seccionesCon, NOMBRE_TIPO } from "@/lib/permisos"
 
 export const dynamic = "force-dynamic"
 
@@ -64,7 +64,8 @@ export async function POST(req: Request) {
     if ((todos || []).some((u: any) => normalizarNombre(u.name) === normalizarNombre(name)))
       return NextResponse.json({ error: "Ya hay un usuario con ese nombre." }, { status: 400 })
 
-    const permisos = tipo === "gerencial" ? plantilla("gerencial") : normalizarPermisos(body?.permisos ?? plantilla(tipo))
+    // Gerencial: todo salvo lo que se le saque a mano (22/10)
+    const permisos = permisosParaGuardar(body?.permisos ?? plantilla(tipo), tipo)
     const ahora = new Date().toISOString()
     const { data: creado, error } = await sb
       .from("app_users")

@@ -1,30 +1,35 @@
 "use client"
 
 /**
- * Columna Viajes, compacta (21/10, Bautista: "que entre mucha más información sin scrollear", pensada para PC): una
- * fila de dos líneas por viaje con todo lo que importa a la vista (hora, obra, cliente, m³, R/X, estado / fórmula,
- * finalidad, bomba o directo). Lo que se achicó es el espacio, no los datos. El resto (dirección, horarios, camión
- * sugerido completo) se despliega con ▾.
- * Tocar la fila la elige (para tocar después el camión). Para arrastrarla: con el mouse, moverla apretada; con el
- * dedo, dejarlo apretado un momento (sin manija, para que la fila entre en una tarjeta angosta).
+ * Columna Viajes como los "Tickets" de Loop (22/10, Bautista: "copiar exactamente cómo lo hace Loop"):
+ * - fila 1, chica y gris: número de pedido (y la bomba, si es bombeado) · 👍 si está confirmado y n/N; una línea finita;
+ * - fila 2: cliente · "8 m³ › 14:13" (m³ del viaje y hora de carga), en 13 px y peso 500;
+ * - fila 3, en gris: la obra; fila 4, gris chico: la fórmula · 📋 (observaciones, con tooltip) y ⋮ (menú);
+ * - tarjeta gris clara con borde fino y barra violeta a la derecha; atrasado = todo el borde en rojo, sin texto.
+ * Sin botón Despachar: se despacha arrastrando la tarjeta al camión, tocando la tarjeta y después el camión, o desde
+ * ⋮ › Despachar. Con el mouse se arrastra apretada; con el dedo, dejándola apretada un momento.
  */
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { ChevronDown, ClipboardList, ThumbsUp, Truck } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { atraso, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho"
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
+import { viajeMinDe } from "@/lib/viajes"
 import { cn } from "@/lib/utils"
+import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 
 export function MarcaTipo({ tipo, className }: { tipo: TipoRemito | null | undefined; className?: string }) {
-  if (!tipo) return <span className={cn("d3c-tag rounded border border-dashed border-border px-1 text-[10.5px] font-bold leading-4 text-muted-foreground", className)} title="Se pregunta al despachar">R/X?</span>
+  if (!tipo) return <span className={cn("d3c-tag rounded border border-dashed border-border px-1 text-[10.5px] leading-4 text-muted-foreground", className)} title="Se pregunta al despachar">R/X?</span>
   return (
-    <span title={TIPO_TEXTO[tipo]} className={cn("d3c-tag rounded px-1 text-[10.5px] font-bold leading-4", tipo === "R" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800", className)}>
+    <span title={TIPO_TEXTO[tipo]} className={cn("d3c-tag rounded px-1 text-[10.5px] leading-4", tipo === "R" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800", className)}>
       {tipo}
     </span>
   )
 }
 
 export function ColumnaViajes({
-  viajes, pedidos, totalPorPedido, tipos, empresas, enPausa, ahora, esHoy, puedeDespachar, elegido, patentes,
+  viajes, pedidos, totalPorPedido, tipos, empresas, enPausa, ahora, esHoy, puedeDespachar, elegido, patentes, numeroPedido,
   onDespachar, onTocar, onPointerDown, recienSoltado, onSoltar, plantaNombre,
 }: {
   viajes: ViajeT[]
@@ -38,6 +43,8 @@ export function ColumnaViajes({
   puedeDespachar: boolean
   elegido: string | null
   patentes: Record<string, string>
+  /** número del pedido en el día (como el número de pedido de Loop) */
+  numeroPedido: Record<string, number>
   onDespachar: (clave: string) => void
   onTocar: (clave: string) => void
   onPointerDown: (e: React.PointerEvent, clave: string, manija?: boolean) => void
@@ -45,121 +52,135 @@ export function ColumnaViajes({
   onSoltar: () => void
   plantaNombre: string
 }) {
-  const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
+  const [buscar, setBuscar] = useState("")
+  // Detalle desplegable de cada viaje (Bautista 22/10): bomba, fibra si la lleva, tiempo hasta la obra y observaciones
+  // El detalle se abre solo con el viaje elegido (tocar la tarjeta lo elige) y se cierra al elegir otro (22/10).
+  // La flecha sigue andando a mano: abre uno que no está elegido o cierra el elegido.
+  const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
+  const [cerrados, setCerrados] = useState<Set<string>>(new Set())
+  useEffect(() => { setAbiertos(new Set()); setCerrados(new Set()) }, [elegido])
+  const estaAbierto = (clave: string) => abiertos.has(clave) || (elegido === clave && !cerrados.has(clave))
+  const alternar = (clave: string) => {
+    const abrir = !estaAbierto(clave)
+    setAbiertos((s) => { const n = new Set(s); if (abrir) n.add(clave); else n.delete(clave); return n })
+    setCerrados((s) => { const n = new Set(s); if (abrir) n.delete(clave); else n.add(clave); return n })
+  }
   const atrasados = esHoy ? viajes.filter((v) => atraso(v.hora_carga, ahora).tipo === "atrasado").length : 0
   const sel = elegido ? viajes.find((v) => v.clave === elegido) : null
+  const lista = viajes.filter((v) => {
+    const p = pedidos[v.pedido_id]
+    return !!p && coincide(buscar, numeroPedido[p.id], p.clients?.name, p.construction_sites?.name, p.formulas?.code, p.finalidad, hhmm(v.hora_carga))
+  })
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-sm font-semibold">Viajes</h2>
+        <h2 className="text-[13px] font-medium">Viajes</h2>
         <span className="text-xs text-muted-foreground">{viajes.length}</span>
-        {atrasados > 0 && <span className="text-xs font-semibold text-red-700">· {atrasados} atrasado{atrasados > 1 ? "s" : ""}</span>}
+        {atrasados > 0 && <span className="text-xs text-red-700">· {atrasados} atrasado{atrasados > 1 ? "s" : ""}</span>}
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">por hora de carga</span>
       </div>
-      <div className="flex flex-1 flex-col gap-[3px] overflow-auto p-1.5">
+      <Buscador valor={buscar} onCambio={setBuscar} />
+      <div className="flex flex-1 flex-col gap-1 overflow-auto p-1.5">
         {sel && (
-          <div className="flex items-center gap-2 rounded-md bg-blue-50 px-2 py-1 text-xs text-blue-900">
+          <div className="flex items-center gap-2 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] text-blue-900">
             <span className="min-w-0 flex-1 truncate">Elegido: {sel.n}/{totalPorPedido[sel.pedido_id] || "?"} · {pedidos[sel.pedido_id]?.construction_sites?.name}. Tocá un camión.</span>
-            <button className="h-7 px-2 underline" onClick={onSoltar}>Soltar</button>
+            <button className="h-6 px-2 underline" onClick={onSoltar}>Soltar</button>
           </div>
         )}
         {!viajes.length && <div className="py-6 text-center text-xs text-muted-foreground">No quedan viajes por despachar en {plantaNombre}.</div>}
-        {viajes.map((v) => {
-          const p = pedidos[v.pedido_id]
-          if (!p) return null
+        {viajes.length > 0 && !lista.length && <div className="py-6 text-center text-xs text-muted-foreground">Nada coincide con «{buscar}».</div>}
+        {lista.map((v) => {
+          const p = pedidos[v.pedido_id]!
           const at = esHoy ? atraso(v.hora_carga, ahora) : { tipo: null, texto: null, min: 0 }
           const tipo = tipos[p.id]?.tipo ?? null
           const bomba = p.metodo_descarga === "bomba"
           const sug = v.mixer_id ? patentes[v.mixer_id] : null
-          const abierto = !!abiertos[v.clave]
+          const o = p.construction_sites
+          const mapa = o?.gps_lat != null && o?.gps_lng != null ? `https://www.google.com/maps?q=${o.gps_lat},${o.gps_lng}`
+            : o?.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.address, o.localidad].filter(Boolean).join(", "))}` : null
+          // Lo que no entra en la tarjeta va en el tooltip (como Loop): dirección, finalidad, bomba, fibra, R/X, contacto
+          const detalle = [
+            o?.address ? [o.address, o.localidad].filter(Boolean).join(", ") : null,
+            p.finalidad ? `Finalidad: ${p.finalidad}` : null,
+            bomba ? textoBomba(p, empresas, "Bomba") : "Directo",
+            Number(p.fiber_kg_per_m3) > 0 ? `Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : null,
+            tipo ? `Remito ${tipo} (${TIPO_TEXTO[tipo].toLowerCase()})` : "R/X: se pregunta al despachar",
+            [o?.site_contact, o?.site_phone].filter(Boolean).join(" · ") || null,
+            sug ? `Camión sugerido: ${sug}` : null,
+            at.texto,
+            v.calculado ? "Viajes calculados (el pedido no los tiene guardados)" : null,
+          ].filter(Boolean).join("\n")
           return (
             <div
               key={v.clave}
               data-viaje={v.clave}
+              title={detalle}
               onPointerDown={(e) => onPointerDown(e, v.clave)}
               onClick={(e) => {
                 if (recienSoltado.current) return
-                if ((e.target as HTMLElement).closest("button")) return
+                if ((e.target as HTMLElement).closest("button,a,[role=menuitem]")) return
                 onTocar(v.clave)
               }}
               onContextMenu={(e) => e.preventDefault()}
               style={{ touchAction: "pan-y", WebkitTouchCallout: "none" } as React.CSSProperties}
               className={cn(
-                "d3c-card relative select-none rounded-md border border-l-[3px] border-l-violet-400 bg-card",
+                "d3c-card relative select-none rounded-md border border-r-[3px] border-slate-200 border-r-violet-700 bg-slate-50 px-2 py-0.5 leading-[1.15]",
                 puedeDespachar && "cursor-pointer",
-                at.tipo === "atrasado" && "border-l-red-600 bg-red-50/50",
-                at.tipo === "ahora" && "border-l-amber-500",
+                at.tipo === "atrasado" && "border-red-400 border-r-red-500",
                 elegido === v.clave && "ring-2 ring-blue-500",
               )}
             >
-              <div className="flex items-center gap-2 py-[3px] pl-2 pr-1">
-                {/* Hora de carga y n/N */}
-                <div className="w-[38px] shrink-0 leading-tight">
-                  <div className={cn("text-[13px] font-semibold tabular-nums", at.tipo === "atrasado" && "text-red-700")}>{hhmm(v.hora_carga)}</div>
-                  <div className="text-[10.5px] text-muted-foreground">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</div>
-                </div>
-                {/* Línea 1: obra · cliente · m³ · R/X · estado. Línea 2: fórmula · finalidad · bomba/directo · sugerido */}
-                <div className="min-w-0 flex-1 leading-tight">
-                  <div className="flex items-center gap-1.5">
-                    <span className="min-w-0 truncate text-[13px]">
-                      <span className="font-medium">{p.construction_sites?.name || "Obra"}</span>
-                      <span className="text-muted-foreground"> · {p.clients?.name}</span>
-                    </span>
-                    <span className="ml-auto shrink-0 text-[13px] font-semibold tabular-nums">{m3txt(v.m3)} m³</span>
-                    <MarcaTipo tipo={tipo} />
-                    {at.texto && <span className={cn("shrink-0 text-[11px] font-semibold", at.tipo === "atrasado" ? "text-red-700" : "text-amber-700")}>{at.texto}</span>}
-                  </div>
-                  <div className="flex items-center gap-1 text-[11.5px] text-muted-foreground">
-                    <span className="min-w-0 truncate">
-                      <span className="text-foreground/80">{p.formulas?.code}</span>
-                      {p.finalidad ? ` · ${p.finalidad}` : ""}
-                      {bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}
-                      {Number(p.fiber_kg_per_m3) > 0 ? " · fibra" : ""}
-                      {p.confirmado_at ? " · 👍" : ""}
-                      {sug ? ` · sug. ${sug}` : ""}
-                      {v.calculado ? " · calculado" : ""}
-                    </span>
-                  </div>
-                </div>
+              {/* Fila 1: número de pedido (y bomba) · 👍 y n/N */}
+              <div className="flex items-center gap-1 text-[10.5px] text-slate-500">
+                <span className="tabular-nums">{numeroPedido[p.id] ?? "—"}</span>
+                {bomba && <Truck className="h-3 w-3 text-blue-600" aria-label="bombeado" />}
+                <span className="flex-1" />
+                {p.confirmado_at && <ThumbsUp className="h-3 w-3 fill-blue-600 text-blue-600" aria-label="confirmado" />}
+                <span className="tabular-nums">{v.n}/{totalPorPedido[v.pedido_id] || "?"}</span>
                 <button
-                  className="flex h-8 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
-                  title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
-                  aria-expanded={abierto}
-                  onClick={(e) => { e.stopPropagation(); setAbiertos((a) => ({ ...a, [v.clave]: !a[v.clave] })) }}
+                  className="-mr-1 flex h-4 w-4 items-center justify-center rounded text-slate-500 hover:bg-slate-200"
+                  title={estaAbierto(v.clave) ? "Ocultar el detalle" : "Ver el detalle"}
+                  aria-expanded={estaAbierto(v.clave)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); alternar(v.clave) }}
                 >
-                  {abierto ? "▴" : "▾"}
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", estaAbierto(v.clave) && "rotate-180")} />
                 </button>
-                {puedeDespachar && (
-                  <button
-                    className="h-8 shrink-0 rounded-md bg-blue-600 px-2.5 text-[12.5px] font-medium text-white hover:bg-blue-700"
-                    onClick={(e) => { e.stopPropagation(); onDespachar(v.clave) }}
-                  >
-                    Despachar
-                  </button>
-                )}
               </div>
-              {abierto && (
-                <div className="space-y-0.5 border-t px-2 py-1.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <div className="text-foreground">{p.construction_sites?.name}{p.construction_sites?.address ? ` · ${p.construction_sites.address}` : ""}</div>
-                  <div>{p.clients?.name} · <b className="font-medium text-foreground">{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""}</div>
-                  <div>
-                    Carga {hhmm(v.hora_carga)} · sale {hhmm(v.hora_salida)} · llega {hhmm(v.hora_llegada)} · vuelve {hhmm(v.hora_vuelta)}
-                  </div>
-                  <div>
-                    {bomba ? textoBomba(p, empresas, "Bomba") : "Directo"}
-                    {Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}
-                    {` · ${tipo ? `Remito ${tipo} (${TIPO_TEXTO[tipo].toLowerCase()})` : "Factura: se pregunta al despachar"}`}
-                    {p.confirmado_at ? " · 👍 confirmado" : " · sin confirmar"}
-                  </div>
-                  <div>{sug ? <>Camión sugerido: <b className="font-medium text-foreground">{sug}</b></> : "Sin camión sugerido"}{v.calculado ? " · viajes calculados (el pedido no los tiene guardados)" : ""}</div>
+              {/* Fila 2: cliente · m³ › hora de carga */}
+              <div className="flex items-baseline gap-2 text-xs font-medium">
+                <span className="min-w-0 flex-1 truncate">{p.clients?.name || "Cliente"}</span>
+                <span className="shrink-0 tabular-nums">{m3txt(v.m3)} m³ <span className="font-normal text-slate-400">›</span> {hhmm(v.hora_carga)}</span>
+              </div>
+              {/* Fila 3: obra · fórmula · 📋 · ⋮ (una sola línea, para que entren más viajes) */}
+              <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                <span className="min-w-0 flex-1 truncate">{o?.name || "Obra"}<span className="text-slate-400"> · {p.formulas?.code}</span></span>
+                {p.observations && <span title={p.observations} className="shrink-0"><ClipboardList className="h-3.5 w-3.5" aria-label="observaciones" /></span>}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="h-4 w-4 shrink-0 rounded text-xs leading-none text-slate-500 hover:bg-slate-200" title="Más opciones" onClick={(e) => e.stopPropagation()}>⋮</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[200px]">
+                    {puedeDespachar && <DropdownMenuItem className="min-h-[30px]" onClick={() => onDespachar(v.clave)}>Despachar</DropdownMenuItem>}
+                    {mapa && <DropdownMenuItem className="min-h-[30px]" onClick={() => window.open(mapa, "_blank")}>Ver la obra en el mapa</DropdownMenuItem>}
+                    {p.observations && <DropdownMenuItem disabled className="whitespace-normal text-xs">Obs.: {p.observations}</DropdownMenuItem>}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              {estaAbierto(v.clave) && (
+                <div className="mt-0.5 space-y-0.5 border-t border-slate-200 pt-0.5 text-[11px] text-slate-600" onPointerDown={(e) => e.stopPropagation()}>
+                  <div>{bomba ? textoBomba(p, empresas, "Con bomba") : "Sin bomba (descarga directa)"}</div>
+                  {Number(p.fiber_kg_per_m3) > 0 && <div>Fibra: {m3txt(p.fiber_kg_per_m3)} kg/m³</div>}
+                  <div>Hasta la obra: {viajeMinDe(p as any)} min</div>
+                  {p.observations && <div className="whitespace-pre-wrap text-slate-700">Obs.: {p.observations}</div>}
                 </div>
               )}
             </div>
           )
         })}
         {enPausa > 0 && (
-          <div className="rounded-md border border-dashed px-2 py-1 text-[11.5px] text-muted-foreground">
+          <div className="rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
             ⏸ {enPausa} viaje{enPausa > 1 ? "s" : ""} en pausa (pedido suspendido). Se ven de nuevo al reabrir el pedido.
           </div>
         )}

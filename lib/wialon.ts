@@ -6,6 +6,7 @@
  * Wialon cobra por unidad y por mes, no por consulta.
  */
 import { createClient } from "@supabase/supabase-js"
+import { CACHE_GPS_MS } from "@/lib/gps-vivo"
 
 export const WIALON_HOST = "https://hst-api.wialon.us"
 /** Página donde el usuario autoriza el acceso con su usuario de B-Track. */
@@ -70,9 +71,11 @@ export type Unidad = {
   lng: number | null
   velocidad: number | null
   rumbo: number | null
-  /** Momento de la última posición (ms) */
+  /** Momento de la última posición válida (ms, hora del equipo) */
   t: number | null
   motor: boolean | null
+  /** Satélites de esa posición (menos de 4 = posición dudosa) */
+  satelites: number | null
 }
 
 // Caché compartida: si varias pantallas consultan a la vez, Wialon recibe una sola consulta
@@ -86,7 +89,9 @@ export async function posiciones(): Promise<Unidad[] | null> {
       {
         spec: { itemsType: "avl_unit", propName: "sys_name", propValueMask: "*", sortType: "sys_name" },
         force: 1,
-        flags: 0x1 | 0x400, // datos básicos + última posición/mensaje
+        // datos básicos + última posición/mensaje: `pos` es la última posición VÁLIDA (la que muestra B-Track)
+        // y `lmsg` el último mensaje (de ahí sale la ignición)
+        flags: 0x1 | 0x400,
         from: 0,
         to: 0,
       },
@@ -114,8 +119,10 @@ export async function posiciones(): Promise<Unidad[] | null> {
     rumbo: u.pos?.c ?? null,
     t: u.pos?.t ? u.pos.t * 1000 : null,
     motor: u.lmsg?.p?.eng_ign_stat != null ? Number(u.lmsg.p.eng_ign_stat) === 1 : null,
+    satelites: u.pos?.sc ?? null,
   }))
-  cache = { datos, hasta: Date.now() + 25 * 1000 }
+  // Antes 25 s: sumado al refresco de 30 s de la pantalla, mostrábamos posiciones de hasta ~75 s (gps-vivo.md)
+  cache = { datos, hasta: Date.now() + CACHE_GPS_MS }
   return datos
 }
 

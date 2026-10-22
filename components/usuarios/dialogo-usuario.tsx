@@ -26,7 +26,7 @@ export type UsuarioPantalla = {
 }
 
 const EXPLICACION_TIPO: Record<Tipo, string> = {
-  gerencial: "Ve, carga, edita y borra todo. Administra usuarios.",
+  gerencial: "Ve, carga, edita y borra todo, salvo lo que se le saque abajo. Administra usuarios.",
   operario: "Ve todo. Carga solo en sus áreas. Editar o borrar se habilita a mano.",
   consulta: "Ve todo. No carga nada.",
 }
@@ -74,7 +74,7 @@ export function DialogoUsuario({
     setNombre(usuario?.name || "")
     setEmail(usuario?.email || "")
     setTipo(usuario?.tipo || "operario")
-    setPermisos(usuario ? normalizarPermisos(usuario.permisos) : plantilla("operario"))
+    setPermisos(usuario ? normalizarPermisos(usuario.permisos, usuario.tipo) : plantilla("operario"))
     setClave("")
     setClave2("")
     setError(null)
@@ -214,7 +214,7 @@ export function DialogoUsuario({
               <div className="space-y-2">
                 <Label>Permisos</Label>
                 <MatrizPermisos tipo={tipo} permisos={permisos} onChange={setPermisos} />
-                {tipo !== "gerencial" && difs.length > 0 && (
+                {difs.length > 0 && (
                   <Button type="button" variant="ghost" size="sm" onClick={() => setPermisos(plantilla(tipo))}>
                     Volver a la plantilla de {NOMBRE_TIPO[tipo]}
                   </Button>

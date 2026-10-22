@@ -1,0 +1,1141 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Despacho y carga</title>
+<style>
+/* Estilo de la pantalla nueva de despacho (fase 3, ajuste del 21/10): 13 px de base, 11–12 px lo secundario,
+   bordes finos, color solo en la franja izquierda y en etiquetas suaves, botones de tamaño mouse. */
+:root{
+  --bg:#ffffff; --card:#ffffff; --fg:#0a0a0a; --mu:#737373; --bd:#e5e5e5; --soft:#f5f5f5; --ring:#3b82f6;
+  --blue:#2563eb; --blue-50:#eff6ff; --blue-8:#1e40af;
+  --em:#10b981; --em-50:#ecfdf5; --em-8:#065f46;
+  --am:#f59e0b; --am-50:#fffbeb; --am-8:#92400e;
+  --red:#dc2626; --red-50:#fef2f2; --red-7:#b91c1c;
+  --cy-50:#ecfeff; --cy-8:#155e75; --vi:#a78bfa; --vi-50:#f5f3ff; --vi-8:#5b21b6;
+  --sl-2:#e2e8f0; --sl-6:#475569;
+}
+.hc{ --bd:#999999; --mu:#1a1a1a; --soft:#e8e8e8; }
+.hc .card,.hc .col,.hc .vr,.hc .cr,.hc .pr{ border-color:#555 !important }
+.hc .tag,.hc .st{ border:1px solid #333 }
+.hc *{ font-weight:500 }
+.hc b,.hc .sb,.hc h1,.hc h2,.hc h3{ font-weight:700 }
+.hc .bgred{ background:#ffd6d6 !important }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.3 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+button{font:inherit;cursor:pointer;color:inherit}
+button:disabled{cursor:not-allowed}
+input,select,textarea{font:inherit;color:inherit}
+.mu{color:var(--mu)}
+.sb{font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+.sp{flex:1}
+.tr{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.x11{font-size:11px}.x12{font-size:12px}
+
+/* Botones */
+.btn{height:30px;padding:0 10px;border:1px solid var(--bd);background:var(--card);border-radius:6px;font-size:12.5px;white-space:nowrap}
+.btn:hover:not(:disabled){background:var(--soft)}
+.btn.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.pri:hover:not(:disabled){background:#1d4ed8}
+.btn.ok{background:#16a34a;border-color:#16a34a;color:#fff}
+.btn.ok:hover:not(:disabled){background:#15803d}
+.btn.amb{border-color:#fbbf24;background:var(--am-50);color:var(--am-8)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--mu)}
+.btn.sm{height:26px;padding:0 8px;font-size:12px}
+.btn:disabled{opacity:.45}
+.lnk{border:0;background:none;padding:0;text-decoration:underline;color:var(--blue-8);font-size:12px}
+
+/* Franja de la maqueta */
+.demo{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:4px 12px;background:#1e293b;color:#e2e8f0;font-size:12px}
+.demo b{color:#fff}
+.demo select{background:#334155;color:#fff;border:1px solid #475569;border-radius:5px;padding:2px 5px;font-size:12px;max-width:100%}
+.demo a{color:#93c5fd;cursor:pointer;text-decoration:underline}
+
+.equipos{display:flex;gap:6px;align-items:stretch;padding:6px 12px 0;flex-wrap:wrap}
+.equipos button{border:1px solid var(--bd);border-bottom:2px solid transparent;background:var(--soft);border-radius:7px 7px 0 0;padding:4px 12px;text-align:left;font-size:13px;color:var(--mu)}
+.equipos button.on{background:var(--card);color:var(--fg);border-bottom-color:var(--blue);box-shadow:0 -1px 0 var(--bd) inset}
+.equipos button .d{display:block;font-size:11px;color:var(--mu);font-weight:400}
+.equipos .flow{align-self:center;font-size:11.5px;color:var(--mu);margin-left:6px}
+/* Barra de arriba */
+.top{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:var(--bg)}
+.top h1{font-size:16px;font-weight:600;margin:0}
+.badge{font-size:10.5px;font-weight:600;color:var(--vi-8);background:var(--vi-50);border-radius:999px;padding:1px 7px}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:6px;padding:2px}
+.seg button{height:26px;border:0;background:transparent;border-radius:4px;padding:0 9px;font-size:12.5px;color:var(--mu)}
+.seg button.on{background:var(--soft);color:var(--fg);font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mu);white-space:nowrap}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--em);display:inline-block}
+.chip.off i{background:var(--red)}
+.chip.off{color:var(--red-7);font-weight:600}
+.hcbtn{height:28px;width:30px;border:1px solid var(--bd);border-radius:6px;background:var(--card);font-size:14px}
+
+.wrap{padding:6px 12px 0}
+.cont{display:flex;flex-wrap:wrap;gap:2px 16px;align-items:center;border:1px solid var(--bd);border-radius:6px;padding:3px 10px;font-size:12px}
+.cont .l{color:var(--mu)}
+.bans{display:flex;flex-direction:column;gap:4px;margin-top:5px}
+.ban{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--bd);border-left:3px solid var(--am);border-radius:6px;padding:3px 10px;font-size:12px;background:var(--card)}
+.ban.red{border-left-color:var(--red);background:var(--red-50);color:var(--red-7);font-weight:600}
+.ban.dark{border-left-color:#0f172a;background:#f1f5f9;color:#0f172a;font-weight:600}
+
+/* Columnas */
+.grid{display:grid;gap:8px;padding:6px 12px 8px}
+.col{border:1px solid var(--bd);border-radius:6px;display:flex;flex-direction:column;overflow:hidden;background:var(--card);min-height:0}
+.ch{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--bd);padding:4px 10px;min-height:31px;flex-wrap:wrap}
+.ch h2{font-size:14px;font-weight:600;margin:0}
+.cb{flex:1;overflow:auto;padding:5px;display:flex;flex-direction:column;gap:3px;min-height:0}
+.hint{background:var(--blue-50);color:var(--blue-8);border-radius:5px;padding:3px 8px;font-size:12px;display:flex;gap:6px;align-items:center}
+.empty{color:var(--mu);text-align:center;padding:20px 6px;font-size:12px}
+.tabs3{display:flex;gap:2px}
+.tabs3 button{height:26px;border:0;background:transparent;border-radius:4px;padding:0 8px;font-size:13px;color:var(--mu)}
+.tabs3 button.on{font-weight:600;color:var(--fg);text-decoration:underline;text-underline-offset:4px}
+.tabs3 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--blue);margin-left:4px;vertical-align:1px}
+
+/* Filas */
+.vr,.cr,.pr,.kr{border:1px solid var(--bd);border-left:3px solid var(--vi);border-radius:6px;background:var(--card);display:flex;align-items:center;gap:7px;padding:3px 4px 3px 8px;cursor:pointer;text-align:left;width:100%}
+.vr.late{border-left-color:var(--red);background:#fef2f280}
+.vr.now{border-left-color:var(--am)}
+.vr.sel,.cr.sel,.kr.sel{box-shadow:0 0 0 2px var(--ring)}
+.vr .h{width:38px;flex:none;line-height:1.15}
+.vr .h b{font-size:13px;font-weight:600}
+.vr .h div{font-size:10.5px;color:var(--mu)}
+.ln{min-width:0;flex:1;line-height:1.25}
+.l1{display:flex;align-items:center;gap:5px;font-size:13px}
+.l2{display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--mu)}
+.tag{font-size:10.5px;font-weight:600;border-radius:4px;padding:0 4px;line-height:16px;white-space:nowrap;flex:none}
+.tR{background:var(--em-50);color:var(--em-8)} .tX{background:var(--am-50);color:var(--am-8)}
+.tok{background:var(--em-50);color:var(--em-8)} .tbad{background:var(--red-50);color:var(--red-7)} .twarn{background:var(--am-50);color:var(--am-8)}
+.tblue{background:var(--blue-50);color:var(--blue-8)} .tcy{background:var(--cy-50);color:var(--cy-8)} .tsl{background:var(--sl-2);color:#1e293b} .tvi{background:var(--vi-50);color:var(--vi-8)}
+.cr.k-planta{border-left-color:var(--em)} .cr.k-yendo{border-left-color:#3b82f6} .cr.k-obra{border-left-color:var(--am)} .cr.k-volviendo{border-left-color:#06b6d4} .cr.k-taller{border-left-color:var(--sl-6)} .cr.k-carga{border-left-color:#7c3aed}
+.cr.lit{box-shadow:0 0 0 2px var(--em)}
+.cr.dim{opacity:.5}
+.pr{border-left-color:var(--bd);cursor:default}
+.pr .bar{height:3px;background:var(--sl-2);border-radius:9px;overflow:hidden;margin-top:2px}
+.pr .bar i{display:block;height:100%;background:var(--em)}
+.kr{border-left-color:#7c3aed}
+.kr.blk{border-left-color:var(--red)} .kr.run{border-left-color:var(--blue)}
+
+/* Panel de carga */
+.kp{display:flex;flex-direction:column;gap:5px;padding:6px 8px;overflow:auto;flex:1;min-height:0}
+.kh{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kh .pat{font-size:15px;font-weight:700;letter-spacing:.04em}
+.st{font-size:11px;font-weight:600;border-radius:4px;padding:1px 6px;white-space:nowrap}
+.st.idle{background:var(--soft);color:var(--mu)} .st.lista{background:var(--em-50);color:var(--em-8)} .st.blk{background:var(--red-50);color:var(--red-7)}
+.st.ciclo{background:#16a34a;color:#fff} .st.susp{background:var(--am-50);color:var(--am-8)} .st.par{background:#0f172a;color:#fff} .st.prep{background:var(--blue-50);color:var(--blue-8)}
+.chks{display:flex;flex-wrap:wrap;gap:3px}
+.ck{font-size:11.5px;border:1px solid var(--bd);border-radius:5px;padding:1px 6px;display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+.ck b{font-weight:700}
+.ck.ok b{color:#16a34a} .ck.no{border-color:#fca5a5;background:var(--red-50);color:var(--red-7)} .ck.wa{border-color:#fcd34d;background:var(--am-50);color:var(--am-8)}
+.box{border:1px solid var(--bd);border-left:3px solid var(--red);border-radius:6px;padding:5px 8px;font-size:12px}
+.box.am{border-left-color:var(--am)} .box.bl{border-left-color:var(--blue)} .box.dk{border-left-color:#0f172a}
+.box h3{font-size:12.5px;font-weight:600;margin:0 0 3px}
+
+/* Planta */
+.plant{position:relative;border:1px solid var(--bd);border-radius:6px;padding:5px}
+.groups{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.grp{border:1px dashed var(--bd);border-radius:6px;padding:3px 4px}
+.grp>.gt{font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:0 1px 2px}
+.grp .row{display:flex;gap:4px;align-items:flex-end}
+.vsl{width:var(--vw,56px);border-radius:5px;padding:2px;border:1px solid transparent}
+.vsl.act{border-color:var(--ring);background:var(--blue-50)}
+.vsl.off{opacity:.4}
+.vsl .vt{font-size:10.5px;font-weight:600;display:flex;justify-content:space-between;gap:2px}
+.vsl .vm{font-size:10.5px;line-height:1.1;min-height:23px}
+.tank{position:relative;height:var(--th,38px);border:1.5px solid #94a3b8;border-bottom:0;border-radius:4px 4px 0 0;background:#fff;overflow:hidden;margin-top:2px}
+.tank.silo{height:calc(var(--th,38px) + 12px);border-radius:16px 16px 0 0}
+.tank.round{border-radius:9px;border-bottom:1.5px solid #94a3b8}
+.tank .fill{position:absolute;left:0;right:0;bottom:0}
+.tank .lv{position:absolute;right:2px;top:1px;font-size:9px;color:#334155}
+.hop{height:9px;background:#cbd5e1;clip-path:polygon(0 0,100% 0,64% 100%,36% 100%)}
+.hop.act{background:var(--ring)}
+.nums{display:flex;justify-content:space-between;font-size:10px;color:var(--mu);margin-top:1px;line-height:1.15}
+.nums b{font-size:12px;color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.hum{font-size:9.5px;color:var(--cy-8)} .hum.w{color:var(--am-8);font-weight:700}
+.chg{border:1px solid var(--bd);background:var(--card);border-radius:4px;font-size:10px;padding:0 4px;height:17px;margin-top:1px}
+.bals{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.bal{flex:1;min-width:92px;border:1px solid var(--bd);border-radius:5px;padding:2px 6px;font-size:10.5px}
+.bal.pes{border-color:var(--ring)} .bal.des{border-color:#16a34a}
+.bal .bt{display:flex;justify-content:space-between;gap:3px;color:var(--mu)}
+.bal .bv{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.bal .bb{height:3px;background:var(--sl-2);border-radius:9px;overflow:hidden}
+.bal .bb i{display:block;height:100%;background:var(--ring)} .bal.des .bb i{background:#16a34a}
+.be{font-size:9.5px;font-weight:700;border-radius:3px;padding:0 4px;letter-spacing:.03em}
+.be.vacia{background:var(--em-50);color:var(--em-8)} .be.pesando{background:var(--ring);color:#fff} .be.llena{background:var(--am-50);color:var(--am-8)} .be.descargando{background:#16a34a;color:#fff}
+.bottom{display:flex;gap:6px;align-items:flex-end;margin-top:4px}
+.cinta-w{flex:1;min-width:60px;font-size:10.5px;color:var(--mu)}
+.cinta{height:10px;border-radius:5px;border:1.5px solid #94a3b8;background:repeating-linear-gradient(90deg,#e5e7eb 0 10px,#f3f4f6 10px 20px);margin-top:2px}
+.cinta.run{animation:belt .5s linear infinite;background:repeating-linear-gradient(90deg,#d6a77a 0 10px,#a3a9b3 10px 20px)}
+@keyframes belt{to{background-position:20px 0}}
+.truck{width:var(--tw,120px);flex:none;position:relative;text-align:center}
+.truck svg{width:100%;height:auto;display:block}
+.truck .tp{font-weight:700;font-size:12px;letter-spacing:.05em}
+.truck .tm{font-size:10.5px;color:var(--mu)}
+.truck.horn::after{content:"BOCINA";position:absolute;left:0;top:0;background:var(--am);color:#fff;font-weight:700;font-size:10px;border-radius:4px;padding:0 4px;animation:pulse .4s infinite}
+@keyframes pulse{50%{opacity:.6}}
+.drum-st{animation:drum 1s linear infinite}
+@keyframes drum{to{transform:translateX(-24px)}}
+.prog{display:flex;gap:3px}
+.prog div{flex:1;height:5px;background:var(--sl-2);border-radius:9px;overflow:hidden}
+.prog div i{display:block;height:100%;background:#16a34a}
+.overlay{position:absolute;inset:0;background:rgba(15,23,42,.85);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;border-radius:6px;font-weight:600;font-size:13px;z-index:5}
+.overlay small{display:block;font-weight:400;font-size:12px;color:#cbd5e1;margin-top:3px}
+.ctr{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.cargar{height:34px;padding:0 18px;border:0;border-radius:6px;background:#16a34a;color:#fff;font-weight:700;font-size:13.5px;letter-spacing:.03em}
+.cargar:disabled{background:#cbd5e1;color:#475569}
+.why{font-size:11.5px;color:var(--red-7)}
+.nodisp{border:1px dashed #94a3b8;border-radius:6px;padding:5px 8px;font-size:12px;color:var(--sl-6)}
+
+/* PARAR fijo (grande y siempre) */
+.parar{position:fixed;right:14px;bottom:12px;z-index:40;width:132px;height:60px;border-radius:10px;border:3px solid #fff;background:var(--red);color:#fff;font-size:22px;font-weight:800;letter-spacing:.06em;box-shadow:0 6px 18px rgba(220,38,38,.4),0 0 0 1.5px var(--red);line-height:1}
+.parar small{display:block;font-size:10px;font-weight:600;letter-spacing:0;opacity:.95;margin-top:2px}
+.hc .parar{border-color:#000;box-shadow:0 0 0 3px #000}
+
+/* Tablas */
+table.t{border-collapse:collapse;width:100%;font-size:12px}
+table.t th{text-align:left;font-size:11px;color:var(--mu);font-weight:600;padding:3px 6px;border-bottom:1px solid var(--bd);white-space:nowrap;background:var(--soft)}
+table.t td{padding:3px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}
+table.t td.r,table.t th.r{text-align:right}
+table.t tr.bad td{background:var(--red-50)}
+table.t tr.wbad td{background:var(--am-50)}
+table.t tr.click{cursor:pointer}
+table.t tr.click:hover td{background:var(--soft)}
+.tw{overflow-x:auto}
+.okc{color:#15803d;font-weight:600}.badc{color:var(--red-7);font-weight:600}.wrnc{color:var(--am-8);font-weight:600}
+
+/* Vista solo carga */
+.solo{display:grid;grid-template-columns:230px minmax(0,1fr) 300px;gap:8px;padding:6px 12px 8px}
+.pane{padding:6px 12px 80px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+.card{border:1px solid var(--bd);border-radius:6px;background:var(--card)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sum{display:flex;flex-wrap:wrap;gap:2px 16px;border:1px solid var(--bd);border-radius:6px;padding:4px 10px;font-size:12px}
+.cats{display:flex;gap:4px;flex-wrap:wrap}
+.cat{height:28px;border:1px solid var(--bd);border-radius:6px;background:var(--card);padding:0 8px;font-size:12px}
+.cat b{font-variant-numeric:tabular-nums}
+.cat.on{background:#0f172a;border-color:#0f172a;color:#fff}
+.cat.hot b{color:var(--red-7)} .cat.on.hot b{color:#fca5a5}
+.flag{font-size:10.5px;font-weight:600;border-radius:4px;padding:0 4px;margin-right:2px;white-space:nowrap;display:inline-block}
+.f-sinRemito{background:var(--red-50);color:var(--red-7)} .f-sinCarga{background:#fff7ed;color:#9a3412} .f-difVol{background:var(--vi-50);color:var(--vi-8)}
+.f-desv{background:#fdf2f8;color:#9d174d} .f-receta{background:var(--am-50);color:var(--am-8)} .f-indumix{background:#f0f9ff;color:#075985} .f-parada{background:#1e293b;color:#fff} .f-ok{background:var(--em-50);color:var(--em-8)} .f-sinNP{background:var(--red-50);color:var(--red-7)}
+.insight{border:1px solid #fed7aa;border-left:3px solid #f97316;border-radius:6px;padding:5px 10px;font-size:12px;color:#7c2d12}
+.al{border:1px solid var(--bd);border-left:3px solid var(--red);border-radius:6px;padding:5px 8px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;font-size:12.5px}
+.al.amber{border-left-color:var(--am)} .al.info{border-left-color:var(--sl-6)} .al.done{border-left-color:var(--em);opacity:.8}
+.al .at{flex:1;min-width:220px} .al .dd{font-size:11.5px;color:var(--mu);margin-top:1px}
+
+/* Modales */
+.mbg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:flex-start;justify-content:center;z-index:60;padding:28px 12px;overflow:auto}
+.modal{background:var(--card);border-radius:10px;width:100%;max-width:560px;box-shadow:0 18px 40px rgba(0,0,0,.25);font-size:13px}
+.modal.lg{max-width:860px} .modal.sm{max-width:420px}
+.mh{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--bd)}
+.mh h3{margin:0;font-size:15px;font-weight:600;flex:1}
+.mb{padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.mf{display:flex;gap:6px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--bd);flex-wrap:wrap}
+.xbtn{border:0;background:transparent;width:28px;height:28px;border-radius:5px;font-size:18px;color:var(--mu)}
+.head{background:var(--soft);border-radius:6px;padding:6px 9px;font-size:12.5px}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fld label{display:block;font-size:11.5px;font-weight:600;margin-bottom:2px}
+.fld input,.fld select,.fld textarea{width:100%;height:30px;border:1px solid #d4d4d4;border-radius:6px;padding:0 8px;background:var(--card);font-size:13px}
+.fld textarea{height:auto;padding:5px 8px}
+.fld .help{font-size:11px;color:var(--mu);margin-top:2px}
+.npl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;border:1px solid var(--bd);border-left:3px solid var(--em);border-radius:6px;padding:4px 8px;font-size:12.5px}
+.npl.no{border-left-color:var(--red);background:var(--red-50)}
+.npl.gen{border-left-color:var(--blue)}
+.opt{border:1px solid var(--bd);border-radius:6px;padding:6px 9px;background:var(--card);text-align:left;width:100%}
+.opt.on{border-color:var(--ring);box-shadow:0 0 0 2px var(--blue-50)}
+.opt .ot{font-weight:600} .opt .od{font-size:11.5px;color:var(--mu);margin-top:1px}
+.cbx{display:flex;gap:7px;align-items:flex-start;font-size:12.5px;border:1px solid var(--bd);border-radius:6px;padding:5px 8px}
+.cbx input{width:16px;height:16px;margin:1px 0 0;flex:none}
+.ficha{border:1px dashed #94a3b8;border-radius:6px;padding:7px 9px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.err{background:var(--red-50);color:var(--red-7);border-radius:6px;padding:5px 9px;font-size:12.5px}
+.okbox{background:var(--em-50);color:var(--em-8);border-radius:6px;padding:5px 9px;font-size:12.5px}
+.ac{background:var(--am-50);color:#78350f;border-radius:6px;padding:5px 9px;font-size:12px}
+.hold{position:relative;overflow:hidden;width:100%;height:42px;border-radius:7px;border:0;background:#16a34a;color:#fff;font-size:14px;font-weight:700;user-select:none;-webkit-user-select:none;touch-action:none}
+.hold i{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.3);width:0}
+.hold span{position:relative}
+.bigpat{font-size:30px;font-weight:800;letter-spacing:.08em;text-align:center;border:2px solid var(--fg);border-radius:8px;padding:2px}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.steps li{display:flex;gap:6px;color:var(--mu)} .steps li.done{color:var(--fg)} .steps li.now{color:var(--blue-8);font-weight:600}
+.steps .ic{flex:none;width:15px;height:15px;border-radius:50%;border:1.5px solid #cbd5e1;display:inline-flex;align-items:center;justify-content:center;font-size:9px}
+.steps li.done .ic{background:#16a34a;border-color:#16a34a;color:#fff}
+.guia{position:fixed;left:12px;bottom:12px;z-index:45;width:380px;max-height:62vh;overflow:auto;background:#fff;border:1px solid #bfdbfe;border-left:3px solid var(--blue);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:8px 10px;font-size:12px;color:#1e3a8a}
+.guia ol{margin:4px 0 0;padding-left:18px} .guia li{margin:2px 0}
+.toast{position:fixed;left:50%;top:10px;transform:translateX(-50%);background:#0f172a;color:#fff;border-radius:8px;padding:7px 12px;font-size:12.5px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:min(560px,80vw);display:none}
+.toast small{display:block;color:#cbd5e1;font-size:11.5px;margin-top:1px}
+@media (max-width:1000px){ .solo{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} .guia{width:300px} }
+</style>
+</head>
+<body>
+
+<div class="demo">
+  <b>MAQUETA</b> · datos simulados, no graba nada ·
+  Ver como <select id="rol" onchange="S.rol=this.value;renderAll()"><option value="titan">Titan (plantista)</option><option value="bautista">Bautista (gerencial)</option></select>
+  Carga abierta en <select id="disp" onchange="S.disp=this.value;renderAll()"><option value="planta">PC de la planta</option><option value="otro">otro equipo (vista remota)</option></select>
+  Velocidad <select id="vel" onchange="S.vel=+this.value"><option value="1">x1</option><option value="5">x5</option><option value="10" selected>x10</option><option value="20">x20</option></select>
+  <select id="simSel" onchange="simular(this.value);this.value=''">
+    <option value="">Simular…</option>
+    <option value="corrigen13">Corrigieron la receta 13 en Indumix</option>
+    <option value="cambio">Alguien cambia la receta 1 en Indumix</option>
+    <option value="internet">Cortar / volver internet en la planta</option>
+    <option value="lan">Cortar / volver la red local PC ↔ planta</option>
+    <option value="puente">Cortar / volver el puente</option>
+    <option value="alarma">Alarma de Indumix</option>
+    <option value="alarmaFin">Se resolvió la alarma</option>
+    <option value="atras">Arrancar «por atrás» (directo al puente)</option>
+    <option value="indumix">Carga hecha desde Indumix</option>
+    <option value="noarranca">El PLC no arranca</option>
+  </select>
+  <a onclick="reiniciar()">Empezar de nuevo</a> <a onclick="S.guia=!S.guia;renderGuia()">Qué probar</a>
+</div>
+
+<div class="equipos" id="equipos"></div>
+<div class="top" id="top"></div>
+<div class="wrap"><div id="cont"></div><div class="bans" id="bans"></div></div>
+<div id="main"></div>
+<div id="pararRoot"></div>
+<div id="guiaRoot"></div>
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const nf = (x, d = 0) => (x == null || isNaN(x)) ? "—" : Number(x).toLocaleString("es-AR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const m3t = (x) => nf(x, x % 1 ? 1 : 0);
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (s) => { s = Math.floor(s); return pad(Math.floor(s / 3600) % 24) + ":" + pad(Math.floor(s / 60) % 60); };
+const hms = (s) => hhmm(s) + ":" + pad(Math.floor(s) % 60);
+const mmss = (s) => { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + pad(s % 60); };
+const dur = (min) => min < 60 ? `${Math.round(min)} min` : `${Math.floor(min / 60)} h ${pad(Math.round(min % 60))}`;
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const T = (h, m, s = 0) => h * 3600 + m * 60 + s;
+
+const MAT0 = {
+  af: { n: "Arena Fina", c: "Arena Fina", s: "Arena", tipo: "arido", col: "#e9c46a", stock: 424073 },
+  a06: { n: "Arena Trituración 0/6", c: "Arena 0/6", s: "0/6", tipo: "arido", col: "#d6a77a", stock: 224900 },
+  p612: { n: "Piedra Partida 6/12", c: "Piedra 6/12", s: "6/12", tipo: "arido", col: "#a3a9b3", stock: 28609 },
+  p620: { n: "Piedra Partida 6/20", c: "Piedra 6/20", s: "6/20", tipo: "arido", col: "#7f8792", stock: 202945 },
+  p1030: { n: "Piedra Partida 10/30", c: "Piedra 10/30", s: "10/30", tipo: "arido", col: "#6b7280", stock: 0 },
+  cpc: { n: "CPC 40", c: "CPC 40", s: "CPC 40", tipo: "cemento", col: "#cbd5e1", stock: 23199 },
+  s90: { n: "Sikament 90E", c: "Sikament 90E", s: "90E", tipo: "aditivo", col: "#a78bfa", stock: -929 },
+  esp: { n: "Espumígeno", c: "Espumígeno", s: "Espum.", tipo: "aditivo", col: "#f0abfc", stock: 0 },
+  agua: { n: "Agua", c: "Agua", s: "Agua", tipo: "agua", col: "#93c5fd", stock: null },
+  s33: { n: "Sikament 33S", c: "Sikament 33S", tipo: "obra" },
+};
+const ORDEN_MAT = ["p612", "p620", "p1030", "a06", "af", "cpc", "s90", "esp", "agua"];
+const FORM0 = {
+  "H30-620-10 C (CAN)": [448, { agua: 165, af: 705, a06: 235, cpc: 310, p620: 970, s33: .93, s90: 2.635 }],
+  "H21-620-15 B (CAN)": [168, { agua: 170, af: 720, a06: 240, cpc: 265, p620: 970, s33: .795, s90: 2.253 }],
+  "H40-6/12-15": [57, { agua: 170, af: 640, a06: 208, cpc: 395, p612: 965, s90: 3.36 }],
+  "H21-620-10 C (CAN)": [53, { agua: 160, af: 735, a06: 245, cpc: 245, p620: 990, s33: .735, s90: 2.083 }],
+  "H30-620-15 B (CAN)": [38, { agua: 168, af: 694, a06: 231, cpc: 320, p620: 950, s33: .96, s90: 2.72 }],
+  "H35-6/12-15 B (CAN)": [36, { agua: 168, af: 693, a06: 231, cpc: 370, p612: 935, s90: 3.15 }],
+  "H30-612-15 B (CAN)": [35, { agua: 168, af: 694, a06: 231, cpc: 330, p612: 950, s33: .99, s90: 2.805 }],
+  "H17-6/20 B": [32, { agua: 165, af: 743, a06: 248, cpc: 245, p620: 970, s90: 2.33 }],
+  "H25-620-15 B (CAN)": [32, { agua: 170, af: 720, a06: 240, cpc: 275, p620: 960, s33: .825, s90: 2.338 }],
+  "H17-620-10 C (CAN)": [32, { agua: 167.7, af: 728, a06: 243, cpc: 245, p620: 975, s33: .735, s90: 2.083 }],
+  "H30-Cordones C (CAN)": [29, { agua: 60, af: 700, a06: 274, cpc: 300, p612: 540, p620: 430, s33: 2.4 }],
+  "H13-620-10 C (CAN)": [29, { agua: 165, af: 739, a06: 246, cpc: 210, p620: 995, s33: .63, s90: 1.785 }],
+  "H40-620-15 B (CAN)": [28, { agua: 170, af: 640, a06: 215, cpc: 390, p620: 965, s33: 1.17, s90: 3.315 }],
+  "H30-620-10 Pavimento (CAN)": [19, { agua: 165, af: 572, a06: 308, cpc: 310, p1030: 150, p620: 900, s33: .93, s90: 2.17 }],
+  "RDC-300 (CAN)": [17, { agua: 170, af: 1320, cpc: 300, esp: .6 }],
+  "H40-620-10 C (CAN)": [17, { agua: 168, af: 645, a06: 215, cpc: 380, p620: 975, s33: 1.14, s90: 3.23 }],
+  "H4-RECUPERADO (CAN)": [11, { cpc: 40, p620: 2000, s90: 1 }],
+  "H21-612-15 B (CAN)": [7, { agua: 170, af: 716, a06: 239, cpc: 275, p612: 965, s33: .825, s90: 2.338 }],
+  "H25-620-10 C (CAN)": [4, { agua: 160, af: 740, a06: 247, cpc: 275, p620: 960, s33: .825, s90: 2.338 }],
+  "H25-620-15 C (CAN)": [3, null], "H25-620-15 B PELQUE (CAN)": [3, { af: 646, a06: 277, cpc: 320, p620: 965 }],
+  "H30-GUN (CAN)": [3, { agua: 170, af: 1008, a06: 112, cpc: 400, p612: 690, s33: 1.2, s90: 3.4 }],
+  "H25-612-10 C (CAN)": [2, { agua: 165, af: 716, a06: 239, cpc: 290, p612: 965, s33: .87, s90: 2.465 }],
+  "H30-612-10 C (CAN)": [2, { agua: 165, af: 705, a06: 228, cpc: 320, p612: 960, s33: .96, s90: 2.72 }],
+  "H21-612-10 C (CAN)": [1, { agua: 165, af: 686, a06: 294, cpc: 255, p612: 970, s33: .765, s90: 2.168 }],
+  "H8-620-15 (CAN)": [0, null], "H35-620-10 C (CAN)": [0, null], "RDC-200 (CAN)": [0, null], "H8-620-10 C (CAN)": [0, null],
+  "H25-612-15 B (CAN)": [0, null], "H25-6/20 (CAN)": [0, null], "H35-620-15 B (CAN)": [0, null], "H35-6/12-10 C (CAN)": [0, null], "H21-6/20 (CAN)": [0, null],
+};
+const SAL = [
+  { k: "a1", g: "arido", lab: "Tolva 1", c: "T1", ind: "PIE 6/20 O 6/12", u: "kg" },
+  { k: "a2", g: "arido", lab: "Tolva 2", c: "T2", ind: "piedra 06", u: "kg" },
+  { k: "a3", g: "arido", lab: "Tolva 3", c: "T3", ind: "ARENA", u: "kg" },
+  { k: "a4", g: "arido", lab: "Tolva 4", c: "T4", ind: "PIE 6/20", u: "kg" },
+  { k: "c1", g: "cemento", lab: "Rosca 1", c: "R1", ind: "CP 40", u: "kg" },
+  { k: "c2", g: "cemento", lab: "Rosca 2", c: "R2", ind: "CP 40", u: "kg" },
+  { k: "ad1", g: "aditivo", lab: "Aditivo 1", c: "Ad1", ind: "PLASTIF", u: "g" },
+  { k: "ad2", g: "aditivo", lab: "Aditivo 2", c: "Ad2", ind: "(vacío)", u: "g" },
+  { k: "w", g: "agua", lab: "Agua", c: "Agua", ind: "Agua", u: "L" },
+];
+const SALK = Object.fromEntries(SAL.map((s) => [s.k, s]));
+const ARIDOS = ["a1", "a2", "a3", "a4"];
+const M3C = 1.5, LCIC = 108;
+const VENT_DESC = { arido: [50, 96], cemento: [54, 90], aditivo: [58, 72], agua: [52, 98] };
+const RESIDUO = { aridos: 31, cemento: 9, aditivo: 12 };
+const TOLR = { cemento: [.01, 2], agua: [.02, 3], arido: [.01, 5], aditivo: [.02, .02] };
+const TOLP = { cemento: .01, agua: .03, arido: .02, aditivo: .03 };
+const RESOLVEDORES = "Bautista, Fernando y Juan";
+const USR = {
+  titan: { nombre: "Titan", desc: "plantista", formulasEditar: false, cargaCargar: true, progCargar: true, gerencial: false },
+  bautista: { nombre: "Bautista", desc: "gerencial", formulasEditar: true, cargaCargar: true, progCargar: true, gerencial: true },
+};
+const PLANTA_PRENDIDA = T(6, 58);
+const CAP = { arido: 26000, cemento: 60000, aditivo: 1400000, agua: 30000 };
+function salMat(k, t1) { return { a1: t1, a2: "a06", a3: "af", a4: "p620", c1: "cpc", c2: "cpc", ad1: "s90", ad2: null, w: "agua" }[k]; }
+function recetaDesde(code) {
+  const m = S.FORM[code][1]; const v = { a1: 0, a2: 0, a3: 0, a4: 0, c1: 0, c2: 0, ad1: 0, ad2: 0, w: 0 };
+  if (m.p612) v.a1 = m.p612; if (m.p620) v.a4 = m.p620; if (m.a06) v.a2 = m.a06; if (m.af) v.a3 = m.af;
+  if (m.cpc) v.c1 = m.cpc; if (m.s90) v.ad1 = Math.round(m.s90 * 1000); if (m.agua) v.w = m.agua;
+  return { v, ord: { a3: 1, a1: 2, a4: m.p612 ? 3 : 2, a2: m.p612 && m.p620 ? 4 : 3 } };
+}
+
+let S;
+function armarRecetas() {
+  const slots = [[1, "H30-620-10 C (CAN)", "fija"], [2, "H21-620-15 B (CAN)", "fija"], [3, "H40-6/12-15", "fija"], [4, "H21-620-10 C (CAN)", "fija"],
+    [5, "H30-620-15 B (CAN)", "fija"], [6, "H35-6/12-15 B (CAN)", "fija"], [7, "H17-6/20 B", "fija"], [8, "H25-620-15 B (CAN)", "fija"],
+    [9, "H17-620-10 C (CAN)", "fija"], [10, "H30-Cordones C (CAN)", "fija"], [11, "H13-620-10 C (CAN)", "fija"], [12, "H40-620-15 B (CAN)", "fija"],
+    [13, "H30-612-15 B (CAN)", "fija"], [14, "RDC-300 (CAN)", "fija"], [15, "H40-620-10 C (CAN)", "fija"], [16, "H4-RECUPERADO (CAN)", "fija"],
+    [17, "H25-620-10 C (CAN)", "rotativa"], [18, "H21-612-15 B (CAN)", "rotativa"], [19, null, "rotativa"], [20, null, "rotativa"]];
+  S.recetas = slots.map(([n, code, tipo]) => {
+    if (n === 13) return { n, code, tipo, nombre: "H30-612-15 B", real: true, v: { a1: 950, a2: 231, a3: 694, a4: 0, c1: 350, c2: 0, ad1: 2800, ad2: 0, w: 110 }, ord: { a3: 1, a1: 2, a2: 3 }, leida: T(6, 59) };
+    if (n === 19) return { n, code: null, tipo, nombre: "PRUEBA AGUA", v: { a1: 0, a2: 200, a3: 900, a4: 0, c1: 250, c2: 0, ad1: 0, ad2: 0, w: 190 }, ord: { a3: 1, a2: 2 }, leida: T(6, 59) };
+    if (n === 20) return { n, code: null, tipo, nombre: "", vacia: true, v: { a1: 0, a2: 0, a3: 0, a4: 0, c1: 0, c2: 0, ad1: 0, ad2: 0, w: 0 }, ord: {}, leida: T(6, 59) };
+    const r = recetaDesde(code);
+    return { n, code, tipo, nombre: code.replace(" (CAN)", "").replace("H30-Cordones C", "H30-CORDONES").replace("H4-RECUPERADO", "H4 RECUP"), v: r.v, ord: r.ord, leida: T(6, 59) };
+  });
+}
+const slotDe = (code) => S.recetas.find((r) => r.code === code) || null;
+const pedidoDe = (id) => S.pedidos.find((p) => p.id === id);
+const cargaDe = (id) => S.cola.find((c) => c.id === id) || null;
+const camionDe = (id) => S.camiones.find((c) => c.id === id);
+const U = () => USR[S.rol];
+const enPlanta = () => S.disp === "planta";
+const ocupada = () => (S.carga && ["en_curso", "suspendida", "parada"].includes(S.carga.fase)) || !!S.prep;
+
+function comparar(v, code, t1) {
+  const f = S.FORM[code][1] || {}; const rec = {}; const sueltas = [];
+  for (const s of SAL) { let x = v[s.k] || 0; if (!x) continue; if (s.u === "g") x /= 1000; const m = salMat(s.k, t1); if (!m) { sueltas.push(s.lab); continue; } rec[m] = (rec[m] || 0) + x; }
+  const mats = ORDEN_MAT.filter((m) => (rec[m] || 0) > 0 || ((f[m] || 0) > 0 && S.MAT[m].tipo !== "obra"));
+  const rows = mats.map((m) => { const fv = f[m] || 0, rv = rec[m] || 0, [rel, ab] = TOLR[S.MAT[m].tipo]; const tol = Math.max(rel * fv, ab), d = rv - fv; return { m, fv, rv, d, pct: fv ? d / fv : null, tol, ok: Math.abs(d) <= tol + 1e-9, agua: m === "agua" }; });
+  const malNoAgua = rows.filter((r) => !r.ok && !r.agua), malAgua = rows.find((r) => !r.ok && r.agua) || null;
+  return { ok: !malNoAgua.length && !malAgua && !sueltas.length, rows, malNoAgua, malAgua, sueltas };
+}
+const t1Para = (code) => (S.FORM[code][1] && S.FORM[code][1].p612 ? "p612" : S.tolva1);
+const ac = (a, c) => (c ? a / c : null);
+function fmtPm3(m, x) { return S.MAT[m].tipo === "aditivo" ? nf(x * 1000) + " g" : nf(x, x % 1 ? 1 : 0) + (m === "agua" ? " L" : " kg"); }
+function asegurarAlertas() {
+  const codes = new Set([...S.cola.map((k) => k.formula), ...S.viajes.map((v) => pedidoDe(v.pedido).formula)]);
+  for (const code of codes) {
+    const slot = slotDe(code); if (!slot) continue; const cmp = comparar(slot.v, code, t1Para(code)); if (cmp.ok) continue;
+    const key = `rec:${slot.n}:${code}`;
+    if (S.alertas.some((a) => a.key === key && a.estado !== "cerrada")) continue;
+    S.alertas.unshift({ key, tipo: "receta", estado: "abierta", at: S.clock, slotN: slot.n, code, titulo: `La receta ${slot.n} de la planta no coincide con ${code}`, det: detalleCmp(cmp) + ` · Mail a ${RESOLVEDORES}.` });
+  }
+}
+function detalleCmp(cmp) { const p = []; for (const r of cmp.rows) if (!r.ok) p.push(`${S.MAT[r.m].c} ${fmtPm3(r.m, r.rv)} en la planta contra ${fmtPm3(r.m, r.fv)}`); for (const s of cmp.sueltas) p.push(`pesa en ${s}, sin material`); return p.join(" · "); }
+
+function prepararCiclo() {
+  const C = S.carga; const r = rng(C.contador * 977 + C.c * 31); const rest = C.ciclos - C.c + 1;
+  for (const k in C.tot) { const tg = (C.tot[k] - (C.acum[k] || 0)) / rest; C.tgt[k] = tg; const [lo, hi] = { arido: [-.009, .013], cemento: [-.003, .007], agua: [-.008, .008], aditivo: [-.01, .008] }[SALK[k].g]; C.real[k] = Math.max(0, tg * (1 + lo + (hi - lo) * r())); }
+  const ar = ARIDOS.filter((k) => C.tot[k] != null).sort((a, b) => (C.ord[a] || 9) - (C.ord[b] || 9)); const w = 42 / Math.max(1, ar.length);
+  ar.forEach((k, i) => (C.win[k] = [2 + i * w, 1 + (i + 1) * w]));
+  C.win.c1 = [3, 36]; C.win.c2 = [3, 36]; C.win.ad1 = [5, 24]; C.win.ad2 = [5, 24]; C.win.w = [8, 40]; C.lvl0 = { ...S.lvl };
+}
+const curva = (p) => p <= 0 ? 0 : p >= 1 ? 1 : p < .75 ? .93 * p / .75 : .93 + .07 * (p - .75) / .25;
+function valor(k, t) { const C = S.carga; const [a, b] = C.win[k] || [0, 1]; return C.real[k] * curva((t - a) / (b - a)); }
+function pesando(k, t) { const w = S.carga.win[k]; return !!w && t >= w[0] && t < w[1]; }
+function fracDesc(g, t) { const [a, b] = VENT_DESC[g]; return clamp((t - a) / (b - a), 0, 1); }
+function balanza(grupo) {
+  const C = S.carga; if (!C) return { v: RESIDUO[grupo] || 0, est: "vacia", max: 1 };
+  const t = C.t; const g = grupo === "aridos" ? "arido" : grupo; const ks = Object.keys(C.tot).filter((k) => SALK[k].g === g);
+  const total = ks.reduce((s, k) => s + C.real[k], 0); const res = RESIDUO[grupo] || 0;
+  if (!ks.length) return { v: res, est: "vacia", max: 1 };
+  if (t < VENT_DESC[g][0]) { const v = ks.reduce((s, k) => s + valor(k, t), 0); const pk = ks.find((k) => pesando(k, t)); return { v, est: pk ? "pesando" : v > total * .99 ? "llena" : "vacia", max: total, pes: pk }; }
+  const fd = fracDesc(g, t); return { v: total * (1 - fd) + res * fd, est: fd < 1 ? "descargando" : "vacia", max: total };
+}
+function nivel(k) {
+  const C = S.carga; const base = (C ? C.lvl0[k] : S.lvl[k]) ?? 0;
+  if (!C || C.tot[k] == null) return base;
+  return clamp(base - valor(k, C.t) / CAP[SALK[k].g] * 100, 0, 100);
+}
+function m3EnTrompo() { const C = S.carga; if (!C) return 0; const fd = (fracDesc("arido", C.t) + fracDesc("cemento", C.t) + fracDesc("agua", C.t)) / 3; return (C.c - 1) * C.m3c + C.m3c * fd; }
+function finCiclo() {
+  const C = S.carga;
+  for (const k in C.tot) { C.acum[k] = (C.acum[k] || 0) + C.real[k]; S.lvl[k] = clamp(C.lvl0[k] - C.real[k] / CAP[SALK[k].g] * 100, 0, 100); }
+  if (C.c < C.ciclos) { C.c++; C.t = 0; prepararCiclo(); renderAll(); toast(`Ciclo ${C.c - 1} de ${C.ciclos} terminado`, "El objetivo del próximo se ajusta por lo que pesó este, como hace Indumix."); }
+  else terminar("ok");
+}
+function matsDeCarga(C, parcial) {
+  const out = []; const f = S.FORM[C.o.formula][1] || {};
+  for (const s of SAL) {
+    if (C.tot[s.k] == null) continue; const m = salMat(s.k, C.t1);
+    let real = C.acum[s.k] || 0; if (parcial) real += valor(s.k, C.t);
+    out.push({ k: s.k, m, lab: s.lab, u: s.u, recPm3: C.v[s.k], formPm3: m ? (s.k === "c2" ? 0 : (f[m] || 0) * (s.u === "g" ? 1000 : 1)) : 0, teo: C.teo[s.k], h: s.g === "arido" ? (C.hum[s.k] || 0) : null, teoCorr: C.tot[s.k], real, g: s.g });
+  }
+  return out;
+}
+// Fin: «ok» (terminó), «sale» (parada, sale con lo cargado), «completar» (parada, se completa con otra carga), «tirada» (parada, se anula el despacho)
+function pedirCargar() {
+  const k = cargaDe(S.selCarga); if (!k) return; const ch = chequeo(k);
+  if (!enPlanta() || !U().cargaCargar || !ch.ok) return;
+  modal(`<div class="modal sm"><div class="mh"><h3>¿El camión está abajo de la planta?</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="bigpat">${esc(k.camion)}</div>
+    <div class="head"><b>${esc(k.cliente)}</b> · ${esc(k.obra)} · ${esc(k.formula)} · <b>${m3t(k.m3)} m³</b> · Remito ${k.tipo} ${esc(k.remito)}</div>
+    ${ch.aviso ? `<div class="ac">${ch.items.filter((x) => x.warn).map((x) => esc(x.t)).join(" · ")}. Queda marcado en la auditoría.</div>` : ""}
+    <button class="btn" onclick="bocina()">Tocar bocina</button>
+    <button class="hold" id="hold"><i id="holdBar"></i><span>Sí, está abajo · mantené apretado</span></button>
+    <div class="mu x12">1 segundo apretado, así no arranca sin querer. Las seguridades de la planta siguen mandando.</div></div></div>`);
+  const h = $("hold"), bar = $("holdBar"); let t0 = 0, raf = 0;
+  const step = () => { const p = clamp((performance.now() - t0) / 1000, 0, 1); bar.style.width = p * 100 + "%"; if (p >= 1) { cerrarModal(); preparar(k); } else raf = requestAnimationFrame(step); };
+  h.addEventListener("pointerdown", (e) => { e.preventDefault(); t0 = performance.now(); raf = requestAnimationFrame(step); });
+  const up = () => { cancelAnimationFrame(raf); bar.style.width = "0"; };
+  h.addEventListener("pointerup", up); h.addEventListener("pointerleave", up); h.addEventListener("pointercancel", up);
+}
+function preparar(k) {
+  const slot = slotDe(k.formula);
+  const pasos = [S.internet ? `Permiso de arranque firmado por la nube (60 s, un uso)` : `Sin internet: la orden ya bajó y la validó la nube; el puente la acepta igual (no se pide nada extra)`, S.internet ? `El puente confirma la orden con la nube` : `El puente usa la orden que ya tenía guardada`, `Escribe en Indumix: receta ${slot.n} · ${m3t(k.m3)} m³ · ${k.cliente} · ${k.camPl} · Observación ${k.remito.padStart(4, "0")}`, `Lee de vuelta lo escrito: coincide`, `Vuelve a leer la receta ${slot.n}: igual`, `CARGAR`];
+  S.prep = { kid: k.id, pasos, i: 0 }; renderAll();
+  const av = () => {
+    if (!S.prep) return;
+    if (!conectado()) { S.prep = null; renderAll(); toast("Se cortó la conexión con la planta: no arrancó nada"); return; }
+    S.prep.i++;
+    if (S.prep.i === 5 && S.noArranca) { S.prep = null; S.noArranca = false; renderAll(); modalInfo("Indumix no arrancó", `<div class="err">Indumix: «Compuerta de la balanza de áridos abierta». La planta no arrancó.</div><p class="x12">Lo decide la planta: no se reintenta solo ni se saltea ninguna seguridad. La carga vuelve a «lista».</p>`); return; }
+    if (S.prep.i >= S.prep.pasos.length) { S.prep = null; iniciarCarga(k); return; }
+    renderAll(); setTimeout(av, 600);
+  };
+  setTimeout(av, 600);
+}
+function resolverParada(modo) {
+  const C = S.carga; if (!C) return;
+  const txt = { sale: ["Sale con lo cargado", `El despacho se corrige a ~${m3t(Math.round(m3EnTrompo() * 10) / 10)} m³ y el pedido vuelve a tener lo que falta.`], completar: ["Completar con otra carga", `Lo que falta (~${m3t(Math.round((C.o.m3 - m3EnTrompo()) * 10) / 10)} m³) va en otra carga para el mismo camión y el mismo remito.`], tirada: ["Se tiró: anular el despacho", `El remito ${C.o.tipo} ${C.o.remito} queda anulado, vuelve el stock teórico y lo pesado se registra como pérdida. El viaje vuelve a Viajes.`] }[modo];
+  modal(`<div class="modal sm"><div class="mh"><h3>${txt[0]}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb"><div class="head">${txt[1]}</div>
+    <div class="fld"><label>Motivo *</label><textarea id="mot" rows="2"></textarea></div></div>
+    <div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn pri" onclick="const m=$('mot').value.trim();if(!m){$('mot').focus();return}cerrarModal();terminar('${modo}',m)">Confirmar</button></div></div>`);
+}
+function cancelarCarga(kid) {
+  const k = cargaDe(kid); if (!k) return;
+  modal(`<div class="modal sm"><div class="mh"><h3>Cancelar la carga de ${esc(k.camion)}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="head">Todavía no se pesó nada. El despacho ya está grabado (Remito ${k.tipo} ${esc(k.remito)}).</div>
+    <div class="fld"><label>Motivo *</label><textarea id="mot" rows="2" placeholder="Ej.: se rompió el camión, la obra suspendió"></textarea></div>
+    <div class="mu x12">«Anular el despacho»: el remito queda anulado (no se borra), vuelve el stock teórico, el pedido y el viaje. Lo puede hacer quien tiene Carga · cargar mientras no se haya pesado nada; después, solo un gerencial.</div></div>
+    <div class="mf"><button class="btn" onclick="cerrarModal()">Volver</button><button class="btn" onclick="cambiarCamion('${kid}')">Cambiar de camión</button><button class="btn pri" onclick="const m=$('mot').value.trim();if(!m){$('mot').focus();return}anularDespacho('${kid}',m)">Anular el despacho</button></div></div>`);
+}
+function anularDespacho(kid, mot) {
+  const k = cargaDe(kid); const p = pedidoDe(k.pedido); const cam = camionDe(k.camion);
+  p.desp -= k.m3; S.viajes.push({ id: "v" + Date.now(), pedido: p.id, n: k.viajeN, m3: k.m3, carga: S.clock + 300 });
+  cam.estado = "planta"; cam.desde = S.clock; S.cola = S.cola.filter((x) => x.id !== kid); S.selCarga = S.cola[0] ? S.cola[0].id : null;
+  S.audit.unshift({ remito: null, remAnulado: k.remito, tipo: k.tipo, camion: k.camion, horaDesp: k.despAt, cliente: `${k.cliente} · ${k.obra}`, formula: k.formula, m3: null, carga: null, anulado: mot, nuevo: true });
+  cerrarModal(); renderAll(); toast(`Despacho anulado · Remito ${k.tipo} ${k.remito}`, "Volvió el stock teórico, el viaje y los m³ del pedido.");
+}
+function cambiarCamion(kid) {
+  const k = cargaDe(kid); const l = libres(); if (!l.length) { toast("No hay otro camión libre en planta"); return; }
+  const viejo = camionDe(k.camion); viejo.estado = "planta"; viejo.desde = S.clock;
+  const nuevo = l.find((c) => c.id !== k.camion) || l[0]; k.camion = nuevo.id; k.camPl = nuevo.id.replace(/^(\w\w)(\d{3})(\w\w)$/, "$1 $2 $3"); k.chofer = nuevo.chofer; nuevo.estado = "cola"; nuevo.desde = S.clock;
+  cerrarModal(); renderAll(); toast(`La carga pasó a ${nuevo.id}`, "El despacho se edita (camión y chofer) con motivo, como en Historial.");
+}
+function cambiarTolva1() {
+  if (!U().cargaCargar || ocupada()) { if (ocupada()) toast("No se cambia la tolva con una carga en curso"); return; }
+  modal(`<div class="modal sm"><div class="mh"><h3>¿Qué hay en la Tolva 1?</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb"><div class="mu x12">En Indumix se llama «PIE 6/20 O 6/12». Queda en Actividad y vale para el stock.</div>
+  ${["p612", "p620"].map((m) => `<button class="opt ${S.tolva1 === m ? "on" : ""}" onclick="S.tolva1='${m}';cerrarModal();asegurarAlertas();renderAll();toast('Tolva 1: ${S.MAT[m].c}')"><div class="ot">${S.MAT[m].n}</div><div class="od">Stock del sistema ${nf(S.MAT[m].stock / 1000, 1)} t</div></button>`).join("")}</div></div>`);
+}
+
+function abrirResolver(code) {
+  const slot = slotDe(code); if (!slot || !U().formulasEditar) return; const cmp = comparar(slot.v, code, t1Para(code)); const f = S.FORM[code][1];
+  const cpcR = cmp.rows.find((r) => r.m === "cpc");
+  S._res = { code, opt: "planta" };
+  modal(`<div class="modal lg"><div class="mh"><h3>Resolver · receta ${slot.n} contra ${esc(code)}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="head"><b>La que vale es la fórmula del sistema</b>: Indumix se adapta a ella (Bautista, 20/10). Lo resuelve quien tiene Fórmulas · editar, desde cualquier lugar.</div>
+    ${tablaCmp(cmp)}
+    ${cmp.malAgua ? `<div class="ac"><b>Agua:</b> se compara la receta base (${nf(cmp.malAgua.rv)} contra ${nf(cmp.malAgua.fv)} L/m³), porque Indumix descuenta la humedad de los áridos. Es un <b>cambio grande de agua/cemento</b> (${cpcR ? nf(ac(cmp.malAgua.rv, cpcR.rv), 2) : "—"} contra ${nf(ac(f.agua, f.cpc), 2)}): antes de sincronizarla conviene que lo confirme Grow.</div>` : ""}
+    <div style="display:flex;flex-direction:column;gap:4px" id="opts"></div><div id="optBody"></div></div>
+    <div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn pri" onclick="confirmarResolver()">Confirmar</button></div></div>`);
+  renderOpts();
+}
+function matsFicticios(v, m3, code, seed, override, bump) {
+  const r = rng(seed); const f = S.FORM[code][1] || {}; const out = []; let aguaAr = 0; const tmp = [];
+  for (const s of SAL) { if (!(v[s.k] > 0)) continue; const teo = v[s.k] * m3; const h = s.g === "arido" ? (S.hum[s.k] || 0) : null; const tc = s.g === "arido" ? teo * (1 + h / 100) : teo; if (s.g === "arido") aguaAr += tc - teo; tmp.push({ s, teo, h, tc }); }
+  for (const x of tmp) {
+    if (x.s.k === "w") x.tc = x.teo - aguaAr;
+    const [lo, hi] = { arido: [-.008, .012], cemento: [-.002, .007], agua: [-.01, .01], aditivo: [-.008, .006] }[x.s.g];
+    let real = Math.round(x.tc * (1 + lo + (hi - lo) * r())); if (override && override[x.s.k] != null) real = override[x.s.k]; if (bump && bump[x.s.k]) real = Math.round(x.tc * bump[x.s.k]);
+    const m = salMat(x.s.k, "p612");
+    out.push({ k: x.s.k, m, lab: x.s.lab, u: x.s.u, recPm3: v[x.s.k], formPm3: m ? (f[m] || 0) * (x.s.u === "g" ? 1000 : 1) : 0, teo: x.teo, h: x.h, teoCorr: x.tc, real, g: x.s.g });
+  }
+  return out;
+}
+const desvio = (x) => x.teoCorr > 0 && Math.abs(x.real - x.teoCorr) > TOLP[x.g] * x.teoCorr;
+function tablaCmp(cmp) {
+  return `<div class="tw"><table class="t"><thead><tr><th>Material</th><th class="r">Fórmula</th><th class="r">Planta</th><th class="r">Dif.</th><th>Tol.</th><th></th></tr></thead><tbody>
+  ${cmp.rows.map((r) => `<tr class="${r.ok ? "" : r.agua ? "wbad" : "bad"}"><td>${S.MAT[r.m].c}${r.agua ? ' <span class="mu">(base)</span>' : ""}</td><td class="r num">${fmtPm3(r.m, r.fv)}</td><td class="r num">${fmtPm3(r.m, r.rv)}</td><td class="r num ${r.ok ? "" : r.agua ? "wrnc" : "badc"}">${r.d > 0 ? "+" : ""}${fmtPm3(r.m, r.d)}${r.pct != null && !r.ok ? ` (${r.d > 0 ? "+" : ""}${nf(r.pct * 100, 1)} %)` : ""}</td><td class="mu">±${fmtPm3(r.m, r.tol)}</td><td>${r.ok ? '<span class="okc">✓</span>' : r.agua ? '<span class="wrnc">agua</span>' : '<span class="badc">✕</span>'}</td></tr>`).join("")}
+  ${cmp.sueltas.map((s) => `<tr class="bad"><td colspan="6">La receta pesa en ${s}, sin material asignado</td></tr>`).join("")}</tbody></table></div>`;
+}
+function renderVivo() {
+  renderTop();
+  const plantEl = $("plant"); if (!plantEl) return;
+  const C = S.carga; const k = C ? C.o : cargaDe(S.selCarga); const compacto = false;
+  let st, stc, kv = "";
+  if (S.prep) { st = "PREPARANDO"; stc = "prep"; }
+  else if (C && C.fase === "en_curso") { st = S.alarma ? "ALARMA" : "EN CICLO"; stc = S.alarma ? "blk" : "ciclo"; }
+  else if (C && C.fase === "suspendida") { st = "SUSPENDIDA"; stc = "susp"; }
+  else if (C && C.fase === "parada") { st = "PARADA"; stc = "par"; }
+  else if (k) { const ch = chequeo(k); st = ch.ok ? "LISTA" : "BLOQUEADA"; stc = ch.ok ? "lista" : "blk"; }
+  else { st = "SIN CARGAS"; stc = "idle"; }
+  if (C) kv = `<span class="x12">Ciclo <b>${C.c}/${C.ciclos}</b> · ${nf(C.m3c, 2)} m³ · ${C.t < 50 ? "pesando" : C.t < 98 ? "descargando al camión" : "fin de ciclo"}</span><span class="x12 mu">ciclo <b class="num" style="color:var(--fg)">${mmss(C.t)}</b>/${mmss(LCIC)} · total ${mmss(C.total)}</span>${compacto ? `<span class="x12"><b>${esc(C.o.camion)}</b> · ${C.o.tipo} ${esc(C.o.remito)} · ${esc(C.o.cliente)}</span>` : ""}`;
+  const sb = $("sbar"); if (sb) sb.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:3px 10px;align-items:center;${compacto ? "" : "padding:5px 8px;border-bottom:1px solid var(--bd)"}"><span class="st ${stc}">${st}</span>${kv}${C ? `<div class="prog" style="width:100%">${Array.from({ length: C.ciclos }, (_, i) => `<div><i style="width:${i + 1 < C.c ? 100 : i + 1 === C.c ? clamp(C.t / LCIC * 100, 0, 100) : 0}%"></i></div>`).join("")}</div>` : ""}</div>`;
+  const t = C ? C.t : 0; const vista = !C && k && slotDe(k.formula) ? previa(k) : null; const t1 = C ? C.t1 : S.tolva1;
+  const vs = (key) => {
+    const s = SALK[key]; const m = salMat(key, t1); const mt = m ? S.MAT[m] : null;
+    const usada = C ? C.tot[key] != null : vista ? vista.tgt[key] != null : false; const act = C && pesando(key, t);
+    const real = C && usada ? valor(key, t) : 0; const obj = usada ? (C ? C.tgt[key] : vista.tgt[key]) : 0; const lvl = nivel(key);
+    const hum = s.g === "arido" ? `<span class="hum ${key === "a3" && Math.abs(S.hum.a3 - S.humAcopio) > 1.5 ? "w" : ""}" title="${key === "a3" ? "Indumix 3 % · acopio 6 % (07:30)" : ""}">H${nf((C ? C.hum : S.hum)[key])}</span>` : "";
+    return `<div class="vsl ${act ? "act" : ""} ${usada ? "" : "off"}" title="${s.lab} · Indumix «${esc(s.ind)}»${mt && mt.stock != null ? ` · stock del sistema ${mt.stock < 0 ? nf(mt.stock) + " kg (revisar recuento)" : nf(mt.stock / 1000, 1) + " t"}` : ""}">
+      <div class="vt"><span>${compacto ? s.c : s.lab}</span>${hum}</div><div class="vm">${mt ? (compacto ? mt.s : mt.c) : "—"}</div>
+      ${key === "a1" && enPlanta() && U().cargaCargar && !ocupada() ? `<button class="chg" onclick="cambiarTolva1()">Cambiar</button>` : ""}
+      <div class="tank ${s.g === "cemento" ? "silo" : s.g === "agua" ? "round" : ""}"><div class="fill" style="height:${lvl}%;background:${mt ? mt.col : "#e5e7eb"}"></div><span class="lv">${nf(lvl)}%</span></div>${s.g === "arido" ? `<div class="hop ${act ? "act" : ""}"></div>` : ""}
+      <div class="nums"><span>R</span><b>${usada ? nf(real) : 0}</b></div><div class="nums"><span>O</span><span class="num">${usada ? nf(obj, compacto ? 0 : 1) : 0}</span></div>${!compacto && mt && mt.stock != null ? `<div class="x11 ${mt.stock < 0 ? "badc" : "mu"}" style="font-size:9.5px">${mt.stock < 0 ? "stock " + nf(mt.stock) + " kg" : nf(mt.stock / 1000, 1) + " t"}</div>` : ""}</div>`;
+  };
+  const bal = (tit, b, u) => `<div class="bal ${b.est === "pesando" ? "pes" : b.est === "descargando" ? "des" : ""}"><div class="bt"><span>${tit}</span><span class="be ${b.est}">${b.est === "vacia" ? "VACÍA" : b.est.toUpperCase()}</span></div><div class="bv">${nf(b.v)} <span class="mu x11">${u}</span></div><div class="bb"><i style="width:${b.max ? clamp(b.v / b.max * 100, 0, 100) : 0}%"></i></div></div>`;
+  const agua = C && C.tot.w != null ? valor("w", t) : 0; const aguaO = C && C.tot.w != null ? C.tgt.w : vista && vista.tgt.w != null ? vista.tgt.w : 0;
+  const cinta = C && C.fase === "en_curso" && !S.alarma && t >= 50 && t < 96; const tot = k ? k.m3 : 0; const tr = m3EnTrompo();
+  const horn = performance.now() < S.bocinaHasta;
+  plantEl.className = "plant"; plantEl.style.cssText = compacto ? "--vw:52px;--th:34px;--tw:110px" : "--vw:78px;--th:62px;--tw:170px";
+  plantEl.innerHTML = `<div class="groups"><div class="grp"><div class="gt">Áridos</div><div class="row">${ARIDOS.map(vs).join("")}</div></div><div class="grp"><div class="gt">Cemento</div><div class="row">${vs("c1")}${vs("c2")}</div></div><div class="grp"><div class="gt">Aditivo</div><div class="row">${vs("ad1")}${vs("ad2")}</div></div><div class="grp"><div class="gt">Agua</div><div class="row">${vs("w")}</div></div></div>
+    <div class="bals">${bal("Bal. áridos", balanza("aridos"), "kg")}${bal("Bal. cemento", balanza("cemento"), "kg")}${bal("Bal. aditivo", balanza("aditivo"), "g")}<div class="bal ${C && pesando("w", t) ? "pes" : ""}"><div class="bt"><span>Agua</span><span class="mu">obj ${nf(aguaO)} L</span></div><div class="bv">${nf(agua)} <span class="mu x11">L</span></div><div class="bb"><i style="width:${aguaO ? clamp(agua / aguaO * 100, 0, 100) : 0}%"></i></div></div></div>
+    <div class="bottom"><div class="cinta-w">Cinta al camión${cinta ? " · en marcha" : ""}<div class="cinta ${cinta ? "run" : ""}"></div><div style="margin-top:3px">${C ? `Trompo <b style="color:var(--fg)">${nf(tr, 2)}</b> de ${m3t(tot)} m³` : k ? `Esperando · ${m3t(tot)} m³ a cargar` : ""}</div></div>
+      <div class="truck ${horn ? "horn" : ""}">${truckSVG(tot ? tr / tot : 0, C && C.fase !== "parada")}<div class="tp">${k ? esc(k.camion) : ""}</div></div></div>
+    ${S.disp === "planta" && !conectado() ? `<div class="overlay"><div>Sin conexión con la planta: no se ven los pesos<small>La planta sigue con lo que hace Indumix. Al volver se muestra el estado real; no arranca nada solo.</small></div></div>` : ""}`;
+  const pes = $("pes");
+  if (pes) pes.innerHTML = C ? `<table class="t"><thead><tr><th>Material</th><th class="r">Objetivo ciclo</th><th class="r">Real ciclo</th><th class="r">Acumulado</th><th class="r">Total teórico</th><th>Estado</th></tr></thead><tbody>${SAL.filter((s) => C.tot[s.k] != null).map((s) => { const m = salMat(s.k, C.t1); const re = valor(s.k, t); const e = pesando(s.k, t) ? '<span class="be pesando">PESANDO</span>' : t < (C.win[s.k] || [0])[0] ? '<span class="mu">espera</span>' : fracDesc(s.g, t) > 0 && fracDesc(s.g, t) < 1 ? '<span class="be descargando">DESCARGANDO</span>' : '<span class="okc">listo</span>'; return `<tr><td>${m ? S.MAT[m].c : "—"} <span class="mu">${s.lab}</span></td><td class="r num">${nf(C.tgt[s.k], 1)}</td><td class="r num sb">${nf(re)}</td><td class="r num">${nf((C.acum[s.k] || 0) + re)}</td><td class="r num">${nf(C.tot[s.k])} ${s.u}</td><td>${e}</td></tr>`; }).join("")}</tbody></table>
+    <div class="x11 mu" style="margin-top:3px">Total = receta × m³ con la humedad de Indumix (agua ya descontada).</div>` : "";
+}
+function previa(k) {
+  const slot = slotDe(k.formula); const ciclos = Math.ceil(k.m3 / M3C - 1e-9); const tgt = {}; let aguaAr = 0;
+  for (const s of SAL) { if (!(slot.v[s.k] > 0)) continue; let x = slot.v[s.k] * k.m3; if (s.g === "arido") { const y = x * (1 + (S.hum[s.k] || 0) / 100); aguaAr += y - x; x = y; } tgt[s.k] = x / ciclos; }
+  if (tgt.w != null) tgt.w = (slot.v.w * k.m3 - aguaAr) / ciclos; return { tgt };
+}
+function truckSVG(frac, gira) {
+  frac = clamp(frac, 0, 1);
+  return `<svg viewBox="0 0 230 112"><defs><clipPath id="dc"><ellipse cx="96" cy="50" rx="70" ry="30"/></clipPath></defs>
+    <rect x="18" y="82" width="190" height="9" rx="3" fill="#64748b"/><path d="M168 38 h34 l16 24 v24 h-50z" fill="#3b82f6"/><rect x="176" y="44" width="22" height="15" rx="2" fill="#dbeafe"/>
+    <ellipse cx="96" cy="50" rx="70" ry="30" fill="#f1f5f9" stroke="#94a3b8" stroke-width="3"/>
+    <g clip-path="url(#dc)"><rect x="20" y="${80 - 60 * frac}" width="160" height="${60 * frac + 2}" fill="#9ca3af"/><g class="${gira ? "drum-st" : ""}" stroke="#cbd5e1" stroke-width="4" opacity=".7">${Array.from({ length: 10 }, (_, i) => `<line x1="${20 + i * 24}" y1="18" x2="${4 + i * 24}" y2="84"/>`).join("")}</g></g>
+    <circle cx="50" cy="94" r="11" fill="#334155"/><circle cx="80" cy="94" r="11" fill="#334155"/><circle cx="190" cy="94" r="11" fill="#334155"/></svg>`;
+}
+
+function paneRecetas() {
+  const rows = S.recetas.map((r) => {
+    let est, cls;
+    if (r.vacia) { est = "Vacía"; cls = "tsl"; } else if (!r.code) { est = "Sin fórmula"; cls = "twarn"; }
+    else { const c = comparar(r.v, r.code, t1Para(r.code)); if (c.ok) { est = "Coincide"; cls = "tok"; } else if (!c.malNoAgua.length && !c.sueltas.length) { est = consultaVigente(r.code) ? "Agua en consulta" : "Agua distinta"; cls = "twarn"; } else { est = "No coincide"; cls = "tbad"; } }
+    const open = S.recAbierta === r.n;
+    return `<tr class="click" onclick="S.recAbierta=${open ? 0 : r.n};renderMain()"><td class="sb">${r.n}</td><td>${r.vacia ? '<span class="mu">(vacía)</span>' : esc(r.nombre)}${r.real ? ' <span class="tag tblue">real (foto)</span>' : ""}</td><td>${r.code ? esc(r.code) : "—"}</td><td class="mu">${r.tipo}</td><td><span class="tag ${cls}">${est}</span></td><td class="mu">${hhmm(r.leida)}</td><td>${open ? "▴" : "▾"}</td></tr>
+    ${open && !r.vacia ? `<tr><td colspan="7" style="white-space:normal">${r.code ? tablaCmp(comparar(r.v, r.code, t1Para(r.code))) : `<span class="mu">Receta de Indumix sin fórmula en el sistema.</span>`}</td></tr>` : ""}`;
+  }).join("");
+  const en = new Set(S.recetas.map((r) => r.code).filter(Boolean)); const sin = Object.entries(S.FORM).filter(([k]) => !en.has(k)).sort((a, b) => b[1][0] - a[1][0]);
+  return `<div class="card"><div class="ch"><h2>Las 20 recetas de Indumix · Canning</h2><span class="sp"></span><span class="x11 mu">el puente las lee cada 5 min y antes de cada carga · última ${hhmm(S.ultimaLectura)}</span><button class="btn sm" onclick="S.ultimaLectura=S.clock;renderMain();toast('Recetas leídas','Sin cambios')">Leer ahora</button></div>
+    <div class="tw"><table class="t"><thead><tr><th>N°</th><th>Nombre en Indumix</th><th>Fórmula del sistema</th><th>Tipo</th><th>Estado</th><th>Leída</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><div class="x11 mu" style="padding:4px 8px">La 13 es la real de la foto; las demás, de ejemplo. A confirmar el jueves: ¿las de 6/20 usan la Tolva 1 o la 4?</div></div>
+    <div class="grid2"><div class="card"><div class="ch"><h2>Qué hay en cada salida</h2></div><table class="t"><tbody>${SAL.map((s) => { const m = salMat(s.k, S.tolva1); return `<tr><td class="sb">${s.lab}</td><td class="mu">«${esc(s.ind)}»</td><td>${m ? S.MAT[m].n : "—"}${s.k === "a1" ? ` <button class="chg" onclick="cambiarTolva1()">Cambiar</button>` : ""}</td><td class="mu">${s.u}</td></tr>`; }).join("")}</tbody></table></div>
+    <div class="card"><div class="ch"><h2>Fórmulas sin lugar entre las 20</h2><span class="mu x12">${sin.length}</span></div><div class="x11 mu" style="padding:4px 8px">1–16 fijas (las más usadas) y 17–20 rotativas, cargadas a mano con la ficha. Aviso el día anterior.</div><table class="t"><tbody>${sin.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r num mu">${v[0]} despachos en 6 meses</td></tr>`).join("")}</tbody></table></div></div>`;
+}
+function paneAlertas() {
+  const ord = { abierta: 0, consulta: 1, esperando: 2, info: 3, resuelta: 4, cerrada: 5 };
+  return [...S.alertas].sort((a, b) => (ord[a.estado] - ord[b.estado]) || (b.at - a.at)).map((a) => {
+    const cls = a.estado === "resuelta" || a.estado === "cerrada" ? "done" : a.estado === "info" ? "info" : a.tipo === "cambio" || a.estado === "consulta" ? "amber" : "";
+    const lbl = { abierta: "Abierta", esperando: "Esperando a la planta", consulta: "Agua en consulta", resuelta: "Resuelta", cerrada: "Se cerró sola", info: "Info" }[a.estado];
+    return `<div class="al ${cls}"><div class="at"><b>${esc(a.titulo)}</b><div class="dd">${esc(a.det)}</div>${a.res ? `<div class="dd"><b>Hecho:</b> ${esc(a.res)}</div>` : ""}<div class="dd">${hhmm(a.at)}</div></div><span class="tag ${cls === "done" ? "tok" : cls === "info" ? "tsl" : cls === "amber" ? "twarn" : "tbad"}">${lbl}</span>${a.tipo === "receta" && a.code && slotDe(a.code) && !["cerrada", "resuelta"].includes(a.estado) && U().formulasEditar ? `<button class="btn sm pri" onclick="abrirResolver('${a.code}')">Resolver</button>` : ""}</div>`;
+  }).join("");
+}
+
+function modal(html) { $("modalRoot").innerHTML = `<div class="mbg" onclick="if(event.target===this)cerrarModal()">${html}</div>`; }
+function cerrarModal() { $("modalRoot").innerHTML = ""; if (S) S.entrega = null; }
+function modalInfo(t, body) { modal(`<div class="modal sm"><div class="mh"><h3>${t}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">${body}</div><div class="mf"><button class="btn pri" onclick="cerrarModal()">Entendido</button></div></div>`); }
+let toastT = 0;
+function toast(t, s) { const el = $("toast"); el.innerHTML = esc(t) + (s ? `<small>${esc(s)}</small>` : ""); el.style.display = "block"; clearTimeout(toastT); toastT = setTimeout(() => (el.style.display = "none"), 4200); }
+
+// ───────────────────────── Estado ─────────────────────────
+function datosIniciales() {
+  return {
+    pant: "despacho", rol: "titan", disp: "planta", vel: 10, tab: "carga", guia: true, hc: false,
+    clock: T(12, 15, 0), puente: true, lan: true, internet: true, alarma: null, noArranca: false, pendSubir: 0,
+    tolva1: "p612", hum: { a1: 0, a2: 0, a3: 3, a4: 0 }, humAcopio: 6,
+    lvl: { a1: 64, a2: 57, a3: 78, a4: 69, c1: 62, c2: 18, ad1: 55, ad2: 0, w: 70 },
+    contador: 14, selViaje: null, selCarga: "k1", carga: null, prep: null, bocinaHasta: 0, ultima: null,
+    autoriz: {}, fichaPedida: {}, ultRem: { R: 887, X: 3242 },
+    FORM: JSON.parse(JSON.stringify(FORM0)), MAT: JSON.parse(JSON.stringify(MAT0)),
+    // Pedidos del día (Canning). Todo pedido programado tiene su NP de Zomatik (se genera al programar).
+    pedidos: [
+      { id: "p1", cliente: "TOP", obra: "Santa Clara", formula: "H30-612-15 B (CAN)", total: 48, desp: 36, tipo: "R", llegada: T(8, 30), bomba: true, np: "NP 0001-00000814", nViajes: 16 },
+      { id: "p2", cliente: "Pavimentos del Sur", obra: "Barrio Las Acacias · calle 7", formula: "H30-620-10 C (CAN)", total: 13.5, desp: 4.5, tipo: "R", llegada: T(11, 30), bomba: false, np: "NP 0001-00000817 (acopio PRO 0001-00000033)", nViajes: 3 },
+      { id: "p3", cliente: "Familia Benítez", obra: "Lote 23 · Los Pinos", formula: "H21-620-15 B (CAN)", total: 3, desp: 0, tipo: "X", llegada: T(13, 15), bomba: false, np: "NP2 0001-00002080", nViajes: 1 },
+      { id: "p4", cliente: "Club Social Plátanos", obra: "Cancha 2", formula: "H21-620-15 B (CAN)", total: 12, desp: 6, tipo: "X", llegada: T(11, 0), bomba: false, np: "NP2 0001-00002078", nViajes: 4 },
+    ],
+    viajes: [
+      { id: "v1", pedido: "p1", n: 13, m3: 3, carga: T(12, 10) }, { id: "v2", pedido: "p2", n: 2, m3: 4.5, carga: T(12, 20) },
+      { id: "v3", pedido: "p1", n: 14, m3: 3, carga: T(12, 40) }, { id: "v4", pedido: "p3", n: 1, m3: 3, carga: T(12, 50) },
+      { id: "v5", pedido: "p4", n: 4, m3: 3, carga: T(13, 5) }, { id: "v6", pedido: "p1", n: 15, m3: 3, carga: T(13, 10) },
+      { id: "v7", pedido: "p2", n: 3, m3: 4.5, carga: T(13, 30) }, { id: "v8", pedido: "p1", n: 16, m3: 3, carga: T(13, 40) },
+    ],
+    camiones: [
+      { id: "AG083GT", estado: "cola", desde: T(12, 13), chofer: "Marcelo Ríos", gps: true },
+      { id: "AF431GU", estado: "planta", desde: T(12, 11), chofer: "Darío Benítez", gps: true },
+      { id: "AE402HE", estado: "yendo", desde: T(12, 7), chofer: "Claudio Ferreyra", gps: true, obra: "Santa Clara" },
+      { id: "CRN449", estado: "obra", desde: T(11, 52), chofer: "Walter Gómez", gps: true, obra: "Cancha 2" },
+      { id: "LES431", estado: "taller", desde: T(9, 40), chofer: "—", gps: false, nota: "embrague" },
+    ],
+    cola: [
+      { id: "k1", pedido: "p4", viajeN: 3, cliente: "Club Social Plátanos", obra: "Cancha 2", formula: "H21-620-15 B (CAN)", m3: 3, camion: "AG083GT", camPl: "AG 083 GT", chofer: "Marcelo Ríos", remito: "3241", tipo: "X", np: "NP2 0001-00002078", env: "12:13 · Titan", despAt: T(12, 13), bajada: T(12, 13, 4) },
+    ],
+    alertas: [], audit: [], audFiltro: null, recAbierta: 13, ultimaLectura: T(12, 15), entrega: null,
+  };
+}
+const consultaVigente = () => false;
+const conectado = () => S.puente && S.lan;
+
+// El agua distinta resalta pero no bloquea (Bautista, 21/10 · 2). Bloquean cemento, áridos, aditivo y la Tolva 1.
+function controlReceta(code, ordenId) {
+  const slot = slotDe(code); const fm = S.FORM[code][1] || {}; const aut = ordenId && S.autoriz[ordenId];
+  const r = { slot, cmp: null, items: [], bloqueaReceta: false, bloqueaTolva: false, aguaDist: false, aviso: false };
+  if (!slot) { r.items.push({ ok: false, k: "receta", t: "Sin receta entre las 20 de la planta", c: "Receta" }); r.bloqueaReceta = true; return r; }
+  const cmp = comparar(slot.v, code, t1Para(code)); r.cmp = cmp;
+  const okNo = !cmp.malNoAgua.length && !cmp.sueltas.length;
+  r.bloqueaReceta = !okNo && !aut;
+  r.items.push({ ok: okNo || !!aut, warn: !okNo && !!aut, k: "receta", c: `Receta ${slot.n}`, t: okNo ? `Receta ${slot.n}: cemento, áridos y aditivo iguales a la fórmula` : aut ? `Receta ${slot.n} distinta · autorizada solo esta carga (${aut.por})` : `Receta ${slot.n}: ${cmp.malNoAgua.map((x) => `${S.MAT[x.m].c} ${fmtPm3(x.m, x.rv)} contra ${fmtPm3(x.m, x.fv)}`).join(" · ")}` });
+  if (cmp.malAgua) { r.aguaDist = true; const cpc = cmp.rows.find((x) => x.m === "cpc"); r.items.push({ ok: true, warn: true, k: "agua", c: "Agua distinta", t: `Agua de la receta ${nf(cmp.malAgua.rv)} contra ${nf(cmp.malAgua.fv)} L/m³ (a/c ${cpc ? nf(ac(cmp.malAgua.rv, cpc.rv), 2) : "—"} contra ${nf(ac(fm.agua, fm.cpc), 2)}) · no frena, queda en la auditoría` }); }
+  else r.items.push({ ok: true, k: "agua", c: "Agua", t: "Agua igual a la fórmula" });
+  if (fm.p612) { r.bloqueaTolva = S.tolva1 !== "p612"; r.items.push({ ok: !r.bloqueaTolva, k: "tolva", c: "Tolva 1", t: r.bloqueaTolva ? "La fórmula pide Piedra 6/12 y la Tolva 1 tiene Piedra 6/20" : "Tolva 1 con Piedra 6/12" }); }
+  else if (fm.p620) r.items.push({ ok: true, k: "tolva", c: "Tolva 4", t: "Tolva 4 con Piedra 6/20" });
+  r.aviso = r.items.some((x) => x.ok && x.warn);
+  return r;
+}
+function chequeo(k) {
+  const items = [{ ok: true, k: "np", c: "NP", t: `${k.np} en Zomatik` }];
+  const rc = controlReceta(k.formula, k.id); items.push(...rc.items);
+  items.push({ ok: conectado(), k: "puente", c: "Planta", t: !S.puente ? "Sin conexión con el puente" : !S.lan ? "El puente no llega a Indumix (red local)" : "Puente e Indumix conectados" });
+  items.push({ ok: !S.alarma, k: "alarma", c: "Alarmas", t: S.alarma ? "Alarma activa en Indumix" : "Sin alarmas en Indumix" });
+  const otra = ocupada() && ((S.carga && S.carga.kid !== k.id) || (S.prep && S.prep.kid !== k.id));
+  items.push({ ok: !otra, k: "libre", c: "Planta libre", t: otra ? "La planta está con otra carga" : "Planta libre" });
+  return { items, ok: items.every((x) => x.ok), rc, aviso: rc.aviso };
+}
+
+// ───────────────────────── Despacho (fase 3) ─────────────────────────
+function libres() { return S.camiones.filter((c) => c.estado === "planta"); }
+function tocarViaje(id) { S.selViaje = S.selViaje === id ? null : id; renderAll(); }
+function tocarCamion(id) { const c = camionDe(id); if (S.selViaje) { if (c.estado === "taller") return toast("En taller: no se puede despachar"); abrirEntrega(S.selViaje, id); } }
+function abrirEntrega(vid, cam) {
+  const v = S.viajes.find((x) => x.id === vid); const p = pedidoDe(v.pedido);
+  cam = cam || (libres()[0] || {}).id || "";
+  S.entrega = { vid, cam, chofer: cam ? camionDe(cam).chofer : "", m3: v.m3, remito: String(S.ultRem[p.tipo] + 1), agua: 0, muestra: false, igual: false };
+  S.selViaje = null; renderAll(); renderEntrega();
+}
+function renderEntrega() {
+  const E = S.entrega; if (!E) return; const v = S.viajes.find((x) => x.id === E.vid); const p = pedidoDe(v.pedido); const rc = controlReceta(p.formula, null);
+  const frena = rc.bloqueaReceta || rc.bloqueaTolva;
+  const recHTML = `<div class="npl ${frena ? "no" : ""}" style="${!frena && rc.aguaDist ? "border-left-color:var(--am)" : ""}"><b>En la planta</b>${rc.items.map((x) => `<span class="tag ${!x.ok ? "tbad" : x.warn ? "twarn" : "tok"}">${esc(x.c)} ${!x.ok ? "✕" : x.warn ? "!" : "✓"}</span>`).join("")}</div>
+    ${frena ? `<label class="cbx" style="border-color:#fca5a5"><input type="checkbox" ${E.igual ? "checked" : ""} onchange="S.entrega.igual=this.checked;renderEntrega()"><span><b>La carga va a quedar frenada en la planta</b>: ${esc(rc.items.find((x) => !x.ok).t)}. Lo resuelven ${RESOLVEDORES} (ya avisados). ¿Despachar igual?</span></label>` : rc.aguaDist ? `<div class="x12 wrnc">${esc(rc.items.find((x) => x.k === "agua").t)}.</div>` : ""}`;
+  const camOpts = S.camiones.map((c) => `<option value="${c.id}" ${E.cam === c.id ? "selected" : ""} ${c.estado === "taller" ? "disabled" : ""}>${c.id} · ${ETQ[c.estado]}</option>`).join("");
+  const dis = !E.cam || !E.remito || (frena && !E.igual) ? "disabled" : "";
+  modal(`<div class="modal"><div class="mh"><h3>Entrega</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="head"><b>${esc(p.cliente)} · ${esc(p.obra)}</b><br>${esc(p.formula)} · ${p.bomba ? "bomba" : "directo"} · Total <b>${m3t(p.total)} m³</b> · enviado ${m3t(p.desp)} · falta <b>${m3t(p.total - p.desp)}</b> · <span class="tag t${p.tipo}">${p.tipo}</span> · <span class="tag tok">${esc(p.np)}</span></div>
+    ${recHTML}
+    <div class="f2">
+      <div class="fld"><label>Viaje</label><input value="Viaje ${v.n}/${p.nViajes} · ${m3t(v.m3)} m³ · cargar ${hhmm(v.carga)}" disabled></div>
+      <div class="fld"><label>Camión *</label><select onchange="S.entrega.cam=this.value;S.entrega.chofer=camionDe(this.value).chofer;renderEntrega()">${camOpts}</select></div>
+      <div class="fld"><label>Chofer *</label><input value="${esc(E.chofer)}" oninput="S.entrega.chofer=this.value"></div>
+      <div class="fld"><label>m³ este camión *</label><input value="${m3t(E.m3)}" oninput="S.entrega.m3=parseFloat(this.value.replace(',','.'))||0"></div>
+      <div class="fld"><label>Remito ${p.tipo} *</label><input value="${esc(E.remito)}" oninput="S.entrega.remito=this.value"><div class="help">Siguiente de la serie ${p.tipo} de Canning</div></div>
+      <div class="fld"><label>Agua extra en planta (L)</label><input value="${E.agua}" oninput="S.entrega.agua=this.value"><div class="help">La que se agregue en la carga se registra sola</div></div>
+    </div>
+    <label class="cbx"><input type="checkbox" ${E.muestra ? "checked" : ""} onchange="S.entrega.muestra=this.checked"><span>Muestra de probeta <span class="mu">(como hoy)</span></span></label>
+    <div class="mu x12">Como en Loop: <b>Despachar</b> graba el despacho (stock teórico, probetas, pedido) y <b>manda la orden a la cola de carga</b> de la PC de la planta. Al terminar la carga, el stock se ajusta con los kilos reales.</div>
+  </div><div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn" ${dis} onclick="despachar(false)">Despachar</button><button class="btn pri" ${dis} onclick="despachar(true)">Despachar e imprimir</button></div></div>`);
+}
+function despachar(imprimir) {
+  const E = S.entrega; const v = S.viajes.find((x) => x.id === E.vid); const p = pedidoDe(v.pedido);
+  S.ultRem[p.tipo] = Math.max(S.ultRem[p.tipo], parseInt(E.remito) || 0);
+  p.desp += E.m3; S.viajes = S.viajes.filter((x) => x.id !== v.id);
+  const cam = camionDe(E.cam); cam.chofer = E.chofer; cam.estado = "cola"; cam.desde = S.clock;
+  const k = { id: "k" + Date.now(), pedido: p.id, viajeN: v.n, cliente: p.cliente, obra: p.obra, formula: p.formula, m3: E.m3, camion: E.cam, camPl: E.cam.replace(/^(\w\w)(\d{3})(\w\w)$/, "$1 $2 $3"), chofer: E.chofer, remito: E.remito, tipo: p.tipo, np: p.np, env: `${hhmm(S.clock)} · ${U().nombre}`, despAt: S.clock, bajada: S.internet ? S.clock + 3 : null };
+  S.cola.push(k); if (!ocupada() && !cargaDe(S.selCarga)) S.selCarga = k.id;
+  S.entrega = null; cerrarModal(); renderAll();
+  toast(`Despachado · Remito ${p.tipo} ${k.remito}${imprimir ? " · impreso (teórico)" : ""}`, S.internet ? `La orden ya está en la cola de carga de la PC de la planta (${S.cola.filter((x) => x.bajada).length}ª). Pestaña «Carga».` : "La PC de la planta no tiene internet: la orden baja cuando vuelva. Mientras, se puede cargar a mano en Indumix con el remito en Observación.");
+}
+
+// ───────────────────────── Carga ─────────────────────────
+function iniciarCarga(k) {
+  const slot = slotDe(k.formula); const ciclos = Math.ceil(k.m3 / M3C - 1e-9); const m3c = k.m3 / ciclos;
+  const v = { ...slot.v }; const teo = {}, tot = {}; let aguaAr = 0;
+  for (const s of SAL) { if (!(v[s.k] > 0)) continue; const x = v[s.k] * k.m3; teo[s.k] = x; if (s.g === "arido") { tot[s.k] = x * (1 + (S.hum[s.k] || 0) / 100); aguaAr += tot[s.k] - x; } else tot[s.k] = x; }
+  if (tot.w != null) tot.w = teo.w - aguaAr;
+  S.contador++; camionDe(k.camion).estado = "cargando"; camionDe(k.camion).desde = S.clock;
+  S.carga = { kid: k.id, o: { ...k }, slotN: slot.n, recNombre: slot.nombre, v, ord: { ...slot.ord }, ciclos, m3c, c: 1, t: 0, fase: "en_curso", extras: [],
+    teo, tot, acum: {}, tgt: {}, real: {}, win: {}, lvl0: { ...S.lvl }, inicio: S.clock, total: 0, contador: S.contador, t1: S.tolva1, hum: { ...S.hum }, aut: S.autoriz[k.id] || null, plantista: U().nombre };
+  prepararCiclo(); renderAll();
+}
+function terminar(modo, motivo) {
+  const C = S.carga; C.fin = S.clock; const parcial = modo !== "ok";
+  const m3 = parcial ? Math.round(m3EnTrompo() * 10) / 10 : C.o.m3;
+  const mats = matsDeCarga(C, parcial); const f = S.FORM[C.o.formula][1] || {};
+  const ajustes = []; const realPorMat = {};
+  for (const x of mats) if (x.m) realPorMat[x.m] = (realPorMat[x.m] || 0) + (x.u === "g" ? x.real / 1000 : x.g === "arido" ? x.real / (1 + (x.h || 0) / 100) : x.real);
+  for (const m of ORDEN_MAT) {
+    if ((!f[m] && !realPorMat[m]) || S.MAT[m].tipo === "obra" || m === "agua") continue;
+    const teoDesp = modo === "tirada" ? 0 : (f[m] || 0) * C.o.m3; const real = realPorMat[m] || 0; const aj = real - teoDesp;
+    if (S.MAT[m].stock != null) S.MAT[m].stock -= aj; ajustes.push({ m, teoDesp, real, aj });
+  }
+  const p = pedidoDe(C.o.pedido); const cam = camionDe(C.o.camion);
+  let m3Desp = C.o.m3, nota = "";
+  if (modo === "sale") { p.desp += m3 - C.o.m3; m3Desp = m3; nota = `Despacho corregido a ${m3t(m3)} m³ (${motivo}). El pedido vuelve a tener ${m3t(C.o.m3 - m3)} m³ por enviar.`; }
+  if (modo === "tirada") { p.desp -= C.o.m3; m3Desp = null; nota = `Despacho anulado (${motivo}). El remito ${C.o.tipo} ${C.o.remito} queda anulado; lo pesado se registró como pérdida. El viaje vuelve a Viajes.`; S.viajes.push({ id: "v" + Date.now(), pedido: p.id, n: C.o.viajeN, m3: C.o.m3, carga: S.clock + 600 }); }
+  if (modo === "completar") nota = `Se cargaron ${m3t(m3)} m³; los ${m3t(C.o.m3 - m3)} que faltan van en otra carga del mismo remito, primera en la cola.`;
+  const cmp = comparar(C.v, C.o.formula, C.t1);
+  const row = { remito: modo === "tirada" ? null : C.o.remito, remAnulado: modo === "tirada" ? C.o.remito : null, tipo: C.o.tipo, camion: C.o.camion, horaDesp: C.o.despAt, cliente: `${C.o.cliente} · ${C.o.obra}`, formula: C.o.formula, m3: m3Desp, plantista: C.plantista,
+    carga: { n: C.contador, inicio: C.inicio, fin: C.fin, m3, ciclos: C.ciclos, receta: C.slotN, recNombre: C.recNombre, origen: "sistema", mats, v: C.v, recOk: !cmp.malNoAgua.length && !cmp.sueltas.length, aguaOk: !cmp.malAgua, aut: C.aut, parada: parcial ? modo : null },
+    extras: C.extras.slice(), salida: null, ajustes, nota, nuevo: true, union: "por id" };
+  S.audit.unshift(row);
+  S.cola = S.cola.filter((k) => k.id !== C.kid); delete S.autoriz[C.kid];
+  if (S.internet) S.audit[0].subida = true; else S.pendSubir++;
+  if (modo === "completar") { const nk = { ...C.o, id: "k" + Date.now(), m3: Math.round((C.o.m3 - m3) * 10) / 10, completa: C.o.remito, env: `${hhmm(S.clock)} · completa el remito ${C.o.remito}` }; S.cola.unshift(nk); S.selCarga = nk.id; cam.estado = "cola"; }
+  else {
+    S.selCarga = S.cola.find((x) => x.bajada) ? S.cola.find((x) => x.bajada).id : null;
+    if (modo === "tirada") { cam.estado = "planta"; cam.desde = S.clock; }
+    else { cam.estado = "cargado"; cam.desde = S.clock; cam.row = row; cam.salidaAt = S.clock + 120 + Math.round(rng(C.contador)() * 300); cam.obra = C.o.obra; S.ultima = { row, camion: cam.id }; }
+  }
+  S.carga = null; renderAll(); abrirReporte(row);
+  toast(modo === "ok" ? `Carga terminada · ${C.o.camion} cargado ${hhmm(C.fin)}` : modo === "tirada" ? "Despacho anulado y carga registrada como pérdida" : modo === "sale" ? `Sale con ${m3t(m3)} m³ · despacho corregido` : "Falta completar: quedó otra carga en la cola",
+    modo === "ok" ? "Stock ajustado con los kilos reales. La salida de planta la va a marcar el GPS." : "");
+}
+let last = performance.now(), lastR = 0;
+function tick(now) {
+  const dt = Math.min(.25, (now - last) / 1000); last = now; const C = S.carga; const ds = dt * S.vel;
+  if (C && C.fase === "en_curso" && !S.alarma) { C.t += ds; C.total += ds; if (C.t >= LCIC) finCiclo(); }
+  S.clock += ds;
+  for (const c of S.camiones) if (c.estado === "cargado" && c.salidaAt && S.clock >= c.salidaAt) {
+    c.estado = "yendo"; c.desde = c.salidaAt; if (c.row) c.row.salida = c.salidaAt; if (S.ultima && S.ultima.camion === c.id) S.ultima = null;
+    toast(`GPS: ${c.id} salió de la planta a las ${hhmm(c.salidaAt)}`, c.row ? `Esperó ${Math.round((c.salidaAt - c.row.carga.fin) / 60)} min después de terminar la carga. Queda en la auditoría.` : ""); renderAll();
+  }
+  if (now - lastR > 100) { lastR = now; if (S.carga || S.prep || performance.now() < S.bocinaHasta + 300) renderVivo(); else renderTop(); }
+  if (S.pant === "despacho" && (S.carga || S.prep) && now - (tick.lc || 0) > 1000) { tick.lc = now; if ($("colC")) renderCamiones(); }
+  requestAnimationFrame(tick);
+}
+function suspender() { const C = S.carga; if (!C || !enPlanta()) return; if (!conectado()) return sinPuente(); C.fase = C.fase === "en_curso" ? "suspendida" : "en_curso"; toast(C.fase === "suspendida" ? "Carga suspendida" : "Carga reanudada"); renderAll(); }
+function bocina() { if (!enPlanta()) return; if (!conectado()) return sinPuente(); S.bocinaHasta = performance.now() + 2000; toast("Bocina 2 s"); renderVivo(); }
+function parar() {
+  if (!conectado()) return sinPuente(); const C = S.carga;
+  if (S.prep) { S.prep = null; renderAll(); toast("PARAR: se cortó la preparación", "No se arrancó nada."); return; }
+  if (!C || !["en_curso", "suspendida"].includes(C.fase)) { toast("PARAR enviado a Indumix", "No había carga en curso. Está siempre, para cualquiera en esta PC."); return; }
+  C.fase = "parada"; C.paradaAt = S.clock; renderAll(); toast(`Carga PARADA · ciclo ${C.c} de ${C.ciclos}`, "Indumix cortó. Lo pesado queda registrado.");
+}
+function sinPuente() { modalInfo("No hay conexión con la planta", `<div class="err" style="font-size:14px">Usá el <b>PARAR de Indumix</b> o la <b>parada de emergencia</b>.</div><p class="x12">${!S.puente ? "El puente no contesta." : "El puente no llega a Indumix por la red local."} Este botón no llega a la planta. La carga sigue según Indumix.</p>`); }
+// Extra agua: el botón de Indumix. Se registra cuánta, cuándo, quién y si fue después de terminar la carga.
+function extraAgua() {
+  if (!enPlanta() || !U().cargaCargar) return; if (!conectado()) return sinPuente();
+  const C = S.carga && ["en_curso", "suspendida"].includes(S.carga.fase) ? S.carga : null; const ult = !C && S.ultima ? S.ultima : null;
+  if (!C && !ult) return toast("No hay un camión cargando ni recién cargado en la planta");
+  const cam = C ? C.o.camion : ult.camion;
+  modal(`<div class="modal sm"><div class="mh"><h3>Extra agua · ${esc(cam)}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="head">${C ? `Durante la carga (ciclo ${C.c} de ${C.ciclos}).` : `<b>Después de terminar la carga</b> (terminó ${hhmm(ult.row.carga.fin)}; el camión sigue en planta).`} Indumix lo agrega con su botón «Extra agua».</div>
+    <div class="ctr">${[10, 20, 30, 50].map((l) => `<button class="btn" onclick="$('litros').value=${l}">${l} L</button>`).join("")}</div>
+    <div class="fld"><label>Litros *</label><input id="litros" inputmode="numeric" value="20"></div>
+    <div class="mu x12">Queda registrado con la hora y quién lo pidió. La auditoría suma el agua extra por camión, fórmula y plantista.</div></div>
+    <div class="mf"><button class="btn" onclick="cerrarModal()">Cancelar</button><button class="btn pri" onclick="confirmarExtra()">Agregar agua</button></div></div>`);
+}
+function confirmarExtra() {
+  const l = parseFloat(($("litros").value || "").replace(",", ".")); if (!(l > 0) || l > 300) { $("litros").focus(); return; }
+  const C = S.carga && ["en_curso", "suspendida"].includes(S.carga.fase) ? S.carga : null;
+  const e = { at: S.clock, l, despues: !C, por: U().nombre };
+  if (C) C.extras.push(e); else if (S.ultima) S.ultima.row.extras.push(e);
+  cerrarModal(); renderAll(); toast(`Extra agua: ${nf(l)} L${e.despues ? " (después de terminar)" : ""}`, "Registrado en la carga y en la auditoría.");
+}
+
+// ───────────────────────── Resolver (sin «agua en consulta»: el agua ya no bloquea) ─────────────────────────
+function renderOpts() {
+  const R = S._res; const slot = slotDe(R.code); const cmp = comparar(slot.v, R.code, t1Para(R.code));
+  const kAut = S.cola.find((k) => k.formula === R.code);
+  const ops = [["planta", "1. Corregir la receta de la planta · recomendado", "Se arma la ficha para Indumix. Se desbloquea sola cuando el puente lee la receta corregida."],
+    kAut ? ["autorizar", "2. Autorizar solo la carga de " + kAut.camion, "Se carga con la receta de la planta. Una carga, con motivo, marcada en la auditoría."] : null,
+    ["formula", "3. Corregir nuestra fórmula · excepción", "Solo si Grow o el laboratorio cambiaron la dosificación. Vale para lo que viene."]].filter(Boolean);
+  $("opts").innerHTML = ops.map(([k, t, d]) => `<button class="opt ${R.opt === k ? "on" : ""}" onclick="S._res.opt='${k}';renderOpts()"><div class="ot">${t}</div><div class="od">${d}</div></button>`).join("");
+  let b = "";
+  if (R.opt === "planta") {
+    const lin = cmp.rows.filter((r) => !r.ok && (!r.agua || R.grow)).map((r) => { const sal = r.m === "cpc" ? "CP 40 (Rosca 1)" : r.m === "agua" ? "Agua" : r.m === "s90" ? "PLASTIF" : S.MAT[r.m].c; const cv = (x) => S.MAT[r.m].tipo === "aditivo" ? nf(x * 1000) : nf(x, x % 1 ? 1 : 0); return `${sal}: ${cv(r.rv)} → <b>${cv(r.fv)}</b>`; });
+    b = `${cmp.malAgua ? `<label class="cbx"><input type="checkbox" ${R.grow ? "checked" : ""} onchange="S._res.grow=this.checked;renderOpts()"><span><b>Grow confirmó el agua de la fórmula</b> (${nf(cmp.malAgua.fv)} L/m³). Sin esta casilla la ficha no lleva el agua, que igual no frena la carga.</span></label>` : ""}
+      <div class="ficha">FICHA PARA INDUMIX · Canning · RECETAS › <b>${slot.n}</b> «${esc(slot.nombre)}»<br>${lin.join("<br>") || "(sin cambios)"}${cmp.malAgua && !R.grow ? `<br>Agua: NO tocar hasta que confirme Grow` : ""}<br>→ GUARDAR</div>`;
+  } else if (R.opt === "autorizar") b = `<div class="fld"><label>Motivo *</label><textarea id="resTxt" rows="2" oninput="S._res.txt=this.value">${esc(R.txt || "")}</textarea></div>`;
+  else b = `<label class="cbx"><input type="checkbox" ${R.lab ? "checked" : ""} onchange="S._res.lab=this.checked;renderOpts()"><span><b>Grow o el laboratorio cambiaron la dosificación</b> y la oficial es la de la planta.</span></label><div class="fld"><label>Motivo *</label><textarea id="resTxt" rows="2" oninput="S._res.txt=this.value">${esc(R.txt || "")}</textarea></div>`;
+  $("optBody").innerHTML = b;
+}
+function confirmarResolver() {
+  const R = S._res; const slot = slotDe(R.code); const cmp = comparar(slot.v, R.code, t1Para(R.code)); const al = S.alertas.find((a) => a.key === `rec:${slot.n}:${R.code}` && a.estado !== "cerrada");
+  const txt = (R.txt || "").trim(); const q = U().nombre;
+  if (R.opt === "planta") { S.fichaPedida[R.code] = { agua: !!R.grow }; if (al) { al.estado = "esperando"; al.res = `Ficha pedida a la planta por ${q} ${hhmm(S.clock)}${R.grow ? " (con agua: confirmó Grow)" : " (sin el agua)"}`; } cerrarModal(); renderAll(); toast("Ficha lista para la planta", "Probá «Simular… › Corrigieron la receta 13»."); return; }
+  if (!txt) { $("resTxt").focus(); return; }
+  if (R.opt === "autorizar") { const k = S.cola.find((x) => x.formula === R.code); S.autoriz[k.id] = { por: q, motivo: txt, at: S.clock }; if (al) al.res = (al.res ? al.res + " · " : "") + `Carga de ${k.camion} autorizada por ${q}: «${txt}»`; toast("Autorizada solo esa carga"); }
+  else { if (!R.lab) { toast("Falta la confirmación de Grow o el laboratorio"); return; } const f = S.FORM[R.code][1]; for (const r of cmp.rows) if (!r.ok && !r.agua) f[r.m] = r.rv; if (al) { al.estado = "resuelta"; al.res = `Fórmula corregida por ${q} (excepción): «${txt}»`; } toast("Fórmula corregida (excepción)", "Resaltado en Actividad."); }
+  cerrarModal(); renderAll();
+}
+
+// ───────────────────────── Simulaciones ─────────────────────────
+function simular(q) {
+  if (!q) return;
+  if (q === "cambio") { const r = S.recetas[0]; if (r.v.c1 !== 310) return toast("Ya se cambió"); r.v.c1 = 320; r.leida = S.clock; S.alertas.unshift({ key: "camb:" + S.clock, tipo: "cambio", estado: "abierta", at: S.clock, titulo: `La receta 1 cambió en Indumix entre ${hhmm(S.clock - 300)} y ${hhmm(S.clock)}`, det: "CP 40: 310 → 320 kg/m³. Se guardó la versión anterior. Indumix no dice quién." }); asegurarAlertas(); renderAll(); toast("Cambio en la receta 1 (H30-620-10 C)", "Avisado. Las cargas de Las Acacias quedan frenadas en la planta."); }
+  else if (q === "corrigen13") {
+    const r = S.recetas[12]; const f = S.FORM[r.code][1]; const pide = S.fichaPedida[r.code];
+    r.v.c1 = f.cpc; r.v.ad1 = Math.round(f.s90 * 1000); if (pide && pide.agua) r.v.w = f.agua; r.leida = S.clock;
+    const al = S.alertas.find((a) => a.key === `rec:13:${r.code}` && a.estado !== "cerrada"); const cmp = comparar(r.v, r.code, "p612");
+    if (al) { if (cmp.ok) { al.estado = "cerrada"; al.res = (al.res ? al.res + " · " : "") + `Corregida en la planta · leída ${hhmm(S.clock)}`; } else { al.estado = "abierta"; al.titulo = `Receta 13: el cemento ya coincide; el agua sigue distinta (${nf(r.v.w)} contra ${nf(f.agua)} L/m³) · no frena`; } }
+    renderAll(); toast("El puente leyó la receta 13 corregida", cmp.ok ? "Coincide en todo." : "Cemento OK: ya se puede cargar. El agua sigue distinta: se resalta, no frena.");
+  }
+  else if (q === "alarma") { S.alarma = "Tolva 3 (ARENA): sin material / falla de vibrador"; renderAll(); }
+  else if (q === "alarmaFin") { S.alarma = null; renderAll(); }
+  else if (q === "puente") { S.puente = !S.puente; renderAll(); toast(S.puente ? "Puente conectado otra vez" : "Se cortó el puente (programa de la PC)", S.puente ? "Se ve el estado real. No arranca nada solo." : "La planta sigue según Indumix. PARAR: el de Indumix."); }
+  else if (q === "lan") { S.lan = !S.lan; renderAll(); toast(S.lan ? "Volvió la red local PC ↔ planta" : "Se cortó la red local entre la PC y la planta", S.lan ? "El puente lee el estado real y los reportes; no arranca nada solo." : "El PLC sigue solo con la carga. Si la pantalla de Indumix corre en esta PC, tampoco se ve: queda la parada de emergencia."); }
+  else if (q === "internet") {
+    S.internet = !S.internet;
+    if (S.internet) { let n = 0; for (const k of S.cola) if (!k.bajada) { k.bajada = S.clock; n++; } const sub = S.pendSubir; S.pendSubir = 0; toast("Volvió internet en la planta", `${n ? `Bajaron ${n} orden${n > 1 ? "es" : ""} nuevas. ` : ""}${sub ? `Se subieron ${sub} reporte${sub > 1 ? "s" : ""} de carga guardados en el puente.` : "Nada pendiente para subir."}`); }
+    else toast("Se cortó internet en la planta", "La carga en curso y el PARAR siguen andando (son locales). Las órdenes ya bajadas se pueden cargar. Las nuevas esperan.");
+    renderAll();
+  }
+  else if (q === "atras") modalInfo("Pedido directo al puente", `<div class="err">POST 127.0.0.1:8787/v1/cargas/k1/arrancar → <b>403</b> «Falta el permiso de arranque»</div><p class="x12">Sin permiso válido (persona con Carga · cargar, orden lista, receta OK) el puente no arranca. No se arrancó nada.</p>`);
+  else if (q === "indumix") { if (ocupada()) return toast("Primero terminá la carga en curso"); S.contador++; const r = S.recetas[1]; S.audit.unshift({ remito: null, camion: "LES431", horaDesp: null, cliente: "—", formula: r.code, m3: null, plantista: "—", extras: [], carga: { n: S.contador, inicio: S.clock - 240, fin: S.clock, m3: 1.5, ciclos: 1, receta: 2, recNombre: r.nombre, origen: "indumix", mats: matsFicticios(r.v, 1.5, r.code, S.contador), v: r.v, recOk: true, aguaOk: true }, nuevo: true, patPl: "LES 431" }); S.alertas.unshift({ key: "ind:" + S.clock, tipo: "indumix", estado: "abierta", at: S.clock, titulo: `Carga hecha desde Indumix, sin el sistema (N° ${S.contador})`, det: "Receta 2 · 1,5 m³ · «LES 431» · Observación vacía. «Sin remito» en la auditoría hasta que el emparejador la una a un remito." }); renderAll(); toast("El puente vio una carga que el sistema no pidió", "Alerta + Auditoría «Sin remito»."); }
+  else if (q === "noarranca") { S.noArranca = true; toast("La próxima vez que toques CARGAR, el PLC no va a arrancar"); }
+}
+
+// ───────────────────────── Auditoría ─────────────────────────
+function armarAuditoria() {
+  const r13 = { a1: 950, a2: 231, a3: 694, a4: 0, c1: 350, c2: 0, ad1: 2800, ad2: 0, w: 110 }; const code = "H30-612-15 B (CAN)";
+  const desp = [[874, "AG083GT", T(10, 42)], [875, "AF431GU", T(10, 42)], [876, "AE402HE", T(10, 43)], [877, "AG083GT", T(10, 43)], [878, "AF431GU", T(10, 43)], [879, "AE402HE", T(11, 4)], [880, "AG083GT", T(11, 4)], [881, "AF431GU", T(11, 5)], [882, "AE402HE", T(11, 24)], [883, "AG083GT", T(11, 45)], [884, "AF431GU", T(11, 55)], [885, "AE402HE", T(12, 7)]];
+  const cargas = [T(8, 2), T(8, 27), T(8, 51), T(9, 18), T(9, 40), T(10, 1), T(10, 24), T(10, 48), T(11, 10), T(11, 31), T(11, 49), T(12, 3)];
+  const extras = { 876: 30, 879: 20, 882: [40, true], 884: 25 };
+  const rows = [];
+  desp.forEach(([rem, cam, h], i) => {
+    const m3c = rem === 881 ? 3.5 : 3; const r = rng(rem * 7);
+    const mats = matsFicticios(r13, m3c, code, rem, rem === 885 ? { a1: 2856, a2: 701, a3: 2138, c1: 1055, ad1: 8360, w: 268 } : null, rem === 879 ? { a3: 1.031 } : null);
+    const fin = cargas[i] + 240; const ex = extras[rem]; const exL = Array.isArray(ex) ? ex[0] : ex;
+    rows.push({ remito: String(rem), tipo: "R", camion: cam, horaDesp: h, cliente: "TOP · Santa Clara", formula: code, m3: 3, plantista: "Titan",
+      carga: { n: rem - 871, inicio: cargas[i], fin, m3: m3c, ciclos: m3c > 3 ? 3 : 2, receta: 13, recNombre: "H30-612-15 B", origen: "leida", mats, v: r13, recOk: false, aguaOk: false },
+      extras: exL ? [{ at: Array.isArray(ex) ? fin + 120 : fin - 60, l: exL, despues: Array.isArray(ex), por: "Titan" }] : [], salida: fin + Math.round(180 + r() * 420),
+      union: i % 4 === 3 ? "por camión y hora" : "por remito (Observación)", patPl: cam.replace(/^(\w\w)(\d{3})(\w\w)$/, "$1 $2 $3") });
+  });
+  const r2 = recetaDesde("H21-620-15 B (CAN)").v;
+  rows.push({ remito: "3240", tipo: "X", camion: "CRN449", horaDesp: T(7, 20), cliente: "Club Social Plátanos · Cancha 2", formula: "H21-620-15 B (CAN)", m3: 3, plantista: "Felipe", extras: [], salida: T(7, 22), carga: { n: 1, inicio: T(7, 12), fin: T(7, 16), m3: 3, ciclos: 2, receta: 2, recNombre: "H21-620-15 B", origen: "leida", mats: matsFicticios(r2, 3, "H21-620-15 B (CAN)", 3240), v: r2, recOk: true, aguaOk: true }, union: "por remito (Observación)" });
+  rows.push({ remito: null, camion: "LES431", horaDesp: null, cliente: "—", formula: "H21-620-15 B (CAN)", m3: null, plantista: "—", extras: [], salida: T(7, 49), carga: { n: 2, inicio: T(7, 41), fin: T(7, 44), m3: 1.5, ciclos: 1, receta: 2, recNombre: "H21-620-15 B", origen: "leida", mats: matsFicticios(r2, 1.5, "H21-620-15 B (CAN)", 2), v: r2, recOk: true, aguaOk: true } });
+  rows.push({ remito: "3239", tipo: "X", camion: "CRN449", horaDesp: T(7, 58), cliente: "Club Social Plátanos · Cancha 2", formula: "H21-620-15 B (CAN)", m3: 3, plantista: "Felipe", extras: [], carga: null });
+  rows.sort((a, b) => ((b.carga ? b.carga.inicio : b.horaDesp) - (a.carga ? a.carga.inicio : a.horaDesp)));
+  S.audit = rows;
+}
+function flagsDe(row) {
+  const f = [];
+  if (!row.remito && row.carga && !row.remAnulado) f.push("sinRemito");
+  if (row.remito && !row.carga) f.push("sinCarga");
+  if (row.carga && row.remito && row.carga.parada !== "completar" && Math.abs(row.carga.m3 - row.m3) > .1) f.push("difVol");
+  if (row.carga && !row.carga.parada && row.carga.mats.some(desvio)) f.push("desv");
+  if (row.carga && (row.remito || row.remAnulado) && (!row.carga.recOk || row.carga.aut)) f.push("receta");
+  if (row.carga && (row.remito || row.remAnulado) && row.carga.aguaOk === false) f.push("aguaDist");
+  if (row.extras && row.extras.length) f.push("aguaExtra");
+  if (row.carga && row.carga.origen === "indumix") f.push("indumix");
+  if (row.carga && row.carga.parada) f.push("parada");
+  return f;
+}
+const FLAGN = { sinRemito: "Sin remito", sinCarga: "Sin carga", difVol: "Dif. volumen", desv: "Desviación", receta: "Receta distinta", aguaDist: "Agua distinta", aguaExtra: "Agua extra", indumix: "Desde Indumix", parada: "Parada" };
+const extraL = (row) => (row.extras || []).reduce((s, e) => s + e.l, 0);
+
+// ───────────────────────── Render ─────────────────────────
+const ETQ = { planta: "En planta · libre", cola: "En cola de carga", cargando: "Cargando", cargado: "Cargado · en planta", yendo: "Yendo a obra", obra: "En obra", volviendo: "Volviendo", taller: "Taller" };
+const ETQC = { planta: "tok", cola: "tvi", cargando: "tvi", cargado: "tvi", yendo: "tblue", obra: "twarn", volviendo: "tcy", taller: "tsl" };
+const KCLS = { planta: "planta", cola: "carga", cargando: "carga", cargado: "carga", yendo: "yendo", obra: "obra", volviendo: "volviendo", taller: "taller" };
+function renderAll() {
+  document.documentElement.classList.toggle("hc", S.hc);
+  renderEquipos(); renderTop(); renderCont(); renderBans(); renderMain(); renderParar(); renderGuia(); renderVivo(); ajustarAlto();
+}
+function ajustarAlto() { const m = $("main").firstElementChild; if (!m) return; const top = m.getBoundingClientRect().top; m.style.height = Math.max(420, window.innerHeight - top - 2) + "px"; }
+window.addEventListener("resize", () => S && ajustarAlto());
+function irCarga(kid) { S.pant = "carga"; S.tab = "carga"; if (kid) S.selCarga = kid; renderAll(); }
+function renderEquipos() {
+  const enCola = S.cola.filter((k) => k.bajada).length; const nAl = S.alertas.filter((a) => a.estado === "abierta").length;
+  $("equipos").innerHTML = [["despacho", "Despacho", "oficina o tablet · Titan, Felipe", ""], ["carga", "Carga", "PC de la planta, con el puente", enCola ? `${enCola} en cola` : ""], ["auditoria", "Auditoría de carga", "cualquier equipo", ""]]
+    .map(([k, t, d, b]) => `<button class="${S.pant === k ? "on" : ""}" onclick="S.pant='${k}';renderAll()"><b>${t}</b>${b ? ` <span class="tag tvi">${b}</span>` : ""}${k === "carga" && nAl ? ` <span class="tag tbad">${nAl} alerta${nAl > 1 ? "s" : ""}</span>` : ""}<span class="d">${d}</span></button>`).join("")
+    + `<span class="flow">${S.internet ? "Despacho → nube → puente: la orden baja en ~3 s" : "Sin internet en la planta: las órdenes nuevas esperan en la nube"}</span>`;
+}
+function renderTop() {
+  const plc = S.clock - PLANTA_PRENDIDA;
+  const t = { despacho: "Despacho", carga: "Carga de planta", auditoria: "Auditoría de carga" }[S.pant];
+  const red = S.pant === "carga" ? (S.disp !== "planta" ? `<span class="chip"><i style="background:#06b6d4"></i>Vista remota (cada 5 s, por la nube)</span>`
+    : `<span class="chip ${S.internet ? "" : "off"}"><i></i>${S.internet ? "Internet" : "Sin internet"}</span><span class="chip ${S.puente ? "" : "off"}"><i></i>${S.puente ? "Puente" : "Puente caído"}</span><span class="chip ${S.lan ? "" : "off"}"><i></i>${S.lan ? "Indumix" : "Sin red con Indumix"}</span>${S.pendSubir ? `<span class="chip off">${S.pendSubir} por subir</span>` : ""}`) : "";
+  $("top").innerHTML = `<h1>${t}</h1><span class="badge">${S.pant === "despacho" ? "Fase 3" : "Propuesta"}</span>
+    <div class="seg"><button class="on">Canning</button><button onclick="toast('En la maqueta solo está Canning')">Hudson</button></div>
+    <span class="sb">Hoy · mar 20/10</span><span class="sb num">${hms(S.clock)}</span>${red}
+    ${S.pant === "carga" ? `<span class="chip" title="El reloj de Indumix vuelve a 1/1/1970 cada día">Indumix ${Math.floor(plc / 3600)}:${pad(Math.floor(plc / 60) % 60)} · 1/1/1970 → hora del puente</span>` : ""}
+    <span class="sp"></span>
+    ${S.pant === "carga" ? `<div class="seg">${[["carga", "Carga"], ["recetas", "Recetas de la planta"], ["alertas", "Alertas"]].map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" onclick="S.tab='${k}';renderAll()">${l}</button>`).join("")}</div>` : ""}
+    ${S.pant === "despacho" ? `<button class="btn sm ghost" onclick="toast('Despacho manual: queda para después','Puede salir sin NP con «NP pendiente», o la genera quien tiene permiso')">+ Despacho manual</button>` : ""}
+    <span class="mu x12">${U().nombre} · ${U().desc}</span>
+    <button class="hcbtn" title="Alto contraste (el botón ☀ del sistema)" onclick="S.hc=!S.hc;renderAll()">☀</button>`;
+}
+function renderCont() {
+  if (S.pant !== "despacho") { $("cont").innerHTML = ""; return; }
+  const prog = S.pedidos.reduce((s, p) => s + p.total, 0), desp = S.pedidos.reduce((s, p) => s + p.desp, 0); const tv = S.pedidos.reduce((s, p) => s + p.nViajes, 0);
+  $("cont").innerHTML = `<div class="cont"><span><span class="l">Programado</span> <b class="num">${m3t(prog)} m³</b></span><span><span class="l">Despachado</span> <b class="num" style="color:#047857">${m3t(desp)} m³</b></span><span><span class="l">Falta</span> <b class="num">${m3t(prog - desp)} m³</b></span><span><span class="l">Viajes</span> <b>${tv - S.viajes.length} de ${tv}</b></span><span><span class="l">En cola de carga</span> <b>${S.cola.length}</b></span><span class="sp"></span><span class="x11" style="color:var(--am-8)">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</span></div>`;
+}
+function renderBans() {
+  const b = [];
+  if (S.pant === "carga" && S.disp === "planta") {
+    if (!S.puente) b.push(`<div class="ban dark">El puente no contesta. La planta sigue con lo que hace Indumix. Para parar: PARAR de Indumix o parada de emergencia.</div>`);
+    else if (!S.lan) b.push(`<div class="ban dark">Se cortó la red local entre esta PC y la planta. El PLC sigue solo con la carga en curso. Para parar: parada de emergencia (y el PARAR de Indumix, si su pantalla no corre en esta PC). Al volver se lee el estado real; no arranca nada solo.</div>`);
+    if (!S.internet) b.push(`<div class="ban">Sin internet. Andan igual: la carga en curso, el PARAR, la planta en vivo y las órdenes que ya bajaron (con las recetas del día guardadas en el puente). No bajan órdenes nuevas: se carga a mano en Indumix con el remito en Observación y el emparejador las une después.</div>`);
+  }
+  if (S.pant === "despacho" && !S.internet) b.push(`<div class="ban">La PC de la planta no tiene internet: lo que se despache ahora queda en la nube y baja cuando vuelva. Avisale al plantista para que lo cargue a mano en Indumix.</div>`);
+  if (S.alarma && S.pant !== "auditoria") b.push(`<div class="ban red">ALARMA DE INDUMIX: ${esc(S.alarma)}${S.carga ? " · la planta se detuvo (lo decide el PLC)" : ""}</div>`);
+  for (const a of S.alertas.filter((a) => a.estado === "abierta" && a.tipo === "cambio")) b.push(`<div class="ban">${esc(a.titulo)}: ${esc(a.det.split(".")[0])}.<span class="sp"></span><button class="lnk" onclick="S.pant='carga';S.tab='alertas';renderAll()">Ver alertas</button></div>`);
+  $("bans").innerHTML = b.join("");
+}
+function renderParar() { $("pararRoot").innerHTML = S.pant === "carga" && S.disp === "planta" ? `<button class="parar" onclick="parar()">PARAR<small>siempre · sin permiso</small></button>` : ""; }
+function renderGuia() {
+  $("guiaRoot").innerHTML = !S.guia ? "" : `<div class="guia"><div style="display:flex;align-items:center"><b>Qué probar</b><span class="sp"></span><button class="xbtn" onclick="S.guia=false;renderGuia()">×</button></div><ol>
+    <li><b>La secuencia, como en Loop (decidida el 21/10):</b> <b>1)</b> primero se <b>despacha</b>: se graba el despacho y se imprime el remito con los m³ programados (stock teórico); <b>2)</b> la orden pasa a la <b>cola de carga</b> de la PC de la planta; <b>3)</b> se <b>carga</b> allá; <b>4)</b> al terminar, el stock se ajusta con los kilos reales y, si la carga salió distinta (PARAR), se corrige el remito: sale con lo cargado (m³ corregidos), completar con otra carga, o se tiró (despacho anulado).</li>
+    <li><b>Dos pantallas.</b> Arriba, «Despacho» (oficina o tablet) y «Carga» (la PC de la planta) simulan los dos equipos. «Auditoría de carga» se ve desde cualquiera.</li>
+    <li><b>De una pantalla a la otra.</b> En Despacho, tocá el viaje de Las Acacias (12:20) y el camión libre <b>AF431GU</b>, y después «Despachar e imprimir»: se imprime el remito teórico y la orden va a la cola de carga. La tarjeta del camión dice «En cola de carga · Ver carga».</li>
+    <li><b>Cargar.</b> En «Carga», Club Social (AG083GT) ya está lista: <b>CARGAR</b>, mantené apretado «está abajo» y mirá los ciclos. Probá <b>Extra agua</b> durante la carga y después de terminar: queda registrado. El GPS marca la salida unos minutos después, y se ve el tiempo de carga y la espera hasta salir.</li>
+    <li><b>Receta distinta.</b> TOP (12:10) usa la receta 13: el cemento (350 contra 330) <b>frena</b> la carga y el agua (110 contra 168) <b>se resalta pero no frena</b>. En Despacho avisa antes. Como <b>Bautista</b>, «Resolver» y después «Simular… › Corrigieron la receta 13».</li>
+    <li><b>Parar a mitad</b> con el PARAR rojo: sale con lo cargado, completar con otra carga o se tiró. Antes de arrancar, «Cancelar…».</li>
+    <li><b>Cortes:</b> «Simular…» › cortar internet. Lo que está en la planta sigue andando, y la cola se carga igual, sin pedir nada extra; las órdenes nuevas esperan. También se puede cortar la red local PC ↔ planta o el puente.</li>
+    <li><b>Auditoría:</b> remito contra carga, tiempos (inicio, fin, tiempo de carga, salida por GPS, espera) y agua extra por camión, fórmula y plantista. Tocá una fila.</li></ol></div>`;
+}
+function renderMain() {
+  if (S.pant === "despacho") {
+    $("main").innerHTML = `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,.9fr) minmax(0,1fr)"><section class="col" id="colV"></section><section class="col" id="colC"></section><section class="col"><div class="ch"><h2>Pedidos</h2><span class="sp"></span><span class="x11 mu">entregado / total · NP de Zomatik</span></div><div id="col3" style="display:flex;flex-direction:column;flex:1;min-height:0"></div></section></div>`;
+    renderViajes(); renderCamiones(); renderPedidos();
+  } else if (S.pant === "carga" && S.tab === "carga") {
+    $("main").innerHTML = `<div class="solo"><section class="col"><div class="ch"><h2>Cola de carga</h2><span class="mu x12">${S.cola.filter((k) => k.bajada).length}</span><span class="sp"></span><span class="x11 mu">llega de Despacho</span></div><div class="cb" id="colaK"></div></section>
+      <section class="col"><div id="sbar"></div><div style="padding:6px;overflow:auto;flex:1"><div id="plant"></div><div id="pes" style="margin-top:6px"></div></div></section>
+      <section class="col"><div class="kp" id="der"></div></section></div>`;
+    renderColaK(); renderDer();
+  } else if (S.pant === "carga") $("main").innerHTML = `<div class="pane">${S.tab === "recetas" ? paneRecetas() : paneAlertas()}</div>`;
+  else $("main").innerHTML = `<div class="pane">${paneAuditoria()}</div>`;
+}
+function renderViajes() {
+  const vs = [...S.viajes].sort((a, b) => a.carga - b.carga); const late = vs.filter((v) => v.carga < S.clock).length; const sel = vs.find((v) => v.id === S.selViaje);
+  $("colV").innerHTML = `<div class="ch"><h2>Viajes</h2><span class="mu x12">${vs.length}</span>${late ? `<span class="x12" style="color:var(--red-7);font-weight:600">· ${late} atrasado${late > 1 ? "s" : ""}</span>` : ""}<span class="sp"></span><span class="x11 mu">por hora de carga</span></div><div class="cb">
+    ${sel ? `<div class="hint"><span class="tr sp">Elegido: ${sel.n}/${pedidoDe(sel.pedido).nViajes} · ${esc(pedidoDe(sel.pedido).obra)}. Tocá un camión.</span><button class="lnk" onclick="S.selViaje=null;renderAll()">Soltar</button></div>` : ""}
+    ${vs.map((v) => { const p = pedidoDe(v.pedido); const at = v.carga < S.clock ? "late" : v.carga - S.clock < 900 ? "now" : ""; const rc = controlReceta(p.formula, null); const frena = rc.bloqueaReceta || rc.bloqueaTolva;
+      return `<div class="vr ${at} ${S.selViaje === v.id ? "sel" : ""}" onclick="if(!event.target.closest('button'))tocarViaje('${v.id}')"><div class="h"><b class="num" style="${at === "late" ? "color:var(--red-7)" : ""}">${hhmm(v.carga)}</b><div>${v.n}/${p.nViajes}</div></div>
+        <div class="ln"><div class="l1"><span class="tr"><span style="font-weight:500">${esc(p.obra)}</span><span class="mu"> · ${esc(p.cliente)}</span></span><span class="sp"></span><b class="num" style="font-weight:600">${m3t(v.m3)} m³</b><span class="tag t${p.tipo}">${p.tipo}</span>${at === "late" ? `<span class="x11" style="color:var(--red-7);font-weight:600">atrasado</span>` : ""}</div>
+        <div class="l2"><span class="tr">${esc(p.formula)} · ${p.bomba ? `<span style="color:var(--cy-8);font-weight:500">bomba</span>` : "directo"}</span>${frena ? `<span class="tag tbad" title="La carga va a quedar frenada en la planta">receta ✕</span>` : rc.aguaDist ? `<span class="tag twarn">agua !</span>` : ""}</div></div>
+        ${U().cargaCargar ? `<button class="btn sm pri" onclick="abrirEntrega('${v.id}')">Despachar</button>` : ""}</div>`; }).join("") || `<div class="empty">No quedan viajes por despachar en Canning.</div>`}</div>`;
+}
+function estadoCargaCamion(c) {
+  const k = S.cola.find((x) => x.camion === c.id);
+  if (c.estado === "cola" && k) { const pos = S.cola.filter((x) => x.bajada).indexOf(k) + 1; const ch = chequeo(k); return { t: k.bajada ? `En cola de carga · ${pos}°${!ch.ok ? " · frenada" : ""}` : "Esperando que baje a la planta (sin internet)", kid: k.id, bad: !ch.ok }; }
+  if (c.estado === "cargando" && S.carga && S.carga.o.camion === c.id) return { t: S.carga.fase === "parada" ? "Carga parada" : S.carga.fase === "suspendida" ? "Carga suspendida" : `Cargando · ciclo ${S.carga.c}/${S.carga.ciclos}`, kid: S.carga.kid };
+  if (c.estado === "cargado" && c.row) return { t: `Cargado ${hhmm(c.row.carga.fin)} · esperando salir`, row: true };
+  return null;
+}
+function renderCamiones() {
+  const nl = libres().length;
+  $("colC").innerHTML = `<div class="ch"><h2>Camiones</h2><span class="mu x12">${nl} libre${nl === 1 ? "" : "s"} en Canning</span></div><div class="cb">
+    ${S.selViaje ? `<div class="hint">Tocá el camión que sale. Los de marco verde están libres.</div>` : ""}
+    ${S.camiones.map((c) => { const ec = estadoCargaCamion(c); const donde = c.estado === "planta" ? "En Canning" : c.estado === "taller" ? c.nota : ["cola", "cargando", "cargado"].includes(c.estado) ? "En Canning" : `→ ${c.obra}`;
+      return `<div class="cr k-${KCLS[c.estado]} ${S.selViaje && c.estado === "planta" ? "lit" : ""} ${S.selViaje && c.estado === "taller" ? "dim" : ""}" onclick="if(!event.target.closest('button'))tocarCamion('${c.id}')"><div class="ln">
+        <div class="l1"><b style="font-weight:600;letter-spacing:.03em">${c.id}</b><span class="tag ${ETQC[c.estado]}">${ETQ[c.estado]}</span><span class="x12 mu num">${dur((S.clock - c.desde) / 60)}</span></div>
+        <div class="l2"><span class="tr">${esc(donde)} · ${esc(c.chofer)} · ${c.gps ? "GPS" : "a mano"}</span></div>
+        ${ec ? `<div class="l2" style="margin-top:1px"><span class="tag ${ec.bad ? "tbad" : "tvi"}">${esc(ec.t)}</span>${ec.kid ? `<button class="lnk" onclick="irCarga('${ec.kid}')">Ver carga</button>` : ""}</div>` : ""}</div></div>`; }).join("")}</div>`;
+}
+function renderPedidos() {
+  $("col3").innerHTML = `<div class="cb">${S.pedidos.map((p) => `<div class="pr"><div class="ln"><div class="l1"><span class="x12 num sb" style="width:36px">${hhmm(p.llegada)}</span><span class="tr" style="font-weight:500">${esc(p.cliente)}</span><span class="sp"></span><span class="x12 num"><b>${m3t(p.desp)}</b>/${m3t(p.total)} m³</span><span class="tag t${p.tipo}">${p.tipo}</span></div>
+      <div class="l2"><span class="tr">${esc(p.obra)} · ${esc(p.formula)}</span><span class="sp"></span><span class="tag tok" title="Se generó al programar">${esc(p.np.split(" (")[0])}</span></div><div class="bar"><i style="width:${clamp(p.desp / p.total * 100, 0, 100)}%"></i></div></div></div>`).join("")}
+    <div class="x11 mu" style="padding:4px">Todo pedido programado tiene su NP: se genera al programar (lo hace quien programa, Titan incluido). Si Zomatik estaba caído, el pedido queda «NP pendiente» y se resuelve en Programación.</div></div>`;
+}
+function filaCarga(k) {
+  const ch = chequeo(k); const run = (S.carga && S.carga.kid === k.id) || (S.prep && S.prep.kid === k.id);
+  const st = run ? ["run", S.carga && S.carga.fase === "parada" ? "parada" : S.carga && S.carga.fase === "suspendida" ? "suspendida" : "cargando"] : ch.ok ? ["", ch.aviso ? "lista · agua !" : "lista"] : ["blk", (ch.items.find((x) => !x.ok) || {}).c + " ✕"];
+  return `<button class="kr ${st[0]} ${S.selCarga === k.id ? "sel" : ""}" onclick="S.selCarga='${k.id}';renderAll()"><div class="ln"><div class="l1"><b style="font-weight:600">${k.camion}</b><span class="tr">${esc(k.cliente)}</span><span class="sp"></span><b class="num" style="font-weight:600">${m3t(k.m3)} m³</b><span class="tag t${k.tipo}">${k.tipo} ${esc(k.remito)}</span></div>
+    <div class="l2"><span class="tr">${esc(k.formula)} · despachó ${esc(k.env)}</span><span class="sp"></span><span class="tag ${st[0] === "blk" ? "tbad" : st[0] === "run" ? "tblue" : ch.aviso ? "twarn" : "tok"}">${esc(st[1])}</span></div></div></button>`;
+}
+function renderColaK() {
+  const bj = S.cola.filter((k) => k.bajada), nb = S.cola.length - bj.length;
+  $("colaK").innerHTML = (bj.map(filaCarga).join("") || `<div class="empty">No hay cargas. Llegan desde Despacho al tocar «Despachar».</div>`) + (nb ? `<div class="hint" style="background:var(--am-50);color:var(--am-8)">${nb} despacho${nb > 1 ? "s" : ""} todavía no bajó (sin internet). Cargalo a mano en Indumix con el remito en Observación: el emparejador lo une después.</div>` : "");
+}
+function renderDer() {
+  const el = $("der"); if (!el) return; const C = S.carga;
+  if (S.prep) { el.innerHTML = `<div class="box bl"><h3>Arrancando · ${esc(cargaDe(S.prep.kid).camion)}</h3><ul class="steps">${S.prep.pasos.map((p, i) => `<li class="${i < S.prep.i ? "done" : i === S.prep.i ? "now" : ""}"><span class="ic">${i < S.prep.i ? "✓" : i + 1}</span><span>${esc(p)}</span></li>`).join("")}</ul></div>`; return; }
+  const btnAgua = (en) => `<button class="btn" style="border-color:#93c5fd;color:var(--blue-8)" onclick="extraAgua()" ${en && U().cargaCargar ? "" : "disabled"}>Extra agua</button>`;
+  const listaExtras = (ex) => ex && ex.length ? `<div class="x12">Agua extra: ${ex.map((e) => `<b>${nf(e.l)} L</b> ${hhmm(e.at)}${e.despues ? " (después de terminar)" : ""}`).join(" · ")}</div>` : "";
+  if (C && ["en_curso", "suspendida", "parada"].includes(C.fase)) {
+    const o = C.o; let ctr = "";
+    if (C.fase === "parada") ctr = `<div class="box dk"><h3>Carga parada a las ${hhmm(C.paradaAt)} · ciclo ${C.c} de ${C.ciclos} · en el trompo ~${m3t(Math.round(m3EnTrompo() * 10) / 10)} m³</h3>
+      ${enPlanta() && U().cargaCargar ? `<div class="ctr"><button class="btn pri" onclick="resolverParada('sale')">Sale con lo cargado</button>${o.completa ? `<span class="x11 mu">Es el resto del remito ${esc(o.completa)}.</span>` : `<button class="btn" onclick="resolverParada('completar')">Completar con otra carga</button><button class="btn" onclick="resolverParada('tirada')">Se tiró · anular despacho</button>`}</div>` : `<div class="x12 mu">Lo decide el plantista en la PC de la planta.</div>`}</div>`;
+    else if (enPlanta()) ctr = `<div class="ctr"><button class="btn amb" onclick="suspender()">${C.fase === "suspendida" ? "Reanudar" : "Suspender"}</button><button class="btn" onclick="bocina()">Bocina</button>${btnAgua(true)}</div><div class="x11 mu">PARAR: abajo a la derecha, siempre.</div>`;
+    else ctr = `<div class="nodisp">Vista remota: se ve, no se acciona.</div>`;
+    el.innerHTML = `<div class="kh"><span class="pat">${esc(o.camion)}</span><span class="tag t${o.tipo}">${o.tipo} ${esc(o.remito)}</span><span class="mu x12">N° ${C.contador} en Indumix</span></div>
+      <div class="x12"><b>${esc(o.cliente)}</b> · ${esc(o.obra)}<br>${esc(o.formula)} · receta ${C.slotN} · <b>${m3t(o.m3)} m³</b> en ${C.ciclos} ciclos</div>
+      <div class="x12 mu">Despachado ${hhmm(o.despAt)} · <b style="color:var(--fg)">inicio de carga ${hms(C.inicio)}</b> · llevamos ${mmss(S.clock - C.inicio)}</div>
+      ${C.aut ? `<div class="box am x12">Autorizada con receta distinta · ${esc(C.aut.por)}: «${esc(C.aut.motivo)}»</div>` : ""}
+      ${controlReceta(o.formula, o.id).aguaDist ? `<div class="box am x12">Agua de la receta distinta de la fórmula: no frena, queda en la auditoría.</div>` : ""}${listaExtras(C.extras)}${ctr}`;
+    return;
+  }
+  const ult = S.ultima ? `<div class="box bl"><h3>${esc(S.ultima.camion)} cargado ${hhmm(S.ultima.row.carga.fin)} · esperando que salga (GPS)</h3>${listaExtras(S.ultima.row.extras)}<div class="ctr">${enPlanta() ? btnAgua(conectado()) : ""}<button class="btn sm" onclick="abrirReporte(S.ultima.row)">Ver reporte</button></div></div>` : "";
+  const k = cargaDe(S.selCarga); if (!k || !k.bajada) { el.innerHTML = ult + `<div class="empty">No hay una carga elegida.</div>`; return; }
+  const ch = chequeo(k); const rc = ch.rc;
+  let extra = "";
+  if (rc.cmp && rc.bloqueaReceta) extra += `<div class="box"><h3>No se puede cargar: la receta ${rc.slot.n} no es igual a la fórmula</h3>${tablaCmp(rc.cmp)}${U().formulasEditar ? `<button class="btn sm pri" style="margin-top:4px" onclick="abrirResolver('${k.formula}')">Resolver</button>` : `<div class="x12" style="margin-top:3px">Lo resuelve quien tiene Fórmulas · editar: ${RESOLVEDORES} (ya les llegó el mail).</div>`}</div>`;
+  else if (rc.aguaDist) extra += `<div class="box am"><h3>Agua de la receta distinta de la fórmula · no frena</h3><div class="x12">${esc(rc.items.find((x) => x.k === "agua").t)}. Antes de tocar el agua en la planta conviene que lo confirme Grow.</div></div>`;
+  let ctr;
+  if (!enPlanta()) ctr = `<div class="nodisp">CARGAR y PARAR se accionan solo desde la computadora de la planta.</div>`;
+  else { const motivo = !ch.ok ? (ch.items.find((x) => !x.ok) || {}).t : ""; ctr = `<div class="ctr"><button class="cargar" onclick="pedirCargar()" ${ch.ok && U().cargaCargar ? "" : "disabled"}>CARGAR</button><button class="btn" onclick="bocina()">Bocina</button><button class="btn ghost" onclick="cancelarCarga('${k.id}')">Cancelar…</button></div>${motivo ? `<div class="why">${esc(motivo)}</div>` : `<div class="x11 mu">Antes de arrancar se confirma que el camión está abajo.</div>`}`; }
+  el.innerHTML = ult + `<div class="kh"><span class="pat">${esc(k.camion)}</span><span class="tag t${k.tipo}">${k.tipo} ${esc(k.remito)}</span><span class="x12 tr"><b>${esc(k.cliente)}</b> · ${esc(k.obra)}</span></div>
+    <div class="x12 mu">${esc(k.formula)} · <b style="color:var(--fg)">${m3t(k.m3)} m³</b> (${Math.ceil(k.m3 / M3C - 1e-9)} ciclos) · chofer ${esc(k.chofer)} · despachó ${esc(k.env)} · bajó ${hms(k.bajada)}</div>
+    <div class="chks">${ch.items.map((x) => `<span class="ck ${!x.ok ? "no" : x.warn ? "wa" : "ok"}" title="${esc(x.t)}"><b>${!x.ok ? "✕" : x.warn ? "!" : "✓"}</b>${esc(x.c)}</span>`).join("")}</div>
+    ${extra}${ctr}`;
+}
+function abrirReporte(row) {
+  const c = row.carga; if (!c) return; const f = flagsDe(row);
+  const filas = c.mats.map((x) => { const d = x.teoCorr ? (x.real - x.teoCorr) / x.teoCorr : 0; const bad = desvio(x); const tol = TOLR[x.g] || [0, 0]; const dist = x.m && x.k !== "c2" && Math.abs(x.formPm3 - x.recPm3) > Math.max(tol[0] * x.formPm3, tol[1] * (x.u === "g" ? 1000 : 1));
+    return `<tr class="${bad ? "bad" : dist ? "wbad" : ""}"><td>${x.m ? S.MAT[x.m].c : "—"} <span class="mu">${x.lab}</span></td><td class="r num">${x.k === "c2" ? "—" : nf(x.formPm3, x.formPm3 % 1 ? 1 : 0)}</td><td class="r num">${nf(x.recPm3)}</td><td class="r num">${nf(x.teo)}</td><td class="r num">${x.h != null ? nf(x.h) + " %" : x.k === "w" ? "−" + nf(x.teo - x.teoCorr) : ""}</td><td class="r num">${nf(x.teoCorr)}</td><td class="r num sb">${nf(x.real)} ${x.u}</td><td class="r num ${bad ? "badc" : ""}">${d > 0 ? "+" : ""}${nf(d * 100, 1)} %</td></tr>`; }).join("");
+  const ex = extraL(row); const aguaR = (c.mats.find((x) => x.k === "w") || {}).real || 0; const cpcR = c.mats.filter((x) => x.m === "cpc").reduce((s, x) => s + x.real, 0);
+  const aj = row.ajustes ? `<div class="tw"><table class="t"><thead><tr><th>Ajuste de stock (kg; áridos en seco)</th><th class="r">Teórico del despacho</th><th class="r">Real</th><th class="r">Ajuste</th></tr></thead><tbody>${row.ajustes.map((a) => { const d = S.MAT[a.m].tipo === "aditivo" ? 2 : 0; return `<tr><td>${S.MAT[a.m].c}</td><td class="r num">${nf(a.teoDesp, d)}</td><td class="r num">${nf(a.real, d)}</td><td class="r num sb">${a.aj > 0 ? "+" : ""}${nf(a.aj, d)}</td></tr>`; }).join("")}</tbody></table></div>` : "";
+  const tiempos = `<div class="sum"><span class="mu">Despachado (remito)</span><b>${row.horaDesp ? hhmm(row.horaDesp) : "—"}</b><span class="mu">Inicio de carga</span><b>${hms(c.inicio)}</b><span class="mu">Fin</span><b>${hms(c.fin)}</b><span class="mu">Tiempo de carga</span><b>${mmss(c.fin - c.inicio)}</b><span class="mu">Salió de planta (GPS)</span><b>${row.salida ? hhmm(row.salida) : "esperando GPS"}</b><span class="mu">Espera hasta salir</span><b>${row.salida ? Math.round((row.salida - c.fin) / 60) + " min" : "—"}</b></div>`;
+  modal(`<div class="modal lg"><div class="mh"><h3>Reporte de carga N° ${c.n}${row.remito ? ` · Remito ${row.tipo || ""} ${esc(row.remito)}` : row.remAnulado ? ` · Remito ${row.tipo} ${esc(row.remAnulado)} ANULADO` : ""}</h3><button class="xbtn" onclick="cerrarModal()">×</button></div><div class="mb">
+    <div class="head">${esc(row.cliente)} · <b>${esc(row.camion)}</b>${row.patPl ? ` (Indumix «${esc(row.patPl)}»)` : ""} · ${esc(row.formula)} · receta ${c.receta} «${esc(c.recNombre)}» · <b>${m3t(c.m3)} m³</b> en ${c.ciclos} ciclos · ${c.origen === "sistema" ? "desde el sistema" : c.origen === "indumix" ? "arrancada en Indumix" : "leída del reporte de Indumix"} · plantista ${esc(row.plantista || "—")}${row.remito ? ` · unión ${esc(row.union || "por id")}` : ""}</div>
+    ${tiempos}
+    <div>${f.length ? f.map((k) => `<span class="flag f-${k}">${FLAGN[k]}</span>`).join("") : '<span class="flag f-ok">Sin problemas</span>'}</div>
+    ${row.nota ? `<div class="ac">${esc(row.nota)}</div>` : ""}
+    <div class="tw"><table class="t"><thead><tr><th>Material</th><th class="r">Fórmula /m³</th><th class="r">Receta /m³</th><th class="r">Teórico</th><th class="r">Humedad</th><th class="r">Teórico corregido</th><th class="r">Real</th><th class="r">Real − teórico</th></tr></thead><tbody>${filas}
+      <tr><td>Agua extra</td><td colspan="5" class="mu">${(row.extras || []).map((e) => `${nf(e.l)} L ${hhmm(e.at)}${e.despues ? " (después de terminar)" : ""} · ${esc(e.por)}`).join(" · ") || "no se agregó"}</td><td class="r num sb">${nf(ex)} L</td><td class="r x11 mu">agua total ${nf(aguaR + ex)} L · a/c ${cpcR ? nf((aguaR + ex) / cpcR, 2) : "—"}</td></tr></tbody></table></div>
+    ${aj}
+    <div class="x11 mu">Teórico corregido: árido húmedo = seco × (1 + H%) y agua descontada la de los áridos, como hace Indumix. Tolerancias de pesaje: cemento ±1 %, áridos ±2 %, agua ±3 %, aditivos ±3 %. El ajuste de stock es lo real menos lo que descontó el despacho (fórmula × m³). Las horas son las del puente.</div>
+  </div><div class="mf"><button class="btn pri" onclick="cerrarModal()">Cerrar</button></div></div>`);
+}
+function paneAuditoria() {
+  const rows = S.audit; const all = rows.map((r) => ({ r, f: flagsDe(r) })); const cnt = (k) => all.filter((x) => x.f.includes(k)).length;
+  const vis = S.audFiltro ? all.filter((x) => x.f.includes(S.audFiltro)) : all;
+  const top = rows.filter((r) => r.carga && r.remito && r.formula === "H30-612-15 B (CAN)" && !r.carga.recOk);
+  const cpcR = top.reduce((s, r) => s + r.carga.mats.filter((x) => x.m === "cpc").reduce((a, x) => a + x.real, 0), 0), cpcF = top.reduce((s, r) => s + 330 * r.carga.m3, 0);
+  const conEx = rows.filter((r) => extraL(r) > 0); const totEx = conEx.reduce((s, r) => s + extraL(r), 0); const desp = conEx.reduce((s, r) => s + r.extras.filter((e) => e.despues).reduce((a, e) => a + e.l, 0), 0);
+  const agrupa = (fn) => { const m = {}; for (const r of conEx) m[fn(r)] = (m[fn(r)] || 0) + extraL(r); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${nf(v)} L`).join(" · "); };
+  const conT = rows.filter((r) => r.carga && r.salida); const promC = conT.length ? conT.reduce((s, r) => s + (r.carga.fin - r.carga.inicio), 0) / conT.length : 0; const promE = conT.length ? conT.reduce((s, r) => s + (r.salida - r.carga.fin), 0) / conT.length / 60 : 0;
+  return `<div class="sum"><span class="mu">Remitos</span><b>${rows.filter((r) => r.remito).length}</b><span class="mu">Cargas</span><b>${rows.filter((r) => r.carga).length}</b><span class="mu">m³ remitos</span><b>${m3t(rows.reduce((s, r) => s + (r.m3 || 0), 0))}</b><span class="mu">m³ cargas</span><b>${m3t(rows.reduce((s, r) => s + (r.carga ? r.carga.m3 : 0), 0))}</b><span class="mu">Tiempo de carga prom.</span><b>${mmss(promC)}</b><span class="mu">Espera hasta salir prom.</span><b>${nf(promE, 1)} min</b><span class="mu">Con problemas</span><b style="color:var(--red-7)">${all.filter((x) => x.f.filter((k) => k !== "aguaExtra").length).length}</b></div>
+    <div class="cats"><button class="cat ${!S.audFiltro ? "on" : ""}" onclick="S.audFiltro=null;renderMain()"><b>${all.length}</b> Todas</button>${Object.keys(FLAGN).map((k) => `<button class="cat ${S.audFiltro === k ? "on" : ""} ${cnt(k) ? "hot" : ""}" onclick="S.audFiltro='${k}';renderMain()"><b>${cnt(k)}</b> ${FLAGN[k]}</button>`).join("")}</div>
+    ${top.length ? `<div class="insight"><b>Hoy, ${top.length} cargas de H30-612-15 B con la receta 13</b>: <b>${nf(cpcR)} kg de CPC 40</b> contra <b>${nf(cpcF)} kg</b> de la fórmula, <b>+${nf(cpcR - cpcF)} kg</b> que el stock no descontó. Agua de la receta 58 L/m³ menos (a/c 0,31 contra 0,51), resaltada pero sin frenar.</div>` : ""}
+    <div class="insight" style="border-left-color:var(--blue);border-color:#bfdbfe;color:#1e3a8a"><b>Agua extra hoy: ${nf(totEx)} L en ${conEx.length} camiones</b>${desp ? ` (${nf(desp)} L después de terminar la carga)` : ""}. Por fórmula: ${agrupa((r) => r.formula) || "—"} · por camión: ${agrupa((r) => r.camion) || "—"} · por plantista: ${agrupa((r) => r.plantista || "—") || "—"}.</div>
+    <div class="card"><div class="ch"><h2>Auditoría de carga · Canning · hoy</h2><span class="sp"></span><button class="btn sm" onclick="toast('Exporta a Excel (xlsx)')">Exportar a Excel</button></div><div class="tw"><table class="t" style="min-width:1180px"><thead><tr><th>Remito</th><th>Camión</th><th>Despacho</th><th>Fórmula</th><th class="r">m³</th><th style="border-left:2px solid var(--bd)">Carga</th><th>Inicio</th><th>Fin</th><th class="r">Carga</th><th>Salió (GPS)</th><th class="r">Espera</th><th class="r">m³</th><th>Receta</th><th class="r">Agua extra</th><th>Problemas</th></tr></thead><tbody>
+    ${vis.map(({ r, f }) => `<tr class="${r.carga ? "click" : ""}" ${r.carga ? `onclick="abrirReporte(S.audit[${rows.indexOf(r)}])"` : ""}><td>${r.remito ? `<span class="tag t${r.tipo}">${r.tipo}</span> ${esc(r.remito)}` : r.remAnulado ? `<s>${r.tipo} ${esc(r.remAnulado)}</s> <span class="mu">anulado</span>` : '<span class="badc">sin remito</span>'}</td><td>${esc(r.camion)}</td><td class="num">${r.horaDesp ? hhmm(r.horaDesp) : "—"}</td><td>${esc(r.formula)}</td><td class="r num">${r.m3 != null ? m3t(r.m3) : "—"}</td>
+      <td style="border-left:2px solid var(--bd)">${r.carga ? "N° " + r.carga.n : '<span class="badc">sin carga</span>'}</td><td class="num">${r.carga ? hhmm(r.carga.inicio) : "—"}</td><td class="num">${r.carga ? hhmm(r.carga.fin) : "—"}</td><td class="r num">${r.carga ? mmss(r.carga.fin - r.carga.inicio) : "—"}</td><td class="num">${r.salida ? hhmm(r.salida) : r.carga ? '<span class="mu">—</span>' : ""}</td><td class="r num">${r.salida && r.carga ? Math.round((r.salida - r.carga.fin) / 60) + " min" : ""}</td><td class="r num">${r.carga ? m3t(r.carga.m3) : "—"}</td><td>${r.carga ? r.carga.receta : "—"}</td><td class="r num">${extraL(r) ? nf(extraL(r)) + " L" : ""}</td>
+      <td style="white-space:normal">${f.map((k) => `<span class="flag f-${k}">${FLAGN[k]}</span>`).join("") || (r.anulado ? `<span class="mu">anulado: ${esc(r.anulado)}</span>` : '<span class="flag f-ok">OK</span>')}</td></tr>`).join("")}</tbody></table></div>
+    <div class="x11 mu" style="padding:4px 8px">«Despacho» es la hora del remito; «Inicio» y «Fin», las de la carga (hora del puente); «Salió», la salida de la geocerca de la planta por GPS (viajes_gps). Las cargas «leídas» son del reporte de Indumix (etapa A), unidas por Observación o por camión y hora. Ejemplo, salvo los kilos del remito 885 (reporte real).</div></div>`;
+}
+function reiniciar() {
+  const keep = S ? { rol: S.rol, disp: S.disp, vel: S.vel, pant: S.pant, hc: S.hc } : {};
+  S = Object.assign(datosIniciales(), keep);
+  armarRecetas(); armarAuditoria();
+  S.alertas = [
+    { key: "hist:7", tipo: "cambio", estado: "cerrada", at: T(8, 10), titulo: "La receta 7 cambió en Indumix entre 08:05 y 08:10", det: "Agua 160 → 165 L/m³: quedó igual a la fórmula H17-6/20 B.", res: "Se cerró sola (leída 08:10)" },
+    { key: "rec:14:RDC-300 (CAN)", tipo: "receta", estado: "abierta", at: T(6, 59), code: "RDC-300 (CAN)", titulo: "La receta 14 no coincide con RDC-300 (CAN)", det: "El Espumígeno (600 g/m³) no está en ninguna salida de Indumix. ¿Se agrega a mano?" },
+    { key: "hum", tipo: "humedad", estado: "info", at: T(7, 30), titulo: "Humedad de la Arena Fina distinta", det: "Indumix usa 3 % y el acopio medido a las 07:30 dio 6 %. No frena." },
+    { key: "reloj", tipo: "reloj", estado: "info", at: PLANTA_PRENDIDA, titulo: "Indumix arrancó a las 06:58 con el reloj en 1/1/1970 0:00", det: "Pasa todos los días. Todas las cargas van con la hora del puente." },
+  ];
+  asegurarAlertas();
+  ["rol", "disp"].forEach((id) => ($(id).value = S[id])); $("vel").value = String(S.vel);
+  cerrarModal(); renderAll();
+}
+
+reiniciar();
+requestAnimationFrame(tick);
+
+</script>
+</body>
+</html>

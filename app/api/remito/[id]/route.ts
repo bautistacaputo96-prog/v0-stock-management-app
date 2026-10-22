@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import * as fs from "fs"
 import * as path from "path"
-import { numeroImpreso, tipoPorNumero } from "@/lib/despacho"
+import { tipoPorNumero } from "@/lib/despacho"
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 function sb() {
@@ -75,10 +75,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const m3           = Number(row.quantity_m3 || 0).toLocaleString("es-AR", { maximumFractionDigits: 2 })
   const remito       = (!isScheduled && row.remito) ? row.remito : ""
   const productoCode = f.code || f.name || ""
-  // Fase 3: R (con factura) lleva "RM" y X (sin factura) "RM2", los dos con el número completado a 8 dígitos
-  // ("RM2: 0099-00003201"). Un despacho viejo sin tipo vale lo que dice su número.
+  // Fase 3: R (con factura) lleva "RM" y X (sin factura) "RM2". Solo la sigla: el número ya viene impreso en el
+  // talonario (Bautista, 21/10/2026). Un despacho viejo sin tipo vale lo que dice su número.
   const remitoTipo   = !isScheduled ? (row.remito_tipo === "R" || row.remito_tipo === "X" ? row.remito_tipo : tipoPorNumero(remito)) : null
-  const remitoImpreso = remito ? numeroImpreso(remitoTipo, remito) : `${remitoTipo === "R" ? "RM" : "RM2"}: `
+  const remitoImpreso = remitoTipo === "R" ? "RM" : "RM2"
 
   const data = {
     fecha,
@@ -340,7 +340,7 @@ async function fillRemitoX(data: Record<string, string>, withBackground: boolean
   w("Localidad: " + (data.localidadCliente || ""),118, 58.6, { size: CS })
   w("Provincia: " + (data.provincia || ""),      118, 63.2, { size: CS })
   w("Cuit: " + (data.cuit || ""),                118, 67.8, { size: CS })
-  w(data.remitoImpreso || "RM2: ",               118, 77.0, { size: CS })
+  w(data.remitoImpreso || "RM2",               118, 77.0, { size: CS })
 
   // Tabla: CANTIDAD (m3 de este viaje) | DESCRIPCION (código de fórmula)
   w(data.m3 ? `${data.m3} m³` : "", 15, 93, { size: 12, bold: true })

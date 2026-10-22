@@ -1,15 +1,16 @@
 "use client"
 
 /**
- * Columna Pedidos, compacta: dos líneas por pedido (llegada, cliente, entregado/total, R/X / obra, fórmula y barra).
- * Lo demás (bomba, fibra, confirmado, puntualidad, próximo viaje) se despliega con ▾.
+ * Columna Pedidos como las "Programações" de Loop (22/10): número de pedido (y hora pedida), cliente en gris y
+ * "14 / 35 m³"; a la derecha ⓘ (detalle) y ⋮ (menú); barra violeta a la izquierda.
  */
 import { useState } from "react"
+import { Info } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { estadoPedido, faltaDe, hhmm, m3txt, textoMotivo, TIPO_TEXTO, type Puntualidad } from "@/lib/despacho"
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { cn } from "@/lib/utils"
-import { MarcaTipo } from "./columna-viajes"
+import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 
 export type PermisosPedido = {
@@ -19,7 +20,7 @@ export type PermisosPedido = {
 }
 
 export function ColumnaPedidos({
-  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos,
+  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido,
   onConfirmar, onGerenciador, onEditarTotal, onVerEntregas, onSuspender, onReabrir, onFinalizar, onCancelar,
 }: {
   pedidos: PedidoT[]
@@ -29,6 +30,8 @@ export function ColumnaPedidos({
   empresas: EmpresaBombeo[]
   puntualidad: Record<string, Puntualidad>
   permisos: PermisosPedido
+  /** número del pedido en el día */
+  numeroPedido: Record<string, number>
   onConfirmar: (p: PedidoT) => void
   onGerenciador: (p: PedidoT) => void
   onEditarTotal: (p: PedidoT) => void
@@ -40,7 +43,8 @@ export function ColumnaPedidos({
 }) {
   const [verCancelados, setVerCancelados] = useState(false)
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
-  const ordenados = [...pedidos].sort((a, b) => new Date(a.scheduled_arrival_time).getTime() - new Date(b.scheduled_arrival_time).getTime())
+  const [buscar, setBuscar] = useState("")
+  const ordenados = [...pedidos].filter((p) => coincide(buscar, numeroPedido[p.id], p.clients?.name, p.construction_sites?.name, p.formulas?.code)).sort((a, b) => new Date(a.scheduled_arrival_time).getTime() - new Date(b.scheduled_arrival_time).getTime())
   const activos = ordenados.filter((p) => ["activo", "suspendido"].includes(estadoPedido(p)))
   const cerrados = ordenados.filter((p) => estadoPedido(p) === "completo")
   const cancelados = ordenados.filter((p) => estadoPedido(p) === "cancelado")
@@ -51,7 +55,6 @@ export function ColumnaPedidos({
     const est = estadoPedido(p)
     const cerr = est === "completo" || est === "cancelado"
     const desp = Number(p.dispatched_m3 || 0)
-    const pct = Math.min(100, (desp / Math.max(0.01, Number(p.quantity_m3))) * 100)
     const falta = faltaDe(p)
     const prox = (viajesPorPedido[p.id] || []).filter((v) => v.estado === "planificado").sort((a, b) => new Date(a.hora_carga).getTime() - new Date(b.hora_carga).getTime())[0]
     const tipo = tipos[p.id]?.tipo ?? (p.remito_tipo || null)
@@ -62,32 +65,28 @@ export function ColumnaPedidos({
     const pt = puntualidad[p.id]
     const abierto = !!abiertos[p.id]
     return (
-      <div key={p.id} className={cn("d3c-card relative rounded-md border bg-card", susp && "border-dashed", cerr && "opacity-70")}>
-        <div className="flex items-center gap-1.5 py-[3px] pl-2 pr-0.5">
-          <div className="w-[38px] shrink-0 text-[12.5px] font-semibold tabular-nums leading-tight" title="Llegada pedida">{hhmm(p.scheduled_arrival_time)}</div>
+      <div key={p.id} className={cn("d3c-card relative rounded-md border border-l-[3px] border-slate-200 border-l-violet-700 bg-slate-50", susp && "border-dashed", cerr && "opacity-70")}>
+        <div className="flex items-center gap-1.5 py-1 pl-2 pr-0.5">
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="flex items-center gap-1">
-              <span className="min-w-0 truncate text-[13px] font-medium">{p.clients?.name || "Cliente"}</span>
-              <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground"><b className="font-semibold text-foreground">{m3txt(desp)}</b>/{m3txt(p.quantity_m3)} m³</span>
+            <div className="flex items-center gap-1 text-[12.5px] font-medium">
+              <span className="tabular-nums">{numeroPedido[p.id] ?? "—"} – {hhmm(p.scheduled_arrival_time)}</span>
+              {p.confirmado_at && <span title="Confirmado" className="text-[11px]">👍</span>}
+              {pt && est !== "cancelado" && <span className={cn("shrink-0 text-[10px]", pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "text-slate-400")} title={pt.texto}>●</span>}
             </div>
-            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-              {est !== "cancelado" && <MarcaTipo tipo={tipo} />}
-              {p.confirmado_at && <span title="Confirmado">👍</span>}
-              {pt && est !== "cancelado" && <span className={cn("shrink-0", pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")} title={pt.texto}>●</span>}
-              <span className="min-w-0 truncate">{p.construction_sites?.name} · <span className="text-foreground/80">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""}{bomba ? <> · <span className="font-medium text-cyan-800">bomba</span></> : " · directo"}</span>
-            </div>
+            <div className="truncate text-[11px] text-slate-500">{p.clients?.name || "Cliente"}</div>
+            <div className="text-[11px] tabular-nums">{m3txt(desp)} / {m3txt(p.quantity_m3)} m³</div>
           </div>
           <button
-            className="flex h-8 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-200"
             title={abierto ? "Ocultar el detalle" : "Ver el detalle"}
             aria-expanded={abierto}
             onClick={() => setAbiertos((a) => ({ ...a, [p.id]: !a[p.id] }))}
           >
-            {abierto ? "▴" : "▾"}
+            <Info className="h-3.5 w-3.5" />
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="h-8 w-7 shrink-0 rounded text-lg leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
+              <button className="h-6 w-6 shrink-0 rounded text-base leading-none text-muted-foreground hover:bg-muted" title="Más opciones">⋮</button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[230px]">
               {ajusta && (act || susp) && (
@@ -104,12 +103,10 @@ export function ColumnaPedidos({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {/* Barra de lo entregado */}
-        <div className="mx-2 mb-1 h-[3px] overflow-hidden rounded-full bg-muted"><i className="block h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
         {susp && (
-          <div className="flex items-center gap-2 border-t px-2 py-0.5 text-[11.5px]">
-            <span className="min-w-0 flex-1 truncate">⏸ <b className="font-semibold">Suspendido</b> · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
-            {permisos.despachar && <button className="h-8 shrink-0 rounded-md border px-2.5 text-xs font-medium" onClick={() => onReabrir(p)}>Reabrir</button>}
+          <div className="flex items-center gap-2 border-t px-2 py-0.5 text-[11px]">
+            <span className="min-w-0 flex-1 truncate">⏸ Suspendido · {textoMotivo(p.suspendido_motivo_tipo)}{p.suspendido_motivo ? ` — ${p.suspendido_motivo}` : ""} · {p.suspendido_at ? hhmm(p.suspendido_at) : ""} · {p.suspendido_por || ""}</span>
+            {permisos.despachar && <button className="h-6 shrink-0 rounded border px-2 text-[11px]" onClick={() => onReabrir(p)}>Reabrir</button>}
           </div>
         )}
         {(est === "completo" || est === "cancelado") && (
@@ -120,9 +117,9 @@ export function ColumnaPedidos({
           </div>
         )}
         {abierto && (
-          <div className="space-y-0.5 border-t px-2 py-1.5 text-[11.5px] leading-snug text-muted-foreground">
-            <div className="text-foreground">{p.construction_sites?.name}</div>
-            <div><b className="font-medium text-foreground">{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+          <div className="space-y-0.5 border-t px-2 py-1 text-[11px] leading-snug text-muted-foreground">
+            <div className="text-foreground">{p.construction_sites?.name}{p.construction_sites?.address ? ` · ${p.construction_sites.address}` : ""}</div>
+            <div><span className="text-foreground">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
             <div>Entregado {m3txt(desp)} de {m3txt(p.quantity_m3)} m³{!cerr && falta > 0 ? ` · falta ${m3txt(falta)}` : ""}</div>
             <div>{tipo ? `Remito ${tipo} · ${TIPO_TEXTO[tipo]}` : "Factura: se pregunta al despachar"} · {p.confirmado_at ? "👍 Confirmado" : "Sin confirmar"}</div>
             {pt && est !== "cancelado" && <div className={cn(pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")}>{pt.texto}</div>}
@@ -136,16 +133,17 @@ export function ColumnaPedidos({
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-        <h2 className="text-sm font-semibold">Pedidos</h2>
+        <h2 className="text-xs font-medium">Pedidos</h2>
         <span className="text-xs text-muted-foreground">{activos.length}</span>
         <span className="flex-1" />
         <span className="text-[11px] text-muted-foreground">👍 {conf} de {noCanc.length} confirmados</span>
       </div>
-      <div className="flex flex-1 flex-col gap-[3px] overflow-auto p-1.5">
+      <Buscador valor={buscar} onCambio={setBuscar} />
+      <div className="flex flex-1 flex-col gap-1 overflow-auto p-1.5">
         {activos.map(tarjeta)}
         {cerrados.length > 0 && (
           <details>
-            <summary className="flex min-h-[28px] cursor-pointer list-none items-center px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <summary className="flex min-h-[28px] cursor-pointer list-none items-center px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
               ▸ Completos y finalizados ({cerrados.length})
             </summary>
             <div className="flex flex-col gap-[3px]">{cerrados.map(tarjeta)}</div>
@@ -159,7 +157,7 @@ export function ColumnaPedidos({
             {verCancelados && cancelados.map(tarjeta)}
           </>
         )}
-        {!ordenados.length && <div className="py-6 text-center text-xs text-muted-foreground">No hay pedidos para este día.</div>}
+        {!ordenados.length && <div className="py-6 text-center text-xs text-muted-foreground">{buscar ? `Nada coincide con «${buscar}».` : "No hay pedidos para este día."}</div>}
       </div>
     </>
   )

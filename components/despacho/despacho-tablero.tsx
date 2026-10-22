@@ -37,6 +37,7 @@ import {
   type DespachoCamion, type GpsCamion, type MixerDia, type MotivoTipo, type Puntualidad, type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
+import { indicadoresPorCamion, type Indicador } from "@/lib/carga/indicador"
 import { ContadoresDia } from "./contadores-dia"
 import { ColumnaViajes, FantasmaViaje } from "./columna-viajes"
 import { ColumnaCamiones, type FiltroCamion } from "./columna-camiones"
@@ -209,10 +210,11 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     cargarTiemposGps(sb).then(setTiempos)
   }, [])
 
-  // GPS cada 60 s (posiciones() tiene caché en el servidor)
+  // GPS cada 30 s (posiciones() tiene caché de 8 s en el servidor; gps-vivo.md)
   const cargarGps = useCallback(async () => {
     try {
       const r = await fetch("/api/gps/posiciones", { cache: "no-store" })
+      if (r.status === 401 || r.status === 403) return // sesión cerrada: queda lo último (el login lo resuelve)
       const j = await r.json()
       const m: Record<string, GpsCamion> = {}
       for (const c of j?.camiones || []) if (c.mixer_id) m[c.mixer_id] = { estado: c.estado, ultima_posicion: c.ultima_posicion, planta_id: c.planta_id || null, probable_obra: !!c.probable_obra }
@@ -221,13 +223,38 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   }, [])
   useEffect(() => {
     cargarGps()
-    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 60_000)
+    const t = setInterval(() => { if (document.visibilityState === "visible") cargarGps() }, 30_000)
     return () => clearInterval(t)
   }, [cargarGps])
+
+  // Carga de planta (en prueba): el indicador chico en la tarjeta del camión, cada 10 s. Sin la migración, nada.
+  const [cargasCamion, setCargasCamion] = useState<Record<string, Indicador>>({})
+  const cargarCargas = useCallback(async () => {
+    if (!planta) return
+    const sb = createClient()
+    const { data, error } = await sb.from("cargas")
+      .select("id, puesto_id, mixer_id, estado, ciclo_actual, ciclos, fin_at, created_at, completa_carga_id, simulada, bloqueo, resolucion, dispatch_id")
+      .eq("plant_id", planta).gte("created_at", new Date(Date.now() - 14 * 3600_000).toISOString())
+    if (error || !data) { setCargasCamion({}); return }
+    const ids = (data as any[]).map((c) => c.dispatch_id).filter(Boolean)
+    const { data: g } = ids.length ? await sb.from("viajes_gps").select("dispatch_id, salida_planta").in("dispatch_id", ids) : { data: [] }
+    const sal = new Map(((g || []) as any[]).map((x) => [x.dispatch_id, x.salida_planta]))
+    setCargasCamion(indicadoresPorCamion((data as any[]).map((c) => ({ ...c, resolucion_modo: c.resolucion?.modo || null, salida_gps: c.dispatch_id ? sal.get(c.dispatch_id) || null : null })), Date.now()))
+  }, [planta])
+  useEffect(() => {
+    cargarCargas()
+    const t = setInterval(() => { if (document.visibilityState === "visible") cargarCargas() }, 10_000)
+    return () => clearInterval(t)
+  }, [cargarCargas])
 
   // ── Derivados ──
   const prmDePlanta = useCallback((id: string) => (plantasFull[id] ? parametrosDePlanta(plantasFull[id]) : PARAMETROS_BASE), [plantasFull])
   const pedidosPorId = useMemo(() => Object.fromEntries(pedidos.map((p) => [p.id, p])), [pedidos])
+  // Número de pedido del día (como el de Loop): por hora pedida. Cuando esté Zomatik, la NP.
+  const numeroPedido = useMemo(() => {
+    const o = [...pedidos].sort((a, b) => new Date(a.scheduled_arrival_time).getTime() - new Date(b.scheduled_arrival_time).getTime() || String((a as any).created_at || "").localeCompare(String((b as any).created_at || "")))
+    return Object.fromEntries(o.map((p, i) => [p.id, i + 1])) as Record<string, number>
+  }, [pedidos])
   const viajes = useMemo(() => viajesDelDia(pedidos, viajesPorPedido, prmDePlanta, tiempos), [pedidos, viajesPorPedido, prmDePlanta, tiempos])
   const pendientes = useMemo(() => viajesPendientes(viajes, pedidos), [viajes, pedidos])
   const enPausa = useMemo(() => viajesEnPausa(viajes, pedidos), [viajes, pedidos])
@@ -239,6 +266,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const totalPorPedido = useMemo(() => Object.fromEntries(Object.entries(viajesDePedido).map(([k, vs]) => [k, vs.filter((v) => v.estado !== "cancelado").length])), [viajesDePedido])
   const despachosPlanta = useMemo(() => despachosDia.filter((d) => d.plant_id === planta), [despachosDia, planta])
   const contadores = useMemo(() => contadoresDia(pedidos, despachosPlanta, viajes), [pedidos, despachosPlanta, viajes])
+  // Adicional (como Loop): lo despachado sin pedido programado (despacho manual)
+  const adicional = useMemo(() => Math.round(despachosPlanta.filter((d) => !d.scheduled_dispatch_id && !d.is_test_dispatch).reduce((s, d) => s + Number(d.quantity_m3 || 0), 0) * 100) / 100, [despachosPlanta])
   const choferPorId = useMemo(() => Object.fromEntries(choferes.map((c) => [c.id, c.nombre])), [choferes])
   const patentes = useMemo(() => Object.fromEntries(mixers.map((m) => [m.id, m.license_plate])), [mixers])
 
@@ -430,6 +459,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     setNueva(r.id)
     setTimeout(() => setNueva(null), 4000)
     cargar()
+    cargarCargas()
   }
 
   // ── Camión: volvió, taller, disponible ──
@@ -566,7 +596,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     viajes: (
       <ColumnaViajes
         viajes={pendientes} pedidos={pedidosPorId} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} enPausa={enPausa}
-        ahora={ahora} esHoy={esHoy} puedeDespachar={puedeDespachar} elegido={selViaje} patentes={patentes}
+        ahora={ahora} esHoy={esHoy} puedeDespachar={puedeDespachar} elegido={selViaje} patentes={patentes} numeroPedido={numeroPedido}
         onDespachar={despacharViaje} onTocar={tocarViaje} onPointerDown={arrastre.empezar} recienSoltado={arrastre.recienSoltado}
         onSoltar={soltarSeleccion} plantaNombre={plantaObj.name}
       />
@@ -576,11 +606,12 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         camiones={camiones} planta={planta} plantas={plants} filtro={filtroCam} setFiltro={setFiltroCam} ahora={ahora}
         puedeDespachar={puedeDespachar} hayViajeElegido={!!selViaje || !!arrastre.fantasma} sobre={arrastre.sobre}
         onTocar={tocarCamion} onVolvio={volvio} onTaller={(id) => { setNotaTaller(""); setTaller(id) }} onDisponible={disponible}
+        cargas={cargasCamion}
       />
     ),
     pedidos: (
       <ColumnaPedidos
-        pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad}
+        pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad} numeroPedido={numeroPedido}
         permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}
@@ -597,6 +628,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       <div className="sticky top-0 z-30 -mx-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background/95 px-3 py-1.5 backdrop-blur">
         <h1 className="text-base font-semibold">Despacho</h1>
         <NuevoBadge />
+        <ContadoresDia c={contadores} adicional={adicional} />
+        <span className="text-[11px] text-muted-foreground">{contadores.viajesDespachados} de {contadores.viajesTotal} viajes</span>
         <div className="inline-flex rounded-md border p-0.5">
           {plants.map((p) => (
             <button key={p.id} onClick={() => elegirPlanta(p.id)} className={cn("h-7 rounded px-2.5 text-[13px]", planta === p.id ? "bg-muted font-semibold text-foreground" : "text-muted-foreground")}>{p.name}</button>
@@ -621,7 +654,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         {onPantallaVieja && <Button variant="ghost" className="h-8 px-2.5 text-[13px] text-muted-foreground" onClick={onPantallaVieja}>Pantalla de siempre</Button>}
       </div>
 
-      <ContadoresDia c={contadores} extra={<span className="text-amber-800">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</span>} />
+      <div className="text-[11px] text-amber-800">⚠ Se recomienda extraer 3 muestras cada 50 m³ despachados</div>
 
       {angosta && (
         <div className="flex gap-1">
@@ -638,14 +671,15 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       ) : angosta ? (
         <section ref={grilla} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[tab]}</section>
       ) : (
-        <div ref={grilla} className="grid grid-cols-3 gap-2">
+        // Viajes es la columna principal: más ancha, para leer obra y cliente enteros en 1366 px (22/10)
+        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr)" }}>
           {(["viajes", "camiones", "pedidos"] as Tab[]).map((t) => (
             <section key={t} className="d3c-col flex flex-col overflow-hidden rounded-md border bg-card" style={{ height: alto }}>{columnas[t]}</section>
           ))}
         </div>
       )}
 
-      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-[12px]">
+      <details className="d3c-card rounded-md border bg-card px-2.5 py-1 text-xs">
         <summary className="flex min-h-[32px] cursor-pointer items-center text-xs text-muted-foreground">¿Qué quiere decir cada color del camión y de dónde sale?</summary>
         <table className="mb-1 w-full border-collapse">
           <tbody>

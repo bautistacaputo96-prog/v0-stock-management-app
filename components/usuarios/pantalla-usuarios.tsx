@@ -32,6 +32,15 @@ function fecha(iso: string | null) {
   return new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })
 }
 
+/** "Sin: …": lo que se le sacó a mano a un gerencial. */
+function quitadoAMano(u: UsuarioPantalla): string[] {
+  if (u.tipo !== "gerencial") return []
+  const nombres = Object.fromEntries(SECCIONES.map((s) => [s.clave, s.nombre]))
+  return diferenciasConPlantilla(u.tipo, u.permisos)
+    .filter((d) => !d.valor)
+    .map((d) => `${nombres[d.seccion]} (${d.accion})`)
+}
+
 /** "Edita/borra: …": solo lo habilitado a mano (lo que no viene de la plantilla del tipo). */
 function editaBorraAMano(u: UsuarioPantalla): string[] {
   const nombres = Object.fromEntries(SECCIONES.map((s) => [s.clave, s.nombre]))
@@ -113,6 +122,7 @@ export function PantallaUsuarios() {
   function fila(u: UsuarioPantalla) {
     const carga = seccionesCon(u, "cargar")
     const aMano = editaBorraAMano(u)
+    const sin = quitadoAMano(u)
     return (
       <div key={u.id} className={cn("rounded-lg border p-3 flex flex-col md:flex-row md:items-center gap-3", !u.active && "opacity-70")}>
         <button type="button" className="flex-1 min-w-0 text-left space-y-1" onClick={() => setDialogo({ open: true, usuario: u })}>
@@ -123,9 +133,10 @@ export function PantallaUsuarios() {
             {u.bloqueado && <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300"><Lock className="h-3 w-3 mr-1" />bloqueado</Badge>}
           </div>
           <p className="text-xs text-muted-foreground">
-            {u.tipo === "gerencial" ? "Puede todo" : carga.length ? `Carga en: ${carga.join(", ")}` : "No carga nada"}
+            {u.tipo === "gerencial" ? (sin.length ? "Puede todo, salvo lo de abajo" : "Puede todo") : carga.length ? `Carga en: ${carga.join(", ")}` : "No carga nada"}
           </p>
           {aMano.length > 0 && <p className="text-xs text-amber-800">Edita/borra: {aMano.join(", ")}</p>}
+          {sin.length > 0 && <p className="text-xs text-red-700">Sin: {sin.join(", ")}</p>}
           <p className="text-xs">
             <span className={COLOR_CLAVE[u.estadoClave]}>Contraseña: {u.estadoClave}</span>
             <span className="text-muted-foreground"> · último ingreso: {fecha(u.ultimoIngreso)}</span>

@@ -41,7 +41,7 @@ export function TablaEntregas({
         )}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] text-[12px]">
+        <table className="w-full min-w-[900px] text-xs">
           <thead>
             <tr className="text-left text-[11px] font-medium text-muted-foreground">
               {["Salió", "Remito", "Camión", "Chofer", "Cliente · obra", "Fórmula", "m³", "Viaje", "Muestra", "Ahora", "En obra / volvió", ""].map((h) => (

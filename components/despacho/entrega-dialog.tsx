@@ -26,9 +26,14 @@ import {
   TIPO_TEXTO, validarEntrega, type AvisoRemito, type FormEntrega, type OrigenTipo, type RemitoHist, type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
+import { cargarContexto, cargarFormulas, cargarPuesto, controlDeFormula, mandaOrdenes } from "@/lib/carga/datos"
+import type { ControlReceta } from "@/lib/carga/receta"
 import type { CamionT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 
 export type EntregaAbierta = { pedido: PedidoT; viajeClave: string | null; camionId: string }
+
+/** Si la planta tiene puesto de carga que recibe órdenes (se recuerda entre aperturas, para que la Entrega no salte) */
+const puestoPorPlanta = new Map<string, boolean>()
 export type ResultadoDespacho = {
   id: string
   pedidoId: string
@@ -91,6 +96,13 @@ export function EntregaDialog({
   const [imprimirPend, setImprimirPend] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const ahoraAbierto = useRef(Date.now())
+  // Carga de planta (en prueba): control de receta "En la planta" y la orden a la cola de carga (carga-planta.md 19.2)
+  const [enPlanta, setEnPlanta] = useState<{ simulada: boolean; ctl: ControlReceta } | null>(null)
+  const [frenadaOk, setFrenadaOk] = useState(false)
+  const [cargandoPlanta, setCargandoPlanta] = useState(false)
+  const [muestraPedida, setMuestraPedida] = useState(false)
+  // Cada apertura tiene su número: si se cambia de pedido, la respuesta vieja se descarta
+  const vueltaPlanta = useRef(0)
 
   const pend = useMemo(() => (p ? pendientes(viajes.filter((v) => v.pedido_id === p.id)) as ViajeT[] : []), [p, viajes])
   const camion = (id: string) => camiones.find((c) => c.id === id) || null
@@ -124,6 +136,19 @@ export function EntregaDialog({
     setResuelto({ tipo: null, origen: null })
     setCargando(true)
     const sb = createClient()
+    setEnPlanta(null); setFrenadaOk(false); setCargandoPlanta(true); setMuestraPedida(false)
+    const vuelta = ++vueltaPlanta.current
+    // Sin puesto de carga en etapa B o C (o sin la migración), no aparece nada y el despacho es el de siempre
+    cargarPuesto(sb, planta.id).then(async (pu) => {
+      puestoPorPlanta.set(planta.id, mandaOrdenes(pu))
+      if (!mandaOrdenes(pu)) return
+      const [ctx, fs] = await Promise.all([cargarContexto(sb, pu!), cargarFormulas(sb, ped.formula_id ? [ped.formula_id] : [])])
+      if (vuelta !== vueltaPlanta.current) return
+      setEnPlanta({ simulada: pu!.sistema === "simulador", ctl: controlDeFormula(ctx, fs[0] || null) })
+      // La muestra pasa al final de la carga: en este despacho no se carga
+      setForm((f) => (f ? { ...f, muestraOn: false, muestraNum: "", asentamiento: "", agua: "0" } : f))
+    }).catch(() => { if (vuelta === vueltaPlanta.current) setEnPlanta(null) })
+      .finally(() => { if (vuelta === vueltaPlanta.current) setCargandoPlanta(false) })
     const desde = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString()
     Promise.all([
       sb.rpc("remito_tipo_para", { p_pedido_id: ped.id }).then((r: any) => (r.error ? null : r.data)),
@@ -157,6 +182,11 @@ export function EntregaDialog({
   const sinDefinir = !resuelto.tipo
   const preguntando = !form.tipo || form.origenTipo === "pregunta" || cambiando
   const m3n = num(form.m3), fibra = num(form.fibraKgM3)
+  // Con la receta que frena la carga, hay que tildar "¿Despachar igual?" (carga-planta.md 20.1)
+  const frenadaFalta = !!enPlanta?.ctl.frena && !frenadaOk
+  // Mientras se controla "En la planta", se muestra la versión con puesto de carga (sin el agua, con "Sacar muestra"),
+  // salvo que ya se sepa que esta planta no tiene: así la Entrega no salta al terminar de cargar (22/10)
+  const modoPlanta = !!enPlanta || (cargandoPlanta && puestoPorPlanta.get(planta.id) !== false)
 
   function elegirTipo(t: TipoRemito) {
     const origen: OrigenTipo = sinDefinir ? "pregunta" : "manual"
@@ -217,6 +247,18 @@ export function EntregaDialog({
       }
       const tipo = (r.remito_tipo || form.tipo)!
       const restante = Math.max(0, r.restante ?? falta - m3n)
+      // Como Loop: Despachar también manda la orden a la cola de carga de la PC de la planta. Si falla, el despacho ya
+      // quedó grabado igual (se avisa).
+      if (enPlanta) {
+        try {
+          const rc = await fetch("/api/carga/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dispatch_id: r.id, frenada_confirmada: enPlanta.ctl.frena && frenadaOk, muestra_pedida: muestraPedida }) })
+          const jc = await rc.json().catch(() => ({}))
+          if (!rc.ok) toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: jc?.error || `Error ${rc.status}` })
+          else if (jc.enviada) toast({ title: `Orden en la cola de carga${jc.simulada ? " (planta simulada)" : ""}`, description: jc.frena ? `Va a quedar frenada en la planta. ${jc.mail?.enviado ? "Se avisó por mail a Juan Oreguy." : `No salió el mail (${jc.mail?.motivo || "?"}).`}` : jc.agua_distinta ? "Agua de la receta distinta: no frena, queda en la auditoría." : "La tarjeta del camión dice «En cola de carga · Ver carga»." })
+        } catch {
+          toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: "Sin conexión con el sistema." })
+        }
+      }
       toast({
         title: `Camión despachado · Remito ${tipo} ${form.remito.trim()}`,
         description: `${cam?.patente || ""} sale con ${m3txt(m3n)} m³ · ${r.completo || restante <= 0.01 ? "Pedido completo" : `falta ${m3txt(restante)} m³`}${form.origenTipo === "pregunta" ? ` · ${TIPO_TEXTO[tipo]} queda para todo el día de ${p.clients?.name || "este cliente"}` : ""}${av && avisoAceptado ? " · aviso de remito aceptado (queda en Actividad)" : ""}`,
@@ -241,43 +283,43 @@ export function EntregaDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && !enviando && onClose()}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[680px]">
-        <DialogHeader><DialogTitle className="text-lg">Entrega</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-            <div className="text-base font-extrabold">{p.clients?.name} · {p.construction_sites?.name}</div>
+      <DialogContent className="max-h-[94vh] overflow-y-auto p-4 text-[13px] sm:max-w-[960px] [&_label]:text-xs [&_button[role=combobox]]:h-[30px] [&_button[role=combobox]]:text-[13px]">
+        <DialogHeader><DialogTitle className="text-base">Entrega</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <div className="rounded-lg border bg-muted/40 px-3 py-1.5 text-[13px]">
+            <div className="text-[14px] font-bold">{p.clients?.name} · {p.construction_sites?.name}</div>
             {p.construction_sites?.address && <div className="text-muted-foreground">{p.construction_sites.address}</div>}
-            <div className="mt-1"><b>{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
-            <div className="mt-1">Total <b>{m3txt(p.quantity_m3)} m³</b> · enviado <b>{m3txt(enviado)}</b> · falta <b className="text-amber-600">{m3txt(falta)}</b></div>
+            <div className="mt-0.5"><b>{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+            <div className="mt-0.5">Total <b>{m3txt(p.quantity_m3)} m³</b> · enviado <b>{m3txt(enviado)}</b> · falta <b className="text-amber-600">{m3txt(falta)}</b></div>
           </div>
 
           {/* Tipo de remito: R (con factura) / X (sin factura) */}
           {cargando && !form.tipo ? (
-            <div className="flex items-center gap-2 rounded-lg border px-3 py-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Buscando si va con o sin factura…</div>
+            <div className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px] text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Buscando si va con o sin factura…</div>
           ) : !preguntando ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5">
               <div>
                 <div className="font-bold">Remito <span className={cn("rounded px-1.5 text-[13px] font-extrabold", form.tipo === "R" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800")}>{form.tipo}</span> {TIPO_TEXTO[form.tipo!]}</div>
                 <div className="text-xs text-muted-foreground">{ORIGEN_TEXTO(form.origenTipo, form.tipo)}</div>
               </div>
               {puedeCambiarTipo && form.origenTipo !== "manual" && (
-                <Button variant="outline" size="sm" className="min-h-[36px]" onClick={() => setCambiando(true)}>Cambiar solo en este remito</Button>
+                <Button variant="outline" size="sm" className="h-[28px] text-xs" onClick={() => setCambiando(true)}>Cambiar solo en este remito</Button>
               )}
             </div>
           ) : (
-            <div className="rounded-lg border-2 border-amber-500 bg-amber-50 px-3 py-2.5">
+            <div className="rounded-lg border-2 border-amber-500 bg-amber-50 px-3 py-1.5">
               <div className="font-bold">¿Este remito va con o sin factura?</div>
               <div className="text-[13px] text-muted-foreground">
                 {sinDefinir
                   ? <>No lo dice el pedido, ni la obra, ni el cliente. Lo que elijas vale para <b>todos los despachos de hoy de {p.clients?.name}</b>.</>
                   : "Cambia solo este remito. Queda en Actividad."}
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
                 {(["R", "X"] as TipoRemito[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => elegirTipo(t)}
-                    className={cn("min-h-[52px] rounded-lg border-2 text-base font-extrabold", form.tipo === t && (form.origenTipo === "pregunta" || form.origenTipo === "manual") ? "border-foreground bg-foreground text-background" : "bg-card")}
+                    className={cn("min-h-[34px] rounded-lg border-2 text-[13px] font-bold", form.tipo === t && (form.origenTipo === "pregunta" || form.origenTipo === "manual") ? "border-foreground bg-foreground text-background" : "bg-card")}
                   >
                     {t === "R" ? "Con factura · R" : "Sin factura · X"}
                   </button>
@@ -287,50 +329,74 @@ export function EntregaDialog({
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
+          {cargandoPlanta && modoPlanta && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-l-[3px] px-2.5 py-1.5 text-[12.5px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> <b className="text-foreground">En la planta</b> · controlando la receta…</div>
+          )}
+          {enPlanta && (() => {
+            const c = enPlanta.ctl
+            const items = c.items.filter((i) => ["receta", "agua", "tolva"].includes(i.clave))
+            return (
+              <div className="space-y-1">
+                <div className={cn("flex flex-wrap items-center gap-1.5 rounded-lg border border-l-[3px] px-2.5 py-1.5 text-[12.5px]", c.frena ? "border-l-red-600 bg-red-50" : c.aguaDistinta ? "border-l-amber-500" : "border-l-emerald-500")}>
+                  <b>En la planta</b>
+                  {items.map((i) => <span key={i.clave + i.corto} title={i.texto} className={cn("rounded px-1 text-[11px] font-semibold", !i.ok ? "bg-red-100 text-red-800" : i.aviso ? "bg-amber-100 text-amber-900" : "bg-emerald-50 text-emerald-800")}>{i.corto} {!i.ok ? "✕" : i.aviso ? "!" : "✓"}</span>)}
+                  {enPlanta.simulada && <span className="rounded bg-amber-100 px-1 text-[11px] font-semibold text-amber-900">planta simulada</span>}
+                  <span className="text-[11px] text-muted-foreground">NP: se controla cuando esté Zomatik</span>
+                </div>
+                {c.frena ? (
+                  <label className="flex items-start gap-2 rounded-lg border border-red-300 px-2.5 py-1.5 text-[12.5px]">
+                    <input type="checkbox" className="mt-0.5 h-4 w-4" checked={frenadaOk} onChange={(e) => setFrenadaOk(e.target.checked)} />
+                    <span><b>La carga va a quedar frenada en la planta</b>: {c.motivo}. Lo resuelven Bautista, Fernando y Juan; se le avisa por mail a Juan Oreguy. ¿Despachar igual?</span>
+                  </label>
+                ) : c.aguaDistinta ? <div className="text-xs font-semibold text-amber-800">{c.items.find((i) => i.clave === "agua")?.texto}.</div> : null}
+              </div>
+            )
+          })()}
+
+          <div className="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-3">
+            <div className="space-y-1">
               <Label>Viaje</Label>
               {pend.length ? (
                 <Select value={viajeClave || ""} onValueChange={cambiarViaje}>
-                  <SelectTrigger className="h-11"><SelectValue placeholder="Elegí el viaje" /></SelectTrigger>
+                  <SelectTrigger className="h-[30px] text-[13px]"><SelectValue placeholder="Elegí el viaje" /></SelectTrigger>
                   <SelectContent>
                     {pend.map((v) => (
                       <SelectItem key={v.clave} value={v.clave}>Viaje {v.n}/{totalViajes} · {m3txt(v.m3)} m³ · cargar {hhmm(v.hora_carga)}{v.calculado ? " (calculado)" : ""}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              ) : <div className="rounded-md border px-3 py-2.5 text-sm text-muted-foreground">El pedido no tiene viajes pendientes</div>}
+              ) : <div className="rounded-md border px-3 py-1 text-[13px] text-muted-foreground">El pedido no tiene viajes pendientes</div>}
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label>Camión *</Label>
               <Select value={form.mixerId} onValueChange={cambiarCamion}>
-                <SelectTrigger className="h-11"><SelectValue placeholder="Elegí el camión" /></SelectTrigger>
+                <SelectTrigger className="h-[30px] text-[13px]"><SelectValue placeholder="Elegí el camión" /></SelectTrigger>
                 <SelectContent>
                   {camiones.map((c) => <SelectItem key={c.id} value={c.id}>{c.patente} · {txtCamion(c)}</SelectItem>)}
                 </SelectContent>
               </Select>
               {cam && cam.e.clave !== "planta" && cam.e.clave !== "taller" && cam.e.clave !== "fuera" && (
-                <p className="text-xs font-semibold text-amber-700">{cam.patente} figura {cam.e.etiqueta.toLowerCase()} ({textoFuenteEstado(cam.e)}{cam.e.desde ? `, hace ${duracion((Date.now() - cam.e.desde) / 60000)}` : ""}). Se puede despachar igual.</p>
+                <p className="text-[11px] font-semibold leading-tight text-amber-700">{cam.patente} figura {cam.e.etiqueta.toLowerCase()} ({textoFuenteEstado(cam.e)}{cam.e.desde ? `, hace ${duracion((Date.now() - cam.e.desde) / 60000)}` : ""}). Se puede despachar igual.</p>
               )}
             </div>
             <div>
               <ChoferSelect choferes={choferes} value={form.choferId} onChange={(v) => { setChoferTocado(true); set({ choferId: v }) }} obligatorio label="Chofer" />
-              <p className="mt-1 text-xs text-muted-foreground">Rotan: viene el último que manejó este camión hoy.</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Rotan: viene el último que manejó este camión hoy.</p>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label>m³ en este camión *</Label>
-              <Input className="h-11 text-xl font-extrabold" inputMode="decimal" value={form.m3} onChange={(e) => set({ m3: e.target.value })} />
+              <Input className="h-[30px] text-[14px] font-bold" inputMode="decimal" value={form.m3} onChange={(e) => set({ m3: e.target.value })} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label>Remito *</Label>
               <Input
-                className="h-11 text-xl font-extrabold"
+                className="h-[30px] text-[14px] font-bold"
                 inputMode="numeric"
                 value={form.remito}
                 disabled={!form.tipo}
                 onChange={(e) => { setRemitoTocado(true); setAvisoOk(false); setAviso(null); set({ remito: e.target.value }) }}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] leading-tight text-muted-foreground">
                 {!form.tipo
                   ? "Primero contestá si va con o sin factura: el número depende del talonario."
                   : sug
@@ -338,29 +404,34 @@ export function EntregaDialog({
                     : <>No hay remitos {form.tipo} de {planta.name} en los últimos 30 días: escribí el número del papel.</>}
               </p>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label>Salió a las</Label>
-              <Input className="h-11" type="time" value={form.salio} onChange={(e) => set({ salio: e.target.value, salioTocado: true })} />
-              <p className="text-xs text-muted-foreground">Si lo cargás más tarde, poné la hora real de salida. La hora en que lo cargás ({hhmm(ahoraAbierto.current)}) se guarda aparte y no se cambia.</p>
+              <Input className="h-[30px] text-[13px]" type="time" value={form.salio} onChange={(e) => set({ salio: e.target.value, salioTocado: true })} />
+              <p className="text-[11px] leading-tight text-muted-foreground">Si lo cargás más tarde, poné la hora real de salida. La hora en que lo cargás ({hhmm(ahoraAbierto.current)}) se guarda aparte y no se cambia.</p>
             </div>
-            <div className="space-y-1.5">
-              <Label>Agua extra en planta (litros)</Label>
-              <Input className="h-11" inputMode="numeric" value={form.agua} onChange={(e) => set({ agua: e.target.value })} />
-            </div>
+            {/* Con carga de planta, el agua extra se registra en la carga ("Extra agua", 21/10 · 6): acá no va.
+                registrar_despacho recibe 0 como siempre (extra_water_liters). */}
+            {!modoPlanta && (
+              <div className="space-y-1">
+                <Label>Agua extra en planta (litros)</Label>
+                <Input className="h-[30px] text-[13px]" inputMode="numeric" value={form.agua} onChange={(e) => set({ agua: e.target.value })} />
+              </div>
+            )}
           </div>
 
-          <div className="rounded-lg border px-3 py-2.5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="rounded-lg border px-3 py-1.5">
             <div className="flex items-center justify-between gap-3">
               <div><div className="font-bold">Fibra</div><div className="text-xs text-muted-foreground">Se agrega al camión en el despacho</div></div>
               <Switch checked={form.fibraOn} onCheckedChange={(v) => set({ fibraOn: v })} />
             </div>
             {form.fibraOn && (
-              <div className="mt-2.5 grid grid-cols-2 items-end gap-3">
-                <div className="space-y-1.5">
+              <div className="mt-1.5 grid grid-cols-2 items-end gap-2">
+                <div className="space-y-1">
                   <Label className="text-xs">Dosificación (kg por m³)</Label>
-                  <Input className="h-11" inputMode="decimal" value={form.fibraKgM3} onChange={(e) => set({ fibraKgM3: e.target.value })} placeholder="Ej: 0,5" />
+                  <Input className="h-[30px] text-[13px]" inputMode="decimal" value={form.fibraKgM3} onChange={(e) => set({ fibraKgM3: e.target.value })} placeholder="Ej: 0,5" />
                 </div>
-                <div className="pb-2 text-sm">
+                <div className="pb-1 text-[12.5px]">
                   {fibra > 0 && m3n > 0
                     ? <>Total en el camión: <b>{(fibra * m3n).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg</b><br /><span className="text-xs text-muted-foreground">{m3txt(fibra)} kg/m³ × {m3txt(m3n)} m³</span></>
                     : <span className="text-[13px] text-muted-foreground">Poné los kg por m³ para ver el total.</span>}
@@ -369,35 +440,45 @@ export function EntregaDialog({
             )}
           </div>
 
-          <div className="rounded-lg border px-3 py-2.5">
+          {modoPlanta ? (
+            // Con carga de planta, la muestra se carga al terminar la carga (respuestas 21/10 · 5): acá solo el aviso
+            <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-1.5">
+              <div><div className="font-bold">Sacar muestra a este camión</div><div className="text-xs text-muted-foreground">Es un aviso para la planta. El número y el asentamiento se cargan al terminar la carga («¿Se sacó muestra?»).</div></div>
+              <Switch checked={muestraPedida} onCheckedChange={setMuestraPedida} />
+            </label>
+          ) : (
+          <div className="rounded-lg border px-3 py-1.5">
             <div className="flex items-center justify-between gap-3">
               <div><div className="font-bold">Muestra de probeta</div><div className="text-xs text-muted-foreground">Se extrajo muestra para ensayo de compresión</div></div>
               <Switch checked={form.muestraOn} onCheckedChange={(v) => set({ muestraOn: v })} />
             </div>
             {form.muestraOn && (
-              <div className="mt-2.5 space-y-2">
+              <div className="mt-1.5 space-y-1.5">
                 {ultimaMuestra && <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-[13px] font-bold text-blue-800">Última muestra: {ultimaMuestra}</span>}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5"><Label>Número de muestra *</Label><Input className="h-11" value={form.muestraNum} onChange={(e) => set({ muestraNum: e.target.value })} placeholder="Ej: M-0413" /></div>
-                  <div className="space-y-1.5"><Label>Asentamiento real (cm) *</Label><Input className="h-11" inputMode="decimal" value={form.asentamiento} onChange={(e) => set({ asentamiento: e.target.value })} placeholder="Ej: 12,5" /></div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1"><Label>Número de muestra *</Label><Input className="h-[30px] text-[13px]" value={form.muestraNum} onChange={(e) => set({ muestraNum: e.target.value })} placeholder="Ej: M-0413" /></div>
+                  <div className="space-y-1"><Label>Asentamiento real (cm) *</Label><Input className="h-[30px] text-[13px]" inputMode="decimal" value={form.asentamiento} onChange={(e) => set({ asentamiento: e.target.value })} placeholder="Ej: 12,5" /></div>
                 </div>
-                <p className="text-xs text-muted-foreground">Se crean 3 probetas: 1 para 7 días y 2 para 28 días.</p>
+                <p className="text-[11px] leading-tight text-muted-foreground">Se crean 3 probetas: 1 para 7 días y 2 para 28 días.</p>
               </div>
             )}
           </div>
+          )}
 
-          {err && <div className="rounded-lg bg-red-100 px-3 py-2 text-sm font-semibold text-red-800">{err}</div>}
+          </div>
+
+          {err && <div className="rounded-lg bg-red-100 px-3 py-1.5 text-[13px] font-semibold text-red-800">{err}</div>}
           {aviso && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-100 px-3 py-2 text-[13px] font-bold text-amber-900">
               <span>⚠ {aviso.texto}</span>
-              <Button size="sm" className="min-h-[36px] bg-amber-600 hover:bg-amber-700" disabled={enviando} onClick={() => { setAvisoOk(true); despachar(imprimirPend, true) }}>Sí, el número está bien</Button>
+              <Button size="sm" className="h-[30px] bg-amber-600 hover:bg-amber-700" disabled={enviando} onClick={() => { setAvisoOk(true); despachar(imprimirPend, true) }}>Sí, el número está bien</Button>
             </div>
           )}
         </div>
         <DialogFooter className="flex-wrap gap-2">
-          <Button variant="outline" className="h-11" onClick={onClose} disabled={enviando}>Cancelar</Button>
-          <Button variant="outline" className="h-11" onClick={() => despachar(true)} disabled={enviando || cargando}>🖨 Despachar e imprimir</Button>
-          <Button className="h-11 bg-green-600 hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando}>
+          <Button variant="outline" className="h-[32px] text-[13px]" onClick={onClose} disabled={enviando}>Cancelar</Button>
+          <Button variant="outline" className="h-[32px] text-[13px]" onClick={() => despachar(true)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>🖨 Despachar e imprimir</Button>
+          <Button className="h-[32px] bg-green-600 text-[13px] hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta}>
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Despachar"}
           </Button>
         </DialogFooter>
