@@ -131,26 +131,26 @@ export function PruebaDialog({ formulas, mixers, onCrear, onCerrar }: {
 export function TablaComparacion({ cmp }: { cmp: Comparacion }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">
+      <table className="w-full border-collapse whitespace-nowrap text-xs">
         <thead><tr className="bg-muted/50 text-left text-[11px] text-slate-500">
-          <th className="border-b px-1.5 py-0.5 font-medium">Material</th><th className="border-b px-1.5 py-0.5 text-right font-medium">Fórmula</th>
-          <th className="border-b px-1.5 py-0.5 text-right font-medium">Planta</th><th className="border-b px-1.5 py-0.5 text-right font-medium">Dif.</th>
-          <th className="border-b px-1.5 py-0.5 font-medium">Tol.</th><th className="border-b px-1.5 py-0.5" />
+          <th className="border-b px-1 py-0.5 font-medium">Material</th><th className="border-b px-1 py-0.5 text-right font-medium">Fórmula</th>
+          <th className="border-b px-1 py-0.5 text-right font-medium">Planta</th><th className="border-b px-1 py-0.5 text-right font-medium">Dif.</th>
+          <th className="border-b px-1 py-0.5 font-medium">Tol.</th><th className="border-b px-1 py-0.5" />
         </tr></thead>
         <tbody>
           {cmp.filas.map((f) => (
             <tr key={f.material_id} className={cn(!f.ok && (f.agua ? "bg-amber-50" : "bg-red-50"))}>
-              <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)}{f.agua && <span className="text-slate-500"> (base)</span>}</td>
-              <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.formula)}</td>
-              <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.receta)}</td>
-              <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", !f.ok && (f.agua ? "font-medium text-amber-800" : "font-medium text-red-700"))}>
+              <td className="border-b px-1 py-0.5">{nombreCorto(f.nombre)}{f.agua && <span className="text-slate-500"> (base)</span>}</td>
+              <td className="border-b px-1 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.formula)}</td>
+              <td className="border-b px-1 py-0.5 text-right tabular-nums">{cantidadPorM3(f.grupo, f.receta)}</td>
+              <td className={cn("border-b px-1 py-0.5 text-right tabular-nums", !f.ok && (f.agua ? "font-medium text-amber-800" : "font-medium text-red-700"))}>
                 {f.dif > 0 ? "+" : ""}{cantidadPorM3(f.grupo, f.dif)}{f.pct != null && !f.ok ? ` (${f.dif > 0 ? "+" : ""}${nf(f.pct * 100, 1)} %)` : ""}
               </td>
-              <td className="border-b px-1.5 py-0.5 text-slate-500">±{cantidadPorM3(f.grupo, f.tol)}</td>
-              <td className="border-b px-1.5 py-0.5">{f.ok ? <span className="font-medium text-green-700">✓</span> : f.agua ? <span className="font-medium text-amber-800">agua</span> : <span className="font-medium text-red-700">✕</span>}</td>
+              <td className="border-b px-1 py-0.5 text-slate-500">±{cantidadPorM3(f.grupo, f.tol)}</td>
+              <td className="border-b px-1 py-0.5">{f.ok ? <span className="font-medium text-green-700">✓</span> : f.agua ? <span className="font-medium text-amber-800">agua</span> : <span className="font-medium text-red-700">✕</span>}</td>
             </tr>
           ))}
-          {cmp.sueltas.map((s) => <tr key={s} className="bg-red-50"><td colSpan={6} className="border-b px-1.5 py-0.5">La receta pesa en {INFO_SALIDA[s].nombre}, sin material asignado</td></tr>)}
+          {cmp.sueltas.map((s) => <tr key={s} className="bg-red-50"><td colSpan={6} className="border-b px-1 py-0.5">La receta pesa en {INFO_SALIDA[s].nombre}, sin material asignado</td></tr>)}
         </tbody>
       </table>
     </div>

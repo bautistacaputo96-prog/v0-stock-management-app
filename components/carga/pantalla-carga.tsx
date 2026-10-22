@@ -361,7 +361,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       )}
 
       {puesto && ctx && tab === "carga" && (
-        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "230px minmax(0,1fr) 300px", height: alto }}>
+        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "200px minmax(0,1fr) 420px", height: alto }}>
           {/* Cola */}
           <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
             <div className="flex min-h-[31px] items-center gap-1.5 border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Cola de carga</h2><span className="text-xs text-slate-500">{colaVisible.length}</span><span className="flex-1" /><span className="text-[11px] text-slate-500">llega de Despacho</span></div>
