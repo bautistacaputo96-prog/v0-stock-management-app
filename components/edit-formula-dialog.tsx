@@ -15,6 +15,9 @@ import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { logCambio } from "@/lib/activity-log"
 import { CampoMotivo, motivoValido } from "@/components/motivo"
+import { usePermisos } from "@/lib/current-user"
+import { CamposNombre, codigoDe, type ValorNombre } from "@/components/formulas/campos-nombre"
+import { PARTES_VACIAS, interpretarNombre } from "@/lib/formulas-nombre"
 
 type Material = {
   id: string
@@ -48,17 +51,25 @@ export function EditFormulaDialog({
   materials,
   open,
   onOpenChange,
+  plantName = null,
 }: {
   formula: Formula
   materials: Material[]
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** nombre de la planta: pone (CAN) / (HUD) en el código */
+  plantName?: string | null
 }) {
   const [loading, setLoading] = useState(false)
   const [motivo, setMotivo] = useState("") // fase 0c-1
+  const { esGerencial } = usePermisos()
+  // Nombre automático (22/10): las que no encajan quedan con nombre libre, que solo cambia un gerencial
+  const [nombre, setNombre] = useState<ValorNombre>(() => {
+    const partes = interpretarNombre(formula.code)
+    return partes ? { modo: "partes", partes, libre: "" } : { modo: "libre", partes: PARTES_VACIAS, libre: formula.code }
+  })
+  const { codigo, error: errorNombre } = codigoDe(nombre, plantName)
   const [formData, setFormData] = useState({
-    code: formula.code,
-    name: formula.name,
     description: formula.description || "",
     yield_m3: formula.yield_m3.toString(),
   })
@@ -97,6 +108,15 @@ export function EditFormulaDialog({
       toast({ variant: "destructive", title: "Falta el motivo", description: "Escribí por qué se cambia la fórmula." })
       return
     }
+    if (errorNombre || !codigo) {
+      toast({ variant: "destructive", title: "Falta el nombre", description: errorNombre || "Completá el nombre de la fórmula" })
+      return
+    }
+    if (nombre.modo === "libre" && codigo !== formula.code && !esGerencial) {
+      toast({ variant: "destructive", title: "Nombre libre", description: "Solo un gerencial puede poner o cambiar un nombre libre." })
+      return
+    }
+    const nombreNuevo = codigo === formula.code ? formula.name : codigo
 
     if (formulaMaterials.length === 0) {
       toast({
@@ -128,8 +148,8 @@ export function EditFormulaDialog({
       const { error: formulaError } = await supabase
         .from("formulas")
         .update({
-          code: formData.code,
-          name: formData.name,
+          code: codigo,
+          name: nombreNuevo,
           description: formData.description || null,
           yield_m3: Number.parseFloat(formData.yield_m3),
           updated_at: new Date().toISOString(),
@@ -137,7 +157,10 @@ export function EditFormulaDialog({
         })
         .eq("id", formula.id)
 
-      if (formulaError) throw formulaError
+      if (formulaError) {
+        if ((formulaError as { code?: string }).code === "23505") throw new Error(`Ya existe ${codigo} en esta planta`)
+        throw formulaError
+      }
 
       // Delete existing formula materials
       const { error: deleteError } = await supabase.from("formula_materials").delete().eq("formula_id", formula.id)
@@ -177,9 +200,9 @@ export function EditFormulaDialog({
       await logCambio({
         entity: "formula",
         entityId: formula.id,
-        reference: formData.code,
+        reference: codigo,
         antes: { code: formula.code, name: formula.name, description: formula.description || "", yield_m3: Number(formula.yield_m3), ...antesMat },
-        despues: { code: formData.code, name: formData.name, description: formData.description || "", yield_m3: Number.parseFloat(formData.yield_m3), ...despuesMat },
+        despues: { code: codigo, name: nombreNuevo, description: formData.description || "", yield_m3: Number.parseFloat(formData.yield_m3), ...despuesMat },
         etiquetas: {
           code: "Código", name: "Nombre", description: "Descripción", yield_m3: "Rinde (m³)",
           ...Object.fromEntries(claves.map((k) => [k, k.slice(4)])),
@@ -189,7 +212,7 @@ export function EditFormulaDialog({
 
       toast({
         title: "Fórmula actualizada",
-        description: `${formData.code} se actualizó correctamente`,
+        description: `${codigo} se actualizó correctamente`,
       })
 
       onOpenChange(false)
@@ -214,35 +237,26 @@ export function EditFormulaDialog({
           <DialogDescription>Modifica la fórmula y su composición</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-code">Código</Label>
-              <Input
-                id="edit-code"
-                value={formData.code}
-                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-yield">Rinde (m³)</Label>
-              <Input
-                id="edit-yield"
-                type="number"
-                step="0.001"
-                value={formData.yield_m3}
-                onChange={(e) => setFormData({ ...formData, yield_m3: e.target.value })}
-                required
-              />
-            </div>
-          </div>
+          <CamposNombre
+            valor={nombre}
+            onChange={setNombre}
+            planta={plantName}
+            permiteLibre={esGerencial}
+            libreSoloLectura={nombre.modo === "libre" && !esGerencial}
+          />
+          {codigo && codigo !== formula.code && (
+            <p className="text-xs text-amber-800">Al guardar, el código pasa de {formula.code} a {codigo}.</p>
+          )}
           <div className="space-y-2">
-            <Label htmlFor="edit-name">Nombre</Label>
+            <Label htmlFor="edit-yield">Rinde (m³)</Label>
             <Input
-              id="edit-name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              id="edit-yield"
+              type="number"
+              step="0.001"
+              value={formData.yield_m3}
+              onChange={(e) => setFormData({ ...formData, yield_m3: e.target.value })}
               required
+              className="w-32"
             />
           </div>
           <div className="space-y-2">

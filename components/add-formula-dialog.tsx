@@ -13,15 +13,14 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Plus, Check, ChevronsUpDown } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { Plus } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { logActivity } from "@/lib/activity-log"
+import { usePermisos } from "@/lib/current-user"
+import { CamposNombre, codigoDe, type ValorNombre } from "@/components/formulas/campos-nombre"
+import { PARTES_VACIAS } from "@/lib/formulas-nombre"
 
 type Material = {
   id: string
@@ -32,6 +31,8 @@ type Material = {
 interface AddFormulaDialogProps {
   materials: Material[]
   plantId: string
+  /** nombre de la planta: pone (CAN) / (HUD) en el código */
+  plantName?: string | null
   onSuccess: () => void
   /** texto del botón (por defecto "Agregar Formula") */
   etiqueta?: string
@@ -39,47 +40,22 @@ interface AddFormulaDialogProps {
   compacto?: boolean
 }
 
-const RESISTENCIAS_COMUNES = ["H4", "H8", "H13", "H17", "H21", "H25", "H30", "H35", "H40", "H45", "H50"]
-const METODOS = [
-  { value: "C", label: "Canaleta" },
-  { value: "B", label: "Bombeable" },
-]
+const NOMBRE_VACIO: ValorNombre = { modo: "partes", partes: PARTES_VACIAS, libre: "" }
 
-export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Agregar Formula", compacto = false }: AddFormulaDialogProps) {
+export function AddFormulaDialog({ materials, plantId, plantName = null, onSuccess, etiqueta = "Agregar Formula", compacto = false }: AddFormulaDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [resistenciaOpen, setResistenciaOpen] = useState(false)
-  const [resistenciaInput, setResistenciaInput] = useState("")
+  const { esGerencial } = usePermisos()
+  // Nombre automático (22/10): H30-620-15 B (CAN) PELQUE; nombre libre solo gerencial
+  const [nombre, setNombre] = useState<ValorNombre>(NOMBRE_VACIO)
   const [formData, setFormData] = useState({
-    resistencia: "",
-    tipoPiedra: "",
-    asentamiento: "",
-    metodo: "none",
     yield_m3: "1.0",
-    tag: "",
   })
   // Store quantities keyed by material_id
   const [materialQuantities, setMaterialQuantities] = useState<Record<string, string>>({})
   const { toast } = useToast()
 
-  // Auto-generate code
-  const generatedCode = useMemo(() => {
-    if (!formData.resistencia) return ""
-    
-    const parts = [formData.resistencia]
-    
-    if (formData.tipoPiedra) {
-      parts.push(formData.tipoPiedra)
-    }
-    
-    if (formData.asentamiento) {
-      parts.push(formData.asentamiento)
-    }
-    
-    const code = parts.join("-")
-    const codeWithMethod = formData.metodo && formData.metodo !== "none" ? `${code} ${formData.metodo}` : code
-    return formData.tag ? `${codeWithMethod} - ${formData.tag}` : codeWithMethod
-  }, [formData])
+  const { codigo: generatedCode, error: errorNombre } = codigoDe(nombre, plantName)
 
   const updateMaterialQuantity = (materialId: string, quantity: string) => {
     setMaterialQuantities(prev => ({
@@ -89,16 +65,9 @@ export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Ag
   }
 
   const resetForm = () => {
-    setFormData({
-      resistencia: "",
-      tipoPiedra: "",
-      asentamiento: "",
-      metodo: "none",
-      yield_m3: "1.0",
-      tag: "",
-    })
+    setFormData({ yield_m3: "1.0" })
+    setNombre(NOMBRE_VACIO)
     setMaterialQuantities({})
-    setResistenciaInput("")
   }
 
   // Get materials with quantities > 0
@@ -111,12 +80,12 @@ export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Ag
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.resistencia) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Debes seleccionar una resistencia",
-      })
+    if (errorNombre || !generatedCode) {
+      toast({ variant: "destructive", title: "Falta el nombre", description: errorNombre || "Completá el nombre de la fórmula" })
+      return
+    }
+    if (nombre.modo === "libre" && !esGerencial) {
+      toast({ variant: "destructive", title: "Nombre libre", description: "Solo un gerencial puede poner un nombre libre." })
       return
     }
 
@@ -140,14 +109,17 @@ export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Ag
         .insert({
           code: generatedCode,
           name: generatedCode,
-          description: formData.tag || null,
+          description: null,
           yield_m3: Number.parseFloat(formData.yield_m3),
           plant_id: plantId,
         })
         .select()
         .single()
 
-      if (formulaError) throw formulaError
+      if (formulaError) {
+        if ((formulaError as { code?: string }).code === "23505") throw new Error(`Ya existe ${generatedCode} en esta planta`)
+        throw formulaError
+      }
 
       // Insert formula materials
       const { error: materialsError } = await supabase.from("formula_materials").insert(
@@ -206,118 +178,7 @@ export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Ag
           <DialogDescription>Crea una nueva formula de hormigon con su composicion</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Code preview */}
-          {generatedCode && (
-            <div className="bg-muted p-3 rounded-lg">
-              <p className="text-sm text-muted-foreground">Codigo generado:</p>
-              <p className="text-lg font-mono font-bold">{generatedCode}</p>
-            </div>
-          )}
-
-          {/* Formula parameters */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Resistencia *</Label>
-              <Popover open={resistenciaOpen} onOpenChange={setResistenciaOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={resistenciaOpen}
-                    className="w-full justify-between font-normal"
-                  >
-                    {formData.resistencia || "Seleccionar o escribir..."}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[200px] p-0" align="start">
-                  <Command>
-                    <CommandInput 
-                      placeholder="Buscar o escribir (ej: H35)..." 
-                      value={resistenciaInput}
-                      onValueChange={setResistenciaInput}
-                    />
-                    <CommandList>
-                      <CommandEmpty>
-                        {resistenciaInput && (
-                          <Button
-                            variant="ghost"
-                            className="w-full justify-start"
-                            onClick={() => {
-                              const value = resistenciaInput.toUpperCase().startsWith("H") 
-                                ? resistenciaInput.toUpperCase() 
-                                : `H${resistenciaInput}`
-                              setFormData({ ...formData, resistencia: value })
-                              setResistenciaInput("")
-                              setResistenciaOpen(false)
-                            }}
-                          >
-                            <Plus className="mr-2 h-4 w-4" />
-                            Crear "{resistenciaInput.toUpperCase().startsWith("H") ? resistenciaInput.toUpperCase() : `H${resistenciaInput}`}"
-                          </Button>
-                        )}
-                      </CommandEmpty>
-                      <CommandGroup>
-                        {RESISTENCIAS_COMUNES.map((r) => (
-                          <CommandItem
-                            key={r}
-                            value={r}
-                            onSelect={() => {
-                              setFormData({ ...formData, resistencia: r })
-                              setResistenciaInput("")
-                              setResistenciaOpen(false)
-                            }}
-                          >
-                            <Check className={cn("mr-2 h-4 w-4", formData.resistencia === r ? "opacity-100" : "opacity-0")} />
-                            {r}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="space-y-2">
-              <Label>Metodo (opcional)</Label>
-              <Select 
-                value={formData.metodo} 
-                onValueChange={(v) => setFormData({ ...formData, metodo: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sin metodo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin metodo</SelectItem>
-                  {METODOS.map(m => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Tipo de Piedra</Label>
-              <Input
-                value={formData.tipoPiedra}
-                onChange={(e) => setFormData({ ...formData, tipoPiedra: e.target.value })}
-                placeholder="Ej: 6/20"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Asentamiento (cm)</Label>
-              <Input
-                type="number"
-                min="1"
-                max="30"
-                value={formData.asentamiento}
-                onChange={(e) => setFormData({ ...formData, asentamiento: e.target.value })}
-                placeholder="Ej: 10"
-              />
-            </div>
-          </div>
+          <CamposNombre valor={nombre} onChange={setNombre} planta={plantName} permiteLibre={esGerencial} />
 
           <div className="space-y-2">
             <Label>Rinde (m3)</Label>
@@ -328,18 +189,6 @@ export function AddFormulaDialog({ materials, plantId, onSuccess, etiqueta = "Ag
               onChange={(e) => setFormData({ ...formData, yield_m3: e.target.value })}
               required
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Etiqueta (opcional)</Label>
-            <Input
-              value={formData.tag}
-              onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
-              placeholder="Ej: Pirelli, Obra ABC, Cliente XYZ..."
-            />
-            <p className="text-xs text-muted-foreground">
-              Se agrega al código de la fórmula para identificarla al despachar. Ej: H30-620-10 C - Pirelli
-            </p>
           </div>
 
           {/* Materials Table */}

@@ -6,6 +6,7 @@
  */
 import { compararReceta, cantidadPorM3 } from "@/lib/carga/receta"
 import { INFO_SALIDA } from "@/lib/carga/tipos"
+import { claveNombre, nombreEnOtraPlanta, sinSufijoPlanta } from "@/lib/formulas-nombre"
 import type { FormulaSistema, Grupo, MaterialSistema, RecetaPlanta, SalidaMapa, Tolerancias } from "@/lib/carga/tipos"
 
 export const RESISTENCIAS = ["H4", "H8", "H13", "H17", "H21", "H25", "H30", "H35", "H40", "H45", "H50"]
@@ -33,9 +34,9 @@ export type CodigoLeido = {
   asentamiento: number | null
 }
 
-/** Saca la etiqueta de planta del final: "H25-620-10 C (CAN)" → "H25-620-10 C". */
+/** Saca la etiqueta de planta: "H25-620-10 C (CAN)" → "H25-620-10 C"; "H25-620-15 B (HUD) PELQUE" → "H25-620-15 B PELQUE". */
 export function sinEtiquetaPlanta(code: string): string {
-  return String(code ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim()
+  return sinSufijoPlanta(String(code ?? "").replace(/\s*\([^)]*\)\s*$/, ""))
 }
 
 export function leerCodigo(code: string): CodigoLeido {
@@ -204,24 +205,15 @@ export function contarUsos(despachos: { formula_id: string | null }[]): Record<s
 
 // ───────────────────────────── Copiar a la otra planta ─────────────────────────────
 
-/** Sufijo de código que usa cada planta: Canning lleva "(CAN)", Hudson nada. */
-export function sufijoPlanta(nombrePlanta: string | null | undefined): string {
-  return /canning/i.test(String(nombrePlanta || "")) ? "(CAN)" : ""
-}
-
-/** Código de la fórmula en la planta de destino: "H25-620-10 C" ↔ "H25-620-10 C (CAN)". */
+/** Código de la fórmula en la planta de destino, con el nombre automático (lib/formulas-nombre.ts). */
 export function codigoEnPlanta(code: string, plantaDestino: string | null | undefined): string {
-  const base = String(code ?? "").replace(/\s*\(CAN\)\s*$/i, "").trim()
-  const suf = sufijoPlanta(plantaDestino)
-  return suf ? `${base} ${suf}` : base
+  return nombreEnOtraPlanta(code, plantaDestino)
 }
 
-const claveCodigo = (c: string) => String(c ?? "").replace(/\s*\(CAN\)\s*$/i, "").replace(/\s+/g, " ").trim().toUpperCase()
-
-/** La fórmula equivalente que ya existe en la otra planta (mismo código sin el sufijo), si hay. */
+/** La fórmula equivalente que ya existe en la otra planta (mismo nombre sin la etiqueta de planta), si hay. */
 export function existeEnPlanta<T extends { code: string }>(code: string, formulasDestino: T[]): T | null {
-  const k = claveCodigo(code)
-  return formulasDestino.find((f) => claveCodigo(f.code) === k) || null
+  const k = claveNombre(code)
+  return formulasDestino.find((f) => claveNombre(f.code) === k) || null
 }
 
 /**

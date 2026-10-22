@@ -12,6 +12,8 @@ import { AddFormulaDialog } from "@/components/add-formula-dialog"
 import { EditFormulaDialog } from "@/components/edit-formula-dialog"
 import { DeleteFormulaDialog } from "@/components/delete-formula-dialog"
 import { PanelFormula, type FormulaPanel } from "@/components/formulas/panel-formula"
+import { NormalizarNombres } from "@/components/formulas/normalizar-nombres"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { SeccionProtegida } from "@/components/seccion-protegida"
@@ -52,7 +54,7 @@ function Chip({ activo, apagado, onClick, children, title }: { activo: boolean; 
 
 function FormulasContenido() {
   const supabase = createClient()
-  const { puede } = usePermisos() // fase 0c-1
+  const { puede, esGerencial } = usePermisos() // fase 0c-1
   const [plants, setPlants] = useState<{ id: string; name: string }[]>([])
   const [selectedPlant, setSelectedPlant] = useState("")
   const [formulas, setFormulas] = useState<FormulaPanel[]>([])
@@ -71,6 +73,7 @@ function FormulasContenido() {
   const [elegida, setElegida] = useState<string | null>(null)
   const [editar, setEditar] = useState<FormulaPanel | null>(null)
   const [borrar, setBorrar] = useState<FormulaPanel | null>(null)
+  const [normalizar, setNormalizar] = useState(false)
 
   useEffect(() => {
     supabase.from("plants").select("id, name").order("name").then(({ data }: { data: { id: string; name: string }[] | null }) => {
@@ -189,9 +192,19 @@ function FormulasContenido() {
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Buscar por código o nombre" value={texto} onChange={(e) => setTexto(e.target.value)} className="h-8 pl-8 text-sm" />
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {esGerencial && puede("formulas", "editar") && (
+            <Button variant="outline" size="sm" className="h-8" onClick={() => setNormalizar(true)}>Normalizar nombres</Button>
+          )}
           {puede("formulas", "cargar") && (
-            <AddFormulaDialog materials={materials} plantId={selectedPlant} onSuccess={recargar} etiqueta="Nueva" compacto />
+            <AddFormulaDialog
+              materials={materials}
+              plantId={selectedPlant}
+              plantName={plants.find((p) => p.id === selectedPlant)?.name || null}
+              onSuccess={recargar}
+              etiqueta="Nueva"
+              compacto
+            />
           )}
         </div>
       </div>
@@ -289,12 +302,22 @@ function FormulasContenido() {
         <EditFormulaDialog
           formula={editar as never}
           materials={materials}
+          plantName={plants.find((p) => p.id === editar.plant_id)?.name || null}
           open
           onOpenChange={(o) => {
             if (!o) {
               setEditar(null)
               recargar()
             }
+          }}
+        />
+      )}
+      {normalizar && (
+        <NormalizarNombres
+          plantas={plants}
+          onClose={(cambio) => {
+            setNormalizar(false)
+            if (cambio) recargar()
           }}
         />
       )}

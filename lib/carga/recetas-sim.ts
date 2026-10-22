@@ -11,8 +11,8 @@ import { INFO_SALIDA, SALIDAS, type FormulaSistema, type MaterialSistema, type R
 
 export type FormulaConUso = FormulaSistema & { usos: number }
 
-/** Nombre corto para Indumix: sin "(CAN)" y en mayúsculas, como en la planta (máx. 20). */
-export const nombreParaIndumix = (code: string) => code.replace(/\s*\((CAN|HUD)\)\s*$/i, "").toUpperCase().slice(0, 20)
+/** Nombre corto para Indumix: sin "(CAN)"/"(HUD)" (esté donde esté) y en mayúsculas, como en la planta (máx. 20). */
+export const nombreParaIndumix = (code: string) => code.replace(/\s*\((CAN|HUD)\)\s*/gi, " ").replace(/\s+/g, " ").trim().toUpperCase().slice(0, 20)
 
 /** La fórmula pasada a una receta de la planta (con el mapa de salidas). Los materiales sin salida no se ponen. */
 export function recetaDesdeFormula(numero: number, f: FormulaSistema, salidas: SalidaMapa[], materiales: MaterialSistema[]): RecetaPlanta {
