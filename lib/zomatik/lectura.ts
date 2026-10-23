@@ -340,7 +340,12 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
   let conTurno = false
   let renovar: ReturnType<typeof setInterval> | null = null
   try {
-    const { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
+    // Si el robot de las NP tiene el turno, se espera hasta ~30 s (lo suelta al terminar) antes de rendirse
+    let { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
+    while (!error && data !== true && Date.now() - t0 < 30_000) {
+      await new Promise((r) => setTimeout(r, 3_000))
+      ;({ data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 }))
+    }
     if (!error) {
       if (data !== true) return { ok: false, partes, errores: ["El robot de las NP está trabajando en Zomatik: la lectura se hace en un rato."], ms: Date.now() - t0 }
       conTurno = true
@@ -357,7 +362,9 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
     const s = await obtenerSesion()
     let foto: Foto | null = null
     try {
-      foto = await leerFoto(s, previo, { presupuestoMs: opts.presupuestoMs, partes, errores })
+      // Lo que se esperó por el turno se descuenta del presupuesto
+      const esperado = Date.now() - t0
+      foto = await leerFoto(s, previo, { presupuestoMs: opts.presupuestoMs !== undefined ? Math.max(5_000, opts.presupuestoMs - esperado) : esperado > 1_000 ? Math.max(5_000, PRESUPUESTO_MS - esperado) : undefined, partes, errores })
     } catch {
       // Falla grave (sesión o usuario): ya quedó en `errores`. No se graba nada a medias.
     }

@@ -469,19 +469,24 @@ export type UsoSaldo = {
   m3: number
   activo: boolean
   created_at: string
+  /** Foto al desvincular: lo despachado contra esta NP hasta ese momento. */
+  despachado_fijo?: number | null
   pedido: { id: string; status: string; dispatched_m3: number | null } | null
 }
 
 const pedidoActivo = (st: string | null | undefined) => !!st && st !== "cancelled" && st !== "completed"
 
 /**
- * Lo despachado de un pedido se reparte entre sus usos en el orden en que se crearon (primero la NP más vieja): así
- * se sabe cuánto consumió cada NP. Devuelve uso → m³ despachados contra esa NP.
+ * Lo despachado de un pedido que le corresponde a cada uso (misma cuenta que `zomatik_np_uso_despachado` en la base):
+ * un uso desactivado se queda con su foto (`despachado_fijo`); el resto se reparte entre los usos ACTIVOS del pedido en
+ * el orden en que se crearon, y el último se lleva lo que sobre.
  */
-export function despachadoPorUso(usosDelPedido: { id: string; m3: number; created_at: string }[], despachado: number): Map<string, number> {
+export function despachadoPorUso(usosDelPedido: { id: string; m3: number; created_at: string; activo?: boolean; despachado_fijo?: number | null }[], despachado: number): Map<string, number> {
   const out = new Map<string, number>()
-  let queda = Math.max(0, Number(despachado) || 0)
-  const orden = [...usosDelPedido].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+  const inactivos = usosDelPedido.filter((u) => u.activo === false)
+  for (const u of inactivos) out.set(u.id, r3(Number(u.despachado_fijo) || 0))
+  let queda = Math.max(0, r3((Number(despachado) || 0) - inactivos.reduce((s, u) => s + (Number(u.despachado_fijo) || 0), 0)))
+  const orden = usosDelPedido.filter((u) => u.activo !== false).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
   orden.forEach((u, i) => {
     const toma = i === orden.length - 1 ? queda : Math.min(queda, Number(u.m3) || 0)
     out.set(u.id, r3(toma))
@@ -491,12 +496,12 @@ export function despachadoPorUso(usosDelPedido: { id: string; m3: number; create
 }
 
 /**
- * Cuánto de la NP compromete un uso: si el pedido sigue activo y la usa, lo que reserva (o lo despachado, si es más);
- * si no (cancelado, finalizado, borrado o desvinculado), solo lo que se despachó contra ella.
+ * Cuánto de la NP compromete un uso: activo de un pedido activo, lo que reserva (o lo despachado, si es más);
+ * desactivado o de un pedido borrado, su foto; de un pedido cerrado, lo despachado contra ella.
  */
 export function comprometidoUso(u: UsoSaldo, despachadoContra: number): number {
-  if (u.activo && pedidoActivo(u.pedido?.status)) return Math.max(Number(u.m3) || 0, despachadoContra)
-  if (!u.pedido) return 0
+  if (!u.activo || !u.pedido) return Number(u.despachado_fijo) || 0
+  if (pedidoActivo(u.pedido.status)) return Math.max(Number(u.m3) || 0, despachadoContra)
   return Math.min(Number(u.m3) || 0, despachadoContra)
 }
 
@@ -514,7 +519,7 @@ export function saldoNp(np: { id: string; m3: number }, usosDePedidos: UsoSaldo[
   for (const u of usosDePedidos.filter((x) => x.np_id === np.id)) {
     const desp = u.pedido ? despachadoPorUso(porPedido.get(u.pedido.id) || [u], Number(u.pedido.dispatched_m3) || 0).get(u.id) || 0 : 0
     comprometido += comprometidoUso(u, desp)
-    if (u.activo && pedidoActivo(u.pedido?.status)) conPedidoActivo = true
+    if (u.activo && u.pedido && pedidoActivo(u.pedido.status)) conPedidoActivo = true
   }
   return { libre: r3(Number(np.m3) - comprometido), comprometido: r3(comprometido), conPedidoActivo }
 }

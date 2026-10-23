@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { linkNp } from "@/lib/zomatik/web"
 import { cargarNpSaldos, decidirSaldoNp, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { Input } from "@/components/ui/input"
+import { usePermisos } from "@/lib/current-user"
 
 const m3t = (n: number) => n.toLocaleString("es-AR", { maximumFractionDigits: 1 })
 const dia = (s: string | null) => (s ? new Date(s.length === 10 ? `${s}T12:00:00Z` : s).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }) : "—")
@@ -33,6 +35,10 @@ export function NpSaldos({ visible, puedeCargar, plantId, onReprogramar, recarga
   const [nps, setNps] = useState<NpSaldo[] | null>(null)
   const [trabajando, setTrabajando] = useState<string | null>(null)
   const [msg, setMsg] = useState<Record<string, string>>({})
+  // "Ya la devolví": solo un gerencial, con motivo (por ejemplo, el número de la DEVOL)
+  const { esGerencial } = usePermisos()
+  const [cerrando, setCerrando] = useState<string | null>(null)
+  const [motivo, setMotivo] = useState("")
   const cargar = useCallback(async () => setNps(await cargarNpSaldos()), [])
   useEffect(() => {
     if (visible) cargar()
@@ -43,7 +49,11 @@ export function NpSaldos({ visible, puedeCargar, plantId, onReprogramar, recarga
 
   async function decidir(x: NpSaldo, d: "devolver" | "cerrada") {
     setTrabajando(x.id)
-    const r = await decidirSaldoNp(x.id, d)
+    const r = await decidirSaldoNp(x.id, d, d === "cerrada" ? motivo : undefined)
+    if (r.ok && d === "cerrada") {
+      setCerrando(null)
+      setMotivo("")
+    }
     setMsg((m) => ({ ...m, [x.id]: r.texto }))
     setTrabajando(null)
     cargar()
@@ -69,7 +79,15 @@ export function NpSaldos({ visible, puedeCargar, plantId, onReprogramar, recarga
               <>
                 <Button size="sm" className="h-6 px-2 text-[11px]" disabled={!!trabajando} onClick={() => onReprogramar(x)}>Reprogramar</Button>
                 {x.saldo_decision === "devolver"
-                  ? <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={!!trabajando} onClick={() => decidir(x, "cerrada")}>Ya la devolví</Button>
+                  ? esGerencial && (cerrando === x.id
+                      ? (
+                        <span className="flex items-center gap-1">
+                          <Input className="h-6 w-44 text-[11px]" placeholder="Cómo (n.º de DEVOL…)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+                          <Button size="sm" className="h-6 px-2 text-[11px]" disabled={!!trabajando || motivo.trim().length < 5} onClick={() => decidir(x, "cerrada")}>Confirmar</Button>
+                          <Button size="sm" variant="ghost" className="h-6 px-1 text-[11px]" onClick={() => setCerrando(null)}>✕</Button>
+                        </span>
+                      )
+                      : <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={!!trabajando} onClick={() => { setCerrando(x.id); setMotivo("") }}>Ya la devolví</Button>)
                   : <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={!!trabajando} onClick={() => decidir(x, "devolver")}>Devolver el saldo</Button>}
               </>
             )}

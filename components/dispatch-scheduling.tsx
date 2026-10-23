@@ -803,7 +803,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     const supabase = createClient()
     const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
     if (error) {
-      toast({ title: "Error", description: "No se pudo eliminar el despacho", variant: "destructive" })
+      // Un pedido con NP en Zomatik no se borra (lo frena la base): se cancela
+      toast({ title: "No se pudo eliminar el pedido", description: /nota de pedido/i.test(error.message || "") ? error.message : "No se pudo eliminar el despacho", variant: "destructive" })
     } else {
       toast({ title: "Despacho eliminado" })
       await logDeletion({

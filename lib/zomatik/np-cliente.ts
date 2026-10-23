@@ -43,9 +43,9 @@ export async function cargarNpSaldos(filtro: { clientId?: string; formulaId?: st
 }
 
 /** "Devolver el saldo" o "Ya la devolví" (a mano, DEVOL). */
-export async function decidirSaldoNp(npId: string, decision: "devolver" | "cerrada"): Promise<{ ok: boolean; texto: string }> {
+export async function decidirSaldoNp(npId: string, decision: "devolver" | "cerrada", motivo?: string): Promise<{ ok: boolean; texto: string }> {
   try {
-    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "saldo", np_id: npId, decision }) })
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "saldo", np_id: npId, decision, motivo }) })
     const j = await json(r)
     return r.ok ? { ok: true, texto: j?.mensaje || "Listo" } : { ok: false, texto: j?.error || `Error ${r.status}` }
   } catch {

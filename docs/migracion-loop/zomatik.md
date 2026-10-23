@@ -1648,3 +1648,23 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
 
 ### 25.7 Verificación
 `test:zomatik-np` 58/58 (plan con usos, saldo, cancelar sin vaciar, reprogramar, devolver, vendedor), las demás pruebas, tsc sin errores nuevos y build bien.
+
+### 25.8 Cambios de la revisión de `5548ecc` (23/10)
+- **B1, el mismo saldo dos veces:** reservar, agrandar y devolver se hacen en la base, con la NP bloqueada (`FOR UPDATE`): `zomatik_np_reservar`, `zomatik_np_devolver` y `zomatik_np_saldo`. Si otro tomó el saldo en el medio, se reserva menos y lo que falta va en una NP nueva, con aviso.
+- **B2, un uso desactivado:** al desvincular queda la foto de lo despachado hasta ese momento (`despachado_fijo`, `zomatik_np_desvincular`). El resto de lo despachado se reparte solo entre los usos activos. El caso del revisor da NP1 con 10 libres y NP2 con 0.
+- **I1:** la pasada ya no mira pedidos cancelados o completos ni NP cerradas, y un aviso igual al último del pedido no se vuelve a grabar.
+- **I2:** sin ninguna llave prendida ni NP para trabajar, el robot no toma el turno. La lectura diaria espera hasta ~30 s el turno antes de rendirse.
+- **Menores:**
+  - "Ya la devolví" lo marca solo un gerencial, con motivo (queda en Actividad), y solo si la NP estaba esperando la devolución.
+  - Un pedido que usa una NP de Zomatik no se puede eliminar (trigger): se cancela y la NP queda pendiente.
+  - El vendedor de una NP nueva es el del usuario de la sesión que guarda el pedido en ese momento (`zomatik_np.vendedor_usuario_id`), no `created_by`.
+  - No queda nada de cambiar la fecha a mano en Zomatik (`cb7c189`).
+- La migración `202610231000` (sin aplicar) suma esas funciones, `despachado_fijo`, `vendedor_usuario_id` y el trigger de borrado. Probada en ROLLBACK:
+  - el caso B2 da 10 libres y 0;
+  - dos reservas de 8 sobre 10 dan 8 y 2;
+  - devolver con un pedido activo se rechaza;
+  - reservar después de devolver da 0;
+  - borrar un pedido con NP se rechaza.
+
+  La concurrencia real la garantiza el `FOR UPDATE`; no se probó con dos sesiones contra la base de producción.
+- `test:zomatik-np` 65/65.

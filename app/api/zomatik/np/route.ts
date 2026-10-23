@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       const id = uuid(body?.np_id)
       const decision = body?.decision === "buena" ? "buena" : body?.decision === "otra" ? "otra" : null
       if (!id || !decision) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
-      const out = await revisarNp(id, decision, u.name)
+      const out = await revisarNp(id, decision, u.name, undefined, u.id)
       if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
       after(() => procesarNp({ usuario: u.name, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
       return NextResponse.json({ ok: true })
@@ -68,7 +68,13 @@ export async function POST(req: Request) {
       const id = uuid(body?.np_id)
       const decision = ["devolver", "cerrada"].includes(body?.decision) ? (body.decision as "devolver" | "cerrada") : null
       if (!id || !decision) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
-      const out = await decidirSaldo(id, decision, u.name)
+      // "Ya la devolví" (DEVOL hecha a mano): solo un gerencial, con motivo
+      const motivo = String(body?.motivo || "").trim().slice(0, 300)
+      if (decision === "cerrada") {
+        if (tipoDe(u) !== "gerencial") return NextResponse.json({ error: "\"Ya la devolví\" lo marca un gerencial." }, { status: 403 })
+        if (motivo.replace(/\s/g, "").length < 5) return NextResponse.json({ error: "Contá cómo se devolvió (por ejemplo, el número de la DEVOL)." }, { status: 400 })
+      }
+      const out = await decidirSaldo(id, decision, u.name, undefined, motivo || null)
       if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
       if (decision === "devolver") after(() => procesarNp({ usuario: u.name, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
       return NextResponse.json(out)
@@ -89,7 +95,8 @@ export async function POST(req: Request) {
     const moverFecha = body?.mover_fecha === true ? true : body?.mover_fecha === false ? false : null
     let sync
     try {
-      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha })
+      // El vendedor de las NP nuevas: el de quien guarda ahora (sesión del servidor)
+      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha, usuarioId: u.id })
     } catch (err) {
       if (faltaMigracion(err)) return NextResponse.json({ activo: false, motivo: "NP: se carga a mano en Zomatik", sinMigracion: true })
       throw err
