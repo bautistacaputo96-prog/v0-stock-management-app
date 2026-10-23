@@ -22,7 +22,9 @@
 --   zomatik_np_saldo / _reservar / _devolver / _desvincular  el saldo se calcula y se reserva en la base con la NP
 --                         bloqueada (FOR UPDATE): dos reprogramaciones, o reprogramar y devolver, nunca toman el mismo
 --                         saldo. Al desvincular un uso queda la foto de lo despachado contra esa NP (despachado_fijo).
---   pedido con NP         no se puede eliminar (trigger BEFORE DELETE): se cancela y la NP queda pendiente.
+--   zomatik_np_crear_con_uso  la NP nueva y su uso en una sola transacción (nunca una NP sin uso).
+--   pedido con NP         si la NP ya está en Zomatik, no se puede eliminar (se cancela y la NP queda pendiente); si
+--                         todavía no llegó, se deja eliminar y la NP local se anula (trigger BEFORE DELETE).
 --   pg_cron               la pasada de las NP cada 10 min (al final, con lo que hay que hacer antes).
 --
 -- Qué pasa con los datos ya cargados:
@@ -331,8 +333,37 @@ REVOKE ALL ON FUNCTION public.zomatik_np_desvincular(uuid, text) FROM PUBLIC, an
 REVOKE ALL ON FUNCTION public.zomatik_np_devolver(uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.zomatik_np_uso_despachado(uuid), public.zomatik_np_saldo(uuid), public.zomatik_np_reservar(uuid, uuid, numeric, text), public.zomatik_np_desvincular(uuid, text), public.zomatik_np_devolver(uuid, text) TO service_role;
 
--- Un pedido que usa una NP de Zomatik no se borra (se perdería lo despachado contra ella): se cancela y la NP queda
--- pendiente en Programación.
+-- Crear una NP del sistema y su uso por el pedido en una sola transacción: nunca queda una NP sin uso (que la
+-- siguiente sincronización no vería y generaría otra). Devuelve el id, o nulo si ya existía (marca o n repetidos).
+CREATE OR REPLACE FUNCTION public.zomatik_np_crear_con_uso(p jsonb)
+RETURNS uuid
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_id uuid;
+BEGIN
+  INSERT INTO zomatik_np (scheduled_dispatch_id, n, marca, tipo, es_adicional, proyecto_codigo, plant_id, client_id, formula_id, fecha, m3,
+                          estado, proximo_intento, created_by, vendedor_usuario_id)
+  VALUES ((p->>'scheduled_dispatch_id')::uuid, (p->>'n')::int, p->>'marca', p->>'tipo', coalesce((p->>'es_adicional')::boolean, false),
+          nullif(p->>'proyecto_codigo', '')::int, nullif(p->>'plant_id', '')::uuid, nullif(p->>'client_id', '')::uuid, nullif(p->>'formula_id', '')::uuid,
+          (p->>'fecha')::date, (p->>'m3')::numeric, 'pendiente', now(), p->>'created_by', nullif(p->>'vendedor_usuario_id', '')::uuid)
+  ON CONFLICT DO NOTHING
+  RETURNING id INTO v_id;
+  IF v_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO zomatik_np_uso (np_id, scheduled_dispatch_id, m3, created_by) VALUES (v_id, (p->>'scheduled_dispatch_id')::uuid, (p->>'m3')::numeric, p->>'created_by');
+  RETURN v_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.zomatik_np_crear_con_uso(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.zomatik_np_crear_con_uso(jsonb) TO service_role;
+
+-- Borrar un pedido: si usa una NP que ya está (o pudo quedar) en Zomatik, no se deja: se cancela y la NP queda
+-- pendiente en Programación (se perdería lo despachado contra ella). Si sus NP todavía no llegaron a Zomatik
+-- (pendiente o con error, sin un "Grabar" cortado), se deja borrar y esas NP se anulan acá.
 CREATE OR REPLACE FUNCTION public.zomatik_np_no_borrar_pedido()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -340,9 +371,16 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM zomatik_np_uso u JOIN zomatik_np n ON n.id = u.np_id WHERE u.scheduled_dispatch_id = OLD.id AND n.estado <> 'anulada') THEN
+  IF EXISTS (
+    SELECT 1 FROM zomatik_np_uso u JOIN zomatik_np n ON n.id = u.np_id
+    WHERE u.scheduled_dispatch_id = OLD.id AND n.estado <> 'anulada'
+      AND NOT (n.estado IN ('pendiente', 'error') AND coalesce(n.paso, '') NOT IN ('grabar', 'verificar', 'grabar_cortado', 'buscar_marca'))
+  ) THEN
     RAISE EXCEPTION 'El pedido tiene nota de pedido en Zomatik: no se puede eliminar. Cancelalo (la NP queda pendiente en Programación).';
   END IF;
+  UPDATE zomatik_np n SET estado = 'anulada', mensaje = 'El pedido se eliminó antes de generarla', proximo_intento = NULL, updated_at = now()
+  WHERE n.estado IN ('pendiente', 'error')
+    AND n.id IN (SELECT u.np_id FROM zomatik_np_uso u WHERE u.scheduled_dispatch_id = OLD.id);
   RETURN OLD;
 END;
 $$;

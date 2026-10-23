@@ -551,6 +551,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         if (error) throw new Error(error.message)
         await notifyDeletion({ entity: "despacho", reference: deleteDispatch.remito || null, details: deletionDetails })
       } else {
+        // Es una programación (tabla "scheduled_dispatches"). Primero se borra (dispatch_status_log se borra solo, en
+        // cascada): si la base lo frena (pedido con NP en Zomatik) no queda nada anotado como borrado.
+        const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
+        if (error) throw error
         // Queda asentado en Actividad (con el motivo, que ya va en el detalle) y se avisa a los gerenciales
         await logDeletion({
           entity: "despacho",
@@ -559,17 +563,14 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           plantId: deleteDispatch.plant_id || null,
           details: deletionDetails,
         })
-        // Es una programación (tabla "scheduled_dispatches")
-        await supabase.from("dispatch_status_log").delete().eq("scheduled_dispatch_id", deleteDispatch.id)
-        const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
-        if (error) throw error
       }
 
       toast({ title: "Despacho eliminado" })
       loadData()
     } catch (error: any) {
       console.error("[v0] Error deleting dispatch:", error)
-      toast({ title: "Error", description: error?.message || "No se pudo eliminar", variant: "destructive" })
+      // El mensaje de la base (por ejemplo: "tiene nota de pedido en Zomatik: cancelalo, la NP queda pendiente")
+      toast({ title: "No se pudo eliminar", description: error?.message || "No se pudo eliminar", variant: "destructive" })
     } finally {
       setSaving(false)
       setDeleteDispatch(null)

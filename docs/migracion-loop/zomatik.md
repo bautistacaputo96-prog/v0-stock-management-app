@@ -1668,3 +1668,15 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
 
   La concurrencia real la garantiza el `FOR UPDATE`; no se probó con dos sesiones contra la base de producción.
 - `test:zomatik-np` 65/65.
+
+### 25.9 Pasada final del revisor (23/10)
+- **I-1:** la NP nueva y su uso se crean juntos, en una sola función de la base (`zomatik_np_crear_con_uso`): nunca queda una NP sin uso. Como resguardo, si una NP propia viva no tiene uso, `sincronizarPedido` se lo repone en vez de generar una segunda.
+- **Borrar un pedido:**
+  - Si sus NP todavía no llegaron a Zomatik (pendiente o con error, sin un "Grabar" cortado), se deja borrar y esas NP se anulan.
+  - Si alguna ya está en Zomatik, la base lo frena con "Cancelalo (la NP queda pendiente en Programación)", y Programación y el Historial muestran ese mensaje.
+  - El Historial ahora borra primero y recién después anota en Actividad y avisa.
+- Probado en ROLLBACK:
+  - el alta con uso funciona y una repetida no duplica;
+  - se puede borrar un pedido con su NP pendiente, que queda anulada;
+  - borrar un pedido con su NP ok se rechaza.
+- `test:zomatik-np` 66/66.

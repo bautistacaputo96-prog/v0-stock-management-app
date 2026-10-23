@@ -263,6 +263,15 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   if (!planta?.zomatik_np_activo) return { activo: false, motivo: "NP: se carga a mano en Zomatik" }
   let usos = (await usosDe(sb, "scheduled_dispatch_id", [ped.id])).filter((u) => u.activo)
   const propias = await npsDePedidos(sb, [ped.id])
+  // Resguardo: una NP propia viva sin ningún uso (un alta a medias de antes) cuenta como usada por el pedido. Se le
+  // repone el uso (con la NP bloqueada) en vez de generar una segunda NP.
+  const conUso = new Set((await usosDe(sb, "np_id", propias.map((x) => x.id))).map((u) => u.np_id))
+  const huerfanas = propias.filter((x) => VIGENTES.includes(x.estado) && !conUso.has(x.id))
+  for (const x of huerfanas) {
+    await rpc(sb, "zomatik_np_reservar", { p_np: x.id, p_pedido: ped.id, p_m3: Number(x.m3), p_usuario: usuario })
+    await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": `La NP ${x.n} no tenía uso: se le repuso (no se genera otra)`, Marca: x.marca } })
+  }
+  if (huerfanas.length) usos = (await usosDe(sb, "scheduled_dispatch_id", [ped.id])).filter((u) => u.activo)
   // Un pedido de antes de prender la llave no tiene NP automática (salvo que ya tenga alguna del sistema)
   if (!pedidoConNp(planta, ped.created_at) && !usos.length && !propias.length) return vacio([], { fuera: true })
 
@@ -378,13 +387,9 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
       // El vendedor de la NP: el de quien guarda el pedido ahora (sesión del servidor), no el que lo cargó primero
       vendedor_usuario_id: opciones.usuarioId ?? null,
     }
-    const { data: nueva, error: e2 } = await sb.from("zomatik_np").insert(fila as never).select("id")
-    if (e2) {
-      if ((e2 as { code?: string }).code === "23505") continue // otro proceso la creó recién
-      throw e2
-    }
-    const npId = ((nueva as { id: string }[] | null) || [])[0]?.id
-    if (npId) await sb.from("zomatik_np_uso").insert({ np_id: npId, scheduled_dispatch_id: ped.id, m3: c.m3, created_by: usuario } as never)
+    // La NP y su uso juntos, en una sola transacción de la base (nunca una NP sin uso)
+    const npId = await rpc(sb, "zomatik_np_crear_con_uso", { p: fila })
+    if (!npId) continue // otro proceso la creó recién (marca o número repetidos)
     creadas++
     await log({ "Qué pasó": c.es_adicional ? `NP adicional por ${c.m3} m³ (el pedido se agrandó)` : `NP ${c.tipo === "proyecto" ? `contra el proyecto ${c.proyecto_codigo}` : "nueva"} por ${c.m3} m³: pendiente de generar`, Marca: fila.marca }, "crear")
   }
