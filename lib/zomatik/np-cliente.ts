@@ -9,25 +9,58 @@ import type { ControlDespacho, EstadoNp, ModoNp, TipoNp } from "@/lib/zomatik/np
 export type NpFila = {
   id: string; n: number; estado: EstadoNp; tipo: TipoNp; m3: number; numero: string | null; zomatik_codigo: number | null
   mensaje: string | null; proyecto_codigo: number | null; es_adicional: boolean; disponible_m3: number | null; updated_at: string
+  /** m³ que el pedido usa de esta NP y lo libre de la NP (una NP puede servir a varios pedidos). */
+  m3_uso: number; libre: number; fecha: string; fecha_zomatik: string | null; saldo_mensaje: string | null
 }
 export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
+  /** Pedido cancelado o completo: sus NP con saldo quedan pendientes en Programación. */
+  cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
   control: ControlDespacho
   /** NP nueva o de un proyecto, guardada en el servidor (null = todavía no se eligió). */
-  eleccion: { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null } | null
+  eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null } | null
 }
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
-export type EleccionNp = { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null }
+export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }
+
+/** Una NP del sistema con saldo (lista de Programación y opción "Usar NP con saldo"). */
+export type NpSaldo = {
+  id: string; numero: string | null; zomatik_codigo: number | null; m3: number; libre: number; comprometido: number; fecha: string; fecha_zomatik: string | null
+  saldo_decision: string | null; saldo_mensaje: string | null; pendiente_desde: string | null; plant_id: string | null; client_id: string | null; cliente: string | null
+  formula_id: string | null; formula: string | null; construction_site_id: string | null; obra: string | null; con_pedido_activo: boolean
+}
+
+export async function cargarNpSaldos(filtro: { clientId?: string; formulaId?: string } = {}): Promise<NpSaldo[]> {
+  try {
+    const q = filtro.clientId ? `?client_id=${filtro.clientId}${filtro.formulaId ? `&formula_id=${filtro.formulaId}` : ""}` : ""
+    const r = await fetch(`/api/zomatik/np/saldos${q}`, { cache: "no-store" })
+    if (!r.ok) return []
+    return ((await json(r))?.nps as NpSaldo[]) || []
+  } catch {
+    return []
+  }
+}
+
+/** "Devolver el saldo" o "Ya la devolví" (a mano, DEVOL). */
+export async function decidirSaldoNp(npId: string, decision: "devolver" | "cerrada"): Promise<{ ok: boolean; texto: string }> {
+  try {
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "saldo", np_id: npId, decision }) })
+    const j = await json(r)
+    return r.ok ? { ok: true, texto: j?.mensaje || "Listo" } : { ok: false, texto: j?.error || `Error ${r.status}` }
+  } catch {
+    return { ok: false, texto: "Sin conexión" }
+  }
+}
 
 async function json(r: Response) {
   return r.json().catch(() => ({}))
 }
 
 /** Después de guardar, cancelar o cambiar los m³: el servidor decide qué NP crear o vaciar (con la llave apagada, nada). */
-export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null): Promise<{ activo?: boolean; creadas?: number; vaciar?: number; avisos?: string[]; error?: string }> {
+export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null, moverFecha?: boolean | null): Promise<{ activo?: boolean; creadas?: number; usadas?: number; avisos?: string[]; error?: string }> {
   try {
-    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined }) })
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined, mover_fecha: moverFecha ?? undefined }) })
     const j = await json(r)
     return r.ok ? j : { error: j?.error || `Error ${r.status}` }
   } catch {
@@ -117,6 +150,11 @@ export function usePasadaNp(activa: boolean, alTerminar?: () => void) {
 export function chipNp(e: EstadoPedidoNp | undefined | null): { texto: string; clase: "ok" | "mal" | "aviso" | "gris"; titulo: string } | null {
   if (!e || !e.activo) return null
   if (!e.entra) return { texto: "NP a mano", clase: "gris", titulo: "Pedido de antes de prender la NP automática: la NP se carga a mano en Zomatik" }
+  // Pedido cancelado o completo con saldo en su NP: queda pendiente en Programación (NP con saldo)
+  if (e.cerrado) {
+    const conSaldo = e.nps.filter((x) => x.estado === "ok" && x.libre > 0.001)
+    if (conSaldo.length) return { texto: "NP pendiente con saldo", clase: "aviso", titulo: conSaldo.map((x) => `${x.numero || "NP"}: ${x.libre} m³ libres (Programación › NP con saldo)`).join("\n") }
+  }
   const vivas = e.nps.filter((x) => ["pendiente", "generando", "ok", "revisar", "error"].includes(x.estado))
   const corto = (n: string | null) => (n ? n.replace(/^(NP2?) 0001-0000/, "$1 …") : "")
   if (!vivas.length) {

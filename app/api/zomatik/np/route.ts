@@ -7,11 +7,13 @@
  *        sale enseguida y el robot trabaja después (`after`). Con la llave apagada no hace nada.
  *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar): espera al robot
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
+ *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
+ *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
  */
 import { NextResponse, after } from "next/server"
 import { exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, tipoDe } from "@/lib/permisos"
-import { estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -61,6 +63,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true })
     }
 
+    if (accion === "saldo") {
+      if (!puedeCon(u, "programacion", "cargar")) return NextResponse.json({ error: "Es de Programación." }, { status: 403 })
+      const id = uuid(body?.np_id)
+      const decision = ["devolver", "cerrada"].includes(body?.decision) ? (body.decision as "devolver" | "cerrada") : null
+      if (!id || !decision) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
+      const out = await decidirSaldo(id, decision, u.name)
+      if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
+      if (decision === "devolver") after(() => procesarNp({ usuario: u.name, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
+      return NextResponse.json(out)
+    }
+
     const pedidoId = uuid(body?.pedido_id)
     if (!pedidoId) return NextResponse.json({ error: "Falta el pedido" }, { status: 400 })
     const puedeProg = puedeCon(u, "programacion", "cargar")
@@ -70,12 +83,13 @@ export async function POST(req: Request) {
 
     const e = body?.eleccion
     const eleccion: Eleccion | null =
-      puedeProg && e && (e.tipo === "nueva" || e.tipo === "proyecto")
-        ? { tipo: e.tipo, proyecto_codigo: Number(e.proyecto_codigo) || null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined || e.tope_m3 === "" ? null : Number(e.tope_m3) }
+      puedeProg && e && (e.tipo === "nueva" || e.tipo === "proyecto" || e.tipo === "saldo")
+        ? { tipo: e.tipo, proyecto_codigo: Number(e.proyecto_codigo) || null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined || e.tope_m3 === "" ? null : Number(e.tope_m3), np_id: uuid(e.np_id) }
         : null
+    const moverFecha = body?.mover_fecha === true ? true : body?.mover_fecha === false ? false : null
     let sync
     try {
-      sync = await sincronizarPedido(pedidoId, u.name, eleccion)
+      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha })
     } catch (err) {
       if (faltaMigracion(err)) return NextResponse.json({ activo: false, motivo: "NP: se carga a mano en Zomatik", sinMigracion: true })
       throw err
@@ -86,7 +100,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ...sync, proceso: proc })
     }
     // Primero se responde (la base ya quedó sincronizada); el robot trabaja después, dentro del tiempo que queda
-    if (sync.creadas || sync.vaciar) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => console.error("[zomatik-np] procesar", err?.message)))
+    if (sync.creadas) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => console.error("[zomatik-np] procesar", err?.message)))
     return NextResponse.json(sync)
   } catch (e) {
     return respuestaError(e)

@@ -58,7 +58,13 @@ export type DatosNp = {
   buscarAntes: boolean
   /** Día en que se creó la NP en nuestro sistema (aaaa-mm-dd): la marca se busca desde ese día hasta hoy. */
   creadaEl?: string | null
+  /** Vendedor de Zomatik de quien programó el pedido (respuesta 4 del 23/10). Sin él, el del cliente (o del proyecto). */
+  vendedorId?: number | null
+  vendedorNombre?: string | null
 }
+
+/** Sin vendedor de quien programa ni del cliente/proyecto: no se genera. */
+const SIN_VENDEDOR = "La NP no tiene vendedor: cargale el vendedor de Zomatik a quien programa (Vínculos con Zomatik) o al cliente en Zomatik."
 
 export type ResultadoNp = {
   estado: "ok" | "revisar" | "error" | "pendiente"
@@ -313,7 +319,9 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   const sec = await nav.get(`traerdatossecundarios.php?fcliente=${d.clienteCodigo}&rnd=${azar()}`)
   const cli = datosSecundarios(sec.html)
   if (!cli) throw formato("los datos del cliente no vinieron")
-  if (!cli.idvendedor) throw dato("El cliente no tiene vendedor en Zomatik: cargáselo en su ficha.")
+  // Vendedor: el de quien programa; si no tiene, el del cliente; si tampoco, no se genera
+  const vend = d.vendedorId ? { id: String(d.vendedorId), nombre: d.vendedorNombre || "", manual: "1" } : cli.idvendedor ? { id: cli.idvendedor, nombre: cli.vendedor, manual: "0" } : null
+  if (!vend) throw dato(SIN_VENDEDOR)
 
   await marcar("lista")
   const ll = listaActiva(listasDeListado((await nav.get("listado_listas.php")).html), comp)
@@ -324,7 +332,7 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
     direccion: cli.direccion, localidad: cli.localidad, provincia: cli.provincia, cp: cli.cp, tipo_iva: cli.tipo_iva, cuit: cli.cuit,
     email: cli.email, condicion_pago: cli.condicion_pago, idobra: "0", obra: "", entregaren: "", deposito: String(d.deposito),
     fecha_entrega: d.fecha, observaciones_entrega: d.entrega, observaciones: d.marca, comprobante: comp, origen: "1",
-    idlista: String(ll.lista.codigo), lista: ll.lista.nombre, vendedor_manual: "0", idvendedor: cli.idvendedor, vendedor: cli.vendedor,
+    idlista: String(ll.lista.codigo), lista: ll.lista.nombre, vendedor_manual: vend.manual, idvendedor: vend.id, vendedor: vend.nombre,
     fletemonto: "0", estado: "1", proyecto: "0", tipo: "0",
   }
   const c = { ...f.campos, ...valores }
@@ -383,12 +391,14 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   if (falta.length) throw formato(`faltan ${falta.join(", ")}`)
   if (!/^grabar_pedidos\.php\?codigo=0$/i.test(f.action || "")) throw formato("el MATERIAL graba en otro lado")
   if (String(f.campos.idcliente) !== String(d.clienteCodigo)) throw dato("El proyecto es de otro cliente en Zomatik: elegí otro proyecto.")
-  if (!f.campos.idvendedor || f.campos.idvendedor === "0") throw dato("El proyecto no tiene vendedor en Zomatik.")
+  // Vendedor: el de quien programa; si no tiene, el que trae el proyecto
+  if (!d.vendedorId && (!f.campos.idvendedor || f.campos.idvendedor === "0")) throw dato(SIN_VENDEDOR)
 
   const obsProyecto = (f.campos.observaciones || "").trim()
   const valores: Record<string, string> = {
     deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones_entrega: d.entrega,
     observaciones: obsProyecto ? `${obsProyecto} · ${d.marca}` : d.marca,
+    ...(d.vendedorId ? { idvendedor: String(d.vendedorId), vendedor: d.vendedorNombre || "", vendedor_manual: "1" } : {}),
   }
   const c = { ...f.campos, ...valores }
   const base: [string, string][] = [["fcliente", c.idcliente], ["facopio", "0"], ["forigen", "3"], ["flista", c.idlista || "0"]]

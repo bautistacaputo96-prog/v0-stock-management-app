@@ -566,8 +566,14 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       details: { Estado: `${p.status} → cancelado`, "m³": p.quantity_m3, Enviado: p.dispatched_m3 || 0, Motivo: `${textoMotivo(tipo)} — ${detalle}` },
     })
     toast({ title: "Pedido cancelado", description: `${p.clients?.name} · ${m3txt(Math.max(0, p.quantity_m3 - Number(p.dispatched_m3 || 0)))} m³ al contador «Cancelado»` })
-    // Zomatik Z2: se vacía su NP (si no tiene remitos)
-    if (np.porPedido[p.id]?.activo) avisarNp(p.id).then(() => np.recargarEn())
+    // Zomatik Z2: la NP no se toca: queda pendiente en Programación (NP con saldo), sin preguntar nada
+    if (np.porPedido[p.id]?.activo) {
+      const teniaNp = np.porPedido[p.id]?.nps.some((x) => x.estado === "ok")
+      avisarNp(p.id).then(() => {
+        if (teniaNp) toast({ title: "La NP queda pendiente en Programación", description: "En «NP con saldo», hasta que se reprograme o se devuelva." })
+        np.recargarEn()
+      })
+    }
     setCancelar(null)
     cargar()
     return null

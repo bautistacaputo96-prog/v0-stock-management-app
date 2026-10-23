@@ -1558,3 +1558,88 @@ No entra: alta de cliente en Zomatik, OF y remito (Z3), "Cargar pedido › NP pa
   - al editar un pedido, la elección no se manda hasta leer la guardada (y el proyecto de la obra no se propone antes);
   - la lectura Z0 renueva su turno cada 20 s.
 - `test:zomatik-np` 51/51.
+
+---
+
+## 25. Respuestas de Bautista (23/10/2026) — mandan sobre lo anterior
+
+Responden las 8 preguntas de 24.8. Lo que cambia de Z2 está programado en `loop/zomatik`, con la migración `202610231000_zomatik_np_saldo.sql` **sin aplicar**. La de Z2, `202610222200`, ya está aplicada.
+
+### 25.1 Lo que dijo Bautista
+1. **Pedido finalizado con sobrante:** "se finaliza el pedido y se hace una devolución para que coincida con lo que se remitió, y cierra en el sistema".
+2. **Cancelar y cambiar la fecha:** no rehacer solo. "El hecho de reprogramar sucede mucho ya que cuando llueve se cancelan las obras. La NP sigue abierta y la persona tiene que decidir reprogramar." Las pendientes figuran en Programación. "Tal vez la NP es mayor a lo que se pide ese día."
+   - **Precisión:** "reprogramar no es instantáneo, no se sabe cuándo se va a retomar la obra. Que quede pendiente."
+3. Pasada cada 10 min con **pg_cron**: sí.
+4. **Vendedor:** el del **usuario que programa**, no el del cliente.
+5. a 8. **OK** a la recomendación: mail ahora y WhatsApp después; en MATERIAL solo el renglón de la fórmula; serie 1000–5999; excepción solo con la sesión de un gerencial.
+
+### 25.2 Cómo queda
+- **Una NP puede servir a varios pedidos** (`zomatik_np_uso`: qué pedido usa qué NP y por cuántos m³).
+  - **Saldo** de una NP = sus m³ − lo que reservan los pedidos activos − lo despachado de los demás.
+  - Lo despachado de un pedido se reparte entre sus NP en el orden en que se crearon.
+- **Cancelar el pedido no toca la NP.** Pasa sola a **"NP con saldo: pendiente"**, sin ningún diálogo; solo el aviso "La NP queda pendiente en Programación". Lo que nunca llegó a Zomatik se anula, como antes.
+- **Lista "NP con saldo"** en Programación (Semana): NP del sistema en Zomatik con saldo y sin pedido activo.
+  - Muestra **desde cuándo** está pendiente y **no vence**.
+  - Queda ahí hasta que alguien toque:
+    - **Reprogramar:** abre el formulario con cliente, obra, fórmula, planta y saldo precargados, y la opción **"Usar NP con saldo"** elegida. El pedido toma de esa NP lo que necesita, sin generar otra. Si no alcanza, el resto va en una NP nueva.
+    - **Devolver el saldo:**
+      - si la NP no tuvo despachos, se vacía (23.4; el robot controla antes que no tenga remitos);
+      - si tuvo despachos o remitos, hace falta una **devolución de pedido (DEVOL)**, que todavía no hace el sistema (25.3). Queda "Devolver" con el aviso de hacerla a mano y el botón "Ya la devolví".
+  - "Dejar abierta" no va: con la precisión, pendiente ya es dejarla abierta.
+- **Bloque del pedido:** tres opciones, "NP nueva", "NP de un proyecto" y **"Usar NP con saldo"**. Esta última solo muestra NP del sistema del mismo cliente y artículo, con algo libre. Reemplaza la "usar NP existente" que se sacó en 22.1. Al editar, el bloque queda deshabilitado hasta leer la elección guardada (observación 2 del revisor).
+- **Cambiar la fecha de un pedido con NP:** el formulario pregunta "¿Mover la NP a la nueva fecha?".
+  - **Sí:** cambia la fecha en nuestro sistema. En Zomatik la fecha de entrega se cambia a mano hasta probar `CambiarFechaEntrega` (25.4); la que quedó en Zomatik se guarda en `fecha_zomatik`.
+  - **No:** el pedido deja de usarla (queda pendiente con su saldo) y se genera una NP nueva.
+- **Cambiar la fórmula, el cliente o la planta:** avisa y no toca la NP vieja (queda pendiente con su saldo). Se genera una nueva para el pedido.
+- **Agrandar:** primero vuelve a usar lo libre de su NP; después, NP adicional por la diferencia (sigue igual).
+- **Achicar:** el pedido reserva menos y lo que sobra queda de saldo en la NP. Al finalizar se devuelve o se reprograma.
+- **Vendedor:**
+  - el de quien programa (`zomatik_vendedores`: Fernando Maldonado 100, Juan Oreguy 101, Felipe Calvo 123; lo edita un gerencial en Vínculos › NP automática);
+  - si no tiene (David, Titan, Bautista), el del cliente;
+  - si tampoco, error "cargale el vendedor".
+  - En la NP de proyecto, el de quien programa reemplaza el del proyecto; si no tiene, queda el del proyecto.
+- **pg_cron:** la pasada cada 10 min está al final de la migración nueva.
+  - Antes, Bautista guarda en Vault el mismo `CRON_SECRET` de Vercel: `select vault.create_secret('<CRON_SECRET>', 'cron_secret');`.
+  - Llama a `https://www.produccionrebucret.com/api/zomatik/np/procesar` (**confirmar el dominio**).
+- **Trigger del despacho:** el pedido tiene NP si usa una NP "ok" (`zomatik_np_uso`).
+
+### 25.3 Finalizar el pedido con sobrante → devolución (diseño, va con Z1; sin implementar)
+Al **finalizar el pedido** (Z1: OF + remito), si la NP tiene más de lo remitido:
+1. Se hace el remito por lo despachado (Z1).
+2. Si a la NP le queda saldo y **no hay otro pedido activo usándola**, se hace una **devolución de pedido** por la diferencia: `listado_pedidosdevolucion.php?pedido=N` › alta `modificar_pedidosdevolucion.php?pedido=N` (DP o DP2, 20.5).
+3. La NP queda **cerrada** (`saldo_decision = cerrada`), con el número de la DP guardado y "Sistema Rebucret · pedido N · DEVOL" en las observaciones (misma marca, para buscarla si se corta).
+4. Si hay otro pedido usándola, no se devuelve nada: el saldo sigue para ese pedido.
+5. Mientras no esté el robot de DEVOL: el saldo queda en "NP con saldo" (Devolver › a mano › "Ya la devolví").
+
+Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir a ciegas un "Grabar" cortado.
+
+### 25.4 Para probar con Bautista en Zomatik (se suma a 20.6 y 24.7)
+1. **DEVOL** (`modificar_pedidosdevolucion.php?pedido=N`):
+   - qué campos pide y qué número da;
+   - si deja la NP sin pendiente;
+   - con una NP remitida en parte;
+   - con una NP de proyecto (¿vuelve el saldo al proyecto?).
+2. **`CambiarFechaEntrega`** en la NP abierta: si existe, qué llama y si deja cambiar la fecha con o sin remitos.
+3. Que el vendedor de quien programa (`idvendedor` + `vendedor_manual=1`) quede bien en la NP nueva y en la de proyecto.
+4. Lo de 24.7.2: `frm_selsuc` en las páginas de resultado, `bus_deposito`, paginado y renglones de `manage_pedidos`.
+
+### 25.5 Migración nueva `202610231000_zomatik_np_saldo.sql` (sin aplicar; fuera de horario)
+- **Agrega:**
+  - `zomatik_np_uso`, que se llena con un uso por cada NP que ya exista (hoy no hay ninguna);
+  - en `zomatik_np`: `saldo_decision`, `saldo_desde`, `saldo_mensaje` y `fecha_zomatik`;
+  - en `zomatik_np_pedido`: el tipo `saldo` y `np_id`;
+  - la tabla `zomatik_vendedores`, con los tres vendedores cargados.
+- **Cambia:** el trigger del despacho.
+- **Programa:** pg_cron.
+- Solo el servidor escribe las tablas nuevas.
+- Datos ya cargados: no cambia nada (no hay NP y la llave está apagada en las dos plantas).
+- Probada dos veces en `BEGIN … ROLLBACK` (lock_timeout 2 s, 5 s). Resultados:
+  - vendedores 100/101/123 cargados;
+  - pg_cron programado;
+  - anon sin acceso;
+  - modo duro: frena sin uso y deja con uso;
+  - tipo `saldo` aceptado.
+- **Hay que aplicarla antes de prender la llave:** sin ella, Programación y Vínculos dicen "falta aplicar la migración".
+
+### 25.6 Verificación
+`test:zomatik-np` 58/58 (plan con usos, saldo, cancelar sin vaciar, reprogramar, devolver, vendedor), las demás pruebas, tsc sin errores nuevos y build bien.

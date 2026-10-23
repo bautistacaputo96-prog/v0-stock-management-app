@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { linkNp } from "@/lib/zomatik/web"
 import { revisarNp } from "@/lib/zomatik/np-cliente"
+import { NpVendedores } from "@/components/zomatik/np-vendedores"
 
 type Planta = { id: string; name: string; activo: boolean; desde: string | null; deposito: number | null; modo: "apagado" | "aviso" | "duro"; aviso_hasta: string | null }
 type Np = { id: string; scheduled_dispatch_id: string | null; n: number; estado: string; numero: string | null; zomatik_codigo: number | null; mensaje: string | null; m3: number; fecha: string; sucursal: string | null; updated_at: string }
@@ -97,6 +98,7 @@ export function NpLlave() {
           </div>
         )}
         {err && <p className="text-red-700">{err}</p>}
+        {!sinMigracion && <NpVendedores />}
         {bandeja.length > 0 && (
           <div className="space-y-1">
             <div className="font-semibold">Para mirar</div>

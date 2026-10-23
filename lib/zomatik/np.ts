@@ -456,6 +456,76 @@ export function conValores(orden: CampoForm[], valores: Record<string, string>):
 }
 
 // ---------------------------------------------------------------------------
+// Saldo de una NP (Z2b, respuestas del 23/10): una NP puede servir a varios pedidos
+// ---------------------------------------------------------------------------
+
+const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
+const TOL = 0.001
+
+/** Un pedido que usa una NP (`zomatik_np_uso`) con lo que hace falta para calcular el saldo. */
+export type UsoSaldo = {
+  id: string
+  np_id: string
+  m3: number
+  activo: boolean
+  created_at: string
+  pedido: { id: string; status: string; dispatched_m3: number | null } | null
+}
+
+const pedidoActivo = (st: string | null | undefined) => !!st && st !== "cancelled" && st !== "completed"
+
+/**
+ * Lo despachado de un pedido se reparte entre sus usos en el orden en que se crearon (primero la NP más vieja): así
+ * se sabe cuánto consumió cada NP. Devuelve uso → m³ despachados contra esa NP.
+ */
+export function despachadoPorUso(usosDelPedido: { id: string; m3: number; created_at: string }[], despachado: number): Map<string, number> {
+  const out = new Map<string, number>()
+  let queda = Math.max(0, Number(despachado) || 0)
+  const orden = [...usosDelPedido].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+  orden.forEach((u, i) => {
+    const toma = i === orden.length - 1 ? queda : Math.min(queda, Number(u.m3) || 0)
+    out.set(u.id, r3(toma))
+    queda = r3(queda - toma)
+  })
+  return out
+}
+
+/**
+ * Cuánto de la NP compromete un uso: si el pedido sigue activo y la usa, lo que reserva (o lo despachado, si es más);
+ * si no (cancelado, finalizado, borrado o desvinculado), solo lo que se despachó contra ella.
+ */
+export function comprometidoUso(u: UsoSaldo, despachadoContra: number): number {
+  if (u.activo && pedidoActivo(u.pedido?.status)) return Math.max(Number(u.m3) || 0, despachadoContra)
+  if (!u.pedido) return 0
+  return Math.min(Number(u.m3) || 0, despachadoContra)
+}
+
+export type SaldoNp = { libre: number; comprometido: number; conPedidoActivo: boolean }
+
+/**
+ * Saldo de una NP: m³ de la NP − lo comprometido por sus usos. `usosDePedidos` = TODOS los usos de los pedidos que
+ * tocan esta NP (para repartir lo despachado de cada pedido entre sus NP).
+ */
+export function saldoNp(np: { id: string; m3: number }, usosDePedidos: UsoSaldo[]): SaldoNp {
+  const porPedido = new Map<string, UsoSaldo[]>()
+  for (const u of usosDePedidos) if (u.pedido) porPedido.set(u.pedido.id, [...(porPedido.get(u.pedido.id) || []), u])
+  let comprometido = 0
+  let conPedidoActivo = false
+  for (const u of usosDePedidos.filter((x) => x.np_id === np.id)) {
+    const desp = u.pedido ? despachadoPorUso(porPedido.get(u.pedido.id) || [u], Number(u.pedido.dispatched_m3) || 0).get(u.id) || 0 : 0
+    comprometido += comprometidoUso(u, desp)
+    if (u.activo && pedidoActivo(u.pedido?.status)) conPedidoActivo = true
+  }
+  return { libre: r3(Number(np.m3) - comprometido), comprometido: r3(comprometido), conPedidoActivo }
+}
+
+/** ¿Va a la lista "NP con saldo" de Programación? En Zomatik, con saldo y sin pedido activo que la use. */
+/** Sin vencimiento: queda en la lista hasta Reprogramar (vuelve a tener pedido activo) o Devolver (cerrada). */
+export function npConSaldo(np: { estado: string; saldo_decision?: string | null }, s: SaldoNp): boolean {
+  return np.estado === "ok" && s.libre > TOL && !s.conPedidoActivo && np.saldo_decision !== "cerrada"
+}
+
+// ---------------------------------------------------------------------------
 // Planificación: qué NP necesita un pedido
 // ---------------------------------------------------------------------------
 
@@ -468,10 +538,15 @@ export type PedidoNp = {
   formula_id: string
   /** Día del pedido (aaaa-mm-dd, hora de Argentina). */
   fecha: string
-  np_tipo?: TipoNp | null
+  /** "saldo" = usar una NP con saldo (Reprogramar). */
+  np_tipo?: TipoNp | "saldo" | null
   proyecto_codigo?: number | null
   /** Si está, solo esto va contra el proyecto y el resto en una NP nueva (20.4, opción 2). */
   proyecto_tope_m3?: number | null
+  /** La NP con saldo elegida y cuánto le queda libre (si es del mismo cliente y artículo; si no, null). */
+  saldo_np?: { id: string; libre: number } | null
+  /** Cambió la fecha del pedido: true = mover la NP a la nueva fecha; false = dejarla (queda con saldo); null = no se preguntó. */
+  mover_fecha?: boolean | null
 }
 
 export type FilaNp = {
@@ -482,12 +557,16 @@ export type FilaNp = {
   paso?: string | null
   tipo: TipoNp
   m3: number
+  numero?: string | null
   proyecto_codigo?: number | null
   formula_id?: string | null
   plant_id?: string | null
   client_id?: string | null
   fecha?: string | null
 }
+
+/** Un uso activo del pedido, con su NP y lo libre de la NP (ya descontado lo que reserva este uso). */
+export type UsoPlan = { uso_id: string; m3: number; np: FilaNp; libre: number }
 
 export type NuevaNp = { n: number; tipo: TipoNp; m3: number; proyecto_codigo: number | null; es_adicional: boolean }
 
@@ -498,9 +577,16 @@ export const puedeEstarGrabada = (x: { paso?: string | null }) => PASOS_GRABADA.
 const sinGrabarSeguro = (x: FilaNp) => SIN_GRABAR.includes(x.estado) && !puedeEstarGrabada(x)
 
 export type PlanNp = {
+  /** NP nuevas (cada una con su uso por esos m³). */
   crear: NuevaNp[]
-  /** NP ya grabadas en Zomatik que hay que vaciar (pedido cancelado). */
-  vaciar: string[]
+  /** Usar parte de una NP con saldo (Reprogramar / "Usar NP con saldo"). */
+  usar: { np_id: string; m3: number }[]
+  /** Cambiar los m³ que el pedido reserva de una NP (crece hasta su saldo, o se achica: el resto queda de saldo). */
+  ajustar: { uso_id: string; m3: number }[]
+  /** El pedido deja de usar la NP (cambió fórmula, cliente, planta o fecha): la NP queda "con saldo: pendiente". */
+  desvincular: { uso_id: string; motivo: string }[]
+  /** Mover la NP a la nueva fecha del pedido (en nuestro sistema). */
+  mover_fecha: string[]
   /** NP que nunca llegaron a Zomatik y ya no hacen falta. */
   anular: string[]
   /** Pedido cancelado con una NP que se cortó al grabar: puede estar en Zomatik, la mira un gerencial. */
@@ -508,8 +594,7 @@ export type PlanNp = {
   avisos: string[]
 }
 
-const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
-const TOL = 0.001
+export const planVacio = (): PlanNp => ({ crear: [], usar: [], ajustar: [], desvincular: [], mover_fecha: [], anular: [], revisar: [], avisos: [] })
 
 /** Reparte m³ entre el proyecto (hasta el tope) y una NP nueva. */
 function repartir(m3: number, tipo: TipoNp, proyecto: number | null, tope: number | null, yaContraProyecto: number): { tipo: TipoNp; m3: number; proyecto_codigo: number | null }[] {
@@ -523,71 +608,125 @@ function repartir(m3: number, tipo: TipoNp, proyecto: number | null, tope: numbe
   return out
 }
 
+const nombreNp = (x: FilaNp) => x.numero || `La NP ${x.n}`
+
 /**
- * Qué hacer con las NP de un pedido (decisiones del 22/10):
- *   - cancelado: vaciar las que ya están en Zomatik; anular las que no llegaron; las "generando"/"revisar" se avisan.
- *   - activo sin NP: una NP por los m³ del pedido (nueva o contra el proyecto; con tope, el resto en una NP nueva).
- *   - activo con NP que todavía no llegó a Zomatik (pendiente/error) y ninguna grabada: se rehace con los datos de ahora.
- *   - activo que se agrandó: NP adicional por la diferencia (20.1.5).
- *   - activo que se achicó: NO se toca (falta la decisión de Bautista): solo un aviso.
- *   - completo: nada (el remito y el cierre son Z3).
+ * Qué hacer con las NP de un pedido (respuestas de Bautista del 23/10, sección 25):
+ *   - cancelado: las que no llegaron a Zomatik se anulan; las grabadas NO se tocan: quedan "NP con saldo: pendiente" en
+ *     Programación, sin vencimiento, hasta que alguien toque Reprogramar o Devolver el saldo (precisión del 23/10).
+ *   - cambió la fórmula, el cliente o la planta de una NP grabada: el pedido deja de usarla (queda con saldo) y se genera
+ *     una nueva. Cambió la fecha: si se eligió mover, se mueve; si no, se desvincula; sin respuesta, solo aviso.
+ *   - lo que todavía no llegó a Zomatik se rehace con los datos de ahora.
+ *   - se agrandó: primero crece lo que reserva de sus NP (hasta su saldo), después la NP con saldo elegida, y por el
+ *     resto, NP adicional (20.1.5). Se achicó: reserva menos; lo que sobra queda de saldo (al finalizar, devolución).
+ *   - completo: nada (el remito, el cierre y la devolución son Z1).
  */
-export function planificarNp(p: PedidoNp, nps: FilaNp[]): PlanNp {
-  const plan: PlanNp = { crear: [], vaciar: [], anular: [], revisar: [], avisos: [] }
-  let n = nps.reduce((m, x) => Math.max(m, x.n || 0), 0)
+export function planificarNp(p: PedidoNp, usos: UsoPlan[], nMax = 0): PlanNp {
+  const plan = planVacio()
+  let n = Math.max(nMax, ...usos.map((u) => u.np.n || 0), 0)
+  const vivos = usos.filter((u) => VIGENTES.includes(u.np.estado))
   if (p.status === "cancelled") {
-    for (const x of nps) {
-      if (x.estado === "ok") plan.vaciar.push(x.id)
-      else if (sinGrabarSeguro(x)) plan.anular.push(x.id)
+    for (const u of vivos) {
+      const x = u.np
+      if (sinGrabarSeguro(x)) plan.anular.push(x.id)
       else if (SIN_GRABAR.includes(x.estado)) plan.revisar.push(x.id)
-      else if (x.estado === "generando") plan.avisos.push(`La NP ${x.n} se está generando: cuando termine, se vacía.`)
-      else if (x.estado === "revisar") plan.avisos.push(`La NP ${x.n} está para revisar: vaciala a mano en Zomatik si hace falta.`)
+      else if (x.estado === "ok") plan.avisos.push(`${nombreNp(x)} queda pendiente en Programación (NP con saldo), hasta que se reprograme o se devuelva.`)
+      else if (x.estado === "generando") plan.avisos.push(`${nombreNp(x)} se está generando: cuando termine queda pendiente en Programación.`)
     }
     return plan
   }
   if (p.status === "completed") return plan
 
+  const usaSaldo = p.np_tipo === "saldo"
   const tipo: TipoNp = p.np_tipo === "proyecto" && p.proyecto_codigo ? "proyecto" : "nueva"
   const proyecto = tipo === "proyecto" ? Number(p.proyecto_codigo) : null
   const tope = tipo === "proyecto" && p.proyecto_tope_m3 !== null && p.proyecto_tope_m3 !== undefined ? Number(p.proyecto_tope_m3) : null
   const m3 = r3(Number(p.quantity_m3) || 0)
-  let vigentes = nps.filter((x) => VIGENTES.includes(x.estado))
-  const grabadas = vigentes.filter((x) => !sinGrabarSeguro(x))
 
-  // Nada grabado todavía: lo pendiente se rehace con los datos de ahora (si cambió algo)
-  if (!grabadas.length && vigentes.length) {
-    const quiere = repartir(m3, tipo, proyecto, tope, 0)
+  // 1. Las grabadas: ¿siguen sirviendo para este pedido?
+  const quedan: UsoPlan[] = []
+  const pendientes: UsoPlan[] = []
+  for (const u of vivos) {
+    const x = u.np
+    if (sinGrabarSeguro(x)) {
+      pendientes.push(u)
+      continue
+    }
+    const dif: string[] = []
+    if (x.formula_id && x.formula_id !== p.formula_id) dif.push("fórmula")
+    if (x.client_id && x.client_id !== p.client_id) dif.push("cliente")
+    if (x.plant_id && x.plant_id !== p.plant_id) dif.push("planta")
+    if (dif.length) {
+      plan.desvincular.push({ uso_id: u.uso_id, motivo: `el pedido cambió de ${dif.join(", ")}` })
+      plan.avisos.push(`${nombreNp(x)} no se toca: queda pendiente con su saldo (el pedido cambió de ${dif.join(", ")}). Se genera una NP nueva.`)
+      continue
+    }
+    if (x.fecha && x.fecha !== p.fecha) {
+      if (p.mover_fecha === true) plan.mover_fecha.push(x.id)
+      else if (p.mover_fecha === false) {
+        plan.desvincular.push({ uso_id: u.uso_id, motivo: "el pedido cambió de fecha y la NP no se movió" })
+        plan.avisos.push(`${nombreNp(x)} queda en su fecha, pendiente con su saldo. Se genera una NP nueva para el pedido.`)
+        continue
+      } else plan.avisos.push(`El pedido cambió de fecha: falta decidir si se mueve ${nombreNp(x)}.`)
+    }
+    quedan.push(u)
+  }
+
+  // 2. Lo que todavía no llegó a Zomatik: se deja si es justo lo que hace falta; si no, se rehace
+  const cubierto = r3(quedan.reduce((s, u) => s + Number(u.m3 || 0), 0))
+  if (pendientes.length) {
+    const falta = r3(m3 - cubierto)
+    const quiere = falta > TOL && !usaSaldo ? repartir(falta, tipo, proyecto, tope, 0) : []
     const igual =
-      quiere.length === vigentes.length &&
+      !quedan.length &&
+      quiere.length === pendientes.length &&
       quiere.every((q, i) => {
-        const v = vigentes[i]
-        return v.tipo === q.tipo && Math.abs(Number(v.m3) - q.m3) <= TOL && (v.proyecto_codigo ?? null) === q.proyecto_codigo &&
+        const v = pendientes[i].np
+        return v.tipo === q.tipo && Math.abs(Number(pendientes[i].m3) - q.m3) <= TOL && (v.proyecto_codigo ?? null) === q.proyecto_codigo &&
           (v.formula_id ?? p.formula_id) === p.formula_id && (v.plant_id ?? p.plant_id) === p.plant_id && (v.client_id ?? p.client_id) === p.client_id && (v.fecha ?? p.fecha) === p.fecha
       })
     if (igual) return plan
-    plan.anular.push(...vigentes.map((x) => x.id))
-    vigentes = []
+    plan.anular.push(...pendientes.map((u) => u.np.id))
   }
 
-  if (!vigentes.length) {
-    if (m3 > TOL) for (const q of repartir(m3, tipo, proyecto, tope, 0)) plan.crear.push({ n: ++n, ...q, es_adicional: false })
-    return plan
-  }
-
-  const total = r3(vigentes.reduce((s, x) => s + Number(x.m3 || 0), 0))
-  for (const v of grabadas) {
-    const dif: string[] = []
-    if (v.formula_id && v.formula_id !== p.formula_id) dif.push("fórmula")
-    if (v.plant_id && v.plant_id !== p.plant_id) dif.push("planta")
-    if (v.client_id && v.client_id !== p.client_id) dif.push("cliente")
-    if (v.fecha && v.fecha !== p.fecha) dif.push("fecha")
-    if (dif.length) plan.avisos.push(`La NP ${v.n} se generó con otra ${dif.join(", ")}: revisala en Zomatik.`)
-  }
+  // 3. Cobertura
+  let total = cubierto
   if (m3 > total + TOL) {
-    const contraProyecto = vigentes.filter((x) => x.tipo === "proyecto").reduce((s, x) => s + Number(x.m3 || 0), 0)
-    for (const q of repartir(r3(m3 - total), tipo, proyecto, tope, contraProyecto)) plan.crear.push({ n: ++n, ...q, es_adicional: true })
+    let falta = r3(m3 - total)
+    // a) crecer lo que reserva de sus NP, hasta lo libre de cada una
+    for (const u of quedan) {
+      if (falta <= TOL) break
+      const crece = Math.min(falta, Math.max(0, Number(u.libre) || 0))
+      if (crece > TOL) {
+        plan.ajustar.push({ uso_id: u.uso_id, m3: r3(Number(u.m3) + crece) })
+        falta = r3(falta - crece)
+      }
+    }
+    // b) la NP con saldo elegida (Reprogramar)
+    if (falta > TOL && usaSaldo && p.saldo_np && !quedan.some((u) => u.np.id === p.saldo_np!.id)) {
+      const toma = Math.min(falta, Math.max(0, p.saldo_np.libre))
+      if (toma > TOL) {
+        plan.usar.push({ np_id: p.saldo_np.id, m3: r3(toma) })
+        falta = r3(falta - toma)
+      }
+    }
+    // c) el resto, NP nueva (adicional si el pedido ya tenía alguna)
+    if (falta > TOL) {
+      const contraProyecto = quedan.filter((u) => u.np.tipo === "proyecto").reduce((s, u) => s + Number(u.m3 || 0), 0)
+      const adicional = quedan.length > 0 || plan.usar.length > 0
+      for (const q of repartir(falta, tipo, proyecto, tope, contraProyecto)) plan.crear.push({ n: ++n, ...q, es_adicional: adicional })
+    }
   } else if (m3 < total - TOL) {
-    plan.avisos.push(`El pedido bajó a ${cantidadTexto(m3)} m³ y sus NP suman ${cantidadTexto(total)} m³: la NP no se achica sola (falta decidir cómo).`)
+    // Se achicó: reserva menos (de la última NP para atrás); lo que sobra queda de saldo en la NP
+    let sobra = r3(total - m3)
+    for (const u of [...quedan].reverse()) {
+      if (sobra <= TOL) break
+      const baja = Math.min(sobra, Number(u.m3) || 0)
+      plan.ajustar.push({ uso_id: u.uso_id, m3: r3(Number(u.m3) - baja) })
+      sobra = r3(sobra - baja)
+    }
+    plan.avisos.push(`El pedido bajó a ${cantidadTexto(m3)} m³: sobran ${cantidadTexto(r3(total - m3))} m³ en la NP. Quedan de saldo (al finalizar se devuelven o se reprograman).`)
+    total = m3
   }
   return plan
 }

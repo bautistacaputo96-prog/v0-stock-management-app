@@ -20,9 +20,10 @@ import { discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik }
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoNp } from "@/lib/zomatik/np-robot"
 import { quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
+import { normalizarNombre } from "@/lib/permisos"
 import {
   MIN_REINTENTO, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
-  pedidoConNp, planificarNp, controlDespacho, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type TipoNp,
+  pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
 } from "@/lib/zomatik/np"
 
 type SB = ReturnType<typeof sbServicio>
@@ -42,10 +43,14 @@ export type FilaNpDB = FilaNp & {
   en_curso_desde: string | null
   created_at: string
   updated_at: string
+  saldo_decision?: string | null
+  saldo_mensaje?: string | null
+  saldo_desde?: string | null
+  fecha_zomatik?: string | null
 }
 
 export const COLUMNAS_NP =
-  "id, scheduled_dispatch_id, n, marca, tipo, es_adicional, proyecto_codigo, plant_id, client_id, formula_id, fecha, m3, estado, paso, mensaje, numero, zomatik_codigo, sucursal, disponible_m3, intentos, proximo_intento, en_curso_desde, created_at, updated_at"
+  "id, scheduled_dispatch_id, n, marca, tipo, es_adicional, proyecto_codigo, plant_id, client_id, formula_id, fecha, m3, estado, paso, mensaje, numero, zomatik_codigo, sucursal, disponible_m3, intentos, proximo_intento, en_curso_desde, created_at, updated_at, saldo_decision, saldo_mensaje, saldo_desde, fecha_zomatik"
 
 const COLUMNAS_PEDIDO =
   "id, status, quantity_m3, plant_id, client_id, construction_site_id, formula_id, scheduled_arrival_time, created_at, created_by"
@@ -53,7 +58,7 @@ const COLUMNAS_PEDIDO =
 export type PlantaNpDB = PlantaNp & { id: string; name: string; zomatik_deposito: number | null }
 
 /** ¿Falta la migración de Z2? (las rutas responden "apagado" en vez de romper). */
-export const faltaMigracion = (e: unknown) => /\b(zomatik_np(_config|_pedido|_excepciones)?|zomatik_np_tomar|zomatik_robot_tomar|zomatik_robot_soltar|codigo_sistema|disponible_m3|disponible_articulo|disponible_at|zomatik_proyecto_codigo)\b/i.test(String((e as { message?: string })?.message || ""))
+export const faltaMigracion = (e: unknown) => /\b(zomatik_np(_config|_pedido|_excepciones)?|zomatik_np_tomar|zomatik_robot_tomar|zomatik_robot_soltar|zomatik_np_uso|zomatik_vendedores|saldo_decision|saldo_mensaje|saldo_desde|fecha_zomatik|codigo_sistema|disponible_m3|disponible_articulo|disponible_at|zomatik_proyecto_codigo)\b/i.test(String((e as { message?: string })?.message || ""))
 
 // ---------------------------------------------------------------------------
 // Plantas y llave
@@ -131,27 +136,62 @@ export async function avisarGerenciales(sb: SB, titulo: string, lineas: string[]
 }
 
 // ---------------------------------------------------------------------------
+// Usos y saldo de las NP (Z2b: una NP puede servir a varios pedidos)
+// ---------------------------------------------------------------------------
+
+export type UsoDB = { id: string; np_id: string; scheduled_dispatch_id: string | null; m3: number; activo: boolean; motivo: string | null; created_at: string }
+const COLUMNAS_USO = "id, np_id, scheduled_dispatch_id, m3, activo, motivo, created_at"
+
+async function usosDe(sb: SB, campo: "np_id" | "scheduled_dispatch_id", ids: string[]): Promise<UsoDB[]> {
+  if (!ids.length) return []
+  const { data, error } = await sb.from("zomatik_np_uso").select(COLUMNAS_USO).in(campo, ids)
+  if (error) throw error
+  return (data as unknown as UsoDB[]) || []
+}
+
+/** Saldo de cada NP: reparte lo despachado de cada pedido entre sus NP (np.ts, `saldoNp`). */
+export async function saldosDe(sb: SB, nps: { id: string; m3: number }[]): Promise<Map<string, SaldoNp>> {
+  const out = new Map<string, SaldoNp>()
+  if (!nps.length) return out
+  const deNps = await usosDe(sb, "np_id", nps.map((x) => x.id))
+  const pedidoIds = [...new Set(deNps.map((u) => u.scheduled_dispatch_id).filter(Boolean) as string[])]
+  const dePedidos = await usosDe(sb, "scheduled_dispatch_id", pedidoIds)
+  const todos = [...new Map([...deNps, ...dePedidos].map((u) => [u.id, u])).values()]
+  const { data: peds, error } = pedidoIds.length ? await sb.from("scheduled_dispatches").select("id, status, dispatched_m3").in("id", pedidoIds) : { data: [], error: null }
+  if (error) throw error
+  const porId = new Map(((peds as { id: string; status: string; dispatched_m3: number | null }[]) || []).map((p) => [p.id, p]))
+  const usos: UsoSaldo[] = todos.map((u) => ({ id: u.id, np_id: u.np_id, m3: Number(u.m3), activo: u.activo, created_at: u.created_at, pedido: u.scheduled_dispatch_id ? porId.get(u.scheduled_dispatch_id) || null : null }))
+  for (const np of nps) out.set(np.id, saldoNp({ id: np.id, m3: Number(np.m3) }, usos))
+  return out
+}
+
+// ---------------------------------------------------------------------------
 // Sincronizar un pedido (sin Zomatik)
 // ---------------------------------------------------------------------------
 
-export type Eleccion = { tipo: TipoNp; proyecto_codigo?: number | null; tope_m3?: number | null }
+export type Eleccion = { tipo: TipoNp | "saldo"; proyecto_codigo?: number | null; tope_m3?: number | null; np_id?: string | null }
 
 export type ResultadoSync =
   | { activo: false; motivo: string }
-  | { activo: true; fuera?: boolean; error?: string; creadas: number; vaciar: number; anuladas: number; avisos: string[]; nps: FilaNpDB[] }
+  | { activo: true; fuera?: boolean; error?: string; creadas: number; usadas: number; desvinculadas: number; anuladas: number; avisos: string[]; nps: FilaNpDB[] }
 
 type PedidoDB = {
   id: string; status: string; quantity_m3: number; plant_id: string; client_id: string; construction_site_id: string | null; formula_id: string
   scheduled_arrival_time: string; created_at: string; created_by: string | null
 }
 
-export type EleccionDB = { tipo: TipoNp; proyecto_codigo: number | null; tope_m3: number | null }
+export type EleccionDB = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null }
 
 export async function eleccionesDe(sb: SB, ids: string[]): Promise<Record<string, EleccionDB>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3").in("scheduled_dispatch_id", ids)
+  const { data, error } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3, np_id").in("scheduled_dispatch_id", ids)
   if (error) throw error
-  return Object.fromEntries(((data as (EleccionDB & { scheduled_dispatch_id: string })[]) || []).map((e) => [e.scheduled_dispatch_id, { tipo: e.tipo, proyecto_codigo: e.proyecto_codigo ?? null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined ? null : Number(e.tope_m3) }]))
+  return Object.fromEntries(
+    ((data as (EleccionDB & { scheduled_dispatch_id: string })[]) || []).map((e) => [
+      e.scheduled_dispatch_id,
+      { tipo: e.tipo, proyecto_codigo: e.proyecto_codigo ?? null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined ? null : Number(e.tope_m3), np_id: e.np_id ?? null },
+    ]),
+  )
 }
 
 /** El proyecto tiene que estar abierto y ser del cliente (no se confía en lo que manda el navegador). */
@@ -168,6 +208,28 @@ async function validarProyecto(sb: SB, clientId: string, codigo: number): Promis
   return null
 }
 
+/** Artículo de Zomatik de una fórmula (para comparar NP con saldo: mismo cliente y artículo). */
+async function articuloDe(sb: SB, formulaIds: string[]): Promise<Map<string, number | null>> {
+  const ids = [...new Set(formulaIds.filter(Boolean))]
+  if (!ids.length) return new Map()
+  const { data } = await sb.from("formulas").select("id, zomatik_articulo_codigo").in("id", ids)
+  return new Map(((data as { id: string; zomatik_articulo_codigo: number | null }[]) || []).map((f) => [f.id, f.zomatik_articulo_codigo ?? null]))
+}
+
+/** Una NP con saldo sirve para el pedido si está en Zomatik, es del mismo cliente y artículo y no se cerró ni se manda a devolver. */
+async function validarSaldo(sb: SB, ped: PedidoDB, npId: string): Promise<{ error: string } | { libre: number }> {
+  const { data } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("id", npId).maybeSingle()
+  const np = data as unknown as FilaNpDB | null
+  if (!np || np.estado !== "ok") return { error: "Esa NP no está en Zomatik." }
+  if (np.saldo_decision === "cerrada" || np.saldo_decision === "devolver") return { error: "Esa NP ya se cerró o se está devolviendo." }
+  if (np.client_id !== ped.client_id) return { error: "Esa NP es de otro cliente." }
+  const art = await articuloDe(sb, [np.formula_id || "", ped.formula_id])
+  const a1 = art.get(np.formula_id || ""), a2 = art.get(ped.formula_id)
+  if (np.formula_id !== ped.formula_id && (!a1 || a1 !== a2)) return { error: "Esa NP es de otro artículo (fórmula)." }
+  const s = (await saldosDe(sb, [np])).get(np.id)
+  return { libre: s?.libre ?? 0 }
+}
+
 export async function npsDePedidos(sb: SB, ids: string[]): Promise<FilaNpDB[]> {
   if (!ids.length) return []
   const { data, error } = await sb.from("zomatik_np").select(COLUMNAS_NP).in("scheduled_dispatch_id", ids).order("n")
@@ -175,7 +237,16 @@ export async function npsDePedidos(sb: SB, ids: string[]): Promise<FilaNpDB[]> {
   return (data as unknown as FilaNpDB[]) || []
 }
 
-export async function sincronizarPedido(pedidoId: string, usuario: string, eleccion?: Eleccion | null, sb: SB = sbServicio()): Promise<ResultadoSync> {
+async function npsPorId(sb: SB, ids: string[]): Promise<FilaNpDB[]> {
+  if (!ids.length) return []
+  const { data, error } = await sb.from("zomatik_np").select(COLUMNAS_NP).in("id", ids)
+  if (error) throw error
+  return (data as unknown as FilaNpDB[]) || []
+}
+
+const vacio = (nps: FilaNpDB[], extra: Partial<Extract<ResultadoSync, { activo: true }>> = {}): ResultadoSync => ({ activo: true, creadas: 0, usadas: 0, desvinculadas: 0, anuladas: 0, avisos: [], nps, ...extra })
+
+export async function sincronizarPedido(pedidoId: string, usuario: string, eleccion?: Eleccion | null, sb: SB = sbServicio(), opciones: { mover_fecha?: boolean | null } = {}): Promise<ResultadoSync> {
   const { data: p, error } = await sb.from("scheduled_dispatches").select(COLUMNAS_PEDIDO).eq("id", pedidoId).maybeSingle()
   if (error) throw error
   if (!p) return { activo: false, motivo: "El pedido no existe" }
@@ -183,73 +254,233 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   const plantas = await plantasNp(sb)
   const planta = plantas[ped.plant_id]
   if (!planta?.zomatik_np_activo) return { activo: false, motivo: "NP: se carga a mano en Zomatik" }
-  let nps = await npsDePedidos(sb, [ped.id])
+  let usos = (await usosDe(sb, "scheduled_dispatch_id", [ped.id])).filter((u) => u.activo)
+  const propias = await npsDePedidos(sb, [ped.id])
   // Un pedido de antes de prender la llave no tiene NP automática (salvo que ya tenga alguna del sistema)
-  if (!pedidoConNp(planta, ped.created_at) && !nps.length) return { activo: true, fuera: true, creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
+  if (!pedidoConNp(planta, ped.created_at) && !usos.length && !propias.length) return vacio([], { fuera: true })
 
-  // Elección del formulario (NP nueva o de un proyecto): se valida y se guarda en zomatik_np_pedido (solo el servidor)
-  let el: EleccionDB = (await eleccionesDe(sb, [ped.id]))[ped.id] || { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
-  if (eleccion && (eleccion.tipo === "nueva" || eleccion.tipo === "proyecto")) {
+  // Elección del formulario (NP nueva, de un proyecto o una NP con saldo): se valida y se guarda (solo el servidor)
+  let el: EleccionDB = (await eleccionesDe(sb, [ped.id]))[ped.id] || { tipo: "nueva", proyecto_codigo: null, tope_m3: null, np_id: null }
+  if (eleccion && (eleccion.tipo === "nueva" || eleccion.tipo === "proyecto" || eleccion.tipo === "saldo")) {
     const proy = eleccion.tipo === "proyecto" && Number(eleccion.proyecto_codigo) > 0 ? Number(eleccion.proyecto_codigo) : null
-    const tipo: TipoNp = proy ? "proyecto" : "nueva"
+    const npSaldo = eleccion.tipo === "saldo" && typeof eleccion.np_id === "string" && eleccion.np_id.length > 0 && eleccion.np_id.length <= 64 ? eleccion.np_id : null
+    const tipo: EleccionDB["tipo"] = proy ? "proyecto" : npSaldo ? "saldo" : "nueva"
     const tope = proy && eleccion.tope_m3 !== null && eleccion.tope_m3 !== undefined && Number(eleccion.tope_m3) >= 0 ? Number(eleccion.tope_m3) : null
-    if (eleccion.tipo === "proyecto" && !proy) return { activo: true, error: "Elegí el proyecto.", creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
+    if (eleccion.tipo === "proyecto" && !proy) return vacio(propias, { error: "Elegí el proyecto." })
+    if (eleccion.tipo === "saldo" && !npSaldo) return vacio(propias, { error: "Elegí la NP con saldo." })
     const invalido = proy ? await validarProyecto(sb, ped.client_id, proy) : null
-    if (invalido) return { activo: true, error: invalido, creadas: 0, vaciar: 0, anuladas: 0, avisos: [], nps }
-    if (tipo !== el.tipo || proy !== el.proyecto_codigo || tope !== el.tope_m3) {
-      const { error: e1 } = await sb.from("zomatik_np_pedido").upsert({ scheduled_dispatch_id: ped.id, tipo, proyecto_codigo: proy, tope_m3: tope, updated_by: usuario, updated_at: new Date().toISOString() } as never, { onConflict: "scheduled_dispatch_id" })
+    if (invalido) return vacio(propias, { error: invalido })
+    if (npSaldo && !usos.some((u) => u.np_id === npSaldo)) {
+      const v = await validarSaldo(sb, ped, npSaldo)
+      if ("error" in v) return vacio(propias, { error: v.error })
+    }
+    if (tipo !== el.tipo || proy !== el.proyecto_codigo || tope !== el.tope_m3 || npSaldo !== el.np_id) {
+      const { error: e1 } = await sb.from("zomatik_np_pedido").upsert({ scheduled_dispatch_id: ped.id, tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo, updated_by: usuario, updated_at: new Date().toISOString() } as never, { onConflict: "scheduled_dispatch_id" })
       if (e1) throw e1
-      el = { tipo, proyecto_codigo: proy, tope_m3: tope }
+      el = { tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo }
     }
     if (proy && ped.construction_site_id) await sb.from("construction_sites").update({ zomatik_proyecto_codigo: proy } as never).eq("id", ped.construction_site_id)
   }
 
+  // Lo que usa el pedido, con lo libre de cada NP
+  const npsUso = await npsPorId(sb, usos.map((u) => u.np_id))
+  const saldoElegida = el.tipo === "saldo" && el.np_id && !usos.some((u) => u.np_id === el.np_id) ? await validarSaldo(sb, ped, el.np_id) : null
+  const saldos = await saldosDe(sb, npsUso)
+  const usoPlan: UsoPlan[] = usos
+    .map((u) => ({ u, np: npsUso.find((x) => x.id === u.np_id) }))
+    .filter((x) => !!x.np)
+    .sort((a, b) => a.u.created_at.localeCompare(b.u.created_at))
+    .map(({ u, np }) => ({ uso_id: u.id, m3: Number(u.m3), np: np!, libre: Math.max(0, saldos.get(np!.id)?.libre ?? 0) }))
   const fecha = diaAR(ped.scheduled_arrival_time)
   const plan = planificarNp(
-    { id: ped.id, status: ped.status, quantity_m3: Number(ped.quantity_m3), plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha, np_tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, proyecto_tope_m3: el.tope_m3 },
-    nps,
+    {
+      id: ped.id, status: ped.status, quantity_m3: Number(ped.quantity_m3), plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha,
+      np_tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, proyecto_tope_m3: el.tope_m3,
+      saldo_np: saldoElegida && "libre" in saldoElegida && el.np_id ? { id: el.np_id, libre: saldoElegida.libre } : null,
+      mover_fecha: opciones.mover_fecha ?? null,
+    },
+    usoPlan,
+    propias.reduce((m, x) => Math.max(m, x.n || 0), 0),
   )
   const ahora = new Date().toISOString()
   const ref = `Pedido ${ped.id.slice(0, 8)}`
+  const log = (detalle: Record<string, unknown>, action: "crear" | "editar" = "editar") => actividadNp(sb, { usuario, action, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle })
+
   // Anular lo que no llegó a Zomatik. Si el robot tomó alguna en el medio (ya no está pendiente/error), se anulan
-  // menos de las planeadas: entonces NO se crea la nueva; la próxima sincronización vuelve a planear con lo que haya.
+  // menos de las planeadas: entonces NO se crea ni se usa nada; la próxima sincronización vuelve a planear.
   let anuladas = 0
   if (plan.anular.length) {
     const { data: an, error: ea } = await sb.from("zomatik_np").update({ estado: "anulada", mensaje: ped.status === "cancelled" ? "El pedido se canceló antes de generarla" : "Se rehízo con los datos nuevos del pedido", proximo_intento: null, updated_at: ahora } as never).in("id", plan.anular).in("estado", ["pendiente", "error"]).select("id")
     if (ea) throw ea
     anuladas = ((an as unknown[]) || []).length
+    if (anuladas) await sb.from("zomatik_np_uso").update({ activo: false, motivo: "NP anulada", updated_at: ahora } as never).in("np_id", plan.anular).eq("scheduled_dispatch_id", ped.id)
   }
-  const rehacerIncompleto = anuladas < plan.anular.length
-  if (rehacerIncompleto) plan.avisos.push("Una NP se estaba generando mientras se cambiaba el pedido: se vuelve a mirar en la próxima pasada.")
+  const incompleto = anuladas < plan.anular.length
+  if (incompleto) plan.avisos.push("Una NP se estaba generando mientras se cambiaba el pedido: se vuelve a mirar en la próxima pasada.")
   if (plan.revisar.length) {
-    const msg = "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala."
+    const msg = "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y decidí qué hacer con el saldo."
     await sb.from("zomatik_np").update({ estado: "revisar", mensaje: msg, proximo_intento: null, updated_at: ahora } as never).in("id", plan.revisar).in("estado", ["pendiente", "error"])
-    await avisarGerenciales(sb, "NP para revisar (pedido cancelado)", [msg, ...nps.filter((x) => plan.revisar.includes(x.id)).map((x) => `Marca: ${x.marca}`)])
+    await avisarGerenciales(sb, "NP para revisar (pedido cancelado)", [msg, ...npsUso.filter((x) => plan.revisar.includes(x.id)).map((x) => `Marca: ${x.marca}`)])
   }
-  if (plan.vaciar.length) {
-    await sb.from("zomatik_np").update({ estado: "vaciar", mensaje: "Pedido cancelado: falta vaciar la NP", proximo_intento: ahora, paso: null, updated_at: ahora } as never).in("id", plan.vaciar).eq("estado", "ok")
-    await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": `Pedido cancelado: se van a vaciar ${plan.vaciar.length} NP en Zomatik`, NP: nps.filter((x) => plan.vaciar.includes(x.id)).map((x) => x.numero).join(", ") } })
+  for (const d of plan.desvincular) {
+    await sb.from("zomatik_np_uso").update({ activo: false, motivo: d.motivo, updated_at: ahora } as never).eq("id", d.uso_id).eq("activo", true)
+    const np = usoPlan.find((x) => x.uso_id === d.uso_id)?.np
+    if (np) await sb.from("zomatik_np").update({ saldo_mensaje: `Sin pedido: ${d.motivo}`, updated_at: ahora } as never).eq("id", np.id)
+    await log({ "Qué pasó": `${np?.numero || "La NP"} queda pendiente con su saldo (${d.motivo})` })
+  }
+  for (const id of plan.mover_fecha) {
+    const np = npsUso.find((x) => x.id === id)
+    await sb.from("zomatik_np").update({ fecha, saldo_mensaje: `Fecha movida al ${fecha} en el sistema. En Zomatik la entrega sigue el ${np?.fecha_zomatik || np?.fecha || "?"}: cambiala a mano (falta probar CambiarFechaEntrega).`, updated_at: ahora } as never).eq("id", id)
+    await log({ "Qué pasó": `${np?.numero || "La NP"} se movió a la nueva fecha del pedido (${fecha})` })
+  }
+  if (!incompleto) {
+    for (const a of plan.ajustar) await sb.from("zomatik_np_uso").update({ m3: a.m3, updated_at: ahora } as never).eq("id", a.uso_id).eq("activo", true)
+    if (plan.ajustar.length) await log({ "Qué pasó": "Cambió lo que el pedido usa de sus NP", Detalle: plan.ajustar.map((a) => `${a.m3} m³`).join(", ") })
+  }
+  let usadas = 0
+  for (const u of incompleto ? [] : plan.usar) {
+    const { error: eu } = await sb.from("zomatik_np_uso").insert({ np_id: u.np_id, scheduled_dispatch_id: ped.id, m3: u.m3, created_by: usuario } as never)
+    if (eu) {
+      if ((eu as { code?: string }).code === "23505") continue
+      throw eu
+    }
+    usadas++
+    await sb.from("zomatik_np").update({ saldo_decision: null, saldo_mensaje: null, saldo_desde: null, updated_at: ahora } as never).eq("id", u.np_id)
+    await log({ "Qué pasó": `El pedido usa ${u.m3} m³ de una NP con saldo (reprogramado)`, NP: npsUso.find((x) => x.id === u.np_id)?.numero || u.np_id }, "crear")
   }
   let creadas = 0
-  for (const c of rehacerIncompleto ? [] : plan.crear) {
+  for (const c of incompleto ? [] : plan.crear) {
     const fila = {
       scheduled_dispatch_id: ped.id, n: c.n, marca: marcaNp(ped.id, c.n), tipo: c.tipo, es_adicional: c.es_adicional, proyecto_codigo: c.proyecto_codigo,
       plant_id: ped.plant_id, client_id: ped.client_id, formula_id: ped.formula_id, fecha, m3: c.m3, estado: "pendiente", proximo_intento: ahora, created_by: usuario,
     }
-    const { error: e2 } = await sb.from("zomatik_np").insert(fila as never)
+    const { data: nueva, error: e2 } = await sb.from("zomatik_np").insert(fila as never).select("id")
     if (e2) {
       if ((e2 as { code?: string }).code === "23505") continue // otro proceso la creó recién
       throw e2
     }
+    const npId = ((nueva as { id: string }[] | null) || [])[0]?.id
+    if (npId) await sb.from("zomatik_np_uso").insert({ np_id: npId, scheduled_dispatch_id: ped.id, m3: c.m3, created_by: usuario } as never)
     creadas++
-    await actividadNp(sb, {
-      usuario, action: "crear", pedidoId: ped.id, plantId: ped.plant_id, referencia: ref,
-      detalle: { "Qué pasó": c.es_adicional ? `NP adicional por ${c.m3} m³ (el pedido se agrandó)` : `NP ${c.tipo === "proyecto" ? `contra el proyecto ${c.proyecto_codigo}` : "nueva"} por ${c.m3} m³: pendiente de generar`, Marca: fila.marca },
-    })
+    await log({ "Qué pasó": c.es_adicional ? `NP adicional por ${c.m3} m³ (el pedido se agrandó)` : `NP ${c.tipo === "proyecto" ? `contra el proyecto ${c.proyecto_codigo}` : "nueva"} por ${c.m3} m³: pendiente de generar`, Marca: fila.marca }, "crear")
   }
-  if (plan.avisos.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Aviso de la NP", Aviso: plan.avisos.join(" · ") } })
-  if (plan.crear.length || plan.anular.length || plan.vaciar.length || plan.revisar.length) nps = await npsDePedidos(sb, [ped.id])
-  return { activo: true, creadas, vaciar: plan.vaciar.length, anuladas, avisos: plan.avisos, nps }
+  if (plan.avisos.length) await log({ "Qué pasó": "Aviso de la NP", Aviso: plan.avisos.join(" · ") })
+  await marcarPendientes(sb, [...new Set([...(await usosDe(sb, "scheduled_dispatch_id", [ped.id])).map((u) => u.np_id), ...propias.map((x) => x.id)])], ahora)
+  usos = (await usosDe(sb, "scheduled_dispatch_id", [ped.id])).filter((u) => u.activo)
+  const nps = await npsPorId(sb, usos.map((u) => u.np_id))
+  return { activo: true, creadas, usadas, desvinculadas: plan.desvincular.length, anuladas, avisos: plan.avisos, nps }
+}
+
+/**
+ * "NP con saldo: pendiente" desde cuándo (precisión del 23/10): una NP en Zomatik con saldo y sin pedido activo queda
+ * pendiente desde que pasó (sin preguntar ni vencer); si vuelve a tener un pedido activo, deja de estarlo.
+ */
+async function marcarPendientes(sb: SB, npIds: string[], ahora: string) {
+  const nps = (await npsPorId(sb, npIds)).filter((x) => x.estado === "ok")
+  if (!nps.length) return
+  const saldos = await saldosDe(sb, nps)
+  for (const x of nps) {
+    const pendiente = npConSaldo(x, saldos.get(x.id)!)
+    if (pendiente && !x.saldo_desde) await sb.from("zomatik_np").update({ saldo_desde: ahora } as never).eq("id", x.id).is("saldo_desde", null)
+    if (!pendiente && x.saldo_desde && x.saldo_decision !== "devolver" && x.saldo_decision !== "cerrada") await sb.from("zomatik_np").update({ saldo_desde: null } as never).eq("id", x.id)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NP con saldo (Programación) y qué hacer con el saldo
+// ---------------------------------------------------------------------------
+
+export type NpSaldo = {
+  id: string; numero: string | null; zomatik_codigo: number | null; m3: number; libre: number; comprometido: number; fecha: string; fecha_zomatik: string | null
+  saldo_decision: string | null; saldo_mensaje: string | null; pendiente_desde: string | null; plant_id: string | null; client_id: string | null; cliente: string | null
+  formula_id: string | null; formula: string | null; construction_site_id: string | null; obra: string | null; con_pedido_activo: boolean
+}
+
+/**
+ * NP del sistema en Zomatik con saldo. `lista`: las que van a "NP con saldo" (sin pedido activo, sin cerrar).
+ * Con `clientId` y `formulaId`: las que sirven para "Usar NP con saldo" (mismo cliente y artículo, con algo libre).
+ */
+export async function npsConSaldo(o: { clientId?: string | null; formulaId?: string | null; sb?: SB } = {}): Promise<NpSaldo[]> {
+  const sb = o.sb ?? sbServicio()
+  let q = sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "ok").order("fecha", { ascending: false }).limit(300)
+  if (o.clientId) q = q.eq("client_id", o.clientId)
+  const { data, error } = await q
+  if (error) throw error
+  const nps = ((data as unknown as FilaNpDB[]) || []).filter((x) => x.saldo_decision !== "cerrada")
+  const saldos = await saldosDe(sb, nps)
+  let elegidas = nps.filter((x) => {
+    const sd = saldos.get(x.id)
+    if (!sd) return false
+    return o.clientId ? sd.libre > 0.001 && x.saldo_decision !== "devolver" : npConSaldo(x, sd)
+  })
+  if (o.clientId && o.formulaId) {
+    const art = await articuloDe(sb, [o.formulaId, ...elegidas.map((x) => x.formula_id || "")])
+    const quiere = art.get(o.formulaId)
+    elegidas = elegidas.filter((x) => x.formula_id === o.formulaId || (!!quiere && art.get(x.formula_id || "") === quiere))
+  }
+  if (!elegidas.length) return []
+  const pedIds = [...new Set(elegidas.map((x) => x.scheduled_dispatch_id).filter(Boolean) as string[])]
+  const [{ data: cli }, { data: frm }, { data: peds }] = await Promise.all([
+    sb.from("clients").select("id, name").in("id", [...new Set(elegidas.map((x) => x.client_id).filter(Boolean) as string[])]),
+    sb.from("formulas").select("id, code").in("id", [...new Set(elegidas.map((x) => x.formula_id).filter(Boolean) as string[])]),
+    pedIds.length ? sb.from("scheduled_dispatches").select("id, construction_site_id, construction_sites(name)").in("id", pedIds) : Promise.resolve({ data: [] }),
+  ])
+  const nombre = new Map(((cli as { id: string; name: string }[]) || []).map((c) => [c.id, c.name]))
+  const codigo = new Map(((frm as { id: string; code: string }[]) || []).map((f) => [f.id, f.code]))
+  const obra = new Map(((peds as { id: string; construction_site_id: string | null; construction_sites?: { name?: string } | null }[]) || []).map((p) => [p.id, p]))
+  return elegidas.map((x) => {
+    const sd = saldos.get(x.id)!
+    const o2 = x.scheduled_dispatch_id ? obra.get(x.scheduled_dispatch_id) : undefined
+    return {
+      id: x.id, numero: x.numero, zomatik_codigo: x.zomatik_codigo, m3: Number(x.m3), libre: sd.libre, comprometido: sd.comprometido, fecha: String(x.fecha), fecha_zomatik: x.fecha_zomatik ?? null,
+      saldo_decision: x.saldo_decision ?? null, saldo_mensaje: x.saldo_mensaje ?? null, pendiente_desde: x.saldo_desde ?? x.updated_at ?? null, plant_id: x.plant_id ?? null, client_id: x.client_id ?? null, cliente: nombre.get(x.client_id || "") || null,
+      formula_id: x.formula_id ?? null, formula: codigo.get(x.formula_id || "") || null, construction_site_id: o2?.construction_site_id ?? null, obra: o2?.construction_sites?.name ?? null,
+      con_pedido_activo: sd.conPedidoActivo,
+    }
+  })
+}
+
+/**
+ * Qué hacer con el saldo de una NP pendiente (respuesta 2 y precisión del 23/10: queda pendiente hasta Reprogramar o
+ * Devolver; Reprogramar es abrir un pedido nuevo con "Usar NP con saldo"):
+ *   devolver  "Devolver el saldo": si no tuvo despachos, se vacía (23.4, el robot controla que no tenga remitos). Si tuvo,
+ *             hace falta una devolución de pedido (DEVOL) por el saldo: TODAVÍA NO la hace el sistema (falta probarla
+ *             con Bautista, 20.6.1): queda "devolver" con el aviso de hacerla a mano.
+ *   cerrada   "Ya la devolví": se hizo a mano en Zomatik.
+ */
+export async function decidirSaldo(npId: string, decision: "devolver" | "cerrada", usuario: string, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string; mensaje?: string }> {
+  const { data } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("id", npId).maybeSingle()
+  const np = data as unknown as FilaNpDB | null
+  if (!np || np.estado !== "ok") return { ok: false, error: "La NP ya no está en Zomatik o se está trabajando. Actualizá la pantalla." }
+  const sd = (await saldosDe(sb, [np])).get(np.id)!
+  if (sd.conPedidoActivo) return { ok: false, error: "La NP la está usando un pedido activo." }
+  const ahora = new Date().toISOString()
+  const ref = `NP ${np.numero || np.id.slice(0, 8)}`
+  let mensaje: string
+  if (decision === "cerrada") {
+    await sb.from("zomatik_np").update({ saldo_decision: "cerrada", saldo_decision_por: usuario, saldo_decision_at: ahora, saldo_mensaje: `Devuelta a mano por ${usuario}`, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
+    mensaje = "Marcada como devuelta"
+  } else if (sd.comprometido > 0.001) {
+    mensaje = `Tuvo despachos: hace falta una devolución de pedido (DEVOL) por ${sd.libre} m³. Todavía no la hace el sistema: hacela a mano en Zomatik y después tocá "Ya la devolví".`
+    await sb.from("zomatik_np").update({ saldo_decision: "devolver", saldo_decision_por: usuario, saldo_decision_at: ahora, saldo_mensaje: mensaje, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
+  } else {
+    mensaje = "Se vacía en Zomatik (sin despachos)."
+    await sb.from("zomatik_np").update({ estado: "vaciar", proximo_intento: ahora, paso: null, saldo_decision: "devolver", saldo_decision_por: usuario, saldo_decision_at: ahora, saldo_mensaje: mensaje, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
+  }
+  await actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP con saldo (${sd.libre} m³): ${decision === "cerrada" ? "ya devuelta a mano" : "devolver el saldo"}`, Mensaje: mensaje } })
+  return { ok: true, mensaje }
+}
+
+/** Vendedor de Zomatik de quien programó el pedido (respuesta 4); null si no tiene. */
+async function vendedorDe(sb: SB, nombre: string | null | undefined): Promise<{ id: number; nombre: string } | null> {
+  const n = normalizarNombre(nombre)
+  if (!n) return null
+  const { data: us } = await sb.from("app_users").select("id, name")
+  const u = ((us as { id: string; name: string }[]) || []).find((x) => normalizarNombre(x.name) === n)
+  if (!u) return null
+  const { data: v, error } = await sb.from("zomatik_vendedores").select("vendedor_id, vendedor_nombre").eq("app_user_id", u.id).maybeSingle()
+  if (error || !v) return null
+  return { id: Number((v as { vendedor_id: number }).vendedor_id), nombre: (v as { vendedor_nombre: string | null }).vendedor_nombre || "" }
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +524,7 @@ type Contexto = {
 async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefined, buscarAntes: boolean): Promise<DatosNp> {
   const pedidoId = np.scheduled_dispatch_id
   const [{ data: ped }, { data: cli }, { data: form }] = await Promise.all([
-    pedidoId ? sb.from("scheduled_dispatches").select("id, construction_site_id, construction_sites(name, address, localidad)").eq("id", pedidoId).maybeSingle() : Promise.resolve({ data: null }),
+    pedidoId ? sb.from("scheduled_dispatches").select("id, created_by, construction_site_id, construction_sites(name, address, localidad)").eq("id", pedidoId).maybeSingle() : Promise.resolve({ data: null }),
     np.client_id ? sb.from("clients").select("id, name, zomatik_codigo").eq("id", np.client_id).maybeSingle() : Promise.resolve({ data: null }),
     np.formula_id ? sb.from("formulas").select("id, code, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", np.formula_id).maybeSingle() : Promise.resolve({ data: null }),
   ])
@@ -308,6 +539,8 @@ async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefin
     const { data: rt } = await sb.rpc("remito_tipo_para", { p_pedido_id: pedidoId })
     comprobante = comprobanteDe((rt as { tipo?: string } | null)?.tipo || null)
   }
+  // Vendedor: el de quien programó el pedido (respuesta 4 del 23/10); si no tiene, el robot usa el del cliente
+  const vendedor = await vendedorDe(sb, (ped as { created_by?: string | null } | null)?.created_by)
   const obra = (ped as { construction_sites?: { name?: string; address?: string | null; localidad?: string | null } | null } | null)?.construction_sites
   const entrega = obra ? [`Obra: ${obra.name || ""}`, obra.address, obra.localidad].filter(Boolean).join(" · ") : ""
   return {
@@ -325,6 +558,8 @@ async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefin
     entrega,
     buscarAntes,
     creadaEl: np.created_at ? diaAR(np.created_at) : null,
+    vendedorId: vendedor?.id ?? null,
+    vendedorNombre: vendedor?.nombre ?? null,
   }
 }
 
@@ -400,7 +635,7 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
   const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
   let guardo = true
   if (r.estado === "ok") {
-    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "ok", numero: r.numero, zomatik_codigo: r.codigo, sucursal: r.sucursal, paso: "ok", ok_at: ahora, proximo_intento: null })
+    guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "ok", numero: r.numero, zomatik_codigo: r.codigo, sucursal: r.sucursal, paso: "ok", ok_at: ahora, proximo_intento: null, fecha_zomatik: np.fecha })
     if (guardo) {
       if (np.scheduled_dispatch_id) await sb.from("zomatik_np_excepciones").update({ regularizado_at: ahora } as never).eq("scheduled_dispatch_id", np.scheduled_dispatch_id).is("regularizado_at", null)
       await actividadNp(sb, { usuario: ctx.usuario, action: "crear", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP generada en Zomatik: ${r.numero}`, "m³": np.m3, Tipo: np.tipo === "proyecto" ? `Proyecto ${np.proyecto_codigo}` : "NP nueva" } })
@@ -444,12 +679,12 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
     return { estado: "vaciar", mensaje: null }
   }
   if (conRemitos) {
-    const msg = `La ${np.numero} ya tiene remitos: no se vació. Revisala en Zomatik.`
-    if (await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: msg, proximo_intento: null })) {
-      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Pedido cancelado con NP remitida: no se vació", NP: np.numero } })
-      await ctx.dep.avisar(sb, `Pedido cancelado con remitos: ${np.numero}`, [msg, `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`])
+    // Con remitos no se vacía: hace falta una devolución de pedido (DEVOL), que todavía no hace el sistema
+    const msg = `La ${np.numero} tiene remitos en Zomatik: no se vació. Hace falta una devolución de pedido (DEVOL) por el saldo: hacela a mano y tocá "Ya la devolví".`
+    if (await guardarSi(sb, np.id, V, { estado: "ok", en_curso_desde: null, mensaje: null, saldo_decision: "devolver", saldo_mensaje: msg, proximo_intento: null })) {
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Devolver el saldo: la NP tiene remitos, falta la DEVOL a mano", NP: np.numero } })
     }
-    return { estado: "revisar", mensaje: msg }
+    return { estado: "ok", mensaje: msg }
   }
   if (!ctx.nav) ctx.nav = await ctx.dep.navegador(llave)
   const r = await vaciarNp(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, {
@@ -462,8 +697,8 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
   const ahora = new Date().toISOString()
   let guardo: boolean
   if (r.estado === "vaciada") {
-    guardo = await guardarSi(sb, np.id, V, { estado: "vaciada", en_curso_desde: null, mensaje: null, vaciada_at: ahora, proximo_intento: null, paso: "vaciada" })
-    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (pedido cancelado): ${np.numero}` } })
+    guardo = await guardarSi(sb, np.id, V, { estado: "vaciada", en_curso_desde: null, mensaje: null, vaciada_at: ahora, proximo_intento: null, paso: "vaciada", saldo_decision: "cerrada", saldo_mensaje: "Vaciada en Zomatik" })
+    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (devolver el saldo): ${np.numero}` } })
   } else if (r.estado === "vaciar") {
     guardo = await guardarSi(sb, np.id, V, { estado: "vaciar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: despuesDe(MIN_REINTENTO) })
   } else {
@@ -557,7 +792,7 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
  * Sincroniza los pedidos de hoy en adelante de las plantas con la llave prendida y los que tienen NP vivas. Para si se
  * le termina el tiempo (`hastaMs` desde `inicio`), así el robot todavía tiene lugar.
  */
-export async function pasadaNp(usuario: string, o: { inicio: number; hastaMs?: number; sb?: SB } = { inicio: Date.now() }): Promise<{ pedidos: number; sincronizados: number; huerfanas: number }> {
+export async function pasadaNp(usuario: string, o: { inicio: number; hastaMs?: number; sb?: SB } = { inicio: Date.now() }): Promise<{ pedidos: number; sincronizados: number }> {
   const sb = o.sb ?? sbServicio()
   const hasta = o.hastaMs ?? 20_000
   const plantas = Object.values(await plantasNp(sb)).filter((p) => p.zomatik_np_activo)
@@ -567,8 +802,10 @@ export async function pasadaNp(usuario: string, o: { inicio: number; hastaMs?: n
     const { data } = await sb.from("scheduled_dispatches").select("id, plant_id, created_at").in("plant_id", plantas.map((p) => p.id)).gte("scheduled_arrival_time", desdeDia).neq("status", "completed").limit(500)
     for (const p of (data as { id: string; plant_id: string; created_at: string }[]) || []) if (pedidoConNp(plantas.find((x) => x.id === p.plant_id), p.created_at)) ids.add(p.id)
   }
-  const { data: vivas } = await sb.from("zomatik_np").select("scheduled_dispatch_id").in("estado", ["ok", "pendiente", "error"] as EstadoNp[]).not("scheduled_dispatch_id", "is", null).limit(1000)
-  for (const v of (vivas as { scheduled_dispatch_id: string }[]) || []) ids.add(v.scheduled_dispatch_id)
+  // Los pedidos que usan NP vivas (para los cancelados, cambios y NP adicionales)
+  const { data: vivas } = await sb.from("zomatik_np").select("id").in("estado", ["ok", "pendiente", "error"] as EstadoNp[]).limit(1000)
+  const usosVivos = await usosDe(sb, "np_id", ((vivas as { id: string }[]) || []).map((x) => x.id))
+  for (const u of usosVivos) if (u.activo && u.scheduled_dispatch_id) ids.add(u.scheduled_dispatch_id)
   let sincronizados = 0
   for (const id of ids) {
     if (Date.now() - o.inicio > hasta) break
@@ -579,11 +816,8 @@ export async function pasadaNp(usuario: string, o: { inicio: number; hastaMs?: n
       console.error("[zomatik-np] sincronizar", id, (e as Error)?.message)
     }
   }
-  // NP de pedidos borrados: como un pedido cancelado
-  const { data: huer } = await sb.from("zomatik_np").select("id").is("scheduled_dispatch_id", null).eq("estado", "ok")
-  const h = ((huer as { id: string }[]) || []).map((x) => x.id)
-  if (h.length) await sb.from("zomatik_np").update({ estado: "vaciar", mensaje: "El pedido se borró: falta vaciar la NP", proximo_intento: new Date().toISOString() } as never).in("id", h).eq("estado", "ok")
-  return { pedidos: ids.size, sincronizados, huerfanas: h.length }
+  // Las NP de pedidos borrados ya no se vacían solas: quedan en "NP con saldo" para decidir (respuesta 2 del 23/10)
+  return { pedidos: ids.size, sincronizados }
 }
 
 // ---------------------------------------------------------------------------
@@ -595,7 +829,10 @@ export type EstadoPedidoNp = {
   modo: ModoNp
   /** El pedido entra en la NP automática (cargado después de prender la llave). */
   entra: boolean
-  nps: FilaNpDB[]
+  /** Las NP que usa el pedido (con los m³ que reserva de cada una y lo libre de la NP). */
+  nps: (FilaNpDB & { m3_uso: number; libre: number })[]
+  /** El pedido está cancelado o completo: sus NP con saldo van a "NP con saldo". */
+  cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
   control: { bloquea: boolean; aviso: string | null }
   /** NP nueva o de un proyecto (null = todavía no se eligió). */
@@ -609,17 +846,26 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
   if (!ids.length || !Object.values(plantas).some((p) => p.zomatik_np_activo)) {
     return { porPedido: {}, plantas: resumen }
   }
-  const [{ data: peds }, nps, { data: exc }, elecciones] = await Promise.all([
-    sb.from("scheduled_dispatches").select("id, plant_id, created_at").in("id", ids),
-    npsDePedidos(sb, ids),
+  const [{ data: peds }, usos, { data: exc }, elecciones] = await Promise.all([
+    sb.from("scheduled_dispatches").select("id, plant_id, created_at, status").in("id", ids),
+    usosDe(sb, "scheduled_dispatch_id", ids),
     sb.from("zomatik_np_excepciones").select("scheduled_dispatch_id, autorizado_por, motivo_tipo, motivo").in("scheduled_dispatch_id", ids).eq("fecha", hoyAR()),
     eleccionesDe(sb, ids),
   ])
+  const activos = usos.filter((u) => u.activo)
+  const nps = await npsPorId(sb, [...new Set(activos.map((u) => u.np_id))])
+  const saldos = await saldosDe(sb, nps.filter((x) => x.estado === "ok"))
   const porPedido: Record<string, EstadoPedidoNp> = {}
-  for (const p of (peds as { id: string; plant_id: string; created_at: string }[]) || []) {
+  for (const p of (peds as { id: string; plant_id: string; created_at: string; status: string }[]) || []) {
     const planta = plantas[p.plant_id]
     const modo = modoDe(planta)
-    const suyas = nps.filter((x) => x.scheduled_dispatch_id === p.id)
+    const suyas = activos
+      .filter((u) => u.scheduled_dispatch_id === p.id)
+      .map((u) => {
+        const x = nps.find((n) => n.id === u.np_id)
+        return x ? { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0) } : null
+      })
+      .filter(Boolean) as (FilaNpDB & { m3_uso: number; libre: number })[]
     const entra = pedidoConNp(planta, p.created_at) || suyas.length > 0
     const e = ((exc as { scheduled_dispatch_id: string; autorizado_por: string; motivo_tipo: string; motivo: string | null }[]) || []).find((x) => x.scheduled_dispatch_id === p.id) || null
     porPedido[p.id] = {
@@ -627,6 +873,7 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
       modo,
       entra,
       nps: suyas,
+      cerrado: p.status === "cancelled" || p.status === "completed",
       excepcion: e ? { autorizado_por: e.autorizado_por, motivo_tipo: e.motivo_tipo, motivo: e.motivo } : null,
       control: controlDespacho({ modo, entra, nps: suyas.filter((x) => VIGENTES.includes(x.estado)), excepcion: !!e }),
       eleccion: elecciones[p.id] || null,
