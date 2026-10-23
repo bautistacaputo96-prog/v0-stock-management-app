@@ -12,8 +12,8 @@
 --                         sobrante): queda "NP con saldo: pendiente" en Programación desde `saldo_desde`, SIN
 --                         vencimiento, hasta que alguien toque Reprogramar o Devolver el saldo. saldo_decision: nulo =
 --                         pendiente · devolver (falta la devolución DEVOL a mano) · cerrada (vaciada o devuelta).
---   zomatik_np.fecha_zomatik  la fecha de entrega con la que se grabó en Zomatik (si se mueve la NP a otra fecha, en
---                         nuestro sistema cambia `fecha`; en Zomatik queda esta hasta que se pruebe CambiarFechaEntrega).
+--   zomatik_np.fecha_zomatik  la fecha de entrega con la que se grabó en Zomatik (solo de registro). Si se mueve la NP a
+--                         otra fecha, cambia `fecha` en nuestro sistema; en Zomatik no hace falta cambiarla (25.5).
 --   zomatik_np_pedido     suma el tipo "saldo" (usar una NP con saldo) y `np_id`.
 --   zomatik_vendedores    usuario de la app → vendedor de Zomatik (5.5). Lo edita un gerencial en Vínculos. Se cargan
 --                         Fernando Maldonado 100, Juan Oreguy 101 y Felipe Calvo 123. Solo servidor.

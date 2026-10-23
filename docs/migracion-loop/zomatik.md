@@ -1588,7 +1588,7 @@ Responden las 8 preguntas de 24.8. Lo que cambia de Z2 está programado en `loop
   - "Dejar abierta" no va: con la precisión, pendiente ya es dejarla abierta.
 - **Bloque del pedido:** tres opciones, "NP nueva", "NP de un proyecto" y **"Usar NP con saldo"**. Esta última solo muestra NP del sistema del mismo cliente y artículo, con algo libre. Reemplaza la "usar NP existente" que se sacó en 22.1. Al editar, el bloque queda deshabilitado hasta leer la elección guardada (observación 2 del revisor).
 - **Cambiar la fecha de un pedido con NP:** el formulario pregunta "¿Mover la NP a la nueva fecha?".
-  - **Sí:** cambia la fecha en nuestro sistema. En Zomatik la fecha de entrega se cambia a mano hasta probar `CambiarFechaEntrega` (25.4); la que quedó en Zomatik se guarda en `fecha_zomatik`.
+  - **Sí:** cambia la fecha solo en nuestro sistema; en Zomatik no hace falta (25.5). La fecha con que se grabó queda en `fecha_zomatik`, de registro.
   - **No:** el pedido deja de usarla (queda pendiente con su saldo) y se genera una NP nueva.
 - **Cambiar la fórmula, el cliente o la planta:** avisa y no toca la NP vieja (queda pendiente con su saldo). Se genera una nueva para el pedido.
 - **Agrandar:** primero vuelve a usar lo libre de su NP; después, NP adicional por la diferencia (sigue igual).
@@ -1619,11 +1619,16 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
    - si deja la NP sin pendiente;
    - con una NP remitida en parte;
    - con una NP de proyecto (¿vuelve el saldo al proyecto?).
-2. **`CambiarFechaEntrega`** en la NP abierta: si existe, qué llama y si deja cambiar la fecha con o sin remitos.
+2. ~~`CambiarFechaEntrega`~~: no hace falta (25.5).
 3. Que el vendedor de quien programa (`idvendedor` + `vendedor_manual=1`) quede bien en la NP nueva y en la de proyecto.
 4. Lo de 24.7.2: `frm_selsuc` en las páginas de resultado, `bus_deposito`, paginado y renglones de `manage_pedidos`.
 
-### 25.5 Migración nueva `202610231000_zomatik_np_saldo.sql` (sin aplicar; fuera de horario)
+### 25.5 Respuestas de Bautista a 25.4 (23/10)
+1. **DEVOL:** está el botón "DEVOL" en Clientes › Pedidos, en cada fila del listado ("FC / FC / DEVOL", visto el 22/10). El formulario sigue sin probar: el robot de DEVOL queda para la prueba con Bautista (25.3).
+2. **Fecha:** "En Zomatik no es necesario cambiar la fecha, sí en el mío." Mover la NP a otra fecha cambia solo nuestro sistema. Se sacó el aviso de cambiarla a mano y no se intenta `CambiarFechaEntrega`.
+3. **Vendedor:** confirmado, "pone la persona que carga". Queda como en 25.2.
+
+### 25.6 Migración nueva `202610231000_zomatik_np_saldo.sql` (sin aplicar; fuera de horario)
 - **Agrega:**
   - `zomatik_np_uso`, que se llena con un uso por cada NP que ya exista (hoy no hay ninguna);
   - en `zomatik_np`: `saldo_decision`, `saldo_desde`, `saldo_mensaje` y `fecha_zomatik`;
@@ -1641,5 +1646,5 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
   - tipo `saldo` aceptado.
 - **Hay que aplicarla antes de prender la llave:** sin ella, Programación y Vínculos dicen "falta aplicar la migración".
 
-### 25.6 Verificación
+### 25.7 Verificación
 `test:zomatik-np` 58/58 (plan con usos, saldo, cancelar sin vaciar, reprogramar, devolver, vendedor), las demás pruebas, tsc sin errores nuevos y build bien.

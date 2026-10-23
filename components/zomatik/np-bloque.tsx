@@ -207,7 +207,6 @@ export function NpBloque({
             <button type="button" disabled={deshabilitado} className={cn("rounded border px-2 py-0.5", moverFecha === true ? "border-primary bg-white font-medium" : "border-amber-300 bg-white")} onClick={() => onMoverFecha(true)}>Sí, mover la NP</button>
             <button type="button" disabled={deshabilitado} className={cn("rounded border px-2 py-0.5", moverFecha === false ? "border-primary bg-white font-medium" : "border-amber-300 bg-white")} onClick={() => onMoverFecha(false)}>No: la NP queda pendiente y va una nueva</button>
           </div>
-          <p className="text-amber-800">En Zomatik la fecha de entrega se cambia a mano por ahora.</p>
         </div>
       )}
 

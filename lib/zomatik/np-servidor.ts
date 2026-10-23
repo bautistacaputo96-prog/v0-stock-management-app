@@ -330,8 +330,8 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   }
   for (const id of plan.mover_fecha) {
     const np = npsUso.find((x) => x.id === id)
-    await sb.from("zomatik_np").update({ fecha, saldo_mensaje: `Fecha movida al ${fecha} en el sistema. En Zomatik la entrega sigue el ${np?.fecha_zomatik || np?.fecha || "?"}: cambiala a mano (falta probar CambiarFechaEntrega).`, updated_at: ahora } as never).eq("id", id)
-    await log({ "Qué pasó": `${np?.numero || "La NP"} se movió a la nueva fecha del pedido (${fecha})` })
+    await sb.from("zomatik_np").update({ fecha, updated_at: ahora } as never).eq("id", id) // solo en nuestro sistema: en Zomatik no hace falta (25.5)
+    await log({ "Qué pasó": `${np?.numero || "La NP"} se movió a la nueva fecha del pedido (${fecha}), en el sistema` })
   }
   if (!incompleto) {
     for (const a of plan.ajustar) await sb.from("zomatik_np_uso").update({ m3: a.m3, updated_at: ahora } as never).eq("id", a.uso_id).eq("activo", true)
