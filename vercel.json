@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/control-ingresos/controlar",
-      "schedule": "5 19 * * *"
+      "schedule": "25 19 * * *"
     }
   ]
 }

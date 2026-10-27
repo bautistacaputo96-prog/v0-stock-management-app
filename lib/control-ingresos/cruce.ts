@@ -79,6 +79,24 @@ export function tramosLectura(desde: string, hoy: string, dias = 32): Tramo[] {
   return out
 }
 
+/** Orden de lectura: primero los tramos con días nunca leídos, después los de lectura más vieja (empate: el más nuevo). */
+export function ordenTramos(tramos: Tramo[], leidos: Map<string, string>): Tramo[] {
+  const peso = (t: Tramo) => {
+    let nunca = false
+    let viejo = Infinity
+    for (let d = t.desde; d <= t.hasta; d = sumarDias(d, 1)) {
+      const l = leidos.get(d)
+      if (!l) nunca = true
+      else viejo = Math.min(viejo, Date.parse(l))
+    }
+    return { nunca, viejo }
+  }
+  return tramos
+    .map((t, i) => ({ t, i, ...peso(t) }))
+    .sort((a, b) => Number(b.nunca) - Number(a.nunca) || a.viejo - b.viejo || a.i - b.i)
+    .map((x) => x.t)
+}
+
 // ---------------------------------------------------------------------------
 // Normalizaciones
 // ---------------------------------------------------------------------------
@@ -351,7 +369,8 @@ export type Lado = {
   planta: string
   material: string
   t: number
-  unidad: "t" | "kg"
+  /** "t" = toneladas · "kg" = kg o litros de nuestro material · "" = unidad de Zomatik sin confirmar (no se compara). */
+  unidad: "t" | "kg" | ""
   remito: string | null
   proveedor: string | null
   transportista: string | null
@@ -374,7 +393,7 @@ export type Diferencia = {
 type Item = Lado & { lado: "n" | "z"; plantaId: string | null; mat: string | null; nro: string | null; comparaT: boolean; usado: boolean }
 
 const fmtT = (t: number) => t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const cant = (i: Lado) => (i.unidad === "t" ? `${fmtT(i.t)} t` : `${i.t.toLocaleString("es-AR")} kg`)
+const cant = (i: Lado) => (i.unidad === "t" ? `${fmtT(i.t)} t` : `${i.t.toLocaleString("es-AR")}${i.unidad ? ` ${i.unidad}` : ""}`)
 
 function itemNuestro(n: IngresoNuestro): Item {
   const mat = claveMaterial(n.material)
@@ -414,7 +433,7 @@ function itemZomatik(z: RemitoZomatik): Item {
     material: mat ? nombreMaterial(mat) : z.articulo,
     mat,
     t: comparaT ? toneladas(z.cantidad).t : z.cantidad,
-    unidad: comparaT ? "t" : "kg",
+    unidad: comparaT ? "t" : "",
     remito: z.remito,
     nro: normalizarRemito(z.remito),
     proveedor: z.proveedor,
@@ -438,7 +457,8 @@ const mismoRemito = (a: Item, b: Item) => Math.abs(diasEntre(a.fecha, b.fecha)) 
 /** Qué no coincide en un par con el mismo número. Vacío = coinciden. */
 function diferenciasDelPar(a: Item, z: Item): { tipo: TipoDiferencia; texto: string }[] {
   const out: { tipo: TipoDiferencia; texto: string }[] = []
-  if (!igualesT(a, z)) {
+  // Aditivos y fibra: la unidad de Zomatik no está confirmada, no se comparan las cantidades (solo número y fecha)
+  if (a.comparaT && z.comparaT && !igualesT(a, z)) {
     const inv = a.comparaT && digitosInvertidos(a.t, z.t)
     out.push({ tipo: inv ? "digitos" : "toneladas", texto: `${inv ? "Dígitos invertidos" : "Toneladas distintas"}: ${cant(a)} en el nuestro y ${cant(z)} en Zomatik` })
   }
@@ -472,7 +492,36 @@ function emparejar(A: Item[], Z: Item[], puntaje: (a: Item, z: Item) => number |
 
 const claveDe = (cat: Categoria, tipo: TipoDiferencia, items: Item[]) => `${cat}:${tipo}:${items.map((i) => `${i.lado}:${i.ref}`).sort().join(",")}`
 
-export type OpcionesCruce = { hoy: string; desde?: string }
+export type OpcionesCruce = {
+  hoy: string
+  desde?: string
+  /** ¿Ese día de Zomatik está leído (y fresco)? Sin esto, todos. Solo se informa lo que se puede controlar. */
+  cubierto?: (fecha: string) => boolean
+}
+
+/**
+ * ¿Se puede controlar algo con estas fechas? Tiene que tener alguna desde `desde` y Zomatik leído desde 3 días antes
+ * hasta 3 días después (la fecha puede variar ±3 días), sin pasar de hoy ni del margen de lectura.
+ */
+export function evaluable(fechas: string[], o: OpcionesCruce): boolean {
+  if (!fechas.length) return false
+  const desde = o.desde || desdeVentana(o.hoy)
+  const f = [...fechas].sort()
+  if (f[f.length - 1] < desde) return false
+  if (!o.cubierto) return true
+  const piso = sumarDias(desde, -MARGEN_DIAS)
+  let d = sumarDias(f[0], -TOL_FECHA_DIAS)
+  if (d < piso) d = piso
+  const tope = sumarDias(f[f.length - 1], TOL_FECHA_DIAS) > o.hoy ? o.hoy : sumarDias(f[f.length - 1], TOL_FECHA_DIAS)
+  for (; d <= tope; d = sumarDias(d, 1)) if (!o.cubierto(d)) return false
+  return true
+}
+
+/** Fechas de los renglones de una diferencia guardada. */
+export const fechasDe = (d: { fecha: string; nuestro?: { fecha: string }[] | null; zomatik?: { fecha: string }[] | null }) => {
+  const fs = [...(d.nuestro || []), ...(d.zomatik || [])].map((l) => l.fecha).filter(Boolean)
+  return fs.length ? fs : [d.fecha]
+}
 
 /**
  * Cruza los dos sistemas. `nuestros` y `zomatik` pueden traer de más hacia atrás (MARGEN_DIAS) para emparejar el borde;
@@ -492,8 +541,7 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
   const Z = zomatik.map(itemZomatik).filter((z) => z.mat !== null) // en Zomatik solo la materia prima
   const out: Diferencia[] = []
   const agregar = (categoria: Categoria, tipo: TipoDiferencia, items: Item[], detalle: string) => {
-    const fechas = items.map((i) => i.fecha).sort()
-    if (fechas[fechas.length - 1] < desde) return
+    if (!evaluable(items.map((i) => i.fecha), { ...opts, desde })) return
     const n = items.filter((i) => i.lado === "n")
     const z = items.filter((i) => i.lado === "z")
     out.push({
@@ -522,7 +570,7 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
     pares.push(
       ...emparejar(g.n, g.z, (a, z) => {
         if (!mismoRemito(a, z)) return null
-        return (a.mat === z.mat ? 0 : 4) + (distProv(a, z) ? 2 : 0) + (a.plantaId === z.plantaId ? 0 : 1) + (igualesT(a, z) ? 0 : 1) + Math.min(Math.abs(diasEntre(a.fecha, z.fecha)), 30) / 30
+        return (a.mat === z.mat ? 0 : 4) + (distProv(a, z) ? 2 : 0) + (a.plantaId === z.plantaId ? 0 : 1) + (!a.comparaT || igualesT(a, z) ? 0 : 1) + Math.min(Math.abs(diasEntre(a.fecha, z.fecha)), 30) / 30
       }),
     )
   }
@@ -576,13 +624,17 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
   const fuzzy = emparejar(sueltosN(), sueltosZ(), (a, z) => {
     if (!a.mat || a.mat !== z.mat) return null
     const dd = Math.abs(diasEntre(a.fecha, z.fecha))
-    if (dd > PAREO_FECHA_DIAS || !igualesT(a, z)) return null
+    if (dd > PAREO_FECHA_DIAS) return null
+    // En toneladas: mismas toneladas. Aditivos y fibra (unidad sin confirmar): misma planta y fecha, sin cantidad
+    if (a.comparaT ? !igualesT(a, z) : a.plantaId !== z.plantaId) return null
     const num = !a.nro || !z.nro ? 0.05 : numerosParecidos(a.nro, z.nro) ? 0 : 0.3
-    return (a.plantaId === z.plantaId ? 0 : 1) + (distProv(a, z) ? 0.5 : 0) + dd * 0.1 + num + Math.abs(a.t - z.t)
+    return (a.plantaId === z.plantaId ? 0 : 1) + (distProv(a, z) ? 0.5 : 0) + dd * 0.1 + num + (a.comparaT ? Math.abs(a.t - z.t) : 0)
   })
   for (const [a, z] of fuzzy) {
     // Sin número en los dos ("000000" y "0000-00000000"), misma planta y proveedor: no hay nada mal escrito
     if (!a.nro && !z.nro && a.plantaId === z.plantaId && !distProv(a, z)) continue
+    // Mismo número (aditivos y fibra emparejados por fecha) y misma planta: coinciden
+    if (a.nro && a.nro === z.nro && a.plantaId === z.plantaId && !distProv(a, z)) continue
     const notas = [`Nº ${a.remito || "sin número"} en el nuestro y ${z.remito || "sin número"} en Zomatik`]
     if (a.plantaId !== z.plantaId) notas.push(`${a.planta} en el nuestro y ${z.planta} en Zomatik`)
     if (distProv(a, z)) notas.push(textoProveedor(a, z))
@@ -605,27 +657,35 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
 // ---------------------------------------------------------------------------
 
 export type Estado = "abierta" | "revisada" | "resuelta"
-export type Guardada = { id: string; clave: string; estado: Estado }
+export type Guardada = { id: string; clave: string; estado: Estado; revisada_at?: string | null; fecha?: string; nuestro?: { fecha: string }[] | null; zomatik?: { fecha: string }[] | null }
 
 /**
  * Qué hacer con la tabla de diferencias después de un cruce:
- *   - nuevas: no estaban (o estaban resueltas y volvieron): se abren;
+ *   - nuevas: no estaban: se abren;
+ *   - reabiertas: estaban resueltas y volvieron: abiertas, o revisadas (con su nota) si alguien ya las había revisado;
  *   - siguen: estaban abiertas o revisadas: se actualiza el detalle y quedan como estaban (revisada no vuelve al mail);
- *   - resueltas: estaban abiertas o revisadas y el cruce ya no las encuentra (alguien corrigió): pasan a resuelta.
+ *   - resueltas: estaban abiertas o revisadas, se pueden controlar (`evaluableG`: dentro de la ventana y con Zomatik
+ *     leído) y el cruce ya no las encuentra (alguien corrigió). Las que salieron de la ventana o no se pudieron
+ *     controlar quedan como estaban.
  */
-export function planDeEstados(actuales: Diferencia[], guardadas: Guardada[]): { nuevas: Diferencia[]; reabiertas: { id: string; d: Diferencia }[]; siguen: { id: string; d: Diferencia }[]; resueltas: string[] } {
+export function planDeEstados(
+  actuales: Diferencia[],
+  guardadas: Guardada[],
+  evaluableG: (g: Guardada) => boolean = () => true,
+): { nuevas: Diferencia[]; reabiertas: { id: string; d: Diferencia; revisada: boolean }[]; siguen: { id: string; d: Diferencia }[]; resueltas: string[] } {
   const porClave = new Map(guardadas.map((g) => [g.clave, g]))
   const vistas = new Set<string>()
   const nuevas: Diferencia[] = []
-  const reabiertas: { id: string; d: Diferencia }[] = []
+  const reabiertas: { id: string; d: Diferencia; revisada: boolean }[] = []
   const siguen: { id: string; d: Diferencia }[] = []
   for (const d of actuales) {
+    if (vistas.has(d.clave)) continue
     vistas.add(d.clave)
     const g = porClave.get(d.clave)
     if (!g) nuevas.push(d)
-    else if (g.estado === "resuelta") reabiertas.push({ id: g.id, d })
+    else if (g.estado === "resuelta") reabiertas.push({ id: g.id, d, revisada: !!g.revisada_at })
     else siguen.push({ id: g.id, d })
   }
-  const resueltas = guardadas.filter((g) => g.estado !== "resuelta" && !vistas.has(g.clave)).map((g) => g.id)
+  const resueltas = guardadas.filter((g) => g.estado !== "resuelta" && !vistas.has(g.clave) && evaluableG(g)).map((g) => g.id)
   return { nuevas, reabiertas, siguen, resueltas }
 }

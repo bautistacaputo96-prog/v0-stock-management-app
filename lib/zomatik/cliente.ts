@@ -336,6 +336,31 @@ export async function sucursalVisible(s: ZomatikSesion, path: string): Promise<s
   return sucursalDePagina(await fetchText(s, path))
 }
 
+/**
+ * Export XLSX con la sucursal confirmada ANTES y DESPUÉS (23.3): elige `sucursal`, mira en el buscador que la sesión
+ * quedó ahí, exporta y vuelve a mirar. Si la página no muestra el selector (`frm_selsuc`) o muestra otra sucursal, error:
+ * otro sistema la cambió y lo exportado puede ser de otra sucursal.
+ */
+export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET): Promise<Fila[]> {
+  const confirmar = async (cuando: string) => {
+    const suc = await sucursalVisible(s, path)
+    if (suc === null) throw new ZomatikError("formato", `No se ve la sucursal en ${path.split(".")[0]} (¿cambió la página?)`)
+    if (suc !== sucursal) throw new ZomatikError("formato", `La sesión estaba en otra sucursal (${suc}) ${cuando} del export: otro sistema la cambió`)
+  }
+  if (!(await elegirSucursal(s.cookie, sucursal))) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  await confirmar("antes")
+  const buf = await fetchRaw(s, `${path}?enviado=1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: armarParams(form, opts, true),
+  })
+  await confirmar("después")
+  if (esXlsx(buf)) return filasDeXlsx(buf)
+  const html = buf.toString("latin1")
+  if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  return parseHtmlTable(html).rows
+}
+
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */
 export async function fetchHtml(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda = {}): Promise<string> {
   await reafirmarRebucret(s)

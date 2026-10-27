@@ -27,7 +27,7 @@ type Dif = {
 }
 type Corrida = { inicio: string; fin: string | null; ok: boolean | null; origen: string; usuario: string | null; error: string | null; mail_at: string | null }
 
-const fmtT = (l: Lado) => (l.unidad === "t" ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t` : `${l.t.toLocaleString("es-AR")} kg`)
+const fmtT = (l: Lado) => (l.unidad === "t" ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t` : `${l.t.toLocaleString("es-AR")}${l.unidad ? ` ${l.unidad}` : ""}`)
 const unico = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x && !!x.trim()))].join(" / ") || "-"
 const hora = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }) : "-"
@@ -107,13 +107,17 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
   async function cambiar(d: Dif, accion: "revisar" | "reabrir") {
     setGuardando(d.id)
     setErr(null)
-    const r = await fetch("/api/control-ingresos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: d.id, accion, nota: notas[d.id] || null }),
-    })
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok) setErr(j?.error || `Error ${r.status}`)
+    try {
+      const r = await fetch("/api/control-ingresos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: d.id, accion, nota: notas[d.id] || null }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) setErr(j?.error || `Error ${r.status}`)
+    } catch {
+      setErr("No se pudo guardar. Probá de nuevo.")
+    }
     setGuardando(null)
     cargar()
   }
@@ -144,7 +148,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
         </Button>
         <span
           className="cursor-help text-muted-foreground"
-          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Toneladas iguales ±0,02; la fecha puede variar ±3 días; lo de los últimos 2 días no se avisa como faltante. Todos los días a las 16 le llega el mail a Juan con lo abierto. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
+          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Toneladas iguales ±0,02; la fecha puede variar ±3 días; lo de los últimos 2 días no se avisa como faltante. Todos los días a las 16:25 le llega el mail a Juan con lo abierto. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
         >
           (?)
         </span>

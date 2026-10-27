@@ -2,15 +2,15 @@
  * Control de ingresos de materia prima · SOLO servidor. Lee Zomatik (ESTAD R.COMPRA, solo lectura, lista cerrada de
  * lib/zomatik/web.ts), guarda la copia, cruza contra stock_entries, actualiza las diferencias y manda el mail.
  *
- * Nunca escribe en Zomatik ni en stock_entries. Escribe solo zomatik_remitos_compra, control_mp_diferencias y
+ * Nunca escribe en Zomatik ni en stock_entries. Escribe solo zomatik_remitos_compra (+ _dias), control_mp_diferencias y
  * control_mp_corridas, con la clave de servicio. Especificación: docs/control-ingresos-mp.md.
  *
  * Reglas de Zomatik (zomatik.md 23 y 24): mismo turno del robot que la lectura diaria y la NP
- * (zomatik_robot_tomar/soltar); la sucursal la comparte el usuario, así que se elige la 18 antes de cada export y
- * después se confirma en la página que sigue en la 18. Si no, ese tramo no se guarda.
+ * (zomatik_robot_tomar/soltar); la sucursal la comparte el usuario, así que antes y después de cada export se confirma
+ * en la página que la sesión está en la 18. Si no, ese tramo no se guarda ni cuenta como leído.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { obtenerSesion, discoverForm, fetchExport, sucursalVisible, SUCURSAL_REBUCRET, ZomatikError } from "@/lib/zomatik/cliente"
+import { obtenerSesion, discoverForm, fetchExportEnSucursal, ZomatikError, type FormInfo, type ZomatikSesion } from "@/lib/zomatik/cliente"
 import { textoError } from "@/lib/zomatik/lectura"
 import type { Fila } from "@/lib/zomatik/parseo"
 import { puedeBorrarViejos } from "@/lib/zomatik/foto"
@@ -18,17 +18,21 @@ import {
   conClaves,
   cruzar,
   desdeVentana,
+  evaluable,
   fechaArgentina,
+  fechasDe,
   filasCopia,
   planDeEstados,
   sumarDias,
   tramosLectura,
+  ordenTramos,
   CATEGORIAS,
   DEPOSITOS,
   MARGEN_DIAS,
   type Diferencia,
   type Guardada,
   type IngresoNuestro,
+  type OpcionesCruce,
   type RemitoZomatik,
   type Tramo,
 } from "@/lib/control-ingresos/cruce"
@@ -39,10 +43,16 @@ import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 export const puedeControlar = (u: UsuarioPermisos) => tipoDe(u) === "gerencial" || puedeCon(u, "materia_prima", "editar")
 
 const LISTADO = "reporte_remitoscompra.php"
-/** Vercel corta a los 60 s: la lectura de Zomatik usa como mucho esto desde que empieza el pedido. */
-const PRESUPUESTO_ZOMATIK_MS = 38_000
+/** maxDuration = 300 s (como Concretus con este listado en Hobby). La lectura de Zomatik termina a los 220 s del pedido. */
+export const LECTURA_HASTA_MS = 220_000
+/** No se arranca un tramo con menos de esto. */
+const MINIMO_TRAMO_MS = 25_000
+/** Espera del turno del robot (dentro del presupuesto de lectura). */
+const ESPERA_TURNO_MS = 20_000
 /** Si un export trae esto o más, puede venir cortado: se parte el tramo. */
 const SOSPECHA_CORTE = 150
+/** Un día de Zomatik cuenta como leído si se leyó en las últimas 30 h. */
+export const FRESCO_MS = 30 * 3600_000
 export const LINK_PANTALLA = "https://www.produccionrebucret.com/materias-primas?tab=control"
 /** Mail: a Juan, con copia a Bautista (por nombre en app_users, como lib/carga/servidor.ts). */
 export const MAIL_A = ["Juan Oreguy"]
@@ -55,60 +65,52 @@ const FROM = process.env.REPORTE_CALIDAD_FROM || "reportes@produccionrebucret.co
 
 export type ResultadoTramo = Tramo & { ok: boolean; filas?: number; motivo?: string }
 
-const nuevoError = (m: string) => new ZomatikError("formato", m)
+const errorFormato = (m: string) => new ZomatikError("formato", m)
+const espera = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const esDeSucursal = (e: unknown) => /otra sucursal|no se ve la sucursal/i.test((e as Error)?.message || "")
 
-/** Export de un depósito (o de todos) confirmando que la página sigue en REBUCRET. */
-async function exportarConfirmado(s: Awaited<ReturnType<typeof obtenerSesion>>, form: Awaited<ReturnType<typeof discoverForm>>, t: Tramo, deposito: string): Promise<Fila[]> {
-  const extra: Record<string, string> = { bus_deposito: deposito }
-  if ("bus_sucursal" in form.fields) extra.bus_sucursal = SUCURSAL_REBUCRET
-  const filas = await fetchExport(s, LISTADO, form, { desde: t.desde, hasta: t.hasta, extra }) // elige la 18 antes
-  const suc = await sucursalVisible(s, LISTADO)
-  if (suc !== SUCURSAL_REBUCRET) throw nuevoError(`la lectura vino de otra sucursal (${suc ?? "?"}): otro sistema la cambió`)
-  return filas
-}
+type Fila_ = NonNullable<ReturnType<typeof filasCopia>[number]>
 
 /**
- * Lee un tramo (Canning, Hudson y todos los depósitos) y lo graba en la copia. Si un export viene sospechoso de corte,
- * se parte en dos (hasta 1 día). Devuelve los tramos efectivamente leídos.
+ * Lee un tramo (Canning, Hudson y todos los depósitos) sin grabar nada. Si un export viene sospechoso de corte, se parte
+ * en dos (hasta 1 día) y se leen las dos mitades: o termina entero o tira error (el tramo no cuenta como leído).
  */
-async function leerTramo(
-  sb: SupabaseClient,
-  s: Awaited<ReturnType<typeof obtenerSesion>>,
-  form: Awaited<ReturnType<typeof discoverForm>>,
-  t: Tramo,
-  plantas: Map<number, string>,
-  queda: () => number,
-): Promise<ResultadoTramo[]> {
-  if (queda() < 8_000) return [{ ...t, ok: false, motivo: "sin tiempo (queda la lectura anterior)" }]
+async function filasTramo(s: ZomatikSesion, form: FormInfo, t: Tramo, limite: number): Promise<Fila_[]> {
+  if (Date.now() > limite - 10_000) throw errorFormato("sin tiempo para terminar el tramo")
+  const exportar = (deposito: string) => fetchExportEnSucursal(s, LISTADO, form, { desde: t.desde, hasta: t.hasta, extra: { bus_deposito: deposito } })
   const porDeposito: { deposito: number; filas: Fila[] }[] = []
-  for (const d of DEPOSITOS) porDeposito.push({ deposito: d.id, filas: await exportarConfirmado(s, form, t, String(d.id)) })
-  const todos = await exportarConfirmado(s, form, t, "")
+  for (const d of DEPOSITOS) porDeposito.push({ deposito: d.id, filas: await exportar(String(d.id)) })
+  const todos = await exportar("")
   const sospechoso = [...porDeposito.map((d) => d.filas.length), todos.length].some((n) => n >= SOSPECHA_CORTE)
   if (sospechoso && t.desde < t.hasta) {
     const medio = sumarDias(t.desde, Math.floor((Date.parse(t.hasta) - Date.parse(t.desde)) / 86_400_000 / 2))
-    return [...(await leerTramo(sb, s, form, { desde: sumarDias(medio, 1), hasta: t.hasta }, plantas, queda)), ...(await leerTramo(sb, s, form, { desde: t.desde, hasta: medio }, plantas, queda))]
+    return [...(await filasTramo(s, form, { desde: sumarDias(medio, 1), hasta: t.hasta }, limite)), ...(await filasTramo(s, form, { desde: t.desde, hasta: medio }, limite))]
   }
-  const filas = conClaves(filasCopia(porDeposito, todos).filter((f): f is NonNullable<typeof f> => !!f && f.fecha >= t.desde && f.fecha <= t.hasta)).map((f) => ({
-    ...f,
-    plant_id: f.deposito !== null ? plantas.get(f.deposito) ?? null : null,
-  }))
-  const { count, error: eC } = await sb.from("zomatik_remitos_compra").select("id", { count: "exact", head: true }).gte("fecha", t.desde).lte("fecha", t.hasta)
-  if (eC) throw eC
-  if ((count || 0) >= 10 && !puedeBorrarViejos(filas.length, count || 0))
-    return [{ ...t, ok: false, filas: filas.length, motivo: `trajo ${filas.length} renglones y había ${count}: no se reemplazó` }]
-  const { error } = await sb.rpc("control_mp_reemplazar_zomatik", { p_desde: t.desde, p_hasta: t.hasta, p_filas: filas })
-  if (error) throw error
-  return [{ ...t, ok: true, filas: filas.length, motivo: sospechoso ? "un día con muchos renglones: revisar si vino cortado" : undefined }]
+  const filas = filasCopia(porDeposito, todos).filter((f): f is Fila_ => !!f && f.fecha >= t.desde && f.fecha <= t.hasta)
+  // Señales de que el export vino de otra sucursal aunque la página diga 18
+  const nuestras = filas.filter((f) => f.deposito !== null).length
+  if (nuestras === 0 && filas.length > 0) throw errorFormato(`otra sucursal: Canning y Hudson vinieron vacíos y "todos" trajo ${filas.length}`)
+  if (filas.some((f) => /^\s*CCTS\s/i.test(f.articulo))) throw errorFormato("otra sucursal: vinieron artículos CCTS (de Concretus)")
+  return filas
 }
 
-/** Lee de Zomatik la ventana, con el turno del robot. No corta: devuelve lo que pudo y por qué no lo demás. */
+async function diasLeidos(sb: SupabaseClient, desde: string): Promise<Map<string, string>> {
+  const { data, error } = await sb.from("zomatik_remitos_compra_dias").select("fecha, leido_at").gte("fecha", desde).limit(2000)
+  if (error) throw error
+  return new Map(((data as any[]) || []).map((d) => [d.fecha, d.leido_at]))
+}
+
+/**
+ * Lee de Zomatik la ventana, con el turno del robot, hasta `t0 + LECTURA_HASTA_MS` (la espera del turno cuenta). Cada
+ * tramo leído entero se graba con sus días marcados como leídos; si no, no cuenta. No corta: devuelve lo que pudo.
+ */
 export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy: string, t0: number): Promise<{ ok: boolean; tramos: ResultadoTramo[]; error?: string }> {
-  const queda = () => PRESUPUESTO_ZOMATIK_MS - (Date.now() - t0)
+  const limite = t0 + LECTURA_HASTA_MS
   const quien = `control-mp·${t0.toString(36)}`
-  // Mismo turno que la lectura diaria y el robot de las NP (pg_cron cada 10 min): se espera hasta ~20 s
+  // Mismo turno que la lectura diaria y el robot de las NP (pg_cron cada 10 min)
   let { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
-  while (!error && data !== true && Date.now() - t0 < 20_000) {
-    await new Promise((r) => setTimeout(r, 3_000))
+  while (!error && data !== true && Date.now() - t0 < ESPERA_TURNO_MS) {
+    await espera(3_000)
     ;({ data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 }))
   }
   if (error) return { ok: false, tramos: [], error: "Falta la migración del turno de Zomatik (zomatik_robot_tomar)" }
@@ -118,13 +120,38 @@ export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy:
   }, 20_000)
   const tramos: ResultadoTramo[] = []
   try {
-    const { data: cfg } = await sb.from("zomatik_np_config").select("plant_id, deposito")
+    const piso = sumarDias(desde, -MARGEN_DIAS)
+    const [{ data: cfg }, leidos] = await Promise.all([sb.from("zomatik_np_config").select("plant_id, deposito"), diasLeidos(sb, piso)])
     const plantas = new Map<number, string>(((cfg as any[]) || []).filter((c) => c.deposito).map((c) => [Number(c.deposito), c.plant_id]))
     const s = await obtenerSesion()
     const form = await discoverForm(s, LISTADO)
-    for (const t of tramosLectura(sumarDias(desde, -MARGEN_DIAS), hoy)) {
+    if (!("bus_deposito" in form.fields)) throw errorFormato("El buscador de ESTAD R.COMPRA no tiene el filtro de depósito (¿cambió la página?)")
+    if (!form.fechaDesdeField || !form.fechaHastaField) throw errorFormato("El buscador de ESTAD R.COMPRA no tiene las fechas (¿cambió la página?)")
+    for (const t of ordenTramos(tramosLectura(piso, hoy), leidos)) {
+      if (limite - Date.now() < MINIMO_TRAMO_MS) {
+        tramos.push({ ...t, ok: false, motivo: "sin tiempo (queda la lectura anterior)" })
+        continue
+      }
       try {
-        tramos.push(...(await leerTramo(sb, s, form, t, plantas, queda)))
+        let filas: Fila_[]
+        try {
+          filas = await filasTramo(s, form, t, limite)
+        } catch (e) {
+          // Otro sistema cambió la sucursal (Concretus, por ejemplo): un reintento en 15 s
+          if (!esDeSucursal(e) || limite - Date.now() < MINIMO_TRAMO_MS + 15_000) throw e
+          await espera(15_000)
+          filas = await filasTramo(s, form, t, limite)
+        }
+        const copia = conClaves(filas).map((f) => ({ ...f, plant_id: f.deposito !== null ? plantas.get(f.deposito) ?? null : null }))
+        const { count, error: eC } = await sb.from("zomatik_remitos_compra").select("id", { count: "exact", head: true }).gte("fecha", t.desde).lte("fecha", t.hasta)
+        if (eC) throw eC
+        if ((count || 0) >= 10 && !puedeBorrarViejos(copia.length, count || 0)) {
+          tramos.push({ ...t, ok: false, filas: copia.length, motivo: `trajo ${copia.length} renglones y había ${count}: no se reemplazó` })
+          continue
+        }
+        const { error: eR } = await sb.rpc("control_mp_reemplazar_zomatik", { p_desde: t.desde, p_hasta: t.hasta, p_filas: copia })
+        if (eR) throw eR
+        tramos.push({ ...t, ok: true, filas: copia.length })
       } catch (e) {
         tramos.push({ ...t, ok: false, motivo: textoError(e) })
         if (e instanceof ZomatikError && ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida"].includes(e.codigo)) break
@@ -224,38 +251,37 @@ const filaDif = (d: Diferencia, ahora: string) => ({
   vista_at: ahora,
 })
 
-/** Graba el resultado del cruce en control_mp_diferencias. */
-async function guardarDiferencias(sb: SupabaseClient, difs: Diferencia[]): Promise<Record<string, number>> {
+async function upsertEnLotes(sb: SupabaseClient, filas: Record<string, unknown>[]) {
+  for (let i = 0; i < filas.length; i += 500) {
+    const { error } = await sb.from("control_mp_diferencias").upsert(filas.slice(i, i + 500), { onConflict: "clave" })
+    if (error) throw error
+  }
+}
+
+/** Graba el resultado del cruce en control_mp_diferencias (en lote: cada grupo con las mismas columnas). */
+async function guardarDiferencias(sb: SupabaseClient, difs: Diferencia[], opts: OpcionesCruce): Promise<Record<string, number>> {
   const ahora = new Date().toISOString()
-  const guardadas = await todasLasFilas<Guardada>((a, b) => sb.from("control_mp_diferencias").select("id, clave, estado").order("id").range(a, b))
-  const plan = planDeEstados(difs, guardadas)
-  for (let i = 0; i < plan.nuevas.length; i += 200) {
-    const { error } = await sb.from("control_mp_diferencias").insert(plan.nuevas.slice(i, i + 200).map((d) => ({ ...filaDif(d, ahora), estado: "abierta", detectada_at: ahora })))
+  const guardadas = await todasLasFilas<Guardada>((a, b) => sb.from("control_mp_diferencias").select("id, clave, estado, revisada_at, fecha, nuestro, zomatik").order("id").range(a, b))
+  // Solo se resuelve lo que hoy se pudo controlar: dentro de la ventana y con Zomatik leído en esas fechas
+  const plan = planDeEstados(difs, guardadas, (g) => evaluable(fechasDe(g as any), opts))
+  // Siguen: solo el detalle (el estado, la nota y quién revisó no se tocan)
+  await upsertEnLotes(sb, plan.siguen.map((r) => filaDif(r.d, ahora)))
+  // Nuevas: abiertas
+  await upsertEnLotes(sb, plan.nuevas.map((d) => ({ ...filaDif(d, ahora), estado: "abierta", detectada_at: ahora, resuelta_at: null })))
+  // Volvieron: abiertas, o revisadas con su nota si alguien ya las había revisado (no vuelven al mail)
+  await upsertEnLotes(sb, plan.reabiertas.map((r) => ({ ...filaDif(r.d, ahora), estado: r.revisada ? "revisada" : "abierta", detectada_at: ahora, resuelta_at: null })))
+  for (let i = 0; i < plan.resueltas.length; i += 500) {
+    const { error } = await sb.from("control_mp_diferencias").update({ estado: "resuelta", resuelta_at: ahora }).in("id", plan.resueltas.slice(i, i + 500))
     if (error) throw error
   }
-  for (const r of plan.reabiertas) {
-    const { error } = await sb
-      .from("control_mp_diferencias")
-      .update({ ...filaDif(r.d, ahora), estado: "abierta", detectada_at: ahora, resuelta_at: null, nota: null, revisada_por: null, revisada_at: null })
-      .eq("id", r.id)
-    if (error) throw error
-  }
-  for (const r of plan.siguen) {
-    const { error } = await sb.from("control_mp_diferencias").update(filaDif(r.d, ahora)).eq("id", r.id)
-    if (error) throw error
-  }
-  if (plan.resueltas.length) {
-    const { error } = await sb.from("control_mp_diferencias").update({ estado: "resuelta", resuelta_at: ahora }).in("id", plan.resueltas)
-    if (error) throw error
-  }
-  const resumen: Record<string, number> = { total: difs.length, nuevas: plan.nuevas.length + plan.reabiertas.length, resueltas: plan.resueltas.length }
+  const resumen: Record<string, number> = { total: difs.length, nuevas: plan.nuevas.length + plan.reabiertas.filter((r) => !r.revisada).length, resueltas: plan.resueltas.length }
   for (const c of CATEGORIAS) resumen[c.clave] = difs.filter((d) => d.categoria === c.clave).length
   return resumen
 }
 
 /**
  * Un control: lee Zomatik (si `leer`), cruza y graba las diferencias. Con `mail`, manda el mail del día.
- * `corridaId` sale de control_mp_registrar (el freno).
+ * `corridaId` sale de control_mp_registrar (el freno). `t0` = cuándo empezó el pedido (para el presupuesto).
  */
 export async function controlar(sb: SupabaseClient, opts: { corridaId: string; leer: boolean; mail: boolean; t0?: number }): Promise<ResultadoControl> {
   const t0 = opts.t0 ?? Date.now()
@@ -265,13 +291,16 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
   try {
     if (opts.leer) res.lectura = await leerZomatikCompras(sb, desde, hoy, t0)
     const desdeMargen = sumarDias(desde, -MARGEN_DIAS)
-    const [nuestros, zomatik] = await Promise.all([leerNuestros(sb, desdeMargen), leerCopiaZomatik(sb, desdeMargen)])
-    if (zomatik.length === 0) {
-      // Sin copia de Zomatik todo saldría como "falta en Zomatik": no se cruza
+    const [nuestros, zomatik, leidos] = await Promise.all([leerNuestros(sb, desdeMargen), leerCopiaZomatik(sb, desdeMargen), diasLeidos(sb, desdeMargen)])
+    // Solo cuentan los días de Zomatik leídos en las últimas 30 h: lo demás no se informa ni se resuelve
+    const frescos = new Set([...leidos].filter(([, l]) => Date.now() - Date.parse(l) <= FRESCO_MS).map(([d]) => d))
+    if (frescos.size === 0) {
       res.ok = false
-      res.motivo = `Todavía no hay remitos de Zomatik guardados${res.lectura?.error ? ` (${res.lectura.error})` : ""}`
+      res.motivo = `No hay una lectura reciente de Zomatik: no se controló${res.lectura?.error ? ` (${res.lectura.error})` : ""}`
     } else {
-      res.resumen = await guardarDiferencias(sb, cruzar(nuestros, zomatik, { hoy, desde }))
+      const oc: OpcionesCruce = { hoy, desde, cubierto: (d) => frescos.has(d) }
+      res.resumen = await guardarDiferencias(sb, cruzar(nuestros, zomatik, oc), oc)
+      res.resumen.dias_leidos = frescos.size
       if (res.lectura && !res.lectura.ok) res.ok = false
     }
     if (opts.mail) res.mail = await mandarMail(sb, hoy, res)

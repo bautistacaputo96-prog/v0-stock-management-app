@@ -41,17 +41,19 @@ export async function GET(req: Request) {
     if (planta && /^[0-9a-f-]{36}$/i.test(planta)) q = q.eq("plant_id", planta)
     if (desde && FECHA.test(desde)) q = q.gte("fecha", desde)
     if (hasta && FECHA.test(hasta)) q = q.lte("fecha", hasta)
-    const [difs, corrida, conteo] = await Promise.all([
+    const contar = (e: string) => sb.from("control_mp_diferencias").select("id", { count: "exact", head: true }).eq("estado", e)
+    const [difs, corrida, abiertas, revisadas, resueltas] = await Promise.all([
       q,
       sb.from("control_mp_corridas").select("inicio, fin, ok, origen, usuario, error, mail_at, resumen").order("inicio", { ascending: false }).limit(1),
-      sb.from("control_mp_diferencias").select("estado"),
+      contar("abierta"),
+      contar("revisada"),
+      contar("resuelta"),
     ])
     if (difs.error) {
       if (/control_mp_diferencias/.test(difs.error.message || "")) return NextResponse.json({ error: "Falta aplicar la migración del control (202610271900)." }, { status: 500 })
       throw difs.error
     }
-    const porEstado: Record<string, number> = { abierta: 0, revisada: 0, resuelta: 0 }
-    for (const f of (conteo.data as any[]) || []) porEstado[f.estado] = (porEstado[f.estado] || 0) + 1
+    const porEstado = { abierta: abiertas.count || 0, revisada: revisadas.count || 0, resuelta: resueltas.count || 0 }
     return NextResponse.json({ diferencias: difs.data || [], ultimaCorrida: (corrida.data as any[])?.[0] || null, porEstado })
   } catch (e) {
     return respuestaError(e)
@@ -72,7 +74,7 @@ export async function POST(req: Request) {
     const valores =
       accion === "revisar"
         ? { estado: "revisada", nota, revisada_por: r.sesion.usuario.name, revisada_at: new Date().toISOString() }
-        : { estado: "abierta", nota: null, revisada_por: null, revisada_at: null }
+        : { estado: "abierta", nota: null, revisada_por: null, revisada_at: null, detectada_at: new Date().toISOString() }
     const { data, error } = await sb
       .from("control_mp_diferencias")
       .update(valores)
