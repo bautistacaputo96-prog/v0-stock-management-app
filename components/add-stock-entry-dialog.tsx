@@ -26,15 +26,23 @@ import { useToast } from "@/hooks/use-toast"
 import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
+import { claveMaterial, enToneladas } from "@/lib/control-ingresos/cruce"
 
 const HUMIDITY_TOLERANCE = 3.0 // 3% tolerance
 const WET_SAMPLE_WEIGHT = 500 // Fixed wet sample weight in grams
+/** Un árido o el cemento con menos de esto en kg seguramente se cargó en toneladas (32,76 en vez de 32760). */
+const KG_SOSPECHOSO = 200
+
+/** ¿El material viene en camiones de toneladas? (áridos y cemento) */
+const vaEnToneladas = (m: { name: string; tipo?: string | null } | undefined) =>
+  !!m && (["arido_fino", "arido_grueso", "cemento"].includes(m.tipo || "") || enToneladas(claveMaterial(m.name)))
 
 type Material = {
   id: string
   name: string
   unit: string
   plant_id: string
+  tipo?: string | null
 }
 
 type Supplier = {
@@ -56,6 +64,8 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
   const [filteredCarriers, setFilteredCarriers] = useState<Carrier[]>([])
   const [showHumidityCalc, setShowHumidityCalc] = useState(false)
   const [drySampleWeight, setDrySampleWeight] = useState("")
+  /** La persona confirmó que la cantidad chica está bien en kg (se vuelve a preguntar si cambia la cantidad). */
+  const [kgConfirmados, setKgConfirmados] = useState(false)
   const [formData, setFormData] = useState({
     material_id: "",
     quantity: "",
@@ -143,6 +153,16 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
         variant: "destructive",
         title: "Error",
         description: "Debes seleccionar un material, un proveedor y una cantidad valida",
+      })
+      return
+    }
+
+    const cantidad = Number.parseFloat(formData.quantity)
+    if (vaEnToneladas(selectedMaterial) && cantidad > 0 && cantidad < KG_SOSPECHOSO && !kgConfirmados) {
+      toast({
+        variant: "destructive",
+        title: "Revisá la cantidad",
+        description: `¿Son toneladas? ${cantidad.toLocaleString("es-AR")} t = ${(cantidad * 1000).toLocaleString("es-AR")} kg. Tocá "Pasar a kg" o confirmá que son kg.`,
       })
       return
     }
@@ -318,6 +338,7 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
         notes: "",
         entry_date: new Date().toISOString().slice(0, 10),
       })
+      setKgConfirmados(false)
       setOpen(false)
       router.refresh()
       onSuccess?.()
@@ -507,10 +528,39 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
                 type="number"
                 step="0.01"
                 value={formData.quantity}
-                onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, quantity: e.target.value })
+                  setKgConfirmados(false)
+                }}
                 placeholder="0"
                 required
               />
+              {(() => {
+                const c = Number.parseFloat(formData.quantity)
+                if (!vaEnToneladas(selectedMaterial) || !(c > 0 && c < KG_SOSPECHOSO) || kgConfirmados) return null
+                return (
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    <span>
+                      ¿Son toneladas? {c.toLocaleString("es-AR", { maximumFractionDigits: 2 })} t = {(c * 1000).toLocaleString("es-AR")} kg
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => {
+                        setFormData({ ...formData, quantity: String(Math.round(c * 1000 * 100) / 100) })
+                        setKgConfirmados(false)
+                      }}
+                    >
+                      Pasar a kg
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setKgConfirmados(true)}>
+                      No, son kg
+                    </Button>
+                  </div>
+                )
+              })()}
             </div>
 
             <div className="space-y-2">
