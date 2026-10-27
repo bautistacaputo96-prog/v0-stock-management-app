@@ -11,7 +11,7 @@ import { MaterialFilter } from "@/components/material-filter"
 import { HumidityExcessTable } from "@/components/humidity-excess-table"
 import { StockEvolutionChart } from "@/components/stock-evolution-chart"
 import { SuppliersTable } from "@/components/suppliers-table"
-import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download } from "lucide-react"
+import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download, ClipboardCheck } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import * as XLSX from "xlsx"
 import { SeccionProtegida } from "@/components/seccion-protegida"
 import { usePermisos } from "@/lib/current-user"
+import { ControlIngresosZomatik } from "@/components/control-ingresos-zomatik"
 
 export default function MateriasPrimasPage() {
   return (
@@ -44,7 +45,9 @@ function MateriasPrimasContent() {
   const [selectedMaterial, setSelectedMaterial] = useState<string>("all")
   const searchParams = useSearchParams()
   const activeTab = searchParams.get("tab") || "stock"
-  const { puede } = usePermisos()
+  const { puede, esGerencial } = usePermisos()
+  // Control con Zomatik: gerenciales o materia_prima.editar (el servidor lo vuelve a controlar)
+  const veControl = esGerencial || puede("materia_prima", "editar")
   const supabase = createClient()
 
   useEffect(() => {
@@ -169,6 +172,7 @@ function MateriasPrimasContent() {
     { id: "ingresos", label: "Ingresos", icon: TrendingUp },
     { id: "humedad", label: "Excedentes de Humedad", icon: Droplets },
     { id: "proveedores", label: "Proveedores", icon: Truck },
+    ...(veControl ? [{ id: "control", label: "Control con Zomatik", icon: ClipboardCheck }] : []),
   ]
 
   return (
@@ -202,7 +206,7 @@ function MateriasPrimasContent() {
             <tab.icon className="h-4 w-4" />
             <span className="hidden sm:inline">{tab.label}</span>
             <span className="sm:hidden">
-              {tab.id === "stock" ? "Stock" : tab.id === "ingresos" ? "Ingresos" : tab.id === "humedad" ? "Humedad" : "Proveedores"}
+              {tab.id === "stock" ? "Stock" : tab.id === "ingresos" ? "Ingresos" : tab.id === "humedad" ? "Humedad" : tab.id === "control" ? "Control" : "Proveedores"}
             </span>
           </Link>
         ))}
@@ -281,6 +285,9 @@ function MateriasPrimasContent() {
           {selectedPlant && <SuppliersTable plantId={selectedPlant} />}
         </>
       )}
+
+      {/* Control con Zomatik */}
+      {activeTab === "control" && veControl && <ControlIngresosZomatik plants={plants} />}
     </div>
   )
 }

@@ -22,6 +22,7 @@ import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, type Fila } from "@/lib/zomatik/parseo"
 import type { LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import { ZOMATIK_WEB, LISTADOS, rutaPermitida, rutaDeLocation, rutaEscrituraNp } from "@/lib/zomatik/web"
+import { camposFormulario } from "@/lib/zomatik/np"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
 /** Sucursal REBUCRET en el selector global (spec 3). */
@@ -320,6 +321,19 @@ export async function fetchExport(s: ZomatikSesion, path: string, form: FormInfo
   const html = buf.toString("latin1")
   if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
   return parseHtmlTable(html).rows
+}
+
+/** Sucursal que muestra una página de Zomatik (el selector global `frm_selsuc`), o null si no se ve. */
+export function sucursalDePagina(html: string): string | null {
+  return camposFormulario(html, /frm_selsuc/i)?.campos.selsuc ?? null
+}
+
+/**
+ * Sucursal activa de la sesión, vista en el buscador de un listado (GET, solo lectura). Sirve para confirmar, justo
+ * después de un export, que la lectura vino de REBUCRET y no de la sucursal que puso otro sistema (23.3).
+ */
+export async function sucursalVisible(s: ZomatikSesion, path: string): Promise<string | null> {
+  return sucursalDePagina(await fetchText(s, path))
 }
 
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */

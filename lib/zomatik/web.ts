@@ -2,7 +2,8 @@
  * Zomatik · dirección y LISTA CERRADA de rutas (sin imports: la usan el navegador, el servidor y las pruebas).
  *
  * Dos grupos:
- *   1. Solo lectura (Z0): login, sucursal, los buscadores de 5 listados, la ficha del cliente y el XLS del acopio.
+ *   1. Solo lectura (Z0): login, sucursal, los buscadores de 6 listados, la ficha del cliente y el XLS del acopio.
+ *      El 6.º es ESTAD R.COMPRA (remitos de compra de materia prima), para el control de ingresos (docs/control-ingresos-mp.md).
  *      Cualquier otra ruta (manage_*, grabar_*, generar_*, set_*, _get*…) se rechaza ANTES de salir.
  *   2. Nota de pedido (Z2, aparte): lo justo para generar y vaciar una NP como en la prueba del 22/10 (spec 23).
  *      Solo se habilita con la llave de la planta prendida (`zomatik_np_config.activo`): el cliente lo pide con
@@ -18,8 +19,8 @@ export const ZOMATIK_WEB = "https://concretus.zomatik.com"
 
 const PROHIBIDO = /(^|\/)(manage_|grabar_|generar_|set_|_get|_validar|_traer|eliminar|borrar|anular|modificar_(?!clientes\.php\?codigo=\d+$))/i
 
-/** Los únicos listados que lee Z0 (buscador por GET y búsqueda/export por POST `?enviado=1`). */
-export const LISTADOS = ["listado_clientes.php", "listado_articulos.php", "reporte_remitosventa.php", "listado_proyectos.php", "listado_pedidos.php"] as const
+/** Los únicos listados que se leen (buscador por GET y búsqueda/export por POST `?enviado=1`). */
+export const LISTADOS = ["listado_clientes.php", "listado_articulos.php", "reporte_remitosventa.php", "listado_proyectos.php", "listado_pedidos.php", "reporte_remitoscompra.php"] as const
 
 /** ¿Se puede pedir esta ruta en solo lectura? `metodo` POST solo para login, sucursal y buscadores (`?enviado=1`). */
 export function rutaPermitida(path: string, metodo: "GET" | "POST"): boolean {
