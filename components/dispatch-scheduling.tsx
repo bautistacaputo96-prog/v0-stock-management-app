@@ -1489,7 +1489,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   <Label>Remito</Label>
                   <div className="grid grid-cols-3 gap-1">
                     {([
-                      ["", `Según ${(selectedSite?.remito_tipo || selectedClient?.remito_tipo) ? `obra/cliente (${selectedSite?.remito_tipo || selectedClient?.remito_tipo})` : "despacho"}`],
+                      ["", (selectedSite?.remito_tipo || selectedClient?.remito_tipo) ? `Según obra/cliente (${selectedSite?.remito_tipo || selectedClient?.remito_tipo})` : "Definir en despacho"],
                       ["R", "R · con factura"],
                       ["X", "X · sin factura"],
                     ] as const).map(([k, l]) => (
@@ -1584,33 +1584,6 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 </div>
               )}
 
-              {/* Fase 2: cómo se parte en viajes (solo con el interruptor) */}
-              {ve && (
-                <div className="rounded-md border border-violet-200 bg-violet-50/40 p-2 space-y-1.5">
-                  <div className="grid gap-x-3 gap-y-2 grid-cols-2 md:grid-cols-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-muted-foreground">m³ por camión</Label>
-                      <Input type="number" step="0.5" min="0.5" className="bg-background" value={form.m3_por_viaje} onChange={(e) => setForm({ ...form, m3_por_viaje: e.target.value })} />
-                    </div>
-                    <div className="space-y-0.5">
-                      <Label className="text-muted-foreground">Minutos entre camiones</Label>
-                      <Input type="number" min="1" className="bg-background" value={form.espaciado_min} onChange={(e) => setForm({ ...form, espaciado_min: e.target.value })} placeholder="Lo que tarda en descargar" />
-                    </div>
-                    <div className="flex items-end pb-1"><NuevoBadge /></div>
-                  </div>
-                  {(() => {
-                    // Tiempos reales: m³ por camión habituales de la obra (si tiene un patrón claro y es distinto)
-                    const sug = tiemposAuto ? m3ParaSugerir(tiemposAuto, parseFloat(form.m3_por_viaje)) : null
-                    return sug ? (
-                      <div className="flex items-center gap-2 flex-wrap text-[11px] text-violet-800">
-                        <span>Esta obra suele llevar <strong>{sug.m3.toLocaleString("es-AR")} m³ por camión</strong> ({sug.viajes} viajes, de {sug.desde.toLocaleString("es-AR")} a {sug.hasta.toLocaleString("es-AR")}).</span>
-                        <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" disabled={soloLectura} onClick={() => setForm({ ...form, m3_por_viaje: String(sug.m3) })}>Usar {sug.m3.toLocaleString("es-AR")} m³</Button>
-                      </div>
-                    ) : null
-                  })()}
-                  <p className="text-[11px] text-muted-foreground">Al guardar se arman los viajes. El último camión lleva el resto. Los viajes no tocan stock.</p>
-                </div>
-              )}
             </SeccionPedido>
 
             <SeccionPedido titulo="Nota de pedido (Zomatik)">
@@ -1640,7 +1613,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 {masDatos ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 Más datos
                 <span className="font-normal normal-case tracking-normal">
-                  {[form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && `fibra ${form.fiber_kg_per_m3} kg/m³`, form.mixer_id && `camión ${mixers.find((m) => m.id === form.mixer_id)?.license_plate || ""}`, form.observations.trim() && "con observaciones"].filter(Boolean).join(" · ") || "(fibra, camión, observaciones)"}
+                  {[form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && `fibra ${form.fiber_kg_per_m3} kg/m³`, form.mixer_id && `camión ${mixers.find((m) => m.id === form.mixer_id)?.license_plate || ""}`, form.observations.trim() && "con observaciones"].filter(Boolean).join(" · ") || (ve ? "(fibra, camión, observaciones, viajes)" : "(fibra, camión, observaciones)")}
                 </span>
               </button>
               {masDatos && (
@@ -1687,6 +1660,36 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     <Label>Observaciones</Label>
                     <Textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} rows={2} />
                   </div>
+                  {/* Fase 2: cómo se parte en viajes (solo con el interruptor). Movido a "Más datos" el 28/10: no se entendía */}
+                  {ve && (
+                    <div className="rounded-md border border-violet-200 bg-violet-50/40 p-2 space-y-1.5 md:col-span-3">
+                      <div className="grid gap-x-3 gap-y-2 grid-cols-2 md:grid-cols-3">
+                        <div className="space-y-0.5">
+                          <Label className="text-muted-foreground">Capacidad por camión (m³)</Label>
+                          <Input type="number" step="0.5" min="0.5" className="bg-background" value={form.m3_por_viaje} onChange={(e) => setForm({ ...form, m3_por_viaje: e.target.value })} placeholder="8" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <Label className="text-muted-foreground">Cada cuántos minutos sale un camión</Label>
+                          <Input type="number" min="1" className="bg-background" value={form.espaciado_min} onChange={(e) => setForm({ ...form, espaciado_min: e.target.value })} placeholder="Vacío: lo que tarda en descargar" />
+                        </div>
+                        <div className="flex items-end gap-2 pb-1">
+                          <span className="cursor-help rounded-full border px-1.5 text-[11px] text-muted-foreground" title="Sirve para armar los viajes del pedido. Si no sabés, dejalo como está.">?</span>
+                          <NuevoBadge />
+                        </div>
+                      </div>
+                      {(() => {
+                        // Tiempos reales: m³ por camión habituales de la obra (si tiene un patrón claro y es distinto)
+                        const sug = tiemposAuto ? m3ParaSugerir(tiemposAuto, parseFloat(form.m3_por_viaje)) : null
+                        return sug ? (
+                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-violet-800">
+                            <span>Esta obra suele llevar <strong>{sug.m3.toLocaleString("es-AR")} m³ por camión</strong> ({sug.viajes} viajes, de {sug.desde.toLocaleString("es-AR")} a {sug.hasta.toLocaleString("es-AR")}).</span>
+                            <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] bg-background" disabled={soloLectura} onClick={() => setForm({ ...form, m3_por_viaje: String(sug.m3) })}>Usar {sug.m3.toLocaleString("es-AR")} m³</Button>
+                          </div>
+                        ) : null
+                      })()}
+                      <p className="text-[11px] text-muted-foreground">Sirve para armar los viajes del pedido. Si no sabés, dejalo como está. El último camión lleva el resto; los viajes no tocan stock.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
