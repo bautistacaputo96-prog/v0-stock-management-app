@@ -15,8 +15,8 @@ Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por pla
 
 ## Zomatik (`reporte_movimientosdestock.php`, INVENTARIO › MOVIMIENTOS STOCK)
 - Es solo lectura: entra en la lista cerrada de `lib/zomatik/web.ts`.
-- Se lee en el mismo cron de las 16:25, **después** del control de remitos y antes del mail. Si después de los remitos quedan menos de 40 s, no se lee. Si falla, el control de remitos no se entera, y el mail lo avisa.
-- Tiene su botón "Actualizar ahora", como mucho uno cada 2 min.
+- Se lee en el mismo cron de las 16:25, en este orden: remitos, **mail** (con la última lectura de stock guardada) y recién después la lectura de stock nueva, que queda para el mail del día siguiente y para la pantalla. Así el mail de remitos nunca se pierde. La lectura de stock arranca solo si pasaron menos de 190 s y termina a los 255 s (`maxDuration` 300).
+- Tiene su botón "Actualizar ahora", como mucho uno cada 2 min y nunca entre las 16:15 y las 16:45 ("se actualiza solo a las 16:25").
 - Protecciones: el mismo turno del robot y la sucursal 18 confirmada en la página antes y después de cada export (`fetchMatrizEnSucursal`).
 - **Qué se lee:** por depósito (116 Canning, 113 Hudson) y artículo, con `bus_linea` 131 (MP Áridos) o 130 (MP Cemento). El período va desde el inicio de la ventana del control (01/08, o los últimos 90 días) hasta hoy. Las cantidades están en toneladas.
 - **El artículo (`idarticulo`):**
@@ -27,7 +27,12 @@ Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por pla
   - el stock inicial es el primer saldo menos su movimiento;
   - el stock final es el **último Saldo**;
   - cada lectura comprueba que el total coincide con el inicial (`total_es_inicial`). Si no coincide, la pantalla lo avisa.
-- **Lectura cortada:** también se comprueba que cada saldo sea el anterior más su movimiento. Si no cierra, el reporte vino cortado o mezcla artículos, y no se guarda.
+- **Lectura cortada:** también se comprueba que cada saldo sea el anterior más su movimiento. Si no cierra, el reporte vino cortado o mezcla artículos, y no se guarda. Además es **sospechosa** si:
+  - tiene 300 renglones o más;
+  - la página trae un link "Siguiente" o `pagina=`;
+  - Zomatik no tiene movimientos en los últimos 10 días y nosotros tenemos consumos después.
+
+  Si es sospechosa, se parte el período en dos. Si alguna mitad sigue sospechosa, no se guarda y la pantalla muestra el aviso.
 - **Entró y salió:** por el signo del movimiento. El detalle muestra el prefijo del comprobante: RMP es compra, RMI es consumo, y puede haber otros.
 
 ## Tablas (migración `supabase/migrations/202610281800_control_stock_mp.sql`, sin aplicar)
@@ -41,7 +46,8 @@ Materias Primas › **Control de stock**, al lado de "Control con Zomatik", con 
 - Una fila por planta y material, para el período elegido (por defecto, el mes en curso).
 - Nuestro sistema: inicio, entró, salió, recuentos y final.
 - Zomatik: inicio, entró, salió y final.
-- Diferencia en t y % del final, de lo que entró y de lo que salió. Va en **rojo si supera el 5 %** y es de al menos media tonelada.
+- Diferencia en t y % del final, del neto (entró − salió), de lo que entró y de lo que salió. Va en **rojo si el final o el neto superan el 5 %** y son de al menos media tonelada. Una devolución (en un sistema resta de lo que entró y en el otro suma a lo que salió) no marca rojo si el neto coincide.
+- Las filas con la lectura de Zomatik vieja (más de 30 h) van en gris, con "lectura del dd/mm".
 - Al tocar una fila: el detalle por día de los dos lados, los comprobantes de Zomatik por tipo, el ajuste sin registro y cómo se leyó Zomatik.
 - Es compacta: `text-xs` y sin negritas.
 
@@ -51,13 +57,15 @@ Se suma al mail de las 16:25 (`lib/control-ingresos/servidor.ts`) una tabla cort
 - las filas en rojo, marcadas;
 - el link a la pantalla.
 
-Si hay filas en rojo, el mail sale aunque no haya remitos abiertos.
+- Una fila en rojo dispara el mail **solo si es nueva**, es decir, si no estaba en rojo en el último mail. Así, los stocks negativos de Hudson no lo mandan todos los días.
+- Si el mail sale por los remitos, la sección de stock va siempre, con todas las filas en rojo.
+- Las filas con la lectura vieja van en gris y no disparan el mail.
 
 ## Criterios de aceptación
-1. Canning, CPC 40, del 20 al 27/10: nuestro sistema da 106,8 t de entradas y 122,2 t de consumo (`npm run test:control-stock`, 10 pruebas, con el extracto real de Zomatik).
+1. Canning, CPC 40, del 20 al 27/10: nuestro sistema da 106,8 t de entradas y 122,2 t de consumo (`npm run test:control-stock`, 15 pruebas, con el extracto real de Zomatik).
 2. El "Total acumulado" se reconoce como saldo inicial y el final es el último Saldo.
 3. Un reporte que no cierra o que trae remitos de otro artículo no se guarda.
-4. Si la lectura de stock falla, el control de remitos y su mail siguen igual.
+4. Si la lectura de stock falla, el control de remitos y su mail siguen igual: el mail sale antes de leer el stock.
 5. Nunca se escribe en Zomatik ni en `stock_entries`, `stock_movements` o `materials`.
 6. tsc sin errores nuevos (17 de la base) y `next build --webpack` bien.
 
@@ -75,4 +83,5 @@ Si hay filas en rojo, el mail sale aunque no haya remitos abiertos.
    Es stock que cambió sin un movimiento que lo explique. *Recomiendo* revisarlo con Bautista antes del próximo recuento.
 2. **Stock negativo en Hudson:** Piedra 6/20 −60 t y Arena 0/6 −115 t. Seguramente faltan ingresos cargados o hubo despachos cruzados. El control lo va a mostrar contra Zomatik.
 3. **Otros comprobantes de Zomatik** (ajustes, remito cambio, scrap): hoy cuentan en entró o salió según su signo, y se ven por prefijo en el detalle. *Recomiendo* separarlos en una columna cuando aparezcan en la primera corrida.
-4. **Rojo:** más del 5 % y al menos 0,5 t. ¿El mínimo en toneladas está bien? *Recomiendo* dejarlo, para no marcar stocks cerca de cero.
+4. **Rojo:** más del 5 % y al menos 0,5 t (confirmado en la revisión).
+5. **"Sin movimientos en 10 días":** si Juan carga los consumos (RMI) en Zomatik cada más de 10 días, esa planta y material nunca se guardaría. *Recomiendo* mirar en la primera corrida cada cuánto aparecen los RMI y ajustar los 10 días.

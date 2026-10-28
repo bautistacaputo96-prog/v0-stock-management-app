@@ -41,10 +41,14 @@ import {
 import { armarMail, type DiferenciaMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
+import { rojasNuevas } from "@/lib/control-stock/calculo"
 
-/** El control de stock (docs/control-stock-mp.md) se lee después de los remitos, en el mismo cron, si quedan 40 s. */
-const STOCK_ULTIMO_INICIO_MS = 240_000
-const STOCK_LIMITE_MS = 280_000
+/**
+ * El control de stock (docs/control-stock-mp.md) va en el mismo cron: remitos → mail (con la última lectura de stock
+ * guardada) → lectura de stock nueva (para el mail de mañana y la pantalla). Así el mail de remitos nunca se pierde.
+ */
+const STOCK_ULTIMO_INICIO_MS = 190_000
+const STOCK_LIMITE_MS = 255_000
 
 /** Quién usa el control: los gerenciales o quien tenga materia_prima.editar (se controla en el servidor). */
 export const puedeControlar = (u: UsuarioPermisos) => tipoDe(u) === "gerencial" || puedeCon(u, "materia_prima", "editar")
@@ -245,7 +249,7 @@ export type ResultadoControl = {
   ok: boolean
   motivo?: string
   lectura?: { ok: boolean; tramos: ResultadoTramo[]; error?: string }
-  resumen?: Record<string, number>
+  resumen?: Record<string, number> & { stock_rojas?: string[] }
   mail?: { enviado: boolean; a: string[]; motivo?: string }
   /** Lectura del control de stock (solo en el cron); no cambia `ok` del control de remitos. */
   stock?: ResultadoStock
@@ -316,15 +320,16 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
       if (res.lectura && !res.lectura.ok) res.ok = false
     }
     if (opts.mail) {
-      // Control de stock: aparte, para que si falla no atrase ni rompa el de remitos
-      let seccion: { html: string; rojas: number } | null = null
+      // 1) El mail, con la última lectura de stock guardada (si falla el stock, el mail de remitos sale igual)
+      const seccion = await seccionStockParaMail(sb, hoy, null)
+      res.mail = await mandarMail(sb, hoy, res, seccion)
+      if (res.mail.enviado) res.resumen = { ...(res.resumen || {}), stock_rojas: seccion?.rojas || [] } as any
+      // 2) Después, la lectura de stock nueva (para el mail de mañana y para la pantalla)
       try {
         res.stock = Date.now() - t0 < STOCK_ULTIMO_INICIO_MS ? await leerStockZomatik(sb, { t0, limite: t0 + STOCK_LIMITE_MS }) : { ok: false, partes: [], error: "sin tiempo después de los remitos", ms: 0 }
       } catch (e) {
         res.stock = { ok: false, partes: [], error: textoError(e), ms: 0 }
       }
-      seccion = await seccionStockParaMail(sb, hoy, res.stock && !res.stock.ok ? res.stock.error : null)
-      res.mail = await mandarMail(sb, hoy, res, seccion)
     }
   } catch (e) {
     res.ok = false
@@ -359,8 +364,8 @@ async function mailsDe(sb: SupabaseClient, nombres: string[]): Promise<string[]>
  * desde el último mail mandado (o de las últimas 24 h si nunca se mandó). Si no se pudo leer Zomatik, se avisa arriba;
  * si además no hay nada abierto, va solo a Bautista.
  */
-async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl, stock: { html: string; rojas: number } | null = null): Promise<{ enviado: boolean; a: string[]; motivo?: string }> {
-  const { data: previos } = await sb.from("control_mp_corridas").select("mail_at").not("mail_at", "is", null).order("mail_at", { ascending: false }).limit(1)
+async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl, stock: { html: string; rojas: string[] } | null = null): Promise<{ enviado: boolean; a: string[]; motivo?: string }> {
+  const { data: previos } = await sb.from("control_mp_corridas").select("mail_at, resumen").not("mail_at", "is", null).order("mail_at", { ascending: false }).limit(1)
   const ultimo = (previos as any[])?.[0]?.mail_at as string | undefined
   if (ultimo && fechaArgentina(ultimo) === hoy) return { enviado: false, a: [], motivo: "ya se mandó hoy" }
   const { data, error } = await sb.from("control_mp_diferencias").select("categoria, fecha, detalle, nuestro, zomatik, detectada_at").eq("estado", "abierta").order("fecha")
@@ -371,7 +376,9 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   const siguen = abiertas.filter((d) => Date.parse(d.detectada_at) <= corte)
   const fallo = res.motivo || res.lectura?.error
   const aviso = fallo ? `Hoy no se pudo leer todo de Zomatik (${fallo}). El control usa la última lectura guardada.` : null
-  const stockRojo = (stock?.rojas || 0) > 0
+  // Una fila de stock en rojo dispara el mail solo si es nueva (no estaba en rojo en el último mail)
+  const rojasPrevias: string[] = ((previos as any[])?.[0]?.resumen?.stock_rojas as string[]) || []
+  const stockRojo = rojasNuevas(stock?.rojas || [], rojasPrevias).length > 0
   if (!abiertas.length && !aviso && !stockRojo) return { enviado: false, a: [], motivo: "sin diferencias abiertas" }
   if (!process.env.RESEND_API_KEY) return { enviado: false, a: [], motivo: "falta RESEND_API_KEY" }
   // Solo a Bautista si lo único que hay es el aviso de que no se pudo leer
@@ -381,7 +388,7 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   if (!to.length) return { enviado: false, a: [], motivo: `${(soloBautista ? MAIL_CC : MAIL_A).join(", ")} sin mail cargado` }
   const armado = armarMail({ nuevas, siguen, link: LINK_PANTALLA, aviso, hoy, extra: stock?.html })
   const html = armado.html
-  const asunto = stockRojo ? `${armado.asunto} · stock: ${stock!.rojas} en rojo` : armado.asunto
+  const asunto = stockRojo ? `${armado.asunto} · stock: ${stock!.rojas.length} en rojo` : armado.asunto
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },

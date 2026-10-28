@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useState } from "react"
 import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { enHorarioDelCron, MENSAJE_HORARIO_CRON } from "@/lib/control-stock/calculo"
 
 type Dia = { fecha: string; entro: number; salio: number; ajustes: number; saldo: number }
 type Lado = { inicio: number; entro: number; salio: number; ajustes: number; final: number; porDia: Dia[]; porPrefijo?: Record<string, { entro: number; salio: number; n: number }> }
@@ -21,7 +22,7 @@ type Fila = {
   sinRegistro: number | null
   ultimoRecuento: string | null
   zomatik: Lado | null
-  comparacion: { final: Dif; entro: Dif; salio: Dif; rojo: boolean } | null
+  comparacion: { final: Dif; neto: Dif; entro: Dif; salio: Dif; rojo: boolean } | null
   lectura: { leidoAt: string | null; vieja: boolean; error: string | null; totalEsInicial: boolean | null; totalAcumulado: number | null; saldoInicial: number | null; idarticulo: string | null; verificado: string | null; desde: string | null } | null
 }
 
@@ -92,6 +93,7 @@ export function ControlStockZomatik() {
     cargar()
   }
 
+  const horarioCron = enHorarioDelCron()
   const ultimaLectura = (filas || []).map((f) => f.lectura?.leidoAt).filter((x): x is string => !!x).sort().pop() || null
 
   return (
@@ -99,13 +101,14 @@ export function ControlStockZomatik() {
       <div className="flex flex-wrap items-center gap-2">
         <Input type="date" className="h-7 w-36 text-xs" value={desde} onChange={(e) => setDesde(e.target.value)} title="Desde (por defecto, el 1.º del mes)" />
         <Input type="date" className="h-7 w-36 text-xs" value={hasta} onChange={(e) => setHasta(e.target.value)} title="Hasta (por defecto, hoy)" />
-        <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" disabled={leyendo} onClick={actualizar}>
+        <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" disabled={leyendo || horarioCron} onClick={actualizar} title={horarioCron ? MENSAJE_HORARIO_CRON : undefined}>
           {leyendo ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           Actualizar ahora
         </Button>
+        {horarioCron && <span className="text-muted-foreground">{MENSAJE_HORARIO_CRON}</span>}
         <span
           className="cursor-help text-muted-foreground"
-          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia (y al menos media tonelada). Tocá una fila para ver el detalle por día. Zomatik se lee todos los días antes del mail de las 16:25."
+          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia y al menos media tonelada, en el stock final o en el neto (entró − salió: una devolución no lo cambia). En gris, las filas con la lectura de Zomatik vieja. Tocá una fila para ver el detalle por día. Zomatik se lee solo todos los días, después del mail de las 16:25."
         >
           (?)
         </span>
@@ -133,7 +136,7 @@ export function ControlStockZomatik() {
                 <th className="border-l px-1.5 py-1 text-left font-normal" colSpan={4}>
                   Zomatik (t)
                 </th>
-                <th className="border-l px-1.5 py-1 text-left font-normal" colSpan={3}>
+                <th className="border-l px-1.5 py-1 text-left font-normal" colSpan={4}>
                   Diferencia (t y %)
                 </th>
                 <th></th>
@@ -151,6 +154,7 @@ export function ControlStockZomatik() {
                 <th className="px-1.5 py-1 font-normal">Salió</th>
                 <th className="px-1.5 py-1 font-normal">Final</th>
                 <th className="border-l px-1.5 py-1 font-normal">Final</th>
+                <th className="px-1.5 py-1 font-normal" title="Entró − salió: una devolución no lo cambia">Neto</th>
                 <th className="px-1.5 py-1 font-normal">Entró</th>
                 <th className="px-1.5 py-1 font-normal">Salió</th>
                 <th className="px-1.5 py-1 text-left font-normal"></th>
@@ -161,14 +165,16 @@ export function ControlStockZomatik() {
                 const k = f.materialId
                 const z = f.zomatik
                 const c = f.comparacion
+                const vieja = !!(z && f.lectura?.vieja && f.lectura.leidoAt)
                 const avisos = [
-                  !z ? (f.lectura?.error ? `Zomatik: ${f.lectura.error}` : "sin lectura de Zomatik") : null,
-                  f.lectura?.vieja && z ? "lectura de Zomatik vieja" : null,
+                  !z && !f.lectura?.error ? "sin lectura de Zomatik" : null,
+                  f.lectura?.error ? `última lectura de Zomatik: ${f.lectura.error}` : null,
+                  vieja ? `lectura del ${ddmm(new Date(Date.parse(f.lectura!.leidoAt!) - 3 * 3600_000).toISOString().slice(0, 10))}` : null,
                   f.sinRegistro ? `ajuste sin registro ${n1(f.sinRegistro)} t` : null,
                 ].filter(Boolean)
                 return (
                   <Fragment key={k}>
-                    <tr className={`cursor-pointer border-b hover:bg-muted/50 ${c?.rojo ? "bg-red-50/60" : ""}`} onClick={() => setAbierta(abierta === k ? null : k)}>
+                    <tr className={`cursor-pointer border-b hover:bg-muted/50 ${vieja ? "text-muted-foreground" : c?.rojo ? "bg-red-50/60" : ""}`} onClick={() => setAbierta(abierta === k ? null : k)}>
                       <td className="px-1.5 py-1">{f.planta}</td>
                       <td className="px-1.5 py-1">{f.material}</td>
                       <td className="border-l px-1.5 py-1 text-right">{n1(f.nuestro.inicio)}</td>
@@ -181,13 +187,14 @@ export function ControlStockZomatik() {
                       <td className="px-1.5 py-1 text-right">{n1(z?.salio)}</td>
                       <td className="px-1.5 py-1 text-right">{n1(z?.final)}</td>
                       <CeldaDif d={c?.final} />
+                      <CeldaDif d={c?.neto} />
                       <CeldaDif d={c?.entro} />
                       <CeldaDif d={c?.salio} />
                       <td className="px-1.5 py-1 text-amber-700">{avisos.join(" · ")}</td>
                     </tr>
                     {abierta === k && (
                       <tr className="border-b bg-muted/30">
-                        <td colSpan={15} className="px-2 py-2">
+                        <td colSpan={16} className="px-2 py-2">
                           <Detalle f={f} />
                         </td>
                       </tr>

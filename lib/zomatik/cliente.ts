@@ -367,7 +367,7 @@ export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form
  * Un reporte como matriz (filas × celdas, con las filas sueltas como "Total acumulado: N"), con la sucursal confirmada
  * antes y después como `fetchExportEnSucursal`. Acepta Excel (xlsx o xls) o, si Zomatik devuelve la página, su tabla.
  */
-export async function fetchMatrizEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET): Promise<{ filas: (string | number)[][]; formato: "excel" | "html" }> {
+export async function fetchMatrizEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET): Promise<{ filas: (string | number)[][]; formato: "excel" | "html"; paginado: boolean }> {
   const confirmar = async (cuando: string) => {
     const suc = await sucursalVisible(s, path)
     if (suc === null) throw new ZomatikError("formato", `No se ve la sucursal en ${path.split(".")[0]} (¿cambió la página?)`)
@@ -385,11 +385,12 @@ export async function fetchMatrizEnSucursal(s: ZomatikSesion, path: string, form
   if (esXlsx(buf) || esXls) {
     const wb = XLSX.read(buf, { type: "buffer" })
     const ws = wb.Sheets[wb.SheetNames[0]]
-    return { filas: ws ? XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, raw: true, defval: "" }) : [], formato: "excel" }
+    return { filas: ws ? XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, raw: true, defval: "" }) : [], formato: "excel", paginado: false }
   }
   const html = buf.toString("latin1")
   if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
-  return { filas: matrizDeTablaHtml(html), formato: "html" }
+  // Si la página trae paginado ("Siguiente", pagina=), lo que vino es solo una parte
+  return { filas: matrizDeTablaHtml(html), formato: "html", paginado: /<a\b[^>]*>[^<]*siguiente|[?&]pagina=\d/i.test(html) }
 }
 
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */

@@ -17,8 +17,12 @@ import { desdeVentana, fechaArgentina } from "@/lib/control-ingresos/cruce"
 import {
   MATERIALES,
   articuloDeListado,
+  clavesRojas,
   comparar,
   inicioDeMes,
+  partirPeriodo,
+  sospechaCorte,
+  unirMitades,
   leerReporteStock,
   libroDesdeRecuento,
   materialDeNombre,
@@ -106,6 +110,17 @@ export async function leerStockZomatik(sb: SupabaseClient, opts: { t0: number; l
     ])
     const plantaDe = new Map<number, string>(((cfg as any[]) || []).map((c) => [Number(c.deposito), c.plant_id]))
     const idPrevio = new Map<string, string>(((previas.data as any[]) || []).filter((p) => p.idarticulo).map((p) => [`${p.deposito}|${p.codigo_articulo}`, p.idarticulo]))
+    // Último consumo nuestro de cada planta y material (para sospechar de un reporte cortado)
+    const ultimoConsumo = new Map<string, string>()
+    const { data: mats } = await sb.from("materials").select("id, name, plant_id")
+    for (const m of (mats as any[]) || []) {
+      const clave = materialDeNombre(m.name)
+      const dep = [...plantaDe].find(([, p]) => p === m.plant_id)?.[0]
+      if (!clave || !dep) continue
+      const { data: u } = await sb.from("stock_movements").select("movement_date").eq("material_id", m.id).eq("movement_type", "consumo").lte("movement_date", hoy).order("movement_date", { ascending: false }).limit(1)
+      const f = (u as any[])?.[0]?.movement_date
+      if (f) ultimoConsumo.set(`${dep}|${MATERIALES.find((x) => x.clave === clave)!.codigo}`, String(f))
+    }
     const s = await obtenerSesion()
     const articulos = await articulosMp(s)
     const form: FormInfo = await discoverForm(s, REPORTE)
@@ -131,15 +146,40 @@ export async function leerStockZomatik(sb: SupabaseClient, opts: { t0: number; l
               parte.motivo = "sin tiempo (queda la lectura anterior)"
               break
             }
-            const m = await fetchMatrizEnSucursal(s, REPORTE, form, {
-              desde,
-              hasta: hoy,
-              extra: { bus_deposito: String(dep.id), bus_linea: mat.linea, idarticulo: id, articulo: art?.nombre || "" },
-            })
-            const r = leerReporteStock(m.filas)
-            if (!r.encabezado && r.totalAcumulado === null) {
+            const leer = async (p: { desde: string; hasta: string }) => {
+              const m = await fetchMatrizEnSucursal(s, REPORTE, form, {
+                desde: p.desde,
+                hasta: p.hasta,
+                extra: { bus_deposito: String(dep.id), bus_linea: mat.linea, idarticulo: id, articulo: art?.nombre || "" },
+              })
+              return { m, r: leerReporteStock(m.filas) }
+            }
+            const consumo = ultimoConsumo.get(`${dep.id}|${mat.codigo}`) || null
+            const primera = await leer({ desde, hasta: hoy })
+            if (!primera.r.encabezado && primera.r.totalAcumulado === null) {
               parte.intentos!.push(`${id}: no vino la tabla`)
               continue
+            }
+            let r = { movs: primera.r.movs, totalAcumulado: primera.r.totalAcumulado }
+            const m = primera.m
+            // ¿Cortada? Se parte el período en dos; si sigue sospechosa, no se guarda (queda el aviso en la pantalla)
+            const sospecha = sospechaCorte({ movs: r.movs, paginado: m.paginado, hoy, ultimoConsumoNuestro: consumo })
+            if (sospecha) {
+              const mitades = partirPeriodo(desde, hoy)
+              if (!mitades || opts.limite - Date.now() < 25_000) {
+                parte.intentos!.push(`${id}: ${sospecha}`)
+                continue
+              }
+              const a = await leer(mitades[0])
+              const b = await leer(mitades[1])
+              const sigue =
+                sospechaCorte({ movs: a.r.movs, paginado: a.m.paginado, hoy: mitades[0].hasta, ultimoConsumoNuestro: null }) ||
+                sospechaCorte({ movs: b.r.movs, paginado: b.m.paginado, hoy, ultimoConsumoNuestro: consumo })
+              if (sigue) {
+                parte.intentos!.push(`${id}: partido en dos, sigue sospechosa (${sigue})`)
+                continue
+              }
+              r = { movs: unirMitades(a.r.movs, b.r.movs), totalAcumulado: a.r.totalAcumulado }
             }
             const v = verificarLectura(r.movs, r.totalAcumulado)
             if (!v.cierra) {
@@ -321,26 +361,27 @@ export async function calcularStock(sb: SupabaseClient, desde: string, hasta: st
 }
 
 /** Sección del mail de las 16:25: el mes en curso hasta hoy. Nunca tira: si falla, devuelve un aviso. */
-export async function seccionStockParaMail(sb: SupabaseClient, hoy: string, errorLectura?: string | null): Promise<{ html: string; rojas: number } | null> {
+export async function seccionStockParaMail(sb: SupabaseClient, hoy: string, errorLectura?: string | null): Promise<{ html: string; rojas: string[] } | null> {
   try {
     const desde = inicioDeMes(hoy)
     const filas = await calcularStock(sb, desde, hoy)
     if (!filas.length) return null
     const fm: FilaMail[] = filas.map((f) => ({
+      clave: `${f.plantaId}|${f.clave}`,
       planta: f.planta,
       material: f.material,
       nuestroFinal: f.nuestro.final,
       zomatikFinal: f.zomatik ? f.zomatik.final : null,
-      dif: f.comparacion ? f.comparacion.final : null,
-      aviso: !f.zomatik ? "sin lectura de Zomatik" : f.lectura?.vieja ? "lectura de Zomatik vieja" : f.comparacion?.rojo && !f.comparacion.final.rojo ? "entró o salió distinto" : null,
+      // En rojo por el stock final o por el neto (entró − salió)
+      dif: f.comparacion ? { ...f.comparacion.final, rojo: f.comparacion.rojo } : null,
+      aviso: !f.zomatik ? "sin lectura de Zomatik" : f.comparacion?.neto.rojo && !f.comparacion.final.rojo ? "el neto (entró − salió) no coincide" : null,
+      vieja: f.zomatik && f.lectura?.vieja && f.lectura.leidoAt ? fechaArgentina(f.lectura.leidoAt) : null,
     }))
-    // En rojo también si lo que entró o salió no coincide, aunque el stock final sí
-    for (let i = 0; i < fm.length; i++) if (filas[i].comparacion?.rojo && fm[i].dif) fm[i].dif = { ...fm[i].dif!, rojo: true }
-    const rojas = fm.filter((f) => f.dif?.rojo).length
+    const rojas = clavesRojas(fm)
     const aviso = errorLectura ? `Hoy no se pudo leer todo el stock de Zomatik (${errorLectura}).` : null
     return { html: seccionMailStock({ filas: fm, desde, hasta: hoy, link: LINK_STOCK, aviso }), rojas }
   } catch (e) {
-    return { html: `<p style="color:#78350f">No se pudo armar el control de stock: ${String(textoError(e)).replace(/[<>&]/g, "")}</p>`, rojas: 0 }
+    return { html: `<p style="color:#78350f">No se pudo armar el control de stock: ${String(textoError(e)).replace(/[<>&]/g, "")}</p>`, rojas: [] }
   }
 }
 

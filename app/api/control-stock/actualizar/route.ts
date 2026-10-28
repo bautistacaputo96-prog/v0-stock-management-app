@@ -7,6 +7,7 @@ import { NextResponse } from "next/server"
 import { exigirSesion, modoPruebaLocal, respuestaModoLocal, respuestaError, sbServicio } from "@/lib/auth/servidor"
 import { puedeControlar } from "@/lib/control-ingresos/servidor"
 import { leerStockZomatik } from "@/lib/control-stock/servidor"
+import { enHorarioDelCron, MENSAJE_HORARIO_CRON } from "@/lib/control-stock/calculo"
 
 export const dynamic = "force-dynamic"
 // Como el control de remitos (Fluid compute en Hobby)
@@ -19,6 +20,7 @@ export async function POST() {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
     if (!puedeControlar(r.sesion.usuario)) return NextResponse.json({ error: "No tenés permiso para el control de stock." }, { status: 403 })
+    if (enHorarioDelCron()) return NextResponse.json({ ok: false, error: `${MENSAJE_HORARIO_CRON}.` }, { status: 409 })
     const sb = sbServicio()
     // Freno simple: no más de una vez cada 2 min (el turno del robot ya evita dos a la vez)
     const { data: ult } = await sb.from("zomatik_stock_lecturas").select("intento_at").order("intento_at", { ascending: false, nullsFirst: false }).limit(1)

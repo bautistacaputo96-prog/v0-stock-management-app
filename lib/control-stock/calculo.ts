@@ -31,6 +31,10 @@ export type ClaveMaterial = (typeof MATERIALES)[number]["clave"]
 export const UMBRAL_PCT = 5
 /** Diferencias de menos de esto (t) no cuentan como rojo aunque el % sea grande (stocks cerca de 0). */
 export const MINIMO_T = 0.5
+/** Un reporte con esto o más renglones puede venir cortado. */
+export const SOSPECHA_RENGLONES = 300
+/** Zomatik sin movimientos en los últimos 10 días, con consumos nuestros después: puede venir cortado. */
+export const SOSPECHA_DIAS_SIN_MOVIMIENTOS = 10
 /** Tolerancia para comprobar que el reporte de Zomatik cierra (saldo anterior + movimientos = saldo). */
 const TOL_SALDO = 0.01
 
@@ -38,6 +42,14 @@ export const materialDeNombre = (nombre: string): ClaveMaterial | null => {
   const c = claveMaterial(nombre)
   return (MATERIALES.find((m) => m.clave === c)?.clave as ClaveMaterial) || null
 }
+
+/** "Actualizar ahora" no se usa de 16:15 a 16:45 de Argentina: a las 16:25 lo actualiza el cron. */
+export function enHorarioDelCron(ahora: number = Date.now()): boolean {
+  const d = new Date(ahora - 3 * 3600_000)
+  const min = d.getUTCHours() * 60 + d.getUTCMinutes()
+  return min >= 16 * 60 + 15 && min < 16 * 60 + 45
+}
+export const MENSAJE_HORARIO_CRON = "Se actualiza solo a las 16:25"
 
 /** Días de `desde` a `hasta` (incluidos). */
 export function dias(desde: string, hasta: string): string[] {
@@ -110,6 +122,34 @@ export function verificarLectura(movs: MovZomatik[], totalAcumulado: number | nu
   let cierra = true
   for (let i = 1; i < movs.length; i++) if (Math.abs(movs[i - 1].saldo + movs[i].movimiento - movs[i].saldo) > TOL_SALDO) cierra = false
   return { inicial, final: movs[movs.length - 1].saldo, cierra, totalEsInicial: totalAcumulado === null ? null : Math.abs(totalAcumulado - inicial) <= TOL_SALDO }
+}
+
+/**
+ * ¿La lectura puede venir cortada? 300 renglones o más, una página con "Siguiente" o `pagina=`, o Zomatik sin
+ * movimientos desde hace más de 10 días cuando nosotros tenemos consumos después. null = no.
+ */
+export function sospechaCorte(d: { movs: MovZomatik[]; paginado: boolean; hoy: string; ultimoConsumoNuestro: string | null }): string | null {
+  if (d.movs.length >= SOSPECHA_RENGLONES) return `trajo ${d.movs.length} renglones (puede venir cortado)`
+  if (d.paginado) return "la página trae más páginas (Siguiente)"
+  const ultimaZ = d.movs.length ? d.movs.map((m) => m.fecha).sort().pop()! : null
+  const limite = sumarDias(d.hoy, -SOSPECHA_DIAS_SIN_MOVIMIENTOS)
+  if (d.ultimoConsumoNuestro && (!ultimaZ || ultimaZ < limite) && d.ultimoConsumoNuestro > (ultimaZ || "")) {
+    return `Zomatik no tiene movimientos ${ultimaZ ? `desde el ${ddmm(ultimaZ)}` : "en el período"} y nosotros tenemos consumos hasta el ${ddmm(d.ultimoConsumoNuestro)}`
+  }
+  return null
+}
+
+/** Las dos mitades de un período partido, una detrás de la otra (el orden sigue). */
+export function unirMitades(a: MovZomatik[], b: MovZomatik[]): MovZomatik[] {
+  return [...a, ...b].map((m, i) => ({ ...m, orden: i }))
+}
+
+/** Mitades de un período (la primera termina el día del medio). */
+export function partirPeriodo(desde: string, hasta: string): [{ desde: string; hasta: string }, { desde: string; hasta: string }] | null {
+  if (desde >= hasta) return null
+  const n = dias(desde, hasta).length
+  const medio = sumarDias(desde, Math.floor(n / 2) - 1)
+  return [{ desde, hasta: medio }, { desde: sumarDias(medio, 1), hasta }]
 }
 
 /**
@@ -231,19 +271,34 @@ export function diferencia(nuestro: number, zomatik: number): Diferencia {
   return { t: d, pct, rojo: Math.abs(d) >= MINIMO_T && (pct === null || Math.abs(pct) > UMBRAL_PCT) }
 }
 
-export function comparar(n: Lado, z: Lado | null): { final: Diferencia; entro: Diferencia; salio: Diferencia; rojo: boolean } | null {
+/**
+ * Compara los dos lados. Rojo por el stock final o por el neto (entró − salió): una devolución que en un sistema resta
+ * de lo que entró y en el otro suma a lo que salió no marca rojo si el neto coincide. Entró y salió solos se marcan
+ * solo si además el neto no coincide.
+ */
+export function comparar(n: Lado, z: Lado | null): { final: Diferencia; neto: Diferencia; entro: Diferencia; salio: Diferencia; rojo: boolean } | null {
   if (!z) return null
   const final = diferencia(n.final, z.final)
+  const neto = diferencia(n.entro - n.salio, z.entro - z.salio)
   const entro = diferencia(n.entro, z.entro)
   const salio = diferencia(n.salio, z.salio)
-  return { final, entro, salio, rojo: final.rojo || entro.rojo || salio.rojo }
+  entro.rojo = entro.rojo && neto.rojo
+  salio.rojo = salio.rojo && neto.rojo
+  return { final, neto, entro, salio, rojo: final.rojo || neto.rojo }
 }
 
 // ---------------------------------------------------------------------------
 // Mail (va dentro del mail de las 16:25 del control de ingresos)
 // ---------------------------------------------------------------------------
 
-export type FilaMail = { planta: string; material: string; nuestroFinal: number; zomatikFinal: number | null; dif: Diferencia | null; aviso?: string | null }
+/** `vieja`: fecha de la última lectura buena de Zomatik si es vieja (la fila va en gris y no cuenta como rojo). */
+export type FilaMail = { clave: string; planta: string; material: string; nuestroFinal: number; zomatikFinal: number | null; dif: Diferencia | null; aviso?: string | null; vieja?: string | null }
+
+/** Filas en rojo que cuentan (no las de lectura vieja ni sin datos). */
+export const clavesRojas = (filas: FilaMail[]) => filas.filter((f) => f.dif?.rojo && !f.vieja && f.zomatikFinal !== null).map((f) => f.clave)
+
+/** Una fila en rojo dispara el mail solo si es nueva: no estaba en rojo en el último mail. */
+export const rojasNuevas = (hoy: string[], ultimoMail: string[]) => hoy.filter((k) => !ultimoMail.includes(k))
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!)
 export const fmtT = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })
@@ -252,12 +307,13 @@ export const fmtPct = (p: number | null) => (p === null ? "-" : `${p > 0 ? "+" :
 /** Tabla corta: stock final de los dos lados y la diferencia; las filas en rojo, marcadas. */
 export function seccionMailStock(d: { filas: FilaMail[]; desde: string; hasta: string; link: string; aviso?: string | null }): string {
   const TH = `style="text-align:left;font-weight:normal;color:#64748b;padding:3px 6px;border-bottom:1px solid #e2e8f0;font-size:11px"`
-  const TD = (rojo: boolean) => `style="padding:3px 6px;border-bottom:1px solid #f1f5f9;font-size:12px;${rojo ? "color:#b91c1c" : ""}"`
-  const rojas = d.filas.filter((f) => f.dif?.rojo).length
+  const TD = (color: string) => `style="padding:3px 6px;border-bottom:1px solid #f1f5f9;font-size:12px;${color ? `color:${color}` : ""}"`
+  const rojas = clavesRojas(d.filas).length
   const filas = d.filas
     .map((f) => {
-      const r = !!f.dif?.rojo
-      return `<tr><td ${TD(r)}>${esc(f.planta)}</td><td ${TD(r)}>${esc(f.material)}</td><td ${TD(r)}>${fmtT(f.nuestroFinal)} t</td><td ${TD(r)}>${f.zomatikFinal === null ? "sin datos" : `${fmtT(f.zomatikFinal)} t`}</td><td ${TD(r)}>${f.dif ? `${fmtT(f.dif.t)} t (${fmtPct(f.dif.pct)})` : "-"}</td><td ${TD(r)}>${esc(f.aviso || "")}</td></tr>`
+      const c = f.vieja ? "#94a3b8" : f.dif?.rojo ? "#b91c1c" : ""
+      const aviso = [f.vieja ? `lectura del ${ddmm(f.vieja)}` : null, f.aviso].filter(Boolean).join(" · ")
+      return `<tr><td ${TD(c)}>${esc(f.planta)}</td><td ${TD(c)}>${esc(f.material)}</td><td ${TD(c)}>${fmtT(f.nuestroFinal)} t</td><td ${TD(c)}>${f.zomatikFinal === null ? "sin datos" : `${fmtT(f.zomatikFinal)} t`}</td><td ${TD(c)}>${f.dif ? `${fmtT(f.dif.t)} t (${fmtPct(f.dif.pct)})` : "-"}</td><td ${TD(c)}>${esc(aviso)}</td></tr>`
     })
     .join("")
   return `<div style="font-size:14px;margin:14px 0 6px">Stock de materia prima: nuestro sistema y Zomatik (${esc(ddmm(d.desde))} al ${esc(ddmm(d.hasta))})${rojas ? ` · ${rojas} en rojo` : ""}</div>
