@@ -73,7 +73,7 @@ export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[
     <div style="font-size:14px;margin:14px 0 6px">Siguen abiertas (${d.siguen.length})</div>
     ${d.siguen.length ? porCategoria(d.siguen) : `<div style="color:#64748b">Ninguna.</div>`}
     <p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>
-    <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha puede variar ±10 días · un proveedor distinto solo no cuenta · lo de los últimos 2 días no se avisa como faltante · produccionrebucret.com</p>
+    <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha puede variar ±10 días · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>
   </div>`
   return { asunto, html }
 }

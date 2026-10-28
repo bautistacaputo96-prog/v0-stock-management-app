@@ -42,7 +42,9 @@ Los pasos:
    - cualquier planta, aunque se prefiere la misma.
 
    Si los dos lados vienen sin número, misma planta y mismo proveedor, no es diferencia.
-4. **Falta en el otro sistema:** lo que queda suelto, salvo lo de los últimos 2 días, que todavía se puede estar cargando. Si nuestro ingreso tiene nota, se muestra.
+4. **Falta en el otro sistema:** lo que queda suelto. "Falta en Zomatik" se avisa recién a los 7 días (en Zomatik se carga con atraso); "Falta en nuestro sistema", a los 2. Si nuestro ingreso tiene nota, se muestra.
+
+**Por ahora se controlan solo áridos y cemento:** Zomatik no trae aditivos ni fibra en los depósitos 116 y 113 (corrida del 28/10).
 
 Cada diferencia tiene una `clave` estable: la categoría, el tipo y los renglones de cada lado.
 

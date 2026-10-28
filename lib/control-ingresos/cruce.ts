@@ -30,6 +30,8 @@ export const PAREO_FECHA_DIAS = 10
 export const MISMO_NUMERO_DIAS = 30
 /** Lo de los últimos 2 días todavía puede estar por cargarse en el otro sistema: no se avisa que falta. */
 export const GRACIA_DIAS = 2
+/** "Falta en Zomatik": en Zomatik se carga con atraso, se espera 7 días antes de avisar. */
+export const GRACIA_ZOMATIK_DIAS = 7
 /** Margen hacia atrás para emparejar lo del borde de la ventana (= la tolerancia de fecha). */
 export const MARGEN_DIAS = 10
 
@@ -621,13 +623,15 @@ export const fechasDe = (d: { fecha: string; nuestro?: { fecha: string }[] | nul
  *    si el hermano ya tiene par; si no, después).
  * 3. Número mal escrito: lo que quedó suelto se empareja por material, ±2 días y toneladas iguales (±0,02), en
  *    cualquier planta (mejor la misma).
- * 4. Lo que queda: falta en el otro sistema (salvo lo de los últimos 2 días).
+ * 4. Lo que queda: falta en el otro sistema ("falta en Zomatik" después de 7 días; "falta en nuestro sistema", de 2).
+ * Por ahora solo áridos y cemento: Zomatik no trae aditivos ni fibra en 116 y 113.
  */
 export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opts: OpcionesCruce): Diferencia[] {
   const hoy = opts.hoy
   const desde = opts.desde || desdeVentana(hoy)
-  const N = nuestros.map(itemNuestro)
-  const Z = zomatik.map(itemZomatik).filter((z) => z.mat !== null) // en Zomatik solo la materia prima
+  // Por ahora se controlan áridos y cemento: Zomatik no trae aditivos ni fibra en los depósitos 116 y 113 (28/10)
+  const N = nuestros.map(itemNuestro).filter((i) => i.comparaT)
+  const Z = zomatik.map(itemZomatik).filter((z) => z.comparaT)
   const out: Diferencia[] = []
   const agregar = (categoria: Categoria, tipo: TipoDiferencia, items: Item[], detalle: string) => {
     if (!evaluable(items.map((i) => i.fecha), { ...opts, desde })) return
@@ -739,7 +743,8 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
 
   // 4. Falta en el otro sistema
   const limite = sumarDias(hoy, -GRACIA_DIAS)
-  for (const a of sueltosN()) if (a.fecha <= limite) agregar("falta_zomatik", "falta", [a], a.notas ? `Nota: ${a.notas.replace(/\s+/g, " ")}` : "")
+  const limiteZomatik = sumarDias(hoy, -GRACIA_ZOMATIK_DIAS)
+  for (const a of sueltosN()) if (a.fecha <= limiteZomatik) agregar("falta_zomatik", "falta", [a], a.notas ? `Nota: ${a.notas.replace(/\s+/g, " ")}` : "")
   for (const z of sueltosZ()) if (z.fecha <= limite) agregar("falta_nuestro", "falta", [z], "")
 
   // Si un renglón está en un "cargado dos veces", su par no se informa aparte (sería la misma diferencia dos veces)
