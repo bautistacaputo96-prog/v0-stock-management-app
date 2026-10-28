@@ -59,22 +59,63 @@ function porCategoria(difs: DiferenciaMail[]): string {
   }).join("")
 }
 
-/** `extra`: HTML que se suma al final (el resumen del control de stock, lib/control-stock/calculo.ts). */
-export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[]; link: string; aviso?: string | null; hoy: string; extra?: string | null }): { asunto: string; html: string } {
-  const total = d.nuevas.length + d.siguen.length
-  const asunto = `Rebucret · Control de ingresos MP: ${d.nuevas.length} ${d.nuevas.length === 1 ? "nueva" : "nuevas"}, ${total} ${total === 1 ? "abierta" : "abiertas"}`
+/** ¿Hoy toca el mail semanal? Los lunes (en Argentina) el semanal reemplaza al diario. */
+export function esDiaSemanal(hoy: string): boolean {
+  return new Date(`${hoy}T12:00:00Z`).getUTCDay() === 1
+}
+
+export const ASUNTO_SEMANAL = "Rebucret · Control semanal de MP (remitos y stock)"
+export const LINEA_SIN_NUEVAS = "Hoy no hay inconsistencias nuevas entre el sistema y Zomatik"
+export const LINEA_SIN_LECTURA = "No se pudo leer Zomatik hoy: no se controló"
+
+const PIE = `<p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>`
+
+/**
+ * Mail del control (Bautista, 28/10/2026). Va siempre a Juan con copia a Bautista:
+ *   - diario: solo las inconsistencias de remitos detectadas ese día (nuevas desde el mail anterior). Si no hay, sale
+ *     igual con una línea. Sin stock y sin "siguen abiertas".
+ *   - semanal (lunes, reemplaza al diario): las nuevas del día, todas las abiertas y la tabla de stock (`stockHtml`).
+ * `falloLectura`: la lectura de Zomatik falló hoy (se dice en una línea).
+ */
+export function armarMail(d: {
+  tipo: "diario" | "semanal"
+  nuevas: DiferenciaMail[]
+  abiertas?: DiferenciaMail[]
+  link: string
+  hoy: string
+  falloLectura?: boolean
+  stockHtml?: string | null
+}): { asunto: string; html: string } {
+  const semanal = d.tipo === "semanal"
+  const n = d.nuevas.length
+  const asunto = semanal
+    ? ASUNTO_SEMANAL
+    : n
+      ? `Rebucret · Control de ingresos MP: ${n} ${n === 1 ? "inconsistencia nueva" : "inconsistencias nuevas"} hoy`
+      : d.falloLectura
+        ? "Rebucret · Control de ingresos MP: no se pudo leer Zomatik hoy"
+        : "Rebucret · Control de ingresos MP: sin inconsistencias hoy"
+  const link = `<p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>`
+  const fallo = d.falloLectura ? `<div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px;margin-bottom:10px">${esc(LINEA_SIN_LECTURA)}</div>` : ""
+  const titulo = semanal ? `Control semanal de materia prima · ${esc(ddmm(d.hoy))}` : `Control de ingresos de materia prima · ${esc(ddmm(d.hoy))}`
+  const abiertas = d.abiertas || []
+  const cuerpo = semanal
+    ? `<div style="font-size:14px;margin:6px 0">Nuevas del día (${n})</div>
+    ${n ? porCategoria(d.nuevas) : `<div style="color:#64748b">${esc(LINEA_SIN_NUEVAS)}.</div>`}
+    <div style="font-size:14px;margin:14px 0 6px">Todas las inconsistencias de remitos abiertas (${abiertas.length})</div>
+    ${abiertas.length ? porCategoria(abiertas) : `<div style="color:#64748b">Ninguna.</div>`}
+    ${link}
+    ${d.stockHtml || ""}`
+    : n
+      ? `<div style="font-size:14px;margin:6px 0">Detectadas hoy (${n})</div>${porCategoria(d.nuevas)}${link}`
+      : `<p>${esc(LINEA_SIN_NUEVAS)}.</p>${link}`
   const html = `
   <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#0f172a;font-size:12px">
-    <div style="font-size:15px;margin-bottom:2px">Control de ingresos de materia prima · ${esc(ddmm(d.hoy))}</div>
-    <div style="color:#64748b;margin-bottom:10px">Remitos de nuestro sistema contra Zomatik (REBUCRET, Canning y Hudson). Lo revisado no vuelve a salir.</div>
-    ${d.aviso ? `<div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px;margin-bottom:10px">${esc(d.aviso)}</div>` : ""}
-    <div style="font-size:14px;margin:6px 0">Nuevas desde ayer (${d.nuevas.length})</div>
-    ${d.nuevas.length ? porCategoria(d.nuevas) : `<div style="color:#64748b">Ninguna.</div>`}
-    <div style="font-size:14px;margin:14px 0 6px">Siguen abiertas (${d.siguen.length})</div>
-    ${d.siguen.length ? porCategoria(d.siguen) : `<div style="color:#64748b">Ninguna.</div>`}
-    <p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>
-    ${d.extra || ""}
-    <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>
+    <div style="font-size:15px;margin-bottom:2px">${titulo}</div>
+    <div style="color:#64748b;margin-bottom:10px">Remitos de nuestro sistema contra Zomatik (REBUCRET, Canning y Hudson)${semanal ? " y stock de materia prima" : ""}.</div>
+    ${fallo}
+    ${cuerpo}
+    ${PIE}
   </div>`
   return { asunto, html }
 }

@@ -150,7 +150,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
         </Button>
         <span
           className="cursor-help text-muted-foreground"
-          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Por ahora se controlan áridos y cemento. Toneladas iguales ±0,02; la fecha sola no cuenta (se empareja con ±10 días); con el mismo número, material y toneladas, un proveedor distinto no cuenta (Fenomix = Cementos Avellaneda); “falta en Zomatik” se avisa después de 7 días y “falta en nuestro sistema” después de 2. Todos los días a las 16:25 le llega el mail a Juan con lo abierto. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
+          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Por ahora se controlan áridos y cemento. Toneladas iguales ±0,02; la fecha sola no cuenta (se empareja con ±10 días); con el mismo número, material y toneladas, un proveedor distinto no cuenta (Fenomix = Cementos Avellaneda); “falta en Zomatik” se avisa después de 7 días y “falta en nuestro sistema” después de 2. Mails: todos los días a las 16:25, a Juan (con copia a Bautista), las inconsistencias de remitos detectadas ese día, o “sin inconsistencias hoy”; los lunes, en su lugar, el semanal con las nuevas, todas las abiertas y la tabla de stock. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
         >
           (?)
         </span>

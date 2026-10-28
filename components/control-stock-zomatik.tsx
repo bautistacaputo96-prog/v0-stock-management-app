@@ -108,7 +108,7 @@ export function ControlStockZomatik() {
         {horarioCron && <span className="text-muted-foreground">{MENSAJE_HORARIO_CRON}</span>}
         <span
           className="cursor-help text-muted-foreground"
-          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia y al menos media tonelada, en el stock final o en el neto (entró − salió: una devolución no lo cambia). En gris, las filas con la lectura de Zomatik vieja. Tocá una fila para ver el detalle por día. Zomatik se lee solo todos los días, después del mail de las 16:25."
+          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia y al menos media tonelada, en el stock final o en el neto (entró − salió: una devolución no lo cambia). En gris, las filas con la lectura de Zomatik vieja. Tocá una fila para ver el detalle por día. Zomatik se lee solo todos los días, después del mail de las 16:25. Mails: todos los días a las 16:25, a Juan (con copia a Bautista), las inconsistencias de remitos detectadas ese día, o “sin inconsistencias hoy”; los lunes, en su lugar, el semanal con las nuevas, todas las abiertas y la tabla de stock."
         >
           (?)
         </span>

@@ -3,7 +3,7 @@
 Rama `loop/control-stock-mp` (sale de `main`, con el control de remitos ya publicado). 28/10/2026.
 
 ## Objetivo
-Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por planta (Canning y Hudson) y material (Arena Fina, Arena Trituración 0/6, Piedra 6/12, Piedra 6/20 y CPC 40), para ver dónde se separan. Se suma un resumen al mail de las 16:25 de Juan.
+Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por planta (Canning y Hudson) y material (Arena Fina, Arena Trituración 0/6, Piedra 6/12, Piedra 6/20 y CPC 40), para ver dónde se separan. La tabla va en el mail semanal de los lunes.
 
 ## Nuestro sistema (`lib/control-stock/calculo.ts`, solo lee)
 - **Entró:** `stock_entries.quantity`, por `entry_date` (fecha de Argentina). Es la cantidad del remito, no `dry_quantity`; el trigger suma `quantity` al stock.
@@ -15,7 +15,7 @@ Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por pla
 
 ## Zomatik (`reporte_movimientosdestock.php`, INVENTARIO › MOVIMIENTOS STOCK)
 - Es solo lectura: entra en la lista cerrada de `lib/zomatik/web.ts`.
-- Se lee en el mismo cron de las 16:25, en este orden: remitos, **mail** (con la última lectura de stock guardada) y recién después la lectura de stock nueva, que queda para el mail del día siguiente y para la pantalla. Así el mail de remitos nunca se pierde. La lectura de stock arranca solo si pasaron menos de 190 s y termina a los 255 s (`maxDuration` 300).
+- Se lee en el mismo cron de las 16:25, en este orden: remitos, **mail** (los lunes, el semanal con la última lectura de stock guardada) y recién después la lectura de stock nueva, que queda para la pantalla y el próximo semanal. Así el mail de remitos nunca se pierde. La lectura de stock arranca solo si pasaron menos de 190 s y termina a los 255 s (`maxDuration` 300).
 - Tiene su botón "Actualizar ahora", como mucho uno cada 2 min y nunca entre las 16:00 y las 16:59: el cron está a las 16:25, pero en Hobby puede caer en cualquier minuto de esa hora, y la pantalla lo dice.
 - Protecciones: el mismo turno del robot y la sucursal 18 confirmada en la página antes y después de cada export (`fetchMatrizEnSucursal`).
 - **Qué se lee:** por depósito (116 Canning, 113 Hudson) y artículo, con `bus_linea` 131 (MP Áridos) o 130 (MP Cemento). El período va desde el inicio de la ventana del control (01/08, o los últimos 90 días) hasta hoy. Las cantidades están en toneladas.
@@ -52,14 +52,13 @@ Materias Primas › **Control de stock**, al lado de "Control con Zomatik", con 
 - Es compacta: `text-xs` y sin negritas.
 
 ## Mail
-Se suma al mail de las 16:25 (`lib/control-ingresos/servidor.ts`) una tabla corta del mes en curso:
-- planta, material, stock final de nuestro sistema y de Zomatik, y la diferencia;
+Desde el 28/10 (Bautista), la tabla de stock va **solo en el mail semanal de los lunes**. Ese mail sale en la misma corrida de las 16:25 y reemplaza al diario (ver docs/control-ingresos-mp.md). La tabla es del mes en curso y lleva:
+- todas las filas: planta, material, stock final de nuestro sistema y de Zomatik, y la diferencia;
 - las filas en rojo, marcadas;
+- en gris, las filas con la lectura vieja ("lectura del dd/mm");
 - el link a la pantalla.
 
-- Una fila en rojo dispara el mail **solo si es nueva**, es decir, si no estaba en rojo en el último mail. Así, los stocks negativos de Hudson no lo mandan todos los días.
-- Si el mail sale por los remitos, la sección de stock va siempre, con todas las filas en rojo.
-- Las filas con la lectura vieja van en gris y no disparan el mail.
+Las filas en rojo ya no disparan ningún mail.
 
 ## Criterios de aceptación
 1. Canning, CPC 40, del 20 al 27/10: nuestro sistema da 106,8 t de entradas y 122,2 t de consumo (`npm run test:control-stock`, 15 pruebas, con el extracto real de Zomatik).

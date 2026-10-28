@@ -63,9 +63,11 @@ Cada diferencia tiene una `clave` estable: la categoría, el tipo y los renglone
   - Queda después de `cajas-whatsapp` de Concretus (18:50 UTC, lun a vie, 60 s, usa el mismo usuario de Zomatik) y entre dos pasadas del pg_cron de las NP (cada 10 min); si el robot tiene el turno, espera hasta 20 s.
   - En el plan Hobby, Vercel puede dispararlo hasta las 16:59. Si en ese momento Concretus cambia la sucursal, el control lo detecta y reintenta el tramo.
 - **A quién:** Juan Oreguy, con copia a Bautista, por nombre en `app_users` (como `lib/carga/servidor.ts`).
-- **Cuándo sale:** solo si hay diferencias abiertas, y una vez por día como mucho.
-- **Contenido:** primero "Nuevas desde ayer" (las que aparecieron desde el último mail) y después "Siguen abiertas (N)". En cada parte, tablas por las 4 categorías con fecha, material, nuestro sistema y Zomatik (número, toneladas, planta y fecha), proveedor y qué pasa (sin transportista: Bautista, 28/10). Al final, el link a la pantalla.
-- **Si no se pudo leer Zomatik:** se avisa arriba y se usa la última lectura guardada. Si además no hay nada abierto, el aviso va solo a Bautista.
+- **Cuándo sale:** todos los días, una vez como mucho, siempre a Juan (Bautista, 28/10).
+- **Diario:** **solo** las inconsistencias de remitos detectadas ese día, es decir, las que aparecieron desde el mail anterior. Van en tablas por las 4 categorías, con fecha, material, nuestro sistema y Zomatik (número, toneladas, planta y fecha), proveedor y qué pasa. Sin stock y sin "siguen abiertas".
+  - Si no hay ninguna, sale igual: asunto "Rebucret · Control de ingresos MP: sin inconsistencias hoy" y una línea, "Hoy no hay inconsistencias nuevas entre el sistema y Zomatik", con el link.
+- **Semanal (lunes, en la misma corrida de las 16:25):** un solo mail, que reemplaza al diario, con asunto "Rebucret · Control semanal de MP (remitos y stock)". Trae las nuevas del día, todas las abiertas y la tabla del control de stock con todas las filas y las rojas marcadas.
+- **Si no se pudo leer Zomatik** (no hubo cruce o no se leyó ningún tramo): lo dice en una línea, "No se pudo leer Zomatik hoy: no se controló". Si además no hay nuevas, el asunto dice "no se pudo leer Zomatik hoy" en lugar de "sin inconsistencias".
 
 ## Pantalla
 Materias Primas › pestaña **Control con Zomatik**. La ven los gerenciales o quien tenga `materia_prima.editar`, y el servidor lo vuelve a controlar en `/api/control-ingresos`. Tiene:
