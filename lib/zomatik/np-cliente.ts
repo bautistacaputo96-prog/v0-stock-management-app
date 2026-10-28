@@ -101,30 +101,55 @@ export function useNp(ids: string[]) {
   const [plantas, setPlantas] = useState<Record<string, PlantaNpResumen>>({})
   const clave = [...ids].sort().join(",")
   const vivo = useRef(true)
+  // Siempre se pide con los pedidos de AHORA y solo vale la última respuesta (antes, un "recargar en 12 s" con la
+  // lista vieja podía llegar después y pisar el estado: un pedido "desaparecía").
+  const claveActual = useRef(clave)
+  claveActual.current = clave
+  const ultimo = useRef(0)
   const cargar = useCallback(async () => {
+    const n = ++ultimo.current
     try {
-      const r = await fetch(`/api/zomatik/np?pedidos=${encodeURIComponent(clave)}`, { cache: "no-store" })
+      const r = await fetch(`/api/zomatik/np?pedidos=${encodeURIComponent(claveActual.current)}`, { cache: "no-store" })
       if (!r.ok) return
       const j = await json(r)
-      if (!vivo.current) return
+      if (!vivo.current || n !== ultimo.current) return
       setPorPedido(j?.porPedido || {})
       setPlantas(j?.plantas || {})
     } catch {
       /* sin NP en pantalla */
     }
-  }, [clave])
+  }, [])
   useEffect(() => {
     vivo.current = true
     cargar()
     return () => {
       vivo.current = false
     }
-  }, [cargar])
+  }, [cargar, clave])
   /** Vuelve a mirar en unos segundos (el robot trabaja después de responder). */
   const recargarEn = useCallback((ms = 12_000) => {
     setTimeout(() => vivo.current && cargar(), ms)
   }, [cargar])
   return { porPedido, plantas, recargar: cargar, recargarEn }
+}
+
+/**
+ * Estado de la NP de UN pedido (el que se abre para editar), aparte de la lista de la semana, con tiempo máximo.
+ * null si no respondió a tiempo o falló: quien llama sigue sin él (Guardar nunca depende de esto).
+ */
+export async function estadoNpDePedido(pedidoId: string, ms = 5_000): Promise<EstadoPedidoNp | null> {
+  const ctrl = new AbortController()
+  const corte = setTimeout(() => ctrl.abort(), ms)
+  try {
+    const r = await fetch(`/api/zomatik/np?pedidos=${encodeURIComponent(pedidoId)}`, { cache: "no-store", signal: ctrl.signal })
+    if (!r.ok) return null
+    const j = await json(r)
+    return (j?.porPedido?.[pedidoId] as EstadoPedidoNp) || null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(corte)
+  }
 }
 
 /**

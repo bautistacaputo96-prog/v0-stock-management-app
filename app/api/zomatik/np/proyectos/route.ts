@@ -2,6 +2,8 @@
  * Zomatik Z2 · Proyectos abiertos de un cliente para "NP de un proyecto" (formulario del pedido).
  *
  *   GET /api/zomatik/np/proyectos?client_id=…&site_id=…
+ *   GET /api/zomatik/np/proyectos?todos=1        todos los proyectos abiertos con su cliente nuestro (y la obra, si está
+ *                                               vinculada): la primera pregunta del alta, "¿Qué NP?" › de un proyecto
  *
  * Lo disponible en m³: el ≈ de la copia (`zomatik_proyectos`, saldo % y remitido, 20.3) y lo que trajo "Continuar"
  * del MATERIAL la última vez que se generó una NP (23.2). El proyecto guardado en la obra va primero.
@@ -24,8 +26,28 @@ export async function GET(req: Request) {
     const q = new URL(req.url).searchParams
     const clientId = uuid(q.get("client_id"))
     const siteId = uuid(q.get("site_id"))
-    if (!clientId) return NextResponse.json({ proyectos: [] })
     const sb = sbServicio()
+    if (!clientId && q.get("todos") === "1") {
+      const [{ data: ps, error: ep }, { data: cs }] = await Promise.all([
+        sb.from("zomatik_proyectos").select("codigo, numero, obra, tipo, pactado_m3, saldo_pct, remitido_m3, ultima_entrega, construction_site_id, cliente_codigo, cliente_nombre").eq("estado", "abierto"),
+        sb.from("clients").select("id, name, zomatik_codigo").not("zomatik_codigo", "is", null).eq("active", true),
+      ])
+      if (ep) throw ep
+      const porCodigo = new Map(((cs as { id: string; name: string; zomatik_codigo: number }[]) || []).map((c) => [c.zomatik_codigo, c]))
+      const proyectos = ((ps as any[]) || [])
+        .map((p) => {
+          const c = porCodigo.get(p.cliente_codigo)
+          if (!c) return null // sin cliente nuestro vinculado no se puede programar
+          const s = saldoAcopio({ tipo: p.tipo, pactado_m3: p.pactado_m3 === null ? null : Number(p.pactado_m3), saldo_pct: p.saldo_pct === null ? null : Number(p.saldo_pct), remitido_m3: Number(p.remitido_m3) || 0 })
+          return { codigo: p.codigo, numero: p.numero, obra: p.obra, client_id: c.id, cliente: c.name, construction_site_id: p.construction_site_id ?? null, saldo_m3: s.saldoM3, estimado: s.estimado, ultima_entrega: p.ultima_entrega }
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => String(b.ultima_entrega || "").localeCompare(String(a.ultima_entrega || "")))
+      const out = NextResponse.json({ proyectos })
+      out.headers.set("Cache-Control", "no-store")
+      return out
+    }
+    if (!clientId) return NextResponse.json({ proyectos: [] })
     const { data: cli } = await sb.from("clients").select("zomatik_codigo").eq("id", clientId).maybeSingle()
     const codigo = (cli as { zomatik_codigo?: number | null } | null)?.zomatik_codigo
     if (!codigo) return NextResponse.json({ proyectos: [], sinVinculo: true })

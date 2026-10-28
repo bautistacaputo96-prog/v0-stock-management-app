@@ -1680,3 +1680,13 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
   - se puede borrar un pedido con su NP pendiente, que queda anulada;
   - borrar un pedido con su NP ok se rechaza.
 - `test:zomatik-np` 66/66.
+
+### 25.10 Arreglos de la prueba del 28/10 (rama `fix/np-formulario`)
+- **"Guardar" ya no depende de la NP.** Al editar, el formulario pide el estado de la NP de **ese** pedido aparte (5 s como mucho), sin depender de la lista de la semana. Si no llega, dice "NP: no se pudo leer, se mantiene la elección", se puede guardar igual y la elección que tenía no se toca.
+  - **Causa:** un "volver a mirar en 12 s" pedía la NP con la lista vieja de pedidos y su respuesta pisaba la nueva; el pedido "desaparecía" y el bloque quedaba leyendo para siempre. Ahora vale solo la última respuesta, siempre con la lista de ahora.
+  - La fórmula vieja al reabrir: el formulario no se resetea con la NP. Se veía H25 porque el pedido nunca se pudo guardar.
+- **Buscador de fórmulas:** encuentra por partes y sin importar guiones, espacios ni paréntesis ("h21 620", "h21-620-10", "620 10 c").
+- **Alta del pedido: la primera pregunta es "¿Qué NP?"**, solo con la llave prendida. Tiene tres opciones:
+  - NP nueva;
+  - de un proyecto: elegís el proyecto y completa cliente y obra;
+  - usar NP con saldo: elegís la NP y completa cliente, obra, fórmula y m³.

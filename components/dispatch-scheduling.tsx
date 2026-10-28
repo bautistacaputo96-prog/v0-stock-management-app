@@ -1,7 +1,7 @@
 "use client"
 
 // Dispatch scheduling component
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -41,9 +41,11 @@ import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoDe
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 import { NpBloque } from "@/components/zomatik/np-bloque"
+import { coincideBusqueda } from "@/lib/buscar-texto"
 import { NpChip } from "@/components/zomatik/np-chip"
 import { NpSaldos } from "@/components/zomatik/np-saldos"
-import { avisarNp, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
+import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpSaldo } from "@/lib/zomatik/np-cliente"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
@@ -94,6 +96,8 @@ const HOURS = Array.from({ length: 14 }, (_, i) => i + 6) // 6:00 to 19:00
 
 function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false)
+  // Filtro propio (no el de la lista): encuentra por partes, sin importar guiones, espacios ni paréntesis
+  const [buscar, setBuscar] = useState("")
   const selectedFormula = formulas.find((f) => f.id === value)
   
   // Ordenar por nombre primero, luego por código
@@ -104,7 +108,7 @@ function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; v
   })
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) setBuscar("") }}>
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between font-normal">
           {selectedFormula ? (selectedFormula.name && selectedFormula.name !== selectedFormula.code ? `${selectedFormula.name} (${selectedFormula.code})` : selectedFormula.code) : "Buscar formula..."}
@@ -112,15 +116,15 @@ function FormulaCombobox({ formulas, value, onChange }: { formulas: Formula[]; v
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Buscar formula..." />
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Buscar fórmula (ej: h21 620)" value={buscar} onValueChange={setBuscar} />
           <CommandList className="max-h-[200px]">
-            <CommandEmpty>No se encontro formula.</CommandEmpty>
+            <CommandEmpty>No se encontró la fórmula.</CommandEmpty>
             <CommandGroup>
-              {sortedFormulas.map((f) => (
+              {sortedFormulas.filter((f) => coincideBusqueda(buscar, f.code, f.name)).map((f) => (
                 <CommandItem
                   key={f.id}
-                  value={`${f.name} ${f.code}`}
+                  value={f.id}
                   onSelect={() => {
                     onChange(f.id)
                     setOpen(false)
@@ -249,8 +253,14 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   // Zomatik Z2: NP nueva o de un proyecto (la guarda el servidor al avisar el pedido)
   const NP_NUEVA: EleccionNp = { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
   const [npEleccion, setNpEleccion] = useState<EleccionNp>(NP_NUEVA)
-  // Al editar: la elección guardada llega con el estado de la NP. Hasta que llegue no se manda (no se pisa lo guardado)
+  // Al editar: la elección guardada llega con el estado de la NP de ESE pedido (se pide aparte, máx. 5 s). Hasta que
+  // llegue no se manda (no se pisa lo guardado). Guardar NUNCA espera esto: sin la lectura, se guarda sin la elección.
   const [npEleccionLista, setNpEleccionLista] = useState(true)
+  const [npDialogo, setNpDialogo] = useState<EstadoPedidoNp | null>(null)
+  const [npLectura, setNpLectura] = useState<"ok" | "leyendo" | "fallo">("ok")
+  const pedidoAbierto = useRef<string | null>(null)
+  // Alta: ya se contestó "¿Qué NP?" (entonces el bloque de abajo no propone solo el proyecto de la obra)
+  const [npPreguntada, setNpPreguntada] = useState(false)
   // El pedido con NP cambió de fecha: ¿se mueve la NP? (sección 25)
   const [npMoverFecha, setNpMoverFecha] = useState<boolean | null>(null)
   // Para volver a leer la lista "NP con saldo" después de guardar o cancelar
@@ -264,15 +274,6 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const np = useNp(idsSemana)
   const hayNpActiva = Object.values(np.plantas).some((p) => p.activo)
   usePasadaNp(puedeCrear && hayNpActiva, np.recargar)
-  // Si el estado de la NP llega después de abrir un pedido para editar, se toma la elección guardada
-  useEffect(() => {
-    if (!isDialogOpen || !editingDispatch || npEleccionLista) return
-    const est = np.porPedido[editingDispatch.id]
-    if (!est) return
-    const el = est.eleccion
-    setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3, np_id: el.np_id } : { tipo: "nueva", proyecto_codigo: null, tope_m3: null, np_id: null })
-    setNpEleccionLista(true)
-  }, [np.porPedido, isDialogOpen, editingDispatch, npEleccionLista])
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
   const [paramsPorPlanta, setParamsPorPlanta] = useState<Record<string, Parametros>>({})
   // Fase 2b: ubicación de la obra y viaje real desde la planta del pedido
@@ -479,6 +480,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       quantity_m3: String(x.libre),
     })
     setNpEleccion({ tipo: "saldo", proyecto_codigo: null, tope_m3: null, np_id: x.id })
+    setNpPreguntada(true)
   }
 
   function openNewDispatch(date: Date, hour: number, precarga: Partial<typeof form> = {}) {
@@ -519,6 +521,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setNpEleccion(NP_NUEVA)
     setNpEleccionLista(true)
     setNpMoverFecha(null)
+    setNpDialogo(null)
+    setNpLectura("ok")
+    setNpPreguntada(false)
+    pedidoAbierto.current = null
     setIsDialogOpen(true)
   }
 
@@ -555,12 +561,40 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setViajeOrigen(dispatch.viaje_min != null ? "pedido" : null)
     setEditingDispatch(dispatch)
     setCuitPrompt("")
-    // La elección guardada vive en el servidor (zomatik_np_pedido): al editar no se cambia sola
-    const est = np.porPedido[dispatch.id]
-    const el = est?.eleccion
-    setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3, np_id: el.np_id } : NP_NUEVA)
-    setNpEleccionLista(!!est || !np.plantas[dispatch.plant_id]?.activo)
+    // La elección guardada vive en el servidor (zomatik_np_pedido): al editar no se cambia sola. Se pide el estado de
+    // la NP de ESTE pedido aparte (no depende de la lista de la semana) con 5 s como mucho.
+    pedidoAbierto.current = dispatch.id
     setNpMoverFecha(null)
+    const deLaSemana = np.porPedido[dispatch.id] || null
+    const aplicar = (est: EstadoPedidoNp) => {
+      const el = est.eleccion
+      setNpDialogo(est)
+      setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3, np_id: el.np_id } : NP_NUEVA)
+      setNpEleccionLista(true)
+      setNpLectura("ok")
+    }
+    if (!np.plantas[dispatch.plant_id]?.activo) {
+      setNpDialogo(null)
+      setNpEleccion(NP_NUEVA)
+      setNpEleccionLista(true)
+      setNpLectura("ok")
+    } else {
+      if (deLaSemana) aplicar(deLaSemana)
+      else {
+        setNpDialogo(null)
+        setNpEleccion(NP_NUEVA)
+        setNpEleccionLista(false)
+        setNpLectura("leyendo")
+      }
+      estadoNpDePedido(dispatch.id).then((est) => {
+        if (pedidoAbierto.current !== dispatch.id) return // ya se abrió otro pedido
+        if (est) {
+          setNpDialogo(est)
+          // La elección solo se toma si todavía no estaba (no pisa lo que la persona ya cambió en el formulario)
+          if (!deLaSemana) aplicar(est)
+        } else if (!deLaSemana) setNpLectura("fallo")
+      })
+    }
     setIsDialogOpen(true)
   }
 
@@ -977,7 +1011,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   // Resumen fijo al pie y "Falta: …" (spec 19.3.4 y 19.3.5)
   // El pedido ya tenía NP en Zomatik y cambió de fecha: hay que decir si se mueve la NP
   const npFechaCambiada =
-    !!editingDispatch && !!np.plantas[form.plant_id]?.activo && !!np.porPedido[editingDispatch.id]?.nps.some((x) => x.estado === "ok") &&
+    !!editingDispatch && !!np.plantas[form.plant_id]?.activo && !!npDialogo?.nps.some((x) => x.estado === "ok") &&
     !!form.arrival_date && form.arrival_date !== format(parseISO(editingDispatch.scheduled_arrival_time), "yyyy-MM-dd")
   const faltaPedido = [
     !form.client_id && "cliente",
@@ -1189,6 +1223,30 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           )}
           <fieldset disabled={soloLectura} className="space-y-3 max-h-[68vh] overflow-y-auto pr-1 min-w-0">
             {/* 1. Cliente y obra arriba: los tiempos del GPS, la llegada sugerida y la bomba dependen de la obra */}
+            {/* Zomatik: en el alta, la primera pregunta es la de la NP (pedido de Bautista del 28/10). Llave apagada: no aparece */}
+            {!editingDispatch && !soloLectura && np.plantas[form.plant_id]?.activo && (
+              <SeccionPedido titulo="¿Qué NP?">
+                <NpPregunta
+                  valor={npEleccion}
+                  plantId={form.plant_id}
+                  onNueva={() => { setNpPreguntada(true); setNpEleccion(NP_NUEVA) }}
+                  onProyecto={(p: ProyectoAlta) => {
+                    setNpPreguntada(true)
+                    setForm({ ...form, client_id: p.client_id, construction_site_id: p.construction_site_id || "" })
+                    setNpEleccion({ tipo: "proyecto", proyecto_codigo: p.codigo, tope_m3: null, np_id: null })
+                  }}
+                  onSaldo={(x: NpSaldo) => {
+                    setNpPreguntada(true)
+                    setForm({
+                      ...form, ...(x.plant_id ? { plant_id: x.plant_id } : {}), client_id: x.client_id || "", construction_site_id: x.construction_site_id || "",
+                      formula_id: x.formula_id || "", quantity_m3: String(x.libre),
+                    })
+                    setNpEleccion({ tipo: "saldo", proyecto_codigo: null, tope_m3: null, np_id: x.id })
+                  }}
+                />
+              </SeccionPedido>
+            )}
+
             <SeccionPedido titulo="Cliente y obra">
               <div className="grid gap-x-3 gap-y-2 md:grid-cols-2">
                 <div className="space-y-1">
@@ -1552,8 +1610,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 onCambio={setNpEleccion}
                 onM3={(v) => setForm({ ...form, quantity_m3: String(v) })}
                 soloLectura={soloLectura}
-                estado={editingDispatch ? np.porPedido[editingDispatch.id] : null}
-                proponer={!editingDispatch || (npEleccionLista && !np.porPedido[editingDispatch.id]?.eleccion)}
+                estado={editingDispatch ? npDialogo : null}
+                fallo={npLectura === "fallo"}
+                proponer={!editingDispatch ? !npPreguntada : npEleccionLista && npLectura === "ok" && !npDialogo?.eleccion}
               />
             </SeccionPedido>
 
@@ -1636,7 +1695,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             )}
             <Button variant="outline" size="sm" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
             {!soloLectura && (
-              <Button size="sm" onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo)) || !npEleccionLista || (npFechaCambiada && npMoverFecha === null)}>
+              <Button size="sm" onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo)) || (npFechaCambiada && npMoverFecha === null)}>
                 {saving ? "Guardando..." : editingDispatch ? "Guardar" : np.plantas[form.plant_id]?.activo ? "Programar y generar NP" : "Programar"}
               </Button>
             )}

@@ -37,7 +37,7 @@ const OPCIONES = [
 ] as const
 
 export function NpBloque({
-  planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fechaCambiada, moverFecha, onMoverFecha,
+  planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -52,8 +52,10 @@ export function NpBloque({
   estado?: EstadoPedidoNp | null
   /** Proponer solo el proyecto guardado en la obra: en el alta, o si el pedido todavía no tiene elección guardada. */
   proponer: boolean
-  /** false mientras no llegó la elección guardada (al editar): el bloque queda deshabilitado. */
+  /** false mientras no llegó la elección guardada (al editar): el bloque queda deshabilitado (Guardar NO). */
   lista: boolean
+  /** No se pudo leer la NP del pedido: se guarda sin tocar la elección que tenía. */
+  fallo?: boolean
   /** El pedido (con NP) cambió de fecha: preguntar si se mueve la NP. */
   fechaCambiada: boolean
   moverFecha: boolean | null
@@ -101,7 +103,7 @@ export function NpBloque({
   }, [activo, clientId, formulaId, lista])
 
   if (!activo) return <p className="text-xs text-muted-foreground">NP: se carga a mano en Zomatik.</p>
-  if (!lista) return <p className="text-xs text-muted-foreground">Leyendo la NP del pedido…</p>
+  if (!lista) return <p className="text-xs text-muted-foreground">{fallo ? "NP: no se pudo leer, se mantiene la elección (podés guardar igual)." : "Leyendo la NP del pedido…"}</p>
 
   const elegido = proyectos?.find((p) => p.codigo === valor.proyecto_codigo) || null
   const disp = disponibleProyecto(elegido)
