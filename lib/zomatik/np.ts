@@ -410,7 +410,16 @@ export function numeroZomatik(s: unknown): number | null {
 
 // ── Listado de pedidos (HTML) ──
 
-export type FilaPedido = { codigo: number; numero: string; fecha: string | null; cliente: string; estado: string }
+/** `total`: la columna Total del listado ("$ 176.500"), lo que Zomatik tiene GRABADO en la NP (null si no vino). */
+export type FilaPedido = { codigo: number; numero: string; fecha: string | null; cliente: string; estado: string; total: number | null }
+
+/** "$ 14.326.400" / "$ 176.500,50" / "$ 0" → número (formato del listado: punto de miles, coma decimal). */
+export function montoListado(s: unknown): number | null {
+  const t = String(s ?? "").replace(/[$\s]/g, "")
+  if (!/^-?[\d.,]+$/.test(t)) return null
+  const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, "") : t)
+  return Number.isFinite(n) ? n : null
+}
 
 export function pedidosDeListado(html: string): FilaPedido[] {
   const out: FilaPedido[] = []
@@ -428,7 +437,8 @@ export function pedidosDeListado(html: string): FilaPedido[] {
     const iNum = celdas.indexOf(numero)
     const cliente = celdas.slice(iNum + 1).find((c) => c && !/^\$/.test(c)) || ""
     const estado = [...celdas].reverse().find((c) => /^(PEN|REM|PEND|PENDIENTE|REMITIDA|ANU|ANULADA|FAC)$/i.test(c)) || ""
-    out.push({ codigo, numero: numero.toUpperCase().replace(/\s+/g, " "), fecha, cliente, estado: estado.toUpperCase() })
+    const total = montoListado(celdas.find((c) => /^\$/.test(c)))
+    out.push({ codigo, numero: numero.toUpperCase().replace(/\s+/g, " "), fecha, cliente, estado: estado.toUpperCase(), total })
   }
   return out
 }

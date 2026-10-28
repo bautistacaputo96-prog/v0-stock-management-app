@@ -465,6 +465,24 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
 // Vaciar (pedido cancelado, 23.4)
 // ---------------------------------------------------------------------------
 
+/** Los renglones GRABADOS de una NP abierta: los de la página o, si la página no los trae (los carga por JS), los que
+ *  devuelve manage_pedidos.php con los datos de esa página (pedidos=N y su pedidos_unico), como hace el navegador. */
+async function detalleGrabado(nav: NavegadorNp, pag: { html: string; form: ReturnType<typeof camposFormulario>; renglones: Renglon[] }, base: [string, string][], proyecto: number | null, azar: () => number): Promise<{ renglones: Renglon[]; det: Detalle | null }> {
+  if (pag.renglones.length || !pag.form) return { renglones: pag.renglones, det: null }
+  const det = await manage(nav, pag.form.campos, [...base, ["flista", pag.form.campos.idlista || "0"]], proyecto, azar)
+  return { renglones: det.renglones, det }
+}
+
+/**
+ * Vaciar una NP ya grabada (23.4). La página de la NP abierta NO trae los renglones en el HTML (el navegador los carga
+ * después, con manage_pedidos.php): por eso, el 28/10, el robot vio "sin renglones" y dio por vaciada la NP2
+ * 0001-00002086 sin borrar ni grabar nada. Ahora:
+ *   1. Lo que vale es lo GRABADO en Zomatik: el total de la NP en el listado (y los renglones de la página o del detalle).
+ *   2. El detalle se carga como lo hace la página (manage_pedidos.php con los datos de la NP abierta: pedidos=N y su
+ *      pedidos_unico), se borra cada renglón con el tacho (fborrar) y se graba con fparam vacío, sin campos de renglón.
+ *   3. Después de grabar se vuelve a abrir la NP y a mirar el listado: vaciada SOLO si no hay renglones y el total es 0.
+ *      Si no, "revisar" con un recorte de la respuesta (lo avisa quien llama a los gerenciales).
+ */
 export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobot): Promise<ResultadoVaciar> {
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   const boundary = o.boundary || `----rebucret${Date.now().toString(36)}`
@@ -473,23 +491,40 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     paso = p
     await o.alPaso?.(p)
   }
+  /** Total grabado de la NP según el listado de REBUCRET (null si no aparece o no trae el total). */
+  const totalGrabado = async (): Promise<number | null> => {
+    if (!d.numero) return null
+    await aRebucret(nav)
+    const l = await listado(nav, { bus_numero: numeroNormalizado(d.numero) || d.numero }, SUCURSAL_REBUCRET)
+    if (l.sucursalPagina !== SUCURSAL_REBUCRET) return null
+    const f = l.filas.find((x) => x.codigo === d.codigo)
+    return f ? f.total : null
+  }
   try {
     if (!Number.isInteger(d.codigo) || d.codigo <= 0) return { estado: "revisar", mensaje: "No se sabe el código de la NP en Zomatik: vaciala a mano.", paso }
+    if (!d.numero) return { estado: "revisar", mensaje: "No se sabe el número de la NP: vaciala a mano.", paso }
     await marcar("abrir")
     const a = await abrir(nav, d.codigo)
-    if (!a.form) throw formato("no se abrió la NP")
+    if (!a.form) throw formato("no se abrió la NP", a.html)
     if (!tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "revisar", mensaje: "La NP no tiene la marca del sistema: no se toca. Revisala en Zomatik.", paso }
-    if (!a.renglones.length) return { estado: "vaciada", mensaje: null, paso } // ya estaba vacía (un grabar anterior llegó)
     const accion = a.form.action || ""
     // Tiene que grabar sobre ESTA NP (nunca codigo=0, que sería una NP nueva)
-    if (accion.toLowerCase() !== `grabar_pedidos.php?codigo=${d.codigo}`) throw formato("la NP graba en otro lado")
+    if (accion.toLowerCase() !== `grabar_pedidos.php?codigo=${d.codigo}`) throw formato("la NP graba en otro lado", a.html)
+    await marcar("total")
+    const antes = await totalGrabado()
     const c = a.form.campos
     const proyecto = Number(c.proyecto || 0) || null
     const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio || "0"], ["forigen", (c.origen as string) || "1"]]
-    let rs = a.renglones
-    let det: Detalle | null = null
-    for (const r of a.renglones) {
-      if (!r.borrar) throw formato("un renglón no tiene el tacho", a.html)
+    // El detalle: el de la página, o el que la página carga por JS (manage_pedidos.php con pedidos=N y su pedidos_unico)
+    await marcar("detalle")
+    const leido = await detalleGrabado(nav, a, base, proyecto, azar)
+    let det: Detalle | null = leido.det
+    let rs = leido.renglones
+    // ¿Ya está vacía en Zomatik? (un grabar anterior llegó): sin renglones Y total 0 en el listado
+    if (!rs.length && antes === 0) return { estado: "vaciada", mensaje: null, paso }
+    if (!rs.length) return { estado: "revisar", mensaje: `No se pudieron leer los renglones de la NP (Zomatik dice total ${antes ?? "sin dato"}). No se tocó: vaciala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    for (const r of [...rs]) {
+      if (!r.borrar) throw formato("un renglón no tiene el tacho", det?.html || a.html)
       await marcar("borrar_renglon")
       det = await manage(nav, c, [...base, ["fparam", fparamDe(rs)], ["fborrar", r.borrar]], proyecto, azar)
       rs = det.renglones
@@ -497,13 +532,24 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     if (rs.length) throw formato("quedaron renglones después de borrar", det?.html)
     await marcar("grabar")
     await aRebucret(nav)
+    // fparam vacío y SIN los campos del renglón viejo (si se mandan, el renglón revive)
     const { cuerpo, tipo } = cuerpoGrabar(a.form.orden, {}, det, [], boundary)
     const g = await nav.post(accion, cuerpo, tipo)
     const no = rechazo(g)
+    // Comprobar en Zomatik: se vuelve a abrir la NP (página nueva, su propio pedidos_unico), se cargan sus renglones como
+    // lo hace la página y se mira el total del listado. Vaciada SOLO sin renglones y con total 0.
     await marcar("verificar")
     const v = await abrir(nav, d.codigo)
-    if (v.form && !v.renglones.length) return { estado: "vaciada", mensaje: null, paso }
-    return { estado: no ? "error" : "revisar", mensaje: no ? `Zomatik no dejó vaciar la NP: ${no}` : "Se grabó pero la NP sigue con renglones. Revisala en Zomatik.", paso }
+    const quedan = v.form ? await detalleGrabado(nav, v, [["fcliente", v.form.campos.idcliente || "0"], ["facopio", v.form.campos.acopio || "0"], ["forigen", (v.form.campos.origen as string) || "1"]], proyecto, azar) : null
+    const despues = await totalGrabado()
+    if (quedan && !quedan.renglones.length && despues === 0) return { estado: "vaciada", mensaje: null, paso }
+    if (no) return { estado: "error", mensaje: `Zomatik no dejó vaciar la NP: ${no}`, paso, recorte: recorte(g.html) }
+    return {
+      estado: "revisar",
+      mensaje: `Se grabó pero la NP no quedó vacía en Zomatik (${quedan ? `${quedan.renglones.length} renglón(es)` : "no se pudo abrir"}, total ${despues ?? "sin dato"}). Revisala en Zomatik.`,
+      paso,
+      recorte: recorte(quedan?.det?.html || v.html),
+    }
   } catch (e) {
     if (e instanceof Corte) return { estado: e.estado === "pendiente" ? "vaciar" : e.estado === "ok" ? "vaciada" : (e.estado as "revisar" | "error"), mensaje: e.message, paso, recorte: e.recorte }
     // Corte de red: queda para vaciar; la próxima vez se abre de nuevo y se mira (vaciar es idempotente)

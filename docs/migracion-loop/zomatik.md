@@ -1717,3 +1717,16 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
   - Si el pedido ya tuvo despachos, solo se puede dejarla pendiente, con el aviso de que hace falta una DEVOL.
   - Los permisos son los mismos de siempre.
   - Con la llave apagada no pregunta nada.
+
+### 25.14 Vaciar de verdad (28/10, rama `fix/np-vaciar-real`)
+- **Qué pasó:** "Sí, cancelarla" dio por "vaciada" la NP2 0001-00002086 (código 157767), pero en Zomatik siguió con su renglón.
+- **Causa:** la página de la NP abierta (`modificar_pedidos.php?codigo=N`) no trae los renglones en el HTML; el navegador los carga después con `manage_pedidos.php`. El robot leyó la página, no vio renglones y la dio por vaciada "porque ya estaba vacía": no borró ni grabó nada. Coincide con los 2 s que tardó (solo el control de remitos y abrir la página).
+- **Ahora:**
+  1. Lo que vale es lo **grabado** en Zomatik: el total de la NP en el listado.
+  2. Los renglones se cargan como lo hace la página: `manage_pedidos.php` con `pedidos=N` y el `pedidos_unico` de esa página.
+  3. Se borra cada renglón con el tacho (`fborrar`) y se graba en `grabar_pedidos.php?codigo=N` con `fparam` vacío y sin ningún campo del renglón viejo.
+  4. Después se **comprueba**: se vuelve a abrir la NP, se cargan sus renglones y se mira el total del listado.
+  5. Queda "vaciada" solo si no hay renglones y el total es 0. Si no, queda "revisar", con el recorte en Actividad y un aviso a los gerenciales.
+  6. Sin poder leer los renglones con un total distinto de 0, no se toca nada.
+- La NP 157767 la vacía Bautista a mano. La próxima prueba se hace con otra NP.
+- Con esta rama: "Capacidad por camión (m³)" vuelve a estar visible (opcional, arranca en 8, con su ayuda). "Cada cuántos minutos sale un camión" queda en "Más datos".
