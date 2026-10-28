@@ -8,8 +8,8 @@
  *   2. falta_zomatik   está en nuestro sistema y no en Zomatik (con la nota, si tiene)
  *   3. no_coincide     está en los dos pero no coincide: toneladas (o dígitos invertidos), cargado dos veces,
  *                      otro producto, otra planta u otra fecha
- *   4. numero_mal      el mismo camión y las mismas toneladas con el número mal escrito en uno de los dos (o el mismo
- *                      número con otro proveedor)
+ *   4. numero_mal      el mismo camión y las mismas toneladas con el número mal escrito en uno de los dos
+ *                      (un proveedor distinto solo, con el mismo número, material y toneladas, no es diferencia)
  */
 import { parseFecha, parseNumero, col, tokensNombre, type Fila } from "@/lib/zomatik/parseo"
 
@@ -22,16 +22,16 @@ export const INICIO_CONTROL = "2026-08-01"
 export const VENTANA_DIAS = 90
 /** Toneladas iguales si difieren en esto o menos. */
 export const TOL_TONELADAS = 0.02
-/** La fecha puede variar hasta 3 días entre los dos sistemas sin que sea una diferencia. */
-export const TOL_FECHA_DIAS = 3
-/** Para emparejar un número mal escrito: misma fecha ±2 días. */
-export const PAREO_FECHA_DIAS = 2
+/** La fecha puede variar hasta 10 días entre los dos sistemas sin que sea una diferencia (en Zomatik se carga días después). */
+export const TOL_FECHA_DIAS = 10
+/** Para emparejar un número mal escrito: fecha ±10 días (se prefiere la más cercana). */
+export const PAREO_FECHA_DIAS = 10
 /** Mismo número de remito en otra fecha: hasta acá se considera el mismo remito (más lejos, es otro). */
 export const MISMO_NUMERO_DIAS = 30
 /** Lo de los últimos 2 días todavía puede estar por cargarse en el otro sistema: no se avisa que falta. */
 export const GRACIA_DIAS = 2
-/** Margen hacia atrás para emparejar lo del borde de la ventana. */
-export const MARGEN_DIAS = 5
+/** Margen hacia atrás para emparejar lo del borde de la ventana (= la tolerancia de fecha). */
+export const MARGEN_DIAS = 10
 
 // ---------------------------------------------------------------------------
 // Fechas (AAAA-MM-DD, sin horas)
@@ -68,8 +68,8 @@ export function ddmm(fecha: string | null | undefined): string {
 
 export type Tramo = { desde: string; hasta: string }
 
-/** Tramos de lectura de Zomatik de 32 días (3 cubren los 90 + 5 de margen), del más nuevo al más viejo. */
-export function tramosLectura(desde: string, hoy: string, dias = 32): Tramo[] {
+/** Tramos de lectura de Zomatik de 34 días (3 cubren los 90 + 10 de margen), del más nuevo al más viejo. */
+export function tramosLectura(desde: string, hoy: string, dias = 34): Tramo[] {
   const out: Tramo[] = []
   for (let hasta = hoy; hasta >= desde; ) {
     const d = sumarDias(hasta, -(dias - 1))
@@ -136,6 +136,8 @@ export function claveMaterial(nombre: unknown): string | null {
   if (!t.trim()) return null
   const medida = (a: number, b: number) => new RegExp(`(^|[^0-9])0?${a}\\s*[-/]\\s*${b}([^0-9]|$)`).test(t)
   if (/ARENA/.test(t)) return /TRIT/.test(t) || medida(0, 6) ? "arena_0_6" : "arena_fina"
+  // "PIEDRA 06" (sin la otra medida) es la 0/6 de trituración, no una piedra
+  if (/\bPIEDRA\s+0\s*6\b(?!\s*[-/])/.test(t)) return "arena_0_6"
   if (medida(6, 12)) return "piedra_6_12"
   if (medida(6, 20) || medida(6, 19)) return "piedra_6_20"
   if (medida(10, 30)) return "piedra_10_30"
@@ -153,11 +155,14 @@ export function claveMaterial(nombre: unknown): string | null {
 /**
  * Artículos de Zomatik por código (ESTAD R.COMPRA de REBUCRET, 20 al 27/10/2026). Manda sobre el nombre.
  *   10000004 CCTS ARENA ESPECIAL → Arena Fina · 10000026 CCTS CEMENTO GRANEL → CPC 40 · 10000005 PIEDRA 6-20
+ *   10000001 CCTS PIEDRA 06 → Arena Trituración 0/6 · 10000612 PIEDRA 6-12
  */
 export const CODIGOS_ARTICULO: Record<string, string> = {
-  "10000004": "arena_fina",
-  "10000026": "cemento",
-  "10000005": "piedra_6_20",
+  "10000004": "arena_fina", // CCTS ARENA ESPECIAL
+  "10000026": "cemento", // CCTS CEMENTO GRANEL
+  "10000005": "piedra_6_20", // PIEDRA 6-20
+  "10000001": "arena_0_6", // CCTS PIEDRA 06 = nuestra Arena Trituración 0/6 (primera corrida, 28/10)
+  "10000612": "piedra_6_12", // PIEDRA 6-12
 }
 
 /** Material de un renglón de Zomatik: por código y, si no está, por el nombre del artículo. null = sin material. */
@@ -220,11 +225,20 @@ function levenshtein(a: string, b: string): number {
   return v[b.length]
 }
 
+/** Proveedores que son el mismo para el control: Fenomix distribuye el cemento de Cementos Avellaneda. */
+const ALIAS_PROVEEDOR: { grupo: string; re: RegExp }[] = [{ grupo: "avellaneda", re: /FENOMIX|AVELLANEDA/ }]
+const grupoProveedor = (s: unknown) => {
+  const t = sinTildes(s)
+  return ALIAS_PROVEEDOR.find((x) => x.re.test(t))?.grupo || null
+}
+
 /**
  * ¿Es el mismo proveedor? "GUERRICO" = "Gerrico" = "GUERRICO S.A." · "CEMENTOS AVELLANEDA" ≠ "FENOMIX MATERIALES".
  * null si falta alguno de los dos (no se puede decir).
  */
 export function mismoProveedor(a: unknown, b: unknown): boolean | null {
+  const ga = grupoProveedor(a)
+  if (ga && ga === grupoProveedor(b)) return true
   const ta = tokensNombre(a).filter((t) => t.length > 2)
   const tb = tokensNombre(b).filter((t) => t.length > 2)
   if (!ta.length || !tb.length) return null
@@ -575,8 +589,8 @@ export type OpcionesCruce = {
 }
 
 /**
- * ¿Se puede controlar algo con estas fechas? Tiene que tener alguna desde `desde` y Zomatik leído desde 3 días antes
- * hasta 3 días después (la fecha puede variar ±3 días), sin pasar de hoy ni del margen de lectura.
+ * ¿Se puede controlar algo con estas fechas? Tiene que tener alguna desde `desde` y Zomatik leído desde 10 días antes
+ * hasta 10 días después (la fecha puede variar ±10 días), sin pasar de hoy ni del margen de lectura.
  */
 export function evaluable(fechas: string[], o: OpcionesCruce): boolean {
   if (!fechas.length) return false
@@ -654,7 +668,8 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
     if (difs.length) {
       const prov = distProv(a, z) ? [textoProveedor(a, z)] : []
       agregar("no_coincide", difs[0].tipo, [a, z], [...difs.map((d) => d.texto), ...prov].join(" · "))
-    } else if (distProv(a, z)) agregar("numero_mal", "proveedor", [a, z], `Mismo número ${a.nro} con otro proveedor: ${a.proveedor} en el nuestro y ${z.proveedor} en Zomatik`)
+    }
+    // Mismo número, material y toneladas: un proveedor distinto solo nunca es diferencia
   }
 
   // 3. Cargado dos veces (del mismo lado, mismo número). Primero los que tienen un hermano ya emparejado (es más
@@ -685,6 +700,10 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
         if (plantas.length > 1) extra.push(`en ${plantas.join(" y ")}`)
         if (transp.length > 1) extra.push(`con dos transportistas: ${transp.join(" y ")}`)
         if (!otros.length) extra.push(`y no está en ${ladoDup === "n" ? "Zomatik" : "nuestro sistema"}`)
+        // Un remito partido en dos renglones (0002 y 0022) que suman lo del otro sistema: se dice, es una sola diferencia
+        const suma = grupo.reduce((t, g) => t + g.t, 0)
+        if (otros.length === 1 && grupo.every((g) => g.comparaT) && Math.abs(suma - otros[0].t) <= TOL_TONELADAS + 1e-9)
+          extra.push(`en ${grupo.length} renglones que suman ${fmtT(suma)} t, igual que ${ladoDup === "n" ? "Zomatik" : "el nuestro"}`)
         const donde = ladoDup === "n" ? "nuestro sistema" : "Zomatik"
         agregar("no_coincide", ladoDup === "n" ? "duplicado_nuestro" : "duplicado_zomatik", [...grupo, ...otros], `Cargado ${grupo.length} veces en ${donde} (Nº ${u.nro})${extra.length ? ` ${extra.join(", ")}` : ""}`)
       }
@@ -703,7 +722,7 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
     // En toneladas: mismas toneladas. Aditivos y fibra (unidad sin confirmar): misma planta y fecha, sin cantidad
     if (a.comparaT ? !igualesT(a, z) : a.plantaId !== z.plantaId) return null
     const num = !a.nro || !z.nro ? 0.05 : numerosParecidos(a.nro, z.nro) ? 0 : 0.3
-    return (a.plantaId === z.plantaId ? 0 : 1) + (distProv(a, z) ? 0.5 : 0) + dd * 0.1 + num + (a.comparaT ? Math.abs(a.t - z.t) : 0)
+    return (a.plantaId === z.plantaId ? 0 : 1) + (distProv(a, z) ? 0.5 : 0) + dd * 0.05 + num + (a.comparaT ? Math.abs(a.t - z.t) : 0)
   })
   for (const [a, z] of fuzzy) {
     // Sin número en los dos ("000000" y "0000-00000000"), misma planta y proveedor: no hay nada mal escrito
@@ -723,6 +742,14 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
   for (const a of sueltosN()) if (a.fecha <= limite) agregar("falta_zomatik", "falta", [a], a.notas ? `Nota: ${a.notas.replace(/\s+/g, " ")}` : "")
   for (const z of sueltosZ()) if (z.fecha <= limite) agregar("falta_nuestro", "falta", [z], "")
 
+  // Si un renglón está en un "cargado dos veces", su par no se informa aparte (sería la misma diferencia dos veces)
+  const enDuplicados = new Set(out.filter((d) => d.tipo === "duplicado_nuestro" || d.tipo === "duplicado_zomatik").flatMap((d) => [...d.nuestro, ...d.zomatik].map((l) => l.ref)))
+  for (let i = out.length - 1; i >= 0; i--) {
+    const d = out[i]
+    if (d.tipo.startsWith("duplicado")) continue
+    const refs = [...d.nuestro, ...d.zomatik].map((l) => l.ref)
+    if (refs.length > 1 && refs.every((r) => enDuplicados.has(r))) out.splice(i, 1)
+  }
   const orden = new Map(CATEGORIAS.map((c, i) => [c.clave, i]))
   return out.sort((x, y) => orden.get(x.categoria)! - orden.get(y.categoria)! || (x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : 0) || (x.clave < y.clave ? -1 : 1))
 }

@@ -18,26 +18,26 @@ Todos los días, cruzar los remitos de ingreso de materia prima (arena, piedras,
   - se usa el mismo turno del robot (`zomatik_robot_tomar`/`soltar`) que la lectura diaria y la NP; la espera del turno sale del mismo presupuesto (la lectura termina a los 220 s; `maxDuration` 300, como Concretus con este listado en Hobby);
   - cada tramo leído entero se graba junto con sus días en `zomatik_remitos_compra_dias` (fecha de lectura);
   - no se guardan precios.
-- **Solo se controla lo leído:** una diferencia se informa (y se resuelve) solo si Zomatik está leído en las últimas 30 h desde 3 días antes hasta 3 días después de sus fechas. Lo que no, queda como estaba. Sin ninguna lectura reciente, no se cruza.
+- **Solo se controla lo leído:** una diferencia se informa (y se resuelve) solo si Zomatik está leído en las últimas 30 h desde 10 días antes hasta 10 días después de sus fechas. Lo que no, queda como estaba. Sin ninguna lectura reciente, no se cruza.
 - **Ventana:** desde el 01/08/2026 y, después, los últimos 90 días, con 5 días de margen hacia atrás para emparejar el borde.
 
 ## Reglas de emparejamiento (`lib/control-ingresos/cruce.ts`)
 - **Número normalizado:** sin el prefijo de Zomatik ("RMP "), sin punto de venta ni ceros a la izquierda, por ejemplo `RMP 0002-00881597` → `881597`. `0000-00000000` y `000000` quedan como "sin número".
 - **Material:** nuestros nombres y los artículos de Zomatik van a una clave común (arena fina, 0/6, 6/12, 6/20, 10/30, cemento, aditivos y fibra). En Zomatik manda el código (10000004 CCTS ARENA ESPECIAL → Arena Fina, 10000026 CCTS CEMENTO GRANEL → CPC 40, 10000005 PIEDRA 6-20 → Piedra Partida 6/20) y si no, el nombre sin "CCTS ". Lo que no se puede llevar a un material no es diferencia: va a la lista "Artículos de Zomatik sin material" de la pantalla.
-- **Proveedor:** se compara sin S.A., SRL ni palabras genéricas y tolera errores de tipeo: `Gerrico` = `GUERRICO S.A.`.
+- **Proveedor:** se compara sin S.A., SRL ni palabras genéricas y tolera errores de tipeo: `Gerrico` = `GUERRICO S.A.`. Alias: Fenomix = Cementos Avellaneda (Fenomix distribuye su cemento).
 
 Los pasos:
 1. **Mismo número:** se emparejan los renglones con el mismo número si tienen el mismo material o el mismo proveedor y están a ±30 días. En cada par se mira:
    - toneladas distintas (más de ±0,02), o dígitos invertidos (39,24 contra 39,42);
    - otro producto;
    - otra planta;
-   - otra fecha, si difieren más de ±3 días.
+   - otra fecha, si difieren más de ±10 días (en Zomatik se carga días después; corrida real del 28/10: de 4 a 9 días).
 
-   Si todo coincide salvo el proveedor, va a la categoría 4. **Aditivos y fibra:** hasta confirmar la unidad de Zomatik no se comparan cantidades: solo número, planta y fecha.
+   Si todo coincide salvo el proveedor, **no es diferencia**. **Aditivos y fibra:** hasta confirmar la unidad de Zomatik no se comparan cantidades: solo número, planta y fecha.
 2. **Cargado dos veces:** el mismo número, del mismo lado, más veces que en el otro sistema. Dice si fue en las dos plantas o con dos transportistas.
 3. **Número mal escrito:** lo que quedó suelto se empareja por:
    - el mismo material;
-   - fecha ±2 días;
+   - fecha ±10 días (mejor la más cercana);
    - toneladas iguales (±0,02);
    - cualquier planta, aunque se prefiere la misma.
 
@@ -74,8 +74,8 @@ Materias Primas › pestaña **Control con Zomatik**. La ven los gerenciales o q
 Es compacta: `text-xs` y sin negritas.
 
 ## Criterios de aceptación
-1. Los casos de las planillas de Juan dan su categoría (`npm run test:control-ingresos`, 25 pruebas):
-   - 3717 contra 163717, 0109-00065063 contra 165063, 0002-00880159 contra 3410, 318633 contra 319633, 0000-00000000 contra 318729 y Fenomix contra Cementos Avellaneda;
+1. Los casos de las planillas de Juan dan su categoría (`npm run test:control-ingresos`, 32 pruebas):
+   - 3717 contra 163717, 0109-00065063 contra 165063, 0002-00880159 contra 3410, 318633 contra 319633 y 0000-00000000 contra 318729 (Fenomix contra Cementos Avellaneda con el mismo número ya no es diferencia);
    - 39,42 contra 39,24, 164613 en las dos plantas, 6/12 contra 6/20 y Hudson 19/10 contra Canning 20/10;
    - "descargó lunes 26/10".
 2. Lo nuestro contra un Zomatik igual da 0 diferencias (prueba automática). Con los 304 ingresos reales desde el 27/07 contra ese espejo con los errores de Juan, sale una diferencia por cada error, y nada más.
@@ -88,5 +88,5 @@ Es compacta: `text-xs` y sin negritas.
 1. **Ingresos en toneladas en una unidad de kg** (20 de Fernando, desde el 17/10): el stock sumó 32,76 kg en vez de 32.760. *Recomiendo* corregirlos con un script aparte (×1000), con el OK de Bautista. Además, que la carga avise si alguien pone menos de 200 kg de un árido o cemento.
 2. **Columnas del export:** se tomaron las de Concretus (`Fecha`, `N Remito`, `Proveedor`, `Articulo`, `Cantidad`). No sabemos si trae el transportista, ni en qué unidad vienen los aditivos (hasta saberlo no se comparan sus cantidades). *Recomiendo* la primera corrida a mano con Bautista y mirar `datos` en la copia.
 3. **Gracia de 2 días para "falta":** con el mail a las 16:25, ¿alcanza con 1 día? *Recomiendo* dejar 2 la primera semana.
-4. **Fecha:** se avisa "otra fecha" recién con más de 3 días. ¿Juan quiere ver también las de 1 a 3 días? *Recomiendo* que no, porque son el día de descarga contra el día del remito.
+4. **Fecha:** se avisa "otra fecha" recién con más de 10 días. Como en Zomatik se carga hasta 9 días después, un "falta en Zomatik" de los últimos días puede ser solo atraso. ¿Subimos la gracia de 2 días? *Recomiendo* verlo con Juan después de una semana.
 5. **Diferencias resueltas a mano:** hoy solo se resuelven solas, cuando alguien corrige. *Recomiendo* que se quede así: "Revisado" alcanza para lo que no se va a corregir.
