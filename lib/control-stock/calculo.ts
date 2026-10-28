@@ -43,13 +43,16 @@ export const materialDeNombre = (nombre: string): ClaveMaterial | null => {
   return (MATERIALES.find((m) => m.clave === c)?.clave as ClaveMaterial) || null
 }
 
-/** "Actualizar ahora" no se usa de 16:15 a 16:45 de Argentina: a las 16:25 lo actualiza el cron. */
+/**
+ * "Actualizar ahora" no se usa de 16:00 a 16:59 de Argentina: el cron está a las 16:25 (19:25 UTC), pero en el plan
+ * Hobby de Vercel puede caer en cualquier minuto de esa hora.
+ */
 export function enHorarioDelCron(ahora: number = Date.now()): boolean {
   const d = new Date(ahora - 3 * 3600_000)
   const min = d.getUTCHours() * 60 + d.getUTCMinutes()
-  return min >= 16 * 60 + 15 && min < 16 * 60 + 45
+  return min >= 16 * 60 && min < 17 * 60
 }
-export const MENSAJE_HORARIO_CRON = "Se actualiza solo a las 16:25"
+export const MENSAJE_HORARIO_CRON = "Entre las 16 y las 17 se actualiza solo (el control diario corre en algún momento de esa hora)"
 
 /** Días de `desde` a `hasta` (incluidos). */
 export function dias(desde: string, hasta: string): string[] {

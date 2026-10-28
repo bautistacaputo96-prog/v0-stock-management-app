@@ -16,7 +16,7 @@ Comparar el stock de materia prima de nuestro sistema con el de Zomatik, por pla
 ## Zomatik (`reporte_movimientosdestock.php`, INVENTARIO › MOVIMIENTOS STOCK)
 - Es solo lectura: entra en la lista cerrada de `lib/zomatik/web.ts`.
 - Se lee en el mismo cron de las 16:25, en este orden: remitos, **mail** (con la última lectura de stock guardada) y recién después la lectura de stock nueva, que queda para el mail del día siguiente y para la pantalla. Así el mail de remitos nunca se pierde. La lectura de stock arranca solo si pasaron menos de 190 s y termina a los 255 s (`maxDuration` 300).
-- Tiene su botón "Actualizar ahora", como mucho uno cada 2 min y nunca entre las 16:15 y las 16:45 ("se actualiza solo a las 16:25").
+- Tiene su botón "Actualizar ahora", como mucho uno cada 2 min y nunca entre las 16:00 y las 16:59: el cron está a las 16:25, pero en Hobby puede caer en cualquier minuto de esa hora, y la pantalla lo dice.
 - Protecciones: el mismo turno del robot y la sucursal 18 confirmada en la página antes y después de cada export (`fetchMatrizEnSucursal`).
 - **Qué se lee:** por depósito (116 Canning, 113 Hudson) y artículo, con `bus_linea` 131 (MP Áridos) o 130 (MP Cemento). El período va desde el inicio de la ventana del control (01/08, o los últimos 90 días) hasta hoy. Las cantidades están en toneladas.
 - **El artículo (`idarticulo`):**

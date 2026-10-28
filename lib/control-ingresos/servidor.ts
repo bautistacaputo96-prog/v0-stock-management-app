@@ -304,6 +304,7 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
   const hoy = fechaArgentina(t0)
   const desde = desdeVentana(hoy)
   const res: ResultadoControl = { ok: true }
+  let mailAt: string | null = null
   try {
     if (opts.leer) res.lectura = await leerZomatikCompras(sb, desde, hoy, t0)
     const desdeMargen = sumarDias(desde, -MARGEN_DIAS)
@@ -323,7 +324,16 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
       // 1) El mail, con la última lectura de stock guardada (si falla el stock, el mail de remitos sale igual)
       const seccion = await seccionStockParaMail(sb, hoy, null)
       res.mail = await mandarMail(sb, hoy, res, seccion)
-      if (res.mail.enviado) res.resumen = { ...(res.resumen || {}), stock_rojas: seccion?.rojas || [] } as any
+      if (res.mail.enviado) {
+        mailAt = new Date().toISOString()
+        res.resumen = { ...(res.resumen || {}), stock_rojas: seccion?.rojas || [] } as any
+        // Se graba ya: si el proceso se corta leyendo el stock, la corrida igual queda con el mail y las filas rojas
+        await sb
+          .from("control_mp_corridas")
+          .update({ mail_at: mailAt, mail_a: res.mail.a, resumen: res.resumen ?? null })
+          .eq("id", opts.corridaId)
+          .then(() => {}, () => {})
+      }
       // 2) Después, la lectura de stock nueva (para el mail de mañana y para la pantalla)
       try {
         res.stock = Date.now() - t0 < STOCK_ULTIMO_INICIO_MS ? await leerStockZomatik(sb, { t0, limite: t0 + STOCK_LIMITE_MS }) : { ok: false, partes: [], error: "sin tiempo después de los remitos", ms: 0 }
@@ -343,7 +353,7 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
       lectura: res.lectura || res.stock ? { ...(res.lectura || {}), stock: res.stock ?? null } : null,
       resumen: res.resumen ?? null,
       error: [res.motivo, res.lectura?.error, res.mail && !res.mail.enviado ? `mail: ${res.mail.motivo}` : null].filter(Boolean).join(" · ").slice(0, 2000) || null,
-      mail_at: res.mail?.enviado ? new Date().toISOString() : null,
+      mail_at: res.mail?.enviado ? mailAt : null,
       mail_a: res.mail?.enviado ? res.mail.a : null,
     })
     .eq("id", opts.corridaId)
