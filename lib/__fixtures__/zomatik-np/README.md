@@ -10,3 +10,7 @@ Respuestas de Zomatik para `lib/__tests__/zomatik-np.test.mjs` (Z2, nota de pedi
 - El resto (alta, MATERIAL, listados, listas, `traerdatossecundarios`) está armado a mano con la estructura de los
   formularios relevados el 20/10 (solo lectura) y la prueba del 22/10 (spec 23). Sin datos de clientes reales salvo
   OBRA PROPIA REBUCRET, el de la prueba.
+- `detalle-np-abierta.html`: el detalle REAL que carga la página de una NP grabada (157767, NP2 0001-00002086, 28/10):
+  un renglón 5349424 (1 m³, $176.500), la celda OC con `AsignarNPDetalle(5349424)`, los sueltos con el crédito usado,
+  `#totalneto` / `#totalcosto` ("Total: 176.500,00") y el bloque COMPROBANTES / OPERACIONES. La página
+  `modificar_pedidos.php?codigo=N` no trae renglones: los pide con `pedidos=N` y su `pedidos_unico`.

@@ -17,7 +17,7 @@
 import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
-  numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esRenglonDe, recorte, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
+  numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 
@@ -355,7 +355,7 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
 
   // Continuar + agregar el artículo (el resto lo completa Zomatik)
   await marcar("continuar")
-  const base: [string, string][] = [["fcliente", String(d.clienteCodigo)], ["facopio", "0"], ["forigen", "1"]]
+  const base: [string, string][] = [["fcliente", String(d.clienteCodigo)], ["facopio", ""], ["forigen", "1"]]
   await manage(nav, c, [...base, ["flista", c.idlista]], null, azar)
   await marcar("articulo")
   const det = await manage(nav, c, [...base, ["fparam", ""], ["farticulo", String(d.articuloCodigoSistema)], ["flista", c.idlista]], null, azar)
@@ -418,7 +418,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
     ...(d.vendedorId ? { idvendedor: String(d.vendedorId), vendedor: d.vendedorNombre || "", vendedor_manual: "1" } : {}),
   }
   const c = { ...f.campos, ...valores }
-  const base: [string, string][] = [["fcliente", c.idcliente], ["facopio", "0"], ["forigen", "3"], ["flista", c.idlista || "0"]]
+  const base: [string, string][] = [["fcliente", c.idcliente], ["facopio", ""], ["forigen", "3"], ["flista", c.idlista || "0"]]
 
   // Continuar: trae el renglón del proyecto con lo disponible (23.2)
   await marcar("continuar")
@@ -467,10 +467,11 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
 
 /** Los renglones GRABADOS de una NP abierta: los de la página o, si la página no los trae (los carga por JS), los que
  *  devuelve manage_pedidos.php con los datos de esa página (pedidos=N y su pedidos_unico), como hace el navegador. */
-async function detalleGrabado(nav: NavegadorNp, pag: { html: string; form: ReturnType<typeof camposFormulario>; renglones: Renglon[] }, base: [string, string][], proyecto: number | null, azar: () => number): Promise<{ renglones: Renglon[]; det: Detalle | null }> {
-  if (pag.renglones.length || !pag.form) return { renglones: pag.renglones, det: null }
+async function detalleGrabado(nav: NavegadorNp, pag: { html: string; form: ReturnType<typeof camposFormulario>; renglones: Renglon[] }, base: [string, string][], proyecto: number | null, azar: () => number): Promise<{ renglones: Renglon[]; det: Detalle | null; valido: boolean; total: number | null }> {
+  if (pag.renglones.length || !pag.form) return { renglones: pag.renglones, det: null, valido: pag.renglones.length > 0, total: null }
   const det = await manage(nav, pag.form.campos, [...base, ["flista", pag.form.campos.idlista || "0"]], proyecto, azar)
-  return { renglones: det.renglones, det }
+  // "Cargó bien" = es la tabla del detalle (cabecera y #totalcosto): solo así "sin renglones" quiere decir algo
+  return { renglones: det.renglones, det, valido: esDetalle(det.html), total: totalDetalle(det.html) }
 }
 
 /**
@@ -513,17 +514,21 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     await marcar("total")
     const antes = await totalGrabado()
     const c = a.form.campos
+    // La página tiene que ser de ESTA NP (hidden "pedidos" = su código): si no, el detalle y el tacho irían a otra
+    if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
     const proyecto = Number(c.proyecto || 0) || null
-    const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio || "0"], ["forigen", (c.origen as string) || "1"]]
+    const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
     // El detalle: el de la página, o el que la página carga por JS (manage_pedidos.php con pedidos=N y su pedidos_unico)
     await marcar("detalle")
     const leido = await detalleGrabado(nav, a, base, proyecto, azar)
     let det: Detalle | null = leido.det
     let rs = leido.renglones
-    // ¿Ya está vacía en Zomatik? (un grabar anterior llegó): sin renglones Y total 0 en el listado
-    if (!rs.length && antes === 0) return { estado: "vaciada", mensaje: null, paso }
-    if (!rs.length) return { estado: "revisar", mensaje: `No se pudieron leer los renglones de la NP (Zomatik dice total ${antes ?? "sin dato"}). No se tocó: vaciala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    if (!leido.valido && !rs.length) return { estado: "revisar", mensaje: `No se pudo leer el detalle de la NP (Zomatik dice total ${antes ?? "sin dato"}). No se tocó: vaciala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    // ¿Ya está vacía en Zomatik? (un grabar anterior llegó): el detalle cargó bien, sin renglones, y el listado da 0
+    if (!rs.length && antes === 0 && (leido.total === null || leido.total === 0)) return { estado: "vaciada", mensaje: null, paso }
+    if (!rs.length) return { estado: "revisar", mensaje: `El detalle de la NP no tiene renglones pero Zomatik dice total ${antes ?? "sin dato"}. No se tocó: revisala a mano.`, paso, recorte: recorte(det?.html || a.html) }
     for (const r of [...rs]) {
+      if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
       if (!r.borrar) throw formato("un renglón no tiene el tacho", det?.html || a.html)
       await marcar("borrar_renglon")
       det = await manage(nav, c, [...base, ["fparam", fparamDe(rs)], ["fborrar", r.borrar]], proyecto, azar)
@@ -540,9 +545,11 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     // lo hace la página y se mira el total del listado. Vaciada SOLO sin renglones y con total 0.
     await marcar("verificar")
     const v = await abrir(nav, d.codigo)
-    const quedan = v.form ? await detalleGrabado(nav, v, [["fcliente", v.form.campos.idcliente || "0"], ["facopio", v.form.campos.acopio || "0"], ["forigen", (v.form.campos.origen as string) || "1"]], proyecto, azar) : null
+    const esLaMisma = !!v.form && String(v.form.campos.pedidos || "") === String(d.codigo)
+    const quedan = esLaMisma ? await detalleGrabado(nav, v, [["fcliente", v.form!.campos.idcliente || "0"], ["facopio", v.form!.campos.acopio ?? ""], ["forigen", (v.form!.campos.origen as string) || "1"]], proyecto, azar) : null
     const despues = await totalGrabado()
-    if (quedan && !quedan.renglones.length && despues === 0) return { estado: "vaciada", mensaje: null, paso }
+    // Vaciada SOLO si el detalle cargó bien y no tiene renglones; el total 0 (listado y #totalcosto) es una confirmación más
+    if (quedan && quedan.valido && !quedan.renglones.length && despues === 0 && (quedan.total === null || quedan.total === 0)) return { estado: "vaciada", mensaje: null, paso }
     if (no) return { estado: "error", mensaje: `Zomatik no dejó vaciar la NP: ${no}`, paso, recorte: recorte(g.html) }
     return {
       estado: "revisar",

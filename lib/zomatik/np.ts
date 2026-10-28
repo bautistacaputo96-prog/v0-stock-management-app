@@ -374,6 +374,20 @@ export function esRenglonDe(r: Renglon, art: { codigo?: number | string | null; 
   return !!art.nombre && plano(r.nombreArticulo) === plano(art.nombre)
 }
 
+/** ¿La respuesta es la tabla del detalle? (cabecera Codigo/Articulo y el total `#totalcosto`). Si no, no se puede
+ *  concluir nada de sus renglones. */
+export function esDetalle(html: string): boolean {
+  const h = sinComentarios(String(html ?? ""))
+  return /id\s*=\s*["']?totalcosto/i.test(h) && /Codigo[\s\S]{0,400}Articulo/i.test(texto(h))
+}
+
+/** Total del detalle (`#totalcosto`: "Total: 176.500,00") → 176500; null si no está. */
+export function totalDetalle(html: string): number | null {
+  const m = sinComentarios(String(html ?? "")).match(/id\s*=\s*["']?totalcosto["']?[^>]*>([\s\S]*?)<\/td>/i)
+  if (!m) return null
+  return montoListado(texto(m[1]).replace(/^Total:\s*/i, ""))
+}
+
 /** Recorte de una respuesta de Zomatik para guardar en Actividad (sin scripts, sin espacios de más, ~2 KB). */
 export function recorte(html: string, max = 2000): string {
   return sinComentarios(String(html ?? "")).replace(/<script\b[\s\S]*?<\/script>/gi, "").replace(/\s+/g, " ").trim().slice(0, max)

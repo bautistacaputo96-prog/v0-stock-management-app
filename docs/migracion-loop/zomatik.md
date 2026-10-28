@@ -1730,3 +1730,8 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
   6. Sin poder leer los renglones con un total distinto de 0, no se toca nada.
 - La NP 157767 la vacía Bautista a mano. La próxima prueba se hace con otra NP.
 - Con esta rama: "Capacidad por camión (m³)" vuelve a estar visible (opcional, arranca en 8, con su ayuda). "Cada cuántos minutos sale un camión" queda en "Más datos".
+- Observaciones del revisor (28/10):
+  - antes de cargar el detalle y antes de borrar se exige que el hidden `pedidos` de la página sea el código de la NP;
+  - "vaciada" solo si el detalle cargó bien (tabla con `#totalcosto`) y no tiene renglones. El total 0 del listado y de `#totalcosto` es una confirmación más: con costo 0 puede haber renglones y total 0.
+- El fixture de la NP abierta es el detalle real de la 157767 (`detalle-np-abierta.html`): celda OC con `AsignarNPDetalle`, totales y bloque de comprobantes.
+- `facopio` va vacío, como en la captura real.
