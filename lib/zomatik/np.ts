@@ -264,16 +264,21 @@ export function listasDeListado(html: string): Lista[] {
 }
 
 /**
- * La lista que corresponde (20.2): la activa "en 1" para la NP o "en 2" para la NP2. Tiene que haber UNA sola activa
- * de ese tipo: si hay cero o varias, no se genera ("Revisar las listas en Zomatik").
+ * La lista que corresponde (20.2, y Bautista el 28/10: "a fines prácticos usá esa"):
+ *   - si hay UNA sola lista activa, va para la NP y la NP2, diga o no "en 1" / "en 2" (ej.: "Lista OCTUBRE 2026");
+ *   - si hay varias activas, la "en 1" para la NP o la "en 2" para la NP2, y tiene que quedar una sola;
+ *   - si no hay ninguna (o no queda una sola), no se genera ("Revisar las listas en Zomatik").
  */
 export function listaActiva(listas: Lista[], comprobante: "15" | "16"): { lista: Lista } | { error: string } {
   const clave = LISTA_DE[comprobante]
-  const re = new RegExp(`\\b${clave.replace(" ", "\\s+")}\\b`, "i")
-  const activas = listas.filter((l) => /^activ/i.test(l.estado) && re.test(l.nombre))
+  const activas = listas.filter((l) => /^activ/i.test(l.estado))
   if (activas.length === 1) return { lista: activas[0] }
-  if (!activas.length) return { error: `No hay ninguna lista activa "${clave}" en Zomatik. Revisar las listas en Zomatik.` }
-  return { error: `Hay ${activas.length} listas activas "${clave}" en Zomatik (${activas.map((l) => l.codigo).join(", ")}). Revisar las listas en Zomatik.` }
+  if (!activas.length) return { error: "No hay ninguna lista activa en Zomatik. Revisar las listas en Zomatik." }
+  const re = new RegExp(`\\b${clave.replace(" ", "\\s+")}\\b`, "i")
+  const delTipo = activas.filter((l) => re.test(l.nombre))
+  if (delTipo.length === 1) return { lista: delTipo[0] }
+  if (!delTipo.length) return { error: `Hay ${activas.length} listas activas y ninguna "${clave}" en Zomatik (${activas.map((l) => l.codigo).join(", ")}). Revisar las listas en Zomatik.` }
+  return { error: `Hay ${delTipo.length} listas activas "${clave}" en Zomatik (${delTipo.map((l) => l.codigo).join(", ")}). Revisar las listas en Zomatik.` }
 }
 
 // ── Detalle de la NP (lo que devuelve manage_pedidos.php y lo que muestra la NP abierta) ──

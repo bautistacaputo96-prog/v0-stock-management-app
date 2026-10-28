@@ -1690,3 +1690,10 @@ Mismo blindaje que la NP: sucursal 18, marca, una sesión a la vez, sin repetir 
   - NP nueva;
   - de un proyecto: elegís el proyecto y completa cliente y obra;
   - usar NP con saldo: elegís la NP y completa cliente, obra, fórmula y m³.
+
+### 25.11 Lista de precios única (28/10, rama `fix/np-lista-unica`)
+En Zomatik crearon "Lista OCTUBRE 2026" (activa, sin "en 1" ni "en 2") y pasaron las de septiembre a invisibles. Bautista: "a fines prácticos usá esa".
+- Si hay una sola lista activa, se usa para la NP y la NP2.
+- Si hay varias, se elige la "en 1" (NP) o la "en 2" (NP2), y tiene que quedar una sola.
+- Si no hay ninguna, o no queda una sola, no se genera la NP ("Revisar las listas en Zomatik").
+- La NP n=2 del pedido `42a614e6` quedó en error. Cuando esto esté publicado, se reintenta con "Generar NP ahora".
