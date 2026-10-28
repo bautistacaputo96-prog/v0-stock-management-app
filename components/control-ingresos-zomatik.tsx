@@ -150,7 +150,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
         </Button>
         <span
           className="cursor-help text-muted-foreground"
-          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Por ahora se controlan áridos y cemento. Toneladas iguales ±0,02; la fecha puede variar ±10 días; con el mismo número, material y toneladas, un proveedor distinto no cuenta (Fenomix = Cementos Avellaneda); “falta en Zomatik” se avisa después de 7 días y “falta en nuestro sistema” después de 2. Todos los días a las 16:25 le llega el mail a Juan con lo abierto. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
+          title="Cruza los remitos de materia prima de nuestro sistema con los de Zomatik (REBUCRET, Canning y Hudson) desde el 01/08/2026, últimos 90 días. Por ahora se controlan áridos y cemento. Toneladas iguales ±0,02; la fecha sola no cuenta (se empareja con ±10 días); con el mismo número, material y toneladas, un proveedor distinto no cuenta (Fenomix = Cementos Avellaneda); “falta en Zomatik” se avisa después de 7 días y “falta en nuestro sistema” después de 2. Todos los días a las 16:25 le llega el mail a Juan con lo abierto. Lo revisado no vuelve al mail; lo que se corrige en cualquiera de los dos sistemas pasa solo a resuelto."
         >
           (?)
         </span>
@@ -200,7 +200,6 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
                       <th className="px-1.5 py-1 font-normal">Nuestro sistema</th>
                       <th className="px-1.5 py-1 font-normal">Zomatik</th>
                       <th className="px-1.5 py-1 font-normal">Proveedor</th>
-                      <th className="px-1.5 py-1 font-normal">Transportista</th>
                       <th className="px-1.5 py-1 font-normal">Qué pasa</th>
                       <th className="w-64 px-1.5 py-1 font-normal"></th>
                     </tr>
@@ -219,7 +218,6 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
                             <CeldaLado ls={d.zomatik} />
                           </td>
                           <td className="px-1.5 py-1">{proveedoresTexto(todos)}</td>
-                          <td className="px-1.5 py-1">{unico(todos.map((l) => l.transportista))}</td>
                           <td className="px-1.5 py-1">{d.detalle || "-"}</td>
                           <td className="px-1.5 py-1">
                             {d.estado === "abierta" ? (

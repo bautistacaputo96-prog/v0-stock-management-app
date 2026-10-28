@@ -31,10 +31,10 @@ Los pasos:
    - toneladas distintas (más de ±0,02), o dígitos invertidos (39,24 contra 39,42);
    - otro producto;
    - otra planta;
-   - otra fecha, si difieren más de ±10 días (en Zomatik se carga días después; corrida real del 28/10: de 4 a 9 días).
+   - ~~otra fecha~~: **sacado (Bautista, 28/10)**. La fecha sola nunca es diferencia; solo se usa para emparejar (±10 días).
 
    Si todo coincide salvo el proveedor, **no es diferencia**. **Aditivos y fibra:** hasta confirmar la unidad de Zomatik no se comparan cantidades: solo número, planta y fecha.
-2. **Cargado dos veces:** el mismo número, del mismo lado, más veces que en el otro sistema. Dice si fue en las dos plantas o con dos transportistas.
+2. **Cargado dos veces:** el mismo número, del mismo lado, más veces que en el otro sistema. Dice si fue en las dos plantas.
 3. **Número mal escrito:** lo que quedó suelto se empareja por:
    - el mismo material;
    - fecha ±10 días (mejor la más cercana);
@@ -64,7 +64,7 @@ Cada diferencia tiene una `clave` estable: la categoría, el tipo y los renglone
   - En el plan Hobby, Vercel puede dispararlo hasta las 16:59. Si en ese momento Concretus cambia la sucursal, el control lo detecta y reintenta el tramo.
 - **A quién:** Juan Oreguy, con copia a Bautista, por nombre en `app_users` (como `lib/carga/servidor.ts`).
 - **Cuándo sale:** solo si hay diferencias abiertas, y una vez por día como mucho.
-- **Contenido:** primero "Nuevas desde ayer" (las que aparecieron desde el último mail) y después "Siguen abiertas (N)". En cada parte, tablas por las 4 categorías con fecha, material, nuestro sistema y Zomatik (número, toneladas, planta y fecha), proveedor, transportista y qué pasa. Al final, el link a la pantalla.
+- **Contenido:** primero "Nuevas desde ayer" (las que aparecieron desde el último mail) y después "Siguen abiertas (N)". En cada parte, tablas por las 4 categorías con fecha, material, nuestro sistema y Zomatik (número, toneladas, planta y fecha), proveedor y qué pasa (sin transportista: Bautista, 28/10). Al final, el link a la pantalla.
 - **Si no se pudo leer Zomatik:** se avisa arriba y se usa la última lectura guardada. Si además no hay nada abierto, el aviso va solo a Bautista.
 
 ## Pantalla

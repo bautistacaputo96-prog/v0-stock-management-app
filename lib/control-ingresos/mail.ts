@@ -41,13 +41,12 @@ function tabla(difs: DiferenciaMail[]): string {
         <td ${TD}>${celdaLado(d.nuestro)}</td>
         <td ${TD}>${celdaLado(d.zomatik)}</td>
         <td ${TD}>${esc(proveedoresTexto(todos))}</td>
-        <td ${TD}>${esc(unico(todos.map((l) => l.transportista)))}</td>
         <td ${TD}>${esc(d.detalle || "-")}</td>
       </tr>`
     })
     .join("")
   return `<table style="width:100%;border-collapse:collapse;margin:2px 0 10px">
-    <tr><th ${TH}>Fecha</th><th ${TH}>Material</th><th ${TH}>Nuestro sistema</th><th ${TH}>Zomatik</th><th ${TH}>Proveedor</th><th ${TH}>Transportista</th><th ${TH}>Qué pasa</th></tr>
+    <tr><th ${TH}>Fecha</th><th ${TH}>Material</th><th ${TH}>Nuestro sistema</th><th ${TH}>Zomatik</th><th ${TH}>Proveedor</th><th ${TH}>Qué pasa</th></tr>
     ${filas}
   </table>`
 }
@@ -73,7 +72,7 @@ export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[
     <div style="font-size:14px;margin:14px 0 6px">Siguen abiertas (${d.siguen.length})</div>
     ${d.siguen.length ? porCategoria(d.siguen) : `<div style="color:#64748b">Ninguna.</div>`}
     <p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>
-    <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha puede variar ±10 días · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>
+    <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>
   </div>`
   return { asunto, html }
 }

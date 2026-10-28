@@ -555,7 +555,7 @@ function diferenciasDelPar(a: Item, z: Item): { tipo: TipoDiferencia; texto: str
   }
   if (a.mat !== z.mat) out.push({ tipo: "producto", texto: `Otro producto: ${a.material} en el nuestro y ${z.material} en Zomatik` })
   if (a.plantaId !== z.plantaId) out.push({ tipo: "planta", texto: `Otra planta: ${a.planta} el ${ddmm(a.fecha)} en el nuestro y ${z.planta} el ${ddmm(z.fecha)} en Zomatik` })
-  else if (Math.abs(diasEntre(a.fecha, z.fecha)) > TOL_FECHA_DIAS) out.push({ tipo: "fecha", texto: `Otra fecha: ${ddmm(a.fecha)} en el nuestro y ${ddmm(z.fecha)} en Zomatik` })
+  // La fecha sola no es diferencia (Bautista, 28/10): en Zomatik se carga días después
   return out
 }
 
@@ -700,9 +700,7 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
         const otros = grupo.map((g) => parDe.get(g)).filter((x): x is Item => !!x)
         const extra: string[] = []
         const plantas = [...new Set(grupo.map((g) => g.planta))]
-        const transp = [...new Set(grupo.map((g) => g.transportista).filter(Boolean))]
         if (plantas.length > 1) extra.push(`en ${plantas.join(" y ")}`)
-        if (transp.length > 1) extra.push(`con dos transportistas: ${transp.join(" y ")}`)
         if (!otros.length) extra.push(`y no está en ${ladoDup === "n" ? "Zomatik" : "nuestro sistema"}`)
         // Un remito partido en dos renglones (0002 y 0022) que suman lo del otro sistema: se dice, es una sola diferencia
         const suma = grupo.reduce((t, g) => t + g.t, 0)
