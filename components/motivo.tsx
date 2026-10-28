@@ -54,6 +54,8 @@ export function ConfirmarConMotivo({
   labelMotivo,
   ejemplo,
   onConfirmar,
+  extra,
+  listo = true,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
@@ -64,6 +66,10 @@ export function ConfirmarConMotivo({
   labelMotivo?: string
   ejemplo?: string
   onConfirmar: (motivo: string) => void | Promise<void>
+  /** Algo más que preguntar antes del motivo (ej.: qué hacer con la NP de Zomatik). */
+  extra?: React.ReactNode
+  /** false: falta contestar `extra` y no se puede confirmar. */
+  listo?: boolean
 }) {
   const [motivo, setMotivo] = useState("")
   const [trabajando, setTrabajando] = useState(false)
@@ -72,7 +78,7 @@ export function ConfirmarConMotivo({
   }, [open])
 
   async function confirmar() {
-    if (!motivoValido(motivo) || trabajando) return
+    if (!motivoValido(motivo) || trabajando || !listo) return
     setTrabajando(true)
     try {
       await onConfirmar(motivo.trim())
@@ -88,12 +94,13 @@ export function ConfirmarConMotivo({
           <DialogTitle>{titulo}</DialogTitle>
           {descripcion && <DialogDescription asChild><div className="text-sm text-muted-foreground">{descripcion}</div></DialogDescription>}
         </DialogHeader>
+        {extra}
         <CampoMotivo value={motivo} onChange={setMotivo} label={labelMotivo} ejemplo={ejemplo} id="motivo-confirmar" />
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={trabajando}>
             Volver
           </Button>
-          <Button variant={destructivo ? "destructive" : "default"} onClick={confirmar} disabled={!motivoValido(motivo) || trabajando}>
+          <Button variant={destructivo ? "destructive" : "default"} onClick={confirmar} disabled={!motivoValido(motivo) || trabajando || !listo}>
             {trabajando ? <Loader2 className="h-4 w-4 animate-spin" /> : textoBoton}
           </Button>
         </DialogFooter>

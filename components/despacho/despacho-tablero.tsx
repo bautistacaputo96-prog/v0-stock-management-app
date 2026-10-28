@@ -49,7 +49,8 @@ import { CancelarDialog, FinalizarDialog } from "./finalizar-dialog"
 import { HumedadAcopio } from "./humedad-acopio"
 import { usarArrastre } from "./usar-arrastre"
 import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
-import { avisarNp, useNp } from "@/lib/zomatik/np-cliente"
+import { avisarNp, estadoNpDePedido, useNp, type NpFila } from "@/lib/zomatik/np-cliente"
+import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 
 const MIN = 60_000
 const CLAVE_PLANTA = "rebucret_despacho_planta"
@@ -108,6 +109,23 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const [reabrir, setReabrir] = useState<PedidoT | null>(null)
   const [finalizar, setFinalizar] = useState<PedidoT | null>(null)
   const [cancelar, setCancelar] = useState<PedidoT | null>(null)
+  // Al cancelar: NP del pedido en Zomatik (null = leyendo) y qué hacer con ellas (28/10)
+  const [npCancelarNps, setNpCancelarNps] = useState<NpFila[] | null>([])
+  const [npCancelarDecision, setNpCancelarDecision] = useState<DecisionNpCancelar | null>(null)
+  // Al abrir "Cancelar pedido": la NP de ESE pedido (si la planta tiene la llave prendida), para preguntar qué hacer
+  useEffect(() => {
+    setNpCancelarDecision(null)
+    if (!cancelar) {
+      setNpCancelarNps([])
+      return
+    }
+    setNpCancelarNps(null)
+    let vivo = true
+    estadoNpDePedido(cancelar.id).then((est) => vivo && setNpCancelarNps(est?.activo || np.porPedido[cancelar.id]?.activo ? npsEnZomatik((est || np.porPedido[cancelar.id])?.nps) : []))
+    return () => {
+      vivo = false
+    }
+  }, [cancelar]) // eslint-disable-line react-hooks/exhaustive-deps
   const [editarTotal, setEditarTotal] = useState<PedidoT | null>(null)
   const [totalNuevo, setTotalNuevo] = useState("")
   const [motivoTotal, setMotivoTotal] = useState("")
@@ -566,11 +584,10 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       details: { Estado: `${p.status} → cancelado`, "m³": p.quantity_m3, Enviado: p.dispatched_m3 || 0, Motivo: `${textoMotivo(tipo)} — ${detalle}` },
     })
     toast({ title: "Pedido cancelado", description: `${p.clients?.name} · ${m3txt(Math.max(0, p.quantity_m3 - Number(p.dispatched_m3 || 0)))} m³ al contador «Cancelado»` })
-    // Zomatik Z2: la NP no se toca: queda pendiente en Programación (NP con saldo), sin preguntar nada
-    if (np.porPedido[p.id]?.activo) {
-      const teniaNp = np.porPedido[p.id]?.nps.some((x) => x.estado === "ok")
-      avisarNp(p.id).then(() => {
-        if (teniaNp) toast({ title: "La NP queda pendiente en Programación", description: "En «NP con saldo», hasta que se reprograme o se devuelva." })
+    // Zomatik: lo que no llegó a Zomatik se anula; la NP en Zomatik queda pendiente o se vacía, según se eligió
+    if (np.porPedido[p.id]?.activo || (npCancelarNps || []).length) {
+      npDespuesDeCancelar(p.id, npCancelarNps || [], npCancelarDecision).then((r) => {
+        if (r) toast({ title: r.titulo, description: r.texto, variant: r.mal ? "destructive" : undefined })
         np.recargarEn()
       })
     }
@@ -807,7 +824,11 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         puedeCorrer={!!reabrir && ajustaPedido(reabrir)} onClose={() => setReabrir(null)} onConfirmar={hacerReabrir}
       />
       <FinalizarDialog pedido={finalizar} onClose={() => setFinalizar(null)} onConfirmar={hacerFinalizar} />
-      <CancelarDialog pedido={cancelar} onClose={() => setCancelar(null)} onConfirmar={hacerCancelar} />
+      <CancelarDialog
+        pedido={cancelar} onClose={() => setCancelar(null)} onConfirmar={hacerCancelar}
+        extra={npCancelarNps === null ? <p className="text-xs text-muted-foreground">Leyendo la NP del pedido…</p> : cancelar && <NpCancelarPregunta nps={npCancelarNps} despachado={Number(cancelar.dispatched_m3 || 0)} valor={npCancelarDecision} onCambio={setNpCancelarDecision} />}
+        listo={npCancelarNps !== null && (npCancelarNps.length === 0 || npCancelarDecision !== null)}
+      />
 
       {/* Editar total (como en la pantalla de siempre) */}
       <Dialog open={!!editarTotal} onOpenChange={(v) => !v && setEditarTotal(null)}>

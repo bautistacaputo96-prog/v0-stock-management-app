@@ -112,14 +112,18 @@ export function comprobanteDeNumero(s: unknown): "15" | "16" | null {
 // Marca en las observaciones
 // ---------------------------------------------------------------------------
 
-/** "Sistema Rebucret · pedido 1a2b3c4d · NP 1" — única por NP (n = 1 la primera, 2… las adicionales). */
+/**
+ * "Sistema Rebucret - pedido 1a2b3c4d - NP 1" — única por NP (n = 1 la primera, 2… las adicionales). Con guiones: el "·"
+ * de antes llegaba a Zomatik como "�" (28/10). `tieneMarca` encuentra las dos formas (la vieja ya está grabada en NP reales).
+ */
 export function marcaNp(pedidoId: string, n: number): string {
-  return `Sistema Rebucret · pedido ${String(pedidoId).replace(/-/g, "").slice(0, 8)} · NP ${n}`
+  return `Sistema Rebucret - pedido ${String(pedidoId).replace(/-/g, "").slice(0, 8)} - NP ${n}`
 }
 
 const plano = (s: unknown) =>
   String(s ?? "")
     .replace(/\u00c2(?=\u00b7)/g, "") // "Â·": el "·" guardado en UTF-8 y leído en latin1
+    .replace(/[\u00b7\ufffd?]/g, " ") // "·", "�" (como quedó en Zomatik el 28/10) o "?": separadores, igual que " - "
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^\w]+/g, " ")

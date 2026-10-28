@@ -45,7 +45,8 @@ import { coincideBusqueda } from "@/lib/buscar-texto"
 import { NpChip } from "@/components/zomatik/np-chip"
 import { NpSaldos } from "@/components/zomatik/np-saldos"
 import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
-import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
+import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
@@ -250,6 +251,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const puedeCrear = puede("programacion", "cargar")
   const [motivo, setMotivo] = useState("")
   const [cancelar, setCancelar] = useState<ScheduledDispatch | null>(null)
+  // Al cancelar: las NP del pedido que ya están en Zomatik (null = leyendo) y qué hacer con ellas (28/10)
+  const [npCancelarNps, setNpCancelarNps] = useState<NpFila[] | null>([])
+  const [npCancelarDecision, setNpCancelarDecision] = useState<DecisionNpCancelar | null>(null)
   // Zomatik Z2: NP nueva o de un proyecto (la guarda el servidor al avisar el pedido)
   const NP_NUEVA: EleccionNp = { tipo: "nueva", proyecto_codigo: null, tope_m3: null }
   const [npEleccion, setNpEleccion] = useState<EleccionNp>(NP_NUEVA)
@@ -274,6 +278,20 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const np = useNp(idsSemana)
   const hayNpActiva = Object.values(np.plantas).some((p) => p.activo)
   usePasadaNp(puedeCrear && hayNpActiva, np.recargar)
+  // Al abrir "Cancelar pedido": se lee la NP de ESE pedido (con la llave prendida) para preguntar qué hacer con ella
+  useEffect(() => {
+    setNpCancelarDecision(null)
+    if (!cancelar || !np.plantas[cancelar.plant_id]?.activo) {
+      setNpCancelarNps([])
+      return
+    }
+    setNpCancelarNps(null)
+    let vivo = true
+    estadoNpDePedido(cancelar.id).then((est) => vivo && setNpCancelarNps(npsEnZomatik((est || np.porPedido[cancelar.id])?.nps)))
+    return () => {
+      vivo = false
+    }
+  }, [cancelar]) // eslint-disable-line react-hooks/exhaustive-deps
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
   const [paramsPorPlanta, setParamsPorPlanta] = useState<Record<string, Parametros>>({})
   // Fase 2b: ubicación de la obra y viaje real desde la planta del pedido
@@ -855,7 +873,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setSaving(false)
   }
 
-  async function cancelDispatch(dispatch: ScheduledDispatch, motivoCancelado: string) {
+  async function cancelDispatch(dispatch: ScheduledDispatch, motivoCancelado: string, npsZomatik: NpFila[] = [], decision: DecisionNpCancelar | null = null) {
     if (!puede("programacion", "borrar")) return
     const supabase = createClient()
     const { error } = await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", dispatch.id)
@@ -863,10 +881,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       toast({ title: "Error", description: "No se pudo cancelar", variant: "destructive" })
     } else {
       toast({ title: "Despacho cancelado" })
-      // Zomatik Z2: pedido cancelado → la NP no se toca: queda pendiente en Programación (NP con saldo)
+      // Zomatik: lo que no llegó a Zomatik se anula; la NP en Zomatik queda pendiente o se vacía, según se eligió
       if (np.plantas[dispatch.plant_id]?.activo) {
-        avisarNp(dispatch.id).then((r) => {
-          if (r.activo && np.porPedido[dispatch.id]?.nps.some((x) => x.estado === "ok")) toast({ title: "La NP queda pendiente en Programación", description: "En «NP con saldo», hasta que se reprograme o se devuelva." })
+        npDespuesDeCancelar(dispatch.id, npsZomatik, decision).then((r) => {
+          if (r) toast({ title: r.titulo, description: r.texto, variant: r.mal ? "destructive" : undefined })
           np.recargarEn()
           setNpSaldosVersion((v) => v + 1)
         })
@@ -1737,8 +1755,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         descripcion={cancelar && `${cancelar.clients?.name || ""} · ${cancelar.construction_sites?.name || ""} · ${cancelar.quantity_m3} m³. El pedido no se borra: queda cancelado.`}
         textoBoton="Cancelar pedido"
         ejemplo="Ej: se suspende por lluvia"
+        extra={
+          npCancelarNps === null ? <p className="text-xs text-muted-foreground">Leyendo la NP del pedido…</p>
+          : cancelar && <NpCancelarPregunta nps={npCancelarNps} despachado={Number(cancelar.dispatched_m3 || 0)} valor={npCancelarDecision} onCambio={setNpCancelarDecision} />
+        }
+        listo={npCancelarNps !== null && (npCancelarNps.length === 0 || npCancelarDecision !== null)}
         onConfirmar={async (m) => {
-          if (cancelar) await cancelDispatch(cancelar, m)
+          if (cancelar) await cancelDispatch(cancelar, m, npCancelarNps || [], npCancelarDecision)
           setCancelar(null)
         }}
       />

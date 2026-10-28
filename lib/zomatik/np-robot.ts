@@ -414,7 +414,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   const obsProyecto = (f.campos.observaciones || "").trim()
   const valores: Record<string, string> = {
     deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones_entrega: d.entrega,
-    observaciones: obsProyecto ? `${obsProyecto} · ${d.marca}` : d.marca,
+    observaciones: obsProyecto ? `${obsProyecto} - ${d.marca}` : d.marca,
     ...(d.vendedorId ? { idvendedor: String(d.vendedorId), vendedor: d.vendedorNombre || "", vendedor_manual: "1" } : {}),
   }
   const c = { ...f.campos, ...valores }

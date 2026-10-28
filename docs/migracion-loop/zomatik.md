@@ -1706,3 +1706,14 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
 - `fparam` = `codigo,costo,cantidad,observación|||` con el valor de `codigo<id>` (el id del renglón). Así lo arma `GrabarDatosDetalle()` en el JavaScript de `modificar_pedidos.php` guardado el 20/10.
 - Al grabar van todos los campos del renglón (peso, hcosto, apallet, palletcant, coeficiente…) y los sueltos del detalle (credito, compraactual, compraactualsib, totalacopio), como el navegador.
 - Si el detalle no coincide, el error guarda en Actividad un recorte de unos 2 KB de la respuesta de Zomatik.
+
+### 25.13 Primera NP real y cancelar con NP (28/10, rama `fix/np-cancelar-y-marca`)
+- **Primera NP real:** NP2 0001-00002086 (código 157767), sucursal 18. Cliente, depósito, fecha, artículo, 1 m³, lista 10248 y vendedor 100: todo bien.
+- **Marca:** en Zomatik el "·" quedaba como "�". La marca nueva usa guiones: "Sistema Rebucret - pedido N - NP n". La búsqueda encuentra también las ya grabadas con "·", "Â·" o "�".
+- **Cancelar pedido con NP en Zomatik** (Programación y Despacho) pregunta "¿Cancelar también la NP en Zomatik?":
+  - **No, dejala pendiente:** por ejemplo, por lluvia; queda en «NP con saldo» para reprogramar.
+  - **Sí, cancelarla:** la vacía en el momento, como «Devolver el saldo».
+  - Sin elegir, no se cancela.
+  - Si el pedido ya tuvo despachos, solo se puede dejarla pendiente, con el aviso de que hace falta una DEVOL.
+  - Los permisos son los mismos de siempre.
+  - Con la llave apagada no pregunta nada.

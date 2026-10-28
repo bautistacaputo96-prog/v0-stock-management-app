@@ -67,10 +67,14 @@ export function FinalizarDialog({ pedido, onClose, onConfirmar }: {
 }
 
 /** Cancelar con motivo (solo gerenciales): el pedido no se borra, queda cancelado con el motivo guardado. */
-export function CancelarDialog({ pedido, onClose, onConfirmar }: {
+export function CancelarDialog({ pedido, onClose, onConfirmar, extra, listo = true }: {
   pedido: PedidoT | null
   onClose: () => void
   onConfirmar: (tipo: MotivoTipo, detalle: string) => Promise<string | null>
+  /** Algo más que preguntar (qué hacer con la NP de Zomatik) */
+  extra?: React.ReactNode
+  /** false: falta contestar `extra` */
+  listo?: boolean
 }) {
   const [tipo, setTipo] = useState<MotivoTipo>("lluvia")
   const [detalle, setDetalle] = useState("")
@@ -78,6 +82,7 @@ export function CancelarDialog({ pedido, onClose, onConfirmar }: {
   const [trabajando, setTrabajando] = useState(false)
   useEffect(() => { if (pedido) { setTipo("lluvia"); setDetalle(""); setErr(null) } }, [pedido])
   async function confirmar() {
+    if (!listo) { setErr("Elegí qué hacer con la NP de Zomatik."); return }
     if (!motivoValido(detalle)) { setErr("El motivo es obligatorio (al menos 5 letras)."); return }
     setTrabajando(true)
     const e = await onConfirmar(tipo, detalle.trim())
@@ -92,6 +97,7 @@ export function CancelarDialog({ pedido, onClose, onConfirmar }: {
           <div className="space-y-3">
             <CabeceraPedido p={pedido} extra={`${m3txt(pedido.quantity_m3)} m³`} />
             <p className="text-sm text-muted-foreground">El pedido no se borra: queda cancelado. Solo gerenciales.</p>
+            {extra}
             <div className="space-y-1.5">
               <Label>Motivo *</Label>
               <ChipsMotivo opciones={MOTIVOS_CANCELAR} valor={tipo} onChange={setTipo} />
@@ -105,7 +111,7 @@ export function CancelarDialog({ pedido, onClose, onConfirmar }: {
         )}
         <DialogFooter className="gap-2">
           <Button variant="outline" className="h-11" onClick={onClose} disabled={trabajando}>Volver</Button>
-          <Button variant="destructive" className="h-11" onClick={confirmar} disabled={trabajando}>
+          <Button variant="destructive" className="h-11" onClick={confirmar} disabled={trabajando || !listo}>
             {trabajando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cancelar pedido"}
           </Button>
         </DialogFooter>
