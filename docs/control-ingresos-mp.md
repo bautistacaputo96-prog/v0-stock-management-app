@@ -10,7 +10,9 @@ Todos los días, cruzar los remitos de ingreso de materia prima (arena, piedras,
   - Ojo: la pantalla dice "Cantidad (kg)", pero desde el 17/10 hay 20 ingresos cargados en toneladas (32,76 en vez de 32760). Para el cruce, menos de 200 se toma como toneladas. El stock de esos ingresos quedó mal (ver Preguntas).
 - **Zomatik:** `reporte_remitoscompra.php`, que entra en la lista cerrada de `lib/zomatik/web.ts` como solo lectura. Se lee por tramos de 32 días: primero los que tienen días nunca leídos y después los de lectura más vieja. En cada tramo:
   - Canning (depósito 116), Hudson (113) y todos los depósitos; lo que está solo en "todos" se cargó en otro depósito y queda sin planta;
-  - se elige la sucursal 18 y se confirma en la página **antes y después** de cada export (zomatik.md 23.3). También se rechaza el tramo si Canning y Hudson vienen vacíos y "todos" no, o si aparece un artículo "CCTS " (es de Concretus). Ante un rechazo por sucursal, se reintenta una vez a los 15 s;
+  - se elige la sucursal 18 y se confirma en la página **antes y después** de cada export (zomatik.md 23.3). También se rechaza el tramo si Canning y Hudson vienen vacíos y "todos" trae renglones cuya columna Depósito es Canning o REBUCRET. **El nombre del artículo no sirve para esto:** REBUCRET también usa artículos "CCTS" (visto el 28/10). Ante un rechazo por sucursal, se reintenta una vez a los 15 s;
+  - el export tiene que venir en Excel: la página HTML redondea las cantidades (40 en vez de 40,32);
+  - cada corrida guarda en `control_mp_corridas.lectura` una muestra por tramo: columnas, depósitos, artículos con su material, series de OC y cuántas cantidades traen decimales;
   - si un export trae 150 renglones o más, el tramo se parte; las dos mitades tienen que terminar, o el tramo no cuenta;
   - si un tramo trae menos del 70 % de lo que había, no se reemplaza;
   - se usa el mismo turno del robot (`zomatik_robot_tomar`/`soltar`) que la lectura diaria y la NP; la espera del turno sale del mismo presupuesto (la lectura termina a los 220 s; `maxDuration` 300, como Concretus con este listado en Hobby);
@@ -20,8 +22,8 @@ Todos los días, cruzar los remitos de ingreso de materia prima (arena, piedras,
 - **Ventana:** desde el 01/08/2026 y, después, los últimos 90 días, con 5 días de margen hacia atrás para emparejar el borde.
 
 ## Reglas de emparejamiento (`lib/control-ingresos/cruce.ts`)
-- **Número normalizado:** sin punto de venta ni ceros a la izquierda, por ejemplo `0002-00881597` → `881597`. `0000-00000000` y `000000` quedan como "sin número".
-- **Material:** nuestros nombres y los artículos de Zomatik van a una clave común (arena fina, 0/6, 6/12, 6/20, 10/30, cemento, aditivos y fibra). Los artículos de Zomatik que no son materia prima, como el gasoil, no se controlan.
+- **Número normalizado:** sin el prefijo de Zomatik ("RMP "), sin punto de venta ni ceros a la izquierda, por ejemplo `RMP 0002-00881597` → `881597`. `0000-00000000` y `000000` quedan como "sin número".
+- **Material:** nuestros nombres y los artículos de Zomatik van a una clave común (arena fina, 0/6, 6/12, 6/20, 10/30, cemento, aditivos y fibra). En Zomatik manda el código (10000004 CCTS ARENA ESPECIAL → Arena Fina, 10000026 CCTS CEMENTO GRANEL → CPC 40, 10000005 PIEDRA 6-20 → Piedra Partida 6/20) y si no, el nombre sin "CCTS ". Lo que no se puede llevar a un material no es diferencia: va a la lista "Artículos de Zomatik sin material" de la pantalla.
 - **Proveedor:** se compara sin S.A., SRL ni palabras genéricas y tolera errores de tipeo: `Gerrico` = `GUERRICO S.A.`.
 
 Los pasos:

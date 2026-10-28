@@ -341,7 +341,7 @@ export async function sucursalVisible(s: ZomatikSesion, path: string): Promise<s
  * quedó ahí, exporta y vuelve a mirar. Si la página no muestra el selector (`frm_selsuc`) o muestra otra sucursal, error:
  * otro sistema la cambió y lo exportado puede ser de otra sucursal.
  */
-export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET): Promise<Fila[]> {
+export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET, exigirXlsx = false): Promise<Fila[]> {
   const confirmar = async (cuando: string) => {
     const suc = await sucursalVisible(s, path)
     if (suc === null) throw new ZomatikError("formato", `No se ve la sucursal en ${path.split(".")[0]} (¿cambió la página?)`)
@@ -356,6 +356,8 @@ export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form
   })
   await confirmar("después")
   if (esXlsx(buf)) return filasDeXlsx(buf)
+  // La página HTML muestra las cantidades redondeadas (40 en vez de 40,32): para comparar toneladas hace falta el Excel
+  if (exigirXlsx) throw new ZomatikError("formato", "El export no vino en Excel (en la página las cantidades vienen redondeadas)")
   const html = buf.toString("latin1")
   if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
   return parseHtmlTable(html).rows

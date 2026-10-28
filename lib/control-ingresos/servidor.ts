@@ -22,6 +22,8 @@ import {
   fechaArgentina,
   fechasDe,
   filasCopia,
+  motivoRechazoTramo,
+  muestraLectura,
   planDeEstados,
   sumarDias,
   tramosLectura,
@@ -63,7 +65,7 @@ const FROM = process.env.REPORTE_CALIDAD_FROM || "reportes@produccionrebucret.co
 // Lectura de Zomatik
 // ---------------------------------------------------------------------------
 
-export type ResultadoTramo = Tramo & { ok: boolean; filas?: number; motivo?: string }
+export type ResultadoTramo = Tramo & { ok: boolean; filas?: number; motivo?: string; muestra?: ReturnType<typeof muestraLectura>[] }
 
 const errorFormato = (m: string) => new ZomatikError("formato", m)
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -75,23 +77,23 @@ type Fila_ = NonNullable<ReturnType<typeof filasCopia>[number]>
  * Lee un tramo (Canning, Hudson y todos los depósitos) sin grabar nada. Si un export viene sospechoso de corte, se parte
  * en dos (hasta 1 día) y se leen las dos mitades: o termina entero o tira error (el tramo no cuenta como leído).
  */
-async function filasTramo(s: ZomatikSesion, form: FormInfo, t: Tramo, limite: number): Promise<Fila_[]> {
+async function filasTramo(s: ZomatikSesion, form: FormInfo, t: Tramo, limite: number, muestras: ReturnType<typeof muestraLectura>[]): Promise<Fila_[]> {
   if (Date.now() > limite - 10_000) throw errorFormato("sin tiempo para terminar el tramo")
-  const exportar = (deposito: string) => fetchExportEnSucursal(s, LISTADO, form, { desde: t.desde, hasta: t.hasta, extra: { bus_deposito: deposito } })
+  const exportar = (deposito: string) => fetchExportEnSucursal(s, LISTADO, form, { desde: t.desde, hasta: t.hasta, extra: { bus_deposito: deposito } }, undefined, true)
   const porDeposito: { deposito: number; filas: Fila[] }[] = []
   for (const d of DEPOSITOS) porDeposito.push({ deposito: d.id, filas: await exportar(String(d.id)) })
   const todos = await exportar("")
   const sospechoso = [...porDeposito.map((d) => d.filas.length), todos.length].some((n) => n >= SOSPECHA_CORTE)
   if (sospechoso && t.desde < t.hasta) {
     const medio = sumarDias(t.desde, Math.floor((Date.parse(t.hasta) - Date.parse(t.desde)) / 86_400_000 / 2))
-    return [...(await filasTramo(s, form, { desde: sumarDias(medio, 1), hasta: t.hasta }, limite)), ...(await filasTramo(s, form, { desde: t.desde, hasta: medio }, limite))]
+    return [...(await filasTramo(s, form, { desde: sumarDias(medio, 1), hasta: t.hasta }, limite, muestras)), ...(await filasTramo(s, form, { desde: t.desde, hasta: medio }, limite, muestras))]
   }
-  const filas = filasCopia(porDeposito, todos).filter((f): f is Fila_ => !!f && f.fecha >= t.desde && f.fecha <= t.hasta)
-  // Señales de que el export vino de otra sucursal aunque la página diga 18
-  const nuestras = filas.filter((f) => f.deposito !== null).length
-  if (nuestras === 0 && filas.length > 0) throw errorFormato(`otra sucursal: Canning y Hudson vinieron vacíos y "todos" trajo ${filas.length}`)
-  if (filas.some((f) => /^\s*CCTS\s/i.test(f.articulo))) throw errorFormato("otra sucursal: vinieron artículos CCTS (de Concretus)")
-  return filas
+  // Para diagnosticar la próxima vez (va a control_mp_corridas.lectura)
+  muestras.push(muestraLectura(porDeposito, todos))
+  // Otra sucursal, sin mirar el nombre del artículo (REBUCRET también usa "CCTS"): ver motivoRechazoTramo
+  const rechazo = motivoRechazoTramo(porDeposito, todos)
+  if (rechazo) throw errorFormato(`otra sucursal: ${rechazo}`)
+  return filasCopia(porDeposito, todos).filter((f): f is Fila_ => !!f && f.fecha >= t.desde && f.fecha <= t.hasta)
 }
 
 async function diasLeidos(sb: SupabaseClient, desde: string): Promise<Map<string, string>> {
@@ -132,28 +134,30 @@ export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy:
         tramos.push({ ...t, ok: false, motivo: "sin tiempo (queda la lectura anterior)" })
         continue
       }
+      const muestras: ReturnType<typeof muestraLectura>[] = []
       try {
         let filas: Fila_[]
         try {
-          filas = await filasTramo(s, form, t, limite)
+          filas = await filasTramo(s, form, t, limite, muestras)
         } catch (e) {
           // Otro sistema cambió la sucursal (Concretus, por ejemplo): un reintento en 15 s
           if (!esDeSucursal(e) || limite - Date.now() < MINIMO_TRAMO_MS + 15_000) throw e
           await espera(15_000)
-          filas = await filasTramo(s, form, t, limite)
+          muestras.length = 0
+          filas = await filasTramo(s, form, t, limite, muestras)
         }
         const copia = conClaves(filas).map((f) => ({ ...f, plant_id: f.deposito !== null ? plantas.get(f.deposito) ?? null : null }))
         const { count, error: eC } = await sb.from("zomatik_remitos_compra").select("id", { count: "exact", head: true }).gte("fecha", t.desde).lte("fecha", t.hasta)
         if (eC) throw eC
         if ((count || 0) >= 10 && !puedeBorrarViejos(copia.length, count || 0)) {
-          tramos.push({ ...t, ok: false, filas: copia.length, motivo: `trajo ${copia.length} renglones y había ${count}: no se reemplazó` })
+          tramos.push({ ...t, ok: false, filas: copia.length, motivo: `trajo ${copia.length} renglones y había ${count}: no se reemplazó`, muestra: muestras })
           continue
         }
         const { error: eR } = await sb.rpc("control_mp_reemplazar_zomatik", { p_desde: t.desde, p_hasta: t.hasta, p_filas: copia })
         if (eR) throw eR
-        tramos.push({ ...t, ok: true, filas: copia.length })
+        tramos.push({ ...t, ok: true, filas: copia.length, muestra: muestras })
       } catch (e) {
-        tramos.push({ ...t, ok: false, motivo: textoError(e) })
+        tramos.push({ ...t, ok: false, motivo: textoError(e), muestra: muestras })
         if (e instanceof ZomatikError && ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida"].includes(e.codigo)) break
       }
     }
@@ -210,7 +214,7 @@ export async function leerNuestros(sb: SupabaseClient, desde: string): Promise<I
 
 export async function leerCopiaZomatik(sb: SupabaseClient, desde: string): Promise<RemitoZomatik[]> {
   const [filas, plantas] = await Promise.all([
-    todasLasFilas<any>((a, b) => sb.from("zomatik_remitos_compra").select("clave, fecha, remito, proveedor, articulo, cantidad, transportista, deposito, plant_id").gte("fecha", desde).order("id").range(a, b)),
+    todasLasFilas<any>((a, b) => sb.from("zomatik_remitos_compra").select("clave, fecha, remito, proveedor, codigo_articulo, articulo, cantidad, transportista, deposito, plant_id").gte("fecha", desde).order("id").range(a, b)),
     sb.from("plants").select("id, name"),
   ])
   const nombre = new Map(((plantas.data as any[]) || []).map((p) => [p.id, p.name]))
@@ -220,6 +224,7 @@ export async function leerCopiaZomatik(sb: SupabaseClient, desde: string): Promi
     plantaId: z.plant_id ?? null,
     planta: z.plant_id ? nombre.get(z.plant_id) || "-" : "otro depósito",
     articulo: z.articulo,
+    codigo: z.codigo_articulo ?? null,
     cantidad: Number(z.cantidad) || 0,
     remito: z.remito,
     proveedor: z.proveedor ?? null,

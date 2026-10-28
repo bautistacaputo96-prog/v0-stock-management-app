@@ -54,6 +54,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
   const [difs, setDifs] = useState<Dif[] | null>(null)
   const [corrida, setCorrida] = useState<Corrida | null>(null)
   const [porEstado, setPorEstado] = useState<Record<string, number>>({})
+  const [sinMaterial, setSinMaterial] = useState<{ articulo: string; codigo: string | null; renglones: number; ultima: string }[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [controlando, setControlando] = useState(false)
@@ -77,6 +78,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
       setDifs(j.diferencias || [])
       setCorrida(j.ultimaCorrida || null)
       setPorEstado(j.porEstado || {})
+      setSinMaterial(j.sinMaterial || [])
     } catch {
       setErr("No se pudo cargar. Probá de nuevo.")
       setDifs([])
@@ -160,6 +162,19 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
           : "Todavía no se corrió el control."}
         {corrida?.error ? <span className="text-amber-700"> · {corrida.error}</span> : null}
       </div>
+      {sinMaterial.length > 0 && (
+        <details className="text-muted-foreground">
+          <summary className="cursor-pointer">Artículos de Zomatik sin material ({sinMaterial.length}): no se controlan</summary>
+          <div className="mt-1 space-y-0.5 pl-3">
+            {sinMaterial.map((a) => (
+              <div key={`${a.codigo}|${a.articulo}`}>
+                {a.codigo ? `${a.codigo} · ` : ""}
+                {a.articulo} · {a.renglones} {a.renglones === 1 ? "renglón" : "renglones"} · último {ddmm(a.ultima)}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       {msg && <div className="text-emerald-700">{msg}</div>}
       {err && <div className="text-red-700">{err}</div>}
 

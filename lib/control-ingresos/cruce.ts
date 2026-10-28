@@ -105,15 +105,19 @@ export function ordenTramos(tramos: Tramo[], leidos: Map<string, string>): Tramo
  * Número de remito sin el punto de venta ni los ceros a la izquierda:
  *   "0002-00881597" → "881597" · "00002-  00319166" → "319166" · "0109  00166837" → "166837" · "00880960" → "880960"
  *   "000200881597" (sin separador, 12 dígitos) → "881597" · "0000-00000000" / "000000" / "" → null (sin número)
+ *   Zomatik antepone el tipo de comprobante: "RMP 0002-00318903" → "318903".
  */
 export function normalizarRemito(remito: unknown): string | null {
-  const grupos = String(remito ?? "").match(/\d+/g) || []
+  const grupos = sinPrefijoRemito(remito).match(/\d+/g) || []
   if (!grupos.length) return null
   let n = grupos[grupos.length - 1]
   if (grupos.length === 1 && n.length >= 12) n = n.slice(-8)
   n = n.replace(/^0+/, "")
   return n || null
 }
+
+/** "RMP 0002-00318903" → "0002-00318903" (Zomatik antepone el tipo de comprobante). */
+export const sinPrefijoRemito = (remito: unknown) => String(remito ?? "").trim().replace(/^[A-Za-z]{1,4}\.?\s+(?=\d)/, "")
 
 const sinTildes = (s: unknown) =>
   String(s ?? "")
@@ -127,7 +131,8 @@ const sinTildes = (s: unknown) =>
  * repuestos…): no se controla.
  */
 export function claveMaterial(nombre: unknown): string | null {
-  const t = sinTildes(nombre).replace(/\s+/g, " ")
+  // Los artículos de Zomatik vienen con el prefijo "CCTS " (también los de REBUCRET): no cuenta
+  const t = sinTildes(nombre).replace(/\s+/g, " ").replace(/^\s*CCTS\s+/, "")
   if (!t.trim()) return null
   const medida = (a: number, b: number) => new RegExp(`(^|[^0-9])0?${a}\\s*[-/]\\s*${b}([^0-9]|$)`).test(t)
   if (/ARENA/.test(t)) return /TRIT/.test(t) || medida(0, 6) ? "arena_0_6" : "arena_fina"
@@ -143,6 +148,22 @@ export function claveMaterial(nombre: unknown): string | null {
   if (/FIBRA|MACROFLEX/.test(t)) return "fibra"
   if (/ADITIVO|SIKA/.test(t)) return "aditivo"
   return null
+}
+
+/**
+ * Artículos de Zomatik por código (ESTAD R.COMPRA de REBUCRET, 20 al 27/10/2026). Manda sobre el nombre.
+ *   10000004 CCTS ARENA ESPECIAL → Arena Fina · 10000026 CCTS CEMENTO GRANEL → CPC 40 · 10000005 PIEDRA 6-20
+ */
+export const CODIGOS_ARTICULO: Record<string, string> = {
+  "10000004": "arena_fina",
+  "10000026": "cemento",
+  "10000005": "piedra_6_20",
+}
+
+/** Material de un renglón de Zomatik: por código y, si no está, por el nombre del artículo. null = sin material. */
+export function materialZomatik(articulo: unknown, codigo?: unknown): string | null {
+  const c = String(codigo ?? "").trim()
+  return CODIGOS_ARTICULO[c] || claveMaterial(articulo)
 }
 
 const NOMBRE_MATERIAL: Record<string, string> = {
@@ -254,6 +275,7 @@ export type RemitoZomatik = {
   plantaId: string | null
   planta: string
   articulo: string
+  codigo?: string | null
   cantidad: number
   remito: string
   proveedor: string | null
@@ -262,12 +284,12 @@ export type RemitoZomatik = {
 
 /** Depósitos de Zomatik de cada planta (zomatik.md 4 y 24: Canning 116, REBUCRET = Hudson 113). */
 export const DEPOSITOS = [
-  { id: 116, planta: "Canning" },
-  { id: 113, planta: "Hudson" },
+  { id: 116, planta: "Canning", nombre: /CANNING/i },
+  { id: 113, planta: "Hudson", nombre: /REBUCRET|HUDSON/i },
 ] as const
 
 /** Columnas del export que nunca se guardan (precios y montos: lectura.ts, "nunca se guarda un precio"). */
-const COLUMNA_PRECIO = /p\.?\s*unit|precio|total|importe|neto|iva|monto|subtotal/i
+const COLUMNA_PRECIO = /p\.?\s*unit|precio|total|importe|neto|iva|monto|subtotal|valor/i
 
 /** Renglón del export de ESTAD R.COMPRA → fila de la copia (sin precios). null = total del reporte o sin datos. */
 export function renglonCompra(row: Fila, deposito: number | null): {
@@ -281,6 +303,8 @@ export function renglonCompra(row: Fila, deposito: number | null): {
   cantidad: number
   transportista: string | null
   deposito: number | null
+  /** La columna "Depósito" del export (si viene). */
+  deposito_texto: string | null
   datos: Record<string, string | number>
 } | null {
   const remito = col(row, "N Remito", "Nro Remito", "Remito")
@@ -291,18 +315,24 @@ export function renglonCompra(row: Fila, deposito: number | null): {
   if (!remito || !articulo || !fecha || cantidad === null) return null
   const datos: Record<string, string | number> = {}
   for (const [k, v] of Object.entries(row)) if (!COLUMNA_PRECIO.test(k)) datos[k] = v
-  const transp = Object.keys(row).find((k) => /transp|flete|chofer|camion/i.test(k))
+  const valor = (re: RegExp) => {
+    const k = Object.keys(row).find((x) => re.test(x) && !COLUMNA_PRECIO.test(x))
+    return k ? String(row[k] ?? "").trim() : ""
+  }
+  // "Transporte" y "Chofer" (el "Valor Flete" es un monto: no se guarda)
+  const transportista = [valor(/^\s*transp/i), valor(/chofer/i)].filter(Boolean).join(" · ") || null
   return {
     fecha,
     remito,
     remito_norm: normalizarRemito(remito),
-    orden_compra: col(row, "N Oc", "Orden de compra") || null,
+    orden_compra: col(row, "Nº OC", "N° OC", "N Oc", "Nro OC", "Orden de compra") || null,
     proveedor: col(row, "Proveedor") || null,
     codigo_articulo: col(row, "Codigo", "Código") || null,
     articulo,
     cantidad,
-    transportista: transp ? String(row[transp] ?? "").trim() || null : null,
+    transportista,
     deposito,
+    deposito_texto: valor(/dep[oó]sito/i) || null,
     datos,
   }
 }
@@ -335,6 +365,51 @@ export function filasCopia(porDeposito: { deposito: number; filas: Fila[] }[], t
     else out.push(r)
   }
   return out
+}
+
+/**
+ * ¿El tramo leído parece de otra sucursal? Sin mirar el nombre del artículo (REBUCRET también usa "CCTS"): solo si
+ * Canning y Hudson vinieron vacíos y "todos" trae renglones cuya columna Depósito es Canning o REBUCRET (el filtro de
+ * depósito no anduvo o la sucursal cambió). Sin la columna Depósito no se rechaza: queda la confirmación de la página.
+ */
+export function motivoRechazoTramo(porDeposito: { deposito: number; filas: Fila[] }[], todos: Fila[]): string | null {
+  const nuestras = porDeposito.reduce((n, d) => n + d.filas.filter((f) => renglonCompra(f, d.deposito)).length, 0)
+  if (nuestras > 0) return null
+  const deNuestrosDepositos = todos
+    .map((f) => renglonCompra(f, null))
+    .filter((r) => r && r.deposito_texto && DEPOSITOS.some((d) => d.nombre.test(r.deposito_texto!))).length
+  return deNuestrosDepositos > 0 ? `Canning y Hudson vinieron vacíos y "todos" trajo ${deNuestrosDepositos} renglones de esos depósitos (¿otra sucursal?)` : null
+}
+
+/** Muestra de lo leído para diagnosticar (sin precios): columnas, depósitos, artículos, series de OC y decimales. */
+export function muestraLectura(porDeposito: { deposito: number; filas: Fila[] }[], todos: Fila[]) {
+  const filas = [...porDeposito.flatMap((d) => d.filas.map((f) => renglonCompra(f, d.deposito))), ...todos.map((f) => renglonCompra(f, null))].filter(
+    (r): r is NonNullable<ReturnType<typeof renglonCompra>> => !!r,
+  )
+  const contar = (xs: string[]) => Object.fromEntries([...xs.reduce((m, x) => m.set(x, (m.get(x) || 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]).slice(0, 20))
+  const una = porDeposito.find((d) => d.filas.length)?.filas[0] || todos[0]
+  return {
+    renglones: Object.fromEntries([...porDeposito.map((d) => [String(d.deposito), d.filas.length]), ["todos", todos.length]]),
+    columnas: una ? Object.keys(una).filter((k) => !COLUMNA_PRECIO.test(k)) : [],
+    depositos: contar(filas.map((r) => r.deposito_texto || "(sin columna)")),
+    articulos: contar(filas.map((r) => `${r.codigo_articulo || "-"} ${r.articulo} → ${materialZomatik(r.articulo, r.codigo_articulo) || "sin material"}`)),
+    series_oc: contar(filas.map((r) => (r.orden_compra || "").replace(/\d{4,}$/, "…") || "(sin OC)")),
+    con_decimales: filas.filter((r) => !Number.isInteger(r.cantidad)).length,
+  }
+}
+
+/** Artículos de la copia que no se pudieron llevar a un material nuestro (no se controlan: van a una lista aparte). */
+export function articulosSinMaterial(filas: { articulo: string; codigo?: string | null; fecha: string }[]): { articulo: string; codigo: string | null; renglones: number; ultima: string }[] {
+  const m = new Map<string, { articulo: string; codigo: string | null; renglones: number; ultima: string }>()
+  for (const f of filas) {
+    if (materialZomatik(f.articulo, f.codigo)) continue
+    const k = `${f.codigo || ""}|${f.articulo}`
+    const x = m.get(k) || { articulo: f.articulo, codigo: f.codigo || null, renglones: 0, ultima: f.fecha }
+    x.renglones++
+    if (f.fecha > x.ultima) x.ultima = f.fecha
+    m.set(k, x)
+  }
+  return [...m.values()].sort((a, b) => b.renglones - a.renglones || a.articulo.localeCompare(b.articulo))
 }
 
 /** Clave estable de cada fila de la copia: depósito + firma + orden entre renglones idénticos. */
@@ -422,7 +497,7 @@ function itemNuestro(n: IngresoNuestro): Item {
 }
 
 function itemZomatik(z: RemitoZomatik): Item {
-  const mat = claveMaterial(z.articulo)
+  const mat = materialZomatik(z.articulo, z.codigo)
   const comparaT = enToneladas(mat)
   return {
     lado: "z",

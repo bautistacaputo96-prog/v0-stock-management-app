@@ -2,7 +2,7 @@
  * Control de ingresos de materia prima · pantalla (Materias Primas › Control con Zomatik).
  *
  *   GET  /api/control-ingresos?estado=abierta|revisada|resuelta|todas&planta=<id>&desde=AAAA-MM-DD&hasta=AAAA-MM-DD
- *        diferencias, última corrida y cuántas hay por estado
+ *        diferencias, última corrida, cuántas hay por estado y los artículos de Zomatik sin material (no se controlan)
  *   POST /api/control-ingresos  { id, accion: "revisar" | "reabrir", nota? }
  *
  * Solo gerenciales o quien tenga materia_prima.editar (se controla acá, en el servidor). Las tablas no las ve anon.
@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server"
 import { exigirSesion, modoPruebaLocal, respuestaModoLocal, respuestaError, sbServicio, registrarActividad } from "@/lib/auth/servidor"
 import { puedeControlar } from "@/lib/control-ingresos/servidor"
+import { articulosSinMaterial, desdeVentana, fechaArgentina, sumarDias, MARGEN_DIAS } from "@/lib/control-ingresos/cruce"
 
 export const dynamic = "force-dynamic"
 
@@ -42,19 +43,22 @@ export async function GET(req: Request) {
     if (desde && FECHA.test(desde)) q = q.gte("fecha", desde)
     if (hasta && FECHA.test(hasta)) q = q.lte("fecha", hasta)
     const contar = (e: string) => sb.from("control_mp_diferencias").select("id", { count: "exact", head: true }).eq("estado", e)
-    const [difs, corrida, abiertas, revisadas, resueltas] = await Promise.all([
+    const ventana = sumarDias(desdeVentana(fechaArgentina()), -MARGEN_DIAS)
+    const [difs, corrida, abiertas, revisadas, resueltas, copia] = await Promise.all([
       q,
       sb.from("control_mp_corridas").select("inicio, fin, ok, origen, usuario, error, mail_at, resumen").order("inicio", { ascending: false }).limit(1),
       contar("abierta"),
       contar("revisada"),
       contar("resuelta"),
+      sb.from("zomatik_remitos_compra").select("articulo, codigo_articulo, fecha").gte("fecha", ventana).limit(10000),
     ])
     if (difs.error) {
       if (/control_mp_diferencias/.test(difs.error.message || "")) return NextResponse.json({ error: "Falta aplicar la migración del control (202610271900)." }, { status: 500 })
       throw difs.error
     }
     const porEstado = { abierta: abiertas.count || 0, revisada: revisadas.count || 0, resuelta: resueltas.count || 0 }
-    return NextResponse.json({ diferencias: difs.data || [], ultimaCorrida: (corrida.data as any[])?.[0] || null, porEstado })
+    const sinMaterial = articulosSinMaterial(((copia.data as any[]) || []).map((f) => ({ articulo: f.articulo, codigo: f.codigo_articulo, fecha: f.fecha })))
+    return NextResponse.json({ diferencias: difs.data || [], ultimaCorrida: (corrida.data as any[])?.[0] || null, porEstado, sinMaterial })
   } catch (e) {
     return respuestaError(e)
   }
