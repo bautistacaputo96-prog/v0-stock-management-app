@@ -585,6 +585,7 @@ async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefin
     fecha: String(np.fecha),
     m3: Number(np.m3),
     articuloCodigoSistema: articulo?.codigo_sistema ?? null,
+    articuloCodigo: codArt ?? null,
     articuloNombre: articulo?.nombre || (form as { zomatik_articulo_nombre?: string } | null)?.zomatik_articulo_nombre || (form as { code?: string } | null)?.code || "",
     proyectoCodigo: np.proyecto_codigo ?? null,
     entrega,
@@ -683,7 +684,8 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "pendiente", paso: r.grabado ? "grabar_cortado" : r.paso, proximo_intento: despuesDe(MIN_REINTENTO) })
   } else {
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
-    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje } })
+    // Con un recorte de lo que respondió Zomatik (~2 KB), para diagnosticar sin capturarlo a mano
+    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje, Paso: r.paso, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
   }
   if (!guardo && (r.estado === "ok" || r.estado === "revisar" || r.grabado)) await noSePudoGuardar(sb, np, ctx, r.numero ? `quedó ${r.numero}` : r.mensaje || r.estado)
   if (np.tipo === "proyecto" && np.proyecto_codigo && r.disponible !== undefined && r.disponible !== null)
@@ -736,7 +738,7 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
   } else {
     guardo = await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
     if (guardo) {
-      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero } })
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
       await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
     }
   }

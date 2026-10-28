@@ -17,7 +17,7 @@
 import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
-  numeroZomatik, hayPaginado, paginasDeListado, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
+  numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esRenglonDe, recorte, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 
@@ -50,6 +50,8 @@ export type DatosNp = {
   fecha: string
   m3: number
   articuloCodigoSistema: number | null
+  /** Código visible del artículo (`zomatik_articulos.codigo`, 10090020): así se reconoce su renglón en el detalle. */
+  articuloCodigo?: number | null
   articuloNombre: string
   proyectoCodigo: number | null
   /** Obra y dirección para "observaciones de entrega". */
@@ -81,10 +83,12 @@ export type ResultadoNp = {
   paso: string
   /** Si quedó registrado que se mandó "Grabar" (el estado lo guarda quien llama). */
   grabado?: boolean
+  /** Recorte de la respuesta de Zomatik que no se entendió (~2 KB), para Actividad. */
+  recorte?: string
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
-export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string }
+export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string; recorte?: string }
 
 export type OpcionesRobot = {
   /** Se llama antes de cada paso. Con "grabar" quien llama tiene que dejarlo guardado ANTES de que se mande. */
@@ -101,14 +105,18 @@ export type OpcionesRobot = {
 class Corte extends Error {
   estado: ResultadoNp["estado"]
   reintentar: boolean
-  constructor(estado: ResultadoNp["estado"], mensaje: string, reintentar = false) {
+  /** Recorte de la respuesta de Zomatik (~2 KB) para diagnosticar desde Actividad. */
+  recorte?: string
+  constructor(estado: ResultadoNp["estado"], mensaje: string, reintentar = false, recorteHtml?: string) {
     super(mensaje)
     this.estado = estado
     this.reintentar = reintentar
+    if (recorteHtml) this.recorte = recorte(recorteHtml)
   }
 }
 
-const formato = (m: string) => new Corte("error", `Zomatik cambió el formulario de la nota de pedido (${m}). No se mandó nada.`, false)
+/** `html`: la respuesta que no se entendió (queda un recorte en Actividad). */
+const formato = (m: string, html?: string) => new Corte("error", `Zomatik cambió el formulario de la nota de pedido (${m}). No se mandó nada.`, false, html)
 const dato = (m: string) => new Corte("error", m, false)
 
 /** ¿Es una falla de red / sesión (se reintenta en 10 min) y no un "no" de Zomatik? */
@@ -139,11 +147,14 @@ function operacion(c: Record<string, string>, proyecto: number | null): [string,
   ]
 }
 
-async function manage(nav: NavegadorNp, c: Record<string, string>, extra: [string, string][], proyecto: number | null, azar: () => number): Promise<Renglon[]> {
+/** El detalle que devuelve manage_pedidos.php: los renglones y la página (para los campos sueltos y el recorte). */
+type Detalle = { renglones: Renglon[]; html: string }
+
+async function manage(nav: NavegadorNp, c: Record<string, string>, extra: [string, string][], proyecto: number | null, azar: () => number): Promise<Detalle> {
   const q = queryLatin1([...operacion(c, proyecto), ...extra, ["rnd", String(azar())]])
   const r = await nav.get(`manage_pedidos.php?${q}`)
-  if (r.status !== 200 || respuestaInvalida(r.html)) throw formato("el detalle no respondió")
-  return renglonesDetalle(r.html)
+  if (r.status !== 200 || respuestaInvalida(r.html)) throw formato("el detalle no respondió", r.html)
+  return { renglones: renglonesDetalle(r.html), html: r.html }
 }
 
 /** Como mucho, cuántas NP se abren para buscar la marca. Si hay más, la búsqueda no es concluyente. */
@@ -246,12 +257,17 @@ function encontrada(x: { sucursal: string; codigo: number; numero: string }, pas
   }
 }
 
-/** Arma el multipart del Grabar con los campos del formulario + los renglones + fparam. */
-function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, renglones: Renglon[], boundary: string) {
-  // Los renglones que ya traía la página (NP abierta) no se mandan: van solo los del detalle de ahora
-  const delDetalle = (n: string) => /^(codigo|costo|cantidad|observacionesdetalle)\d+$/i.test(n)
-  const base = conValores(orden.filter((c) => !delDetalle(c.nombre)), { ...valores, fparam: fparamDe(renglones) })
-  return multipartLatin1([...base, ...renglones.flatMap((r) => r.campos)], boundary)
+/** Campos de renglón (y sueltos del detalle) que trae la página: se reemplazan por los del detalle de ahora. */
+const CAMPO_DETALLE = /^(codigo|peso|hcosto|costo|apallet|palletcant|cantidad|coeficiente|observacionesdetalle)\d+$|^(credito|compraactual|compraactualsib|totalacopio)$/i
+
+/**
+ * Arma el multipart del Grabar: los campos del formulario + los del detalle de ahora (todos los de cada renglón y los
+ * sueltos: credito, compraactual…) + fparam, como lo manda el navegador.
+ */
+function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, detalle: Detalle | null, renglones: Renglon[], boundary: string) {
+  const sueltos = detalle ? camposSueltosDetalle(detalle.html) : []
+  const base = conValores(orden.filter((c) => !CAMPO_DETALLE.test(c.nombre)), { ...valores, fparam: fparamDe(renglones) })
+  return multipartLatin1([...base, ...renglones.flatMap((r) => r.campos), ...sueltos], boundary)
 }
 
 /** Después de Grabar: ¿Zomatik dijo que no? */
@@ -296,7 +312,7 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
 
     return d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
   } catch (e) {
-    if (e instanceof Corte) return { estado: e.estado, mensaje: e.message, paso, reintentar: e.reintentar, grabado }
+    if (e instanceof Corte) return { estado: e.estado, mensaje: e.message, paso, reintentar: e.reintentar, grabado, recorte: e.recorte }
     // Red o sesión. Antes de Grabar: se reintenta en 10 min. Durante o después: queda para buscar la marca primero.
     const m = mensajeDe(e)
     if (grabado || paso === "grabar") return { estado: "pendiente", mensaje: `Se cortó al grabar (${m}). Antes de reintentar se busca la NP por la marca.`, paso, grabado: true, reintentar: true }
@@ -342,10 +358,11 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   const base: [string, string][] = [["fcliente", String(d.clienteCodigo)], ["facopio", "0"], ["forigen", "1"]]
   await manage(nav, c, [...base, ["flista", c.idlista]], null, azar)
   await marcar("articulo")
-  let rs = await manage(nav, c, [...base, ["fparam", ""], ["farticulo", String(d.articuloCodigoSistema)], ["flista", c.idlista]], null, azar)
-  const art = rs.filter((r) => r.codigo === String(d.articuloCodigoSistema))
-  if (art.length !== 1 || rs.length !== 1) throw formato(rs.length ? "el detalle trajo otros renglones" : "no se agregó el artículo")
-  rs = [conCantidad(art[0], d.m3)]
+  const det = await manage(nav, c, [...base, ["fparam", ""], ["farticulo", String(d.articuloCodigoSistema)], ["flista", c.idlista]], null, azar)
+  // El renglón del artículo se reconoce por el código visible (o el nombre), no por codigo<id> (id del renglón)
+  const art = det.renglones.filter((r) => esRenglonDe(r, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
+  if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
+  const rs = [conCantidad(art[0], d.m3)]
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
   await marcar("numero")
@@ -362,7 +379,7 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   await marcar("grabar")
   alGrabar()
   await aRebucret(nav)
-  const { cuerpo, tipo } = cuerpoGrabar(f.orden, { ...valores, numero: numero!, pedidos_unico: c.pedidos_unico, pedidos: c.pedidos || "0" }, rs, boundary)
+  const { cuerpo, tipo } = cuerpoGrabar(f.orden, { ...valores, numero: numero!, pedidos_unico: c.pedidos_unico, pedidos: c.pedidos || "0" }, det, rs, boundary)
   const g = await nav.post("grabar_pedidos.php?codigo=0", cuerpo, tipo)
   const no = rechazo(g)
 
@@ -405,8 +422,10 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
 
   // Continuar: trae el renglón del proyecto con lo disponible (23.2)
   await marcar("continuar")
-  let rs = await manage(nav, c, base, d.proyectoCodigo, azar)
-  const mio = rs.filter((r) => r.codigo === String(d.articuloCodigoSistema))
+  let det = await manage(nav, c, base, d.proyectoCodigo, azar)
+  let rs = det.renglones
+  const delPedido = { codigo: d.articuloCodigo, nombre: d.articuloNombre }
+  const mio = rs.filter((r) => esRenglonDe(r, delPedido))
   if (mio.length !== 1) {
     const hay = rs.map((r) => r.articulo).filter(Boolean).join(", ")
     throw dato(`El proyecto no tiene la fórmula del pedido${d.articuloNombre ? ` (${d.articuloNombre})` : ""}${hay ? `; tiene: ${hay}` : ""}.`)
@@ -419,16 +438,17 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   for (const otro of rs.filter((r) => r !== mio[0])) {
     if (!otro.borrar) throw formato("un renglón del proyecto no se puede sacar")
     await marcar("sacar_renglon")
-    rs = await manage(nav, c, [...base.slice(0, 3), ["fparam", fparamDe(rs)], ["fborrar", otro.borrar]], d.proyectoCodigo, azar)
+    det = await manage(nav, c, [...base.slice(0, 3), ["fparam", fparamDe(rs)], ["fborrar", otro.borrar]], d.proyectoCodigo, azar)
+    rs = det.renglones
   }
-  const elegido = rs.filter((r) => r.codigo === String(d.articuloCodigoSistema))
-  if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro")
+  const elegido = rs.filter((r) => esRenglonDe(r, delPedido))
+  if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
   rs = [conCantidad(elegido[0], d.m3)]
 
   await marcar("grabar")
   alGrabar()
   await aRebucret(nav)
-  const { cuerpo, tipo } = cuerpoGrabar(f.orden, valores, rs, boundary)
+  const { cuerpo, tipo } = cuerpoGrabar(f.orden, valores, det, rs, boundary)
   const g = await nav.post("grabar_pedidos.php?codigo=0", cuerpo, tipo)
   const no = rechazo(g)
 
@@ -467,15 +487,17 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     const proyecto = Number(c.proyecto || 0) || null
     const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio || "0"], ["forigen", (c.origen as string) || "1"]]
     let rs = a.renglones
+    let det: Detalle | null = null
     for (const r of a.renglones) {
-      if (!r.borrar) throw formato("un renglón no tiene el tacho")
+      if (!r.borrar) throw formato("un renglón no tiene el tacho", a.html)
       await marcar("borrar_renglon")
-      rs = await manage(nav, c, [...base, ["fparam", fparamDe(rs)], ["fborrar", r.borrar]], proyecto, azar)
+      det = await manage(nav, c, [...base, ["fparam", fparamDe(rs)], ["fborrar", r.borrar]], proyecto, azar)
+      rs = det.renglones
     }
-    if (rs.length) throw formato("quedaron renglones después de borrar")
+    if (rs.length) throw formato("quedaron renglones después de borrar", det?.html)
     await marcar("grabar")
     await aRebucret(nav)
-    const { cuerpo, tipo } = cuerpoGrabar(a.form.orden, {}, [], boundary)
+    const { cuerpo, tipo } = cuerpoGrabar(a.form.orden, {}, det, [], boundary)
     const g = await nav.post(accion, cuerpo, tipo)
     const no = rechazo(g)
     await marcar("verificar")
@@ -483,7 +505,7 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     if (v.form && !v.renglones.length) return { estado: "vaciada", mensaje: null, paso }
     return { estado: no ? "error" : "revisar", mensaje: no ? `Zomatik no dejó vaciar la NP: ${no}` : "Se grabó pero la NP sigue con renglones. Revisala en Zomatik.", paso }
   } catch (e) {
-    if (e instanceof Corte) return { estado: e.estado === "pendiente" ? "vaciar" : e.estado === "ok" ? "vaciada" : (e.estado as "revisar" | "error"), mensaje: e.message, paso }
+    if (e instanceof Corte) return { estado: e.estado === "pendiente" ? "vaciar" : e.estado === "ok" ? "vaciada" : (e.estado as "revisar" | "error"), mensaje: e.message, paso, recorte: e.recorte }
     // Corte de red: queda para vaciar; la próxima vez se abre de nuevo y se mira (vaciar es idempotente)
     return { estado: "vaciar", mensaje: `${mensajeDe(e)}. Se reintenta en 10 min.`, paso }
   }

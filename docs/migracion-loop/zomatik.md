@@ -1697,3 +1697,12 @@ En Zomatik crearon "Lista OCTUBRE 2026" (activa, sin "en 1" ni "en 2") y pasaron
 - Si hay varias, se elige la "en 1" (NP) o la "en 2" (NP2), y tiene que quedar una sola.
 - Si no hay ninguna, o no queda una sola, no se genera la NP ("Revisar las listas en Zomatik").
 - La NP n=2 del pedido `42a614e6` quedó en error. Cuando esto esté publicado, se reintenta con "Generar NP ahora".
+
+### 25.12 Renglón real de `manage_pedidos.php` (28/10, rama `fix/np-renglon-real`)
+La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"): el robot buscaba el renglón por `codigo<id>`, pero ese es el **id del renglón** (5349423) y no el del artículo.
+
+- Los fixtures ahora son la respuesta **real** capturada el 28/10.
+- El renglón del artículo se reconoce por el **código visible** de la 1.ª celda (10090020 = `zomatik_articulos.codigo`) o por el nombre.
+- `fparam` = `codigo,costo,cantidad,observación|||` con el valor de `codigo<id>` (el id del renglón). Así lo arma `GrabarDatosDetalle()` en el JavaScript de `modificar_pedidos.php` guardado el 20/10.
+- Al grabar van todos los campos del renglón (peso, hcosto, apallet, palletcant, coeficiente…) y los sueltos del detalle (credito, compraactual, compraactualsib, totalacopio), como el navegador.
+- Si el detalle no coincide, el error guarda en Actividad un recorte de unos 2 KB de la respuesta de Zomatik.

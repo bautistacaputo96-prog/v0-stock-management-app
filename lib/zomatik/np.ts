@@ -284,62 +284,102 @@ export function listaActiva(listas: Lista[], comprobante: "15" | "16"): { lista:
 // ── Detalle de la NP (lo que devuelve manage_pedidos.php y lo que muestra la NP abierta) ──
 
 export type Renglon = {
-  /** Lo que sigue al nombre de cada campo (codigo<sufijo>, cantidad<sufijo>…). */
+  /** Lo que sigue al nombre de cada campo (codigo<sufijo>, cantidad<sufijo>…): el id del renglón en Zomatik. */
   sufijo: string
+  /** Valor de `codigo<sufijo>`: el id del RENGLÓN (5349423), no el del artículo. Es lo que va en `fparam`. */
   codigo: string
   costo: string
   cantidad: string
   observaciones: string
   /** Id para el tacho (`verificar(id)` → `fborrar=id`). */
   borrar: string | null
-  /** Texto del renglón (el nombre del artículo). */
+  /** Código visible del artículo (1.ª celda: 10090020 = `zomatik_articulos.codigo`). */
+  codigoArticulo: string
+  /** Nombre del artículo (2.ª celda: "H21-620-10 C (CAN)"). */
+  nombreArticulo: string
+  /** Texto del renglón. */
   articulo: string
-  /** Todos los campos del renglón, como los manda el formulario. */
+  /** TODOS los campos del renglón (codigo, peso, hcosto, costo, apallet, palletcant, cantidad, coeficiente,
+   *  observacionesdetalle…), en el orden de la página, como los manda el formulario al grabar. */
   campos: CampoForm[]
 }
 
 /** Filas sin otras filas adentro (el layout de Zomatik anida tablas). */
 const filasInternas = (html: string) => sinComentarios(html).match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) || []
 
-const PREFIJOS_RENGLON = ["observacionesdetalle", "codigo", "costo", "cantidad"] as const
+/** Campos de una fila (inputs y textareas con nombre; sin botones ni imágenes). */
+function camposDe(html: string): CampoForm[] {
+  const out: CampoForm[] = []
+  for (const m of html.matchAll(/<input\b[^>]*>|<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi)) {
+    const t = m[0]
+    const esArea = /^<textarea/i.test(t)
+    const nombre = atributo(esArea ? (t.match(/<textarea[^>]*>/i) || [""])[0] : t, "name")
+    if (!nombre) continue
+    if (!esArea && ["submit", "button", "image", "reset", "file"].includes((atributo(t, "type") || "text").toLowerCase())) continue
+    out.push({ nombre, valor: esArea ? decodificar(t.replace(/^<textarea[^>]*>/i, "").replace(/<\/textarea>$/i, "")) : decodificar(atributo(t, "value") ?? "") })
+  }
+  return out
+}
 
-/** Renglones del detalle: una fila con inputs codigo… / costo… / cantidad… (y observacionesdetalle…). */
+const esRenglonFila = (tr: string) => /name\s*=\s*["']?codigo\d+/i.test(tr) && /name\s*=\s*["']?cantidad\d+/i.test(tr)
+
+/**
+ * Renglones del detalle (respuesta real de manage_pedidos.php del 28/10, lib/__fixtures__/zomatik-np): una fila por
+ * renglón con `codigo<id>` (hidden, = id del renglón), `costo<id>`, `cantidad<id>`, `observacionesdetalle<id>` y otros;
+ * 1.ª celda el código visible del artículo, 2.ª el nombre.
+ */
 export function renglonesDetalle(html: string): Renglon[] {
   const out: Renglon[] = []
   for (const tr of filasInternas(html)) {
-    const campos: CampoForm[] = []
-    const r: Partial<Renglon> = {}
-    for (const m of tr.matchAll(/<input\b[^>]*>|<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi)) {
-      const t = m[0]
-      const esArea = /^<textarea/i.test(t)
-      const nombre = atributo(esArea ? (t.match(/<textarea[^>]*>/i) || [""])[0] : t, "name")
-      if (!nombre) continue
-      const valor = esArea ? decodificar(t.replace(/^<textarea[^>]*>/i, "").replace(/<\/textarea>$/i, "")) : decodificar(atributo(t, "value") ?? "")
-      const pref = PREFIJOS_RENGLON.find((p) => nombre.toLowerCase().startsWith(p) && nombre.length > p.length)
-      if (!pref) continue
-      campos.push({ nombre, valor })
-      const suf = nombre.slice(pref.length)
-      if (pref === "codigo") r.sufijo = suf
-      if (pref === "observacionesdetalle") r.observaciones = valor
-      else (r as any)[pref] = valor
-    }
-    if (r.sufijo === undefined || r.cantidad === undefined) continue
-    const borrar = tr.match(/verificar\(\s*['"]?(\d+)['"]?\s*\)/i)?.[1] || null
+    if (!esRenglonFila(tr)) continue
+    const campos = camposDe(tr)
+    const valor = (pref: string) => campos.find((c) => new RegExp(`^${pref}\\d+$`, "i").test(c.nombre))
+    const cod = valor("codigo")
+    if (!cod) continue
+    const sufijo = cod.nombre.slice("codigo".length)
+    const celdas = tr.match(/<td\b[^>]*>[\s\S]*?<\/td>/gi) || []
+    const sinCampos = (c: string) => texto(c.replace(/<input\b[^>]*>|<textarea\b[\s\S]*?<\/textarea>|<a\b[\s\S]*?<\/a>/gi, " "))
     out.push({
-      sufijo: r.sufijo,
-      codigo: r.codigo ?? "",
-      costo: r.costo ?? "",
-      cantidad: r.cantidad ?? "",
-      observaciones: r.observaciones ?? "",
-      borrar,
-      articulo: texto(tr.replace(/<input\b[^>]*>|<textarea\b[\s\S]*?<\/textarea>|<a\b[\s\S]*?<\/a>/gi, " ")),
+      sufijo,
+      codigo: cod.valor,
+      costo: valor("costo")?.valor ?? "",
+      cantidad: valor("cantidad")?.valor ?? "",
+      observaciones: valor("observacionesdetalle")?.valor ?? "",
+      borrar: tr.match(/verificar\(\s*['"]?(\d+)['"]?\s*\)/i)?.[1] || null,
+      codigoArticulo: celdas[0] ? sinCampos(celdas[0]) : "",
+      nombreArticulo: celdas[1] ? sinCampos(celdas[1]) : "",
+      articulo: sinCampos(tr),
       campos,
     })
   }
   return out
 }
 
-/** `fparam` como lo arma GrabarDatosDetalle(): "codigo,costo,cantidad,observación|||" por renglón. */
+/** Campos del detalle que no son de ningún renglón (credito, compraactual, compraactualsib, totalacopio…): el formulario
+ *  los manda igual al grabar. */
+export function camposSueltosDetalle(html: string): CampoForm[] {
+  let resto = sinComentarios(html)
+  for (const tr of filasInternas(resto)) if (esRenglonFila(tr)) resto = resto.replace(tr, " ")
+  return camposDe(resto)
+}
+
+/** ¿Este renglón es el del artículo pedido? Por el código visible (zomatik_articulos.codigo) o por el nombre. Nunca por
+ *  `codigo<sufijo>`, que es el id del renglón. */
+export function esRenglonDe(r: Renglon, art: { codigo?: number | string | null; nombre?: string | null }): boolean {
+  if (art.codigo && r.codigoArticulo.replace(/\D/g, "") === String(art.codigo)) return true
+  return !!art.nombre && plano(r.nombreArticulo) === plano(art.nombre)
+}
+
+/** Recorte de una respuesta de Zomatik para guardar en Actividad (sin scripts, sin espacios de más, ~2 KB). */
+export function recorte(html: string, max = 2000): string {
+  return sinComentarios(String(html ?? "")).replace(/<script\b[\s\S]*?<\/script>/gi, "").replace(/\s+/g, " ").trim().slice(0, max)
+}
+
+/**
+ * `fparam` como lo arma GrabarDatosDetalle() del formulario (leído del JavaScript de modificar_pedidos.php, guardado el
+ * 20/10): recorre los campos y por renglón junta el valor de `codigo<id>` (el id del RENGLÓN), `costo<id>` y
+ * `cantidad<id>`, más la observación: "codigo,costo,cantidad,observación|||".
+ */
 export function fparamDe(renglones: Renglon[]): string {
   return renglones.map((r) => `${r.codigo},${r.costo},${r.cantidad},${r.observaciones}|||`).join("")
 }
