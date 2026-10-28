@@ -40,6 +40,11 @@ import {
 } from "@/lib/control-ingresos/cruce"
 import { armarMail, type DiferenciaMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
+import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
+
+/** El control de stock (docs/control-stock-mp.md) se lee después de los remitos, en el mismo cron, si quedan 40 s. */
+const STOCK_ULTIMO_INICIO_MS = 240_000
+const STOCK_LIMITE_MS = 280_000
 
 /** Quién usa el control: los gerenciales o quien tenga materia_prima.editar (se controla en el servidor). */
 export const puedeControlar = (u: UsuarioPermisos) => tipoDe(u) === "gerencial" || puedeCon(u, "materia_prima", "editar")
@@ -242,6 +247,8 @@ export type ResultadoControl = {
   lectura?: { ok: boolean; tramos: ResultadoTramo[]; error?: string }
   resumen?: Record<string, number>
   mail?: { enviado: boolean; a: string[]; motivo?: string }
+  /** Lectura del control de stock (solo en el cron); no cambia `ok` del control de remitos. */
+  stock?: ResultadoStock
 }
 
 const filaDif = (d: Diferencia, ahora: string) => ({
@@ -308,7 +315,17 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
       res.resumen.dias_leidos = frescos.size
       if (res.lectura && !res.lectura.ok) res.ok = false
     }
-    if (opts.mail) res.mail = await mandarMail(sb, hoy, res)
+    if (opts.mail) {
+      // Control de stock: aparte, para que si falla no atrase ni rompa el de remitos
+      let seccion: { html: string; rojas: number } | null = null
+      try {
+        res.stock = Date.now() - t0 < STOCK_ULTIMO_INICIO_MS ? await leerStockZomatik(sb, { t0, limite: t0 + STOCK_LIMITE_MS }) : { ok: false, partes: [], error: "sin tiempo después de los remitos", ms: 0 }
+      } catch (e) {
+        res.stock = { ok: false, partes: [], error: textoError(e), ms: 0 }
+      }
+      seccion = await seccionStockParaMail(sb, hoy, res.stock && !res.stock.ok ? res.stock.error : null)
+      res.mail = await mandarMail(sb, hoy, res, seccion)
+    }
   } catch (e) {
     res.ok = false
     res.motivo = textoError(e)
@@ -318,7 +335,7 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
     .update({
       fin: new Date().toISOString(),
       ok: res.ok,
-      lectura: res.lectura ?? null,
+      lectura: res.lectura || res.stock ? { ...(res.lectura || {}), stock: res.stock ?? null } : null,
       resumen: res.resumen ?? null,
       error: [res.motivo, res.lectura?.error, res.mail && !res.mail.enviado ? `mail: ${res.mail.motivo}` : null].filter(Boolean).join(" · ").slice(0, 2000) || null,
       mail_at: res.mail?.enviado ? new Date().toISOString() : null,
@@ -342,7 +359,7 @@ async function mailsDe(sb: SupabaseClient, nombres: string[]): Promise<string[]>
  * desde el último mail mandado (o de las últimas 24 h si nunca se mandó). Si no se pudo leer Zomatik, se avisa arriba;
  * si además no hay nada abierto, va solo a Bautista.
  */
-async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl): Promise<{ enviado: boolean; a: string[]; motivo?: string }> {
+async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl, stock: { html: string; rojas: number } | null = null): Promise<{ enviado: boolean; a: string[]; motivo?: string }> {
   const { data: previos } = await sb.from("control_mp_corridas").select("mail_at").not("mail_at", "is", null).order("mail_at", { ascending: false }).limit(1)
   const ultimo = (previos as any[])?.[0]?.mail_at as string | undefined
   if (ultimo && fechaArgentina(ultimo) === hoy) return { enviado: false, a: [], motivo: "ya se mandó hoy" }
@@ -354,13 +371,17 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   const siguen = abiertas.filter((d) => Date.parse(d.detectada_at) <= corte)
   const fallo = res.motivo || res.lectura?.error
   const aviso = fallo ? `Hoy no se pudo leer todo de Zomatik (${fallo}). El control usa la última lectura guardada.` : null
-  if (!abiertas.length && !aviso) return { enviado: false, a: [], motivo: "sin diferencias abiertas" }
+  const stockRojo = (stock?.rojas || 0) > 0
+  if (!abiertas.length && !aviso && !stockRojo) return { enviado: false, a: [], motivo: "sin diferencias abiertas" }
   if (!process.env.RESEND_API_KEY) return { enviado: false, a: [], motivo: "falta RESEND_API_KEY" }
-  const soloBautista = !abiertas.length
+  // Solo a Bautista si lo único que hay es el aviso de que no se pudo leer
+  const soloBautista = !abiertas.length && !stockRojo
   const to = await mailsDe(sb, soloBautista ? MAIL_CC : MAIL_A)
   const cc = soloBautista ? [] : await mailsDe(sb, MAIL_CC)
   if (!to.length) return { enviado: false, a: [], motivo: `${(soloBautista ? MAIL_CC : MAIL_A).join(", ")} sin mail cargado` }
-  const { asunto, html } = armarMail({ nuevas, siguen, link: LINK_PANTALLA, aviso, hoy })
+  const armado = armarMail({ nuevas, siguen, link: LINK_PANTALLA, aviso, hoy, extra: stock?.html })
+  const html = armado.html
+  const asunto = stockRojo ? `${armado.asunto} · stock: ${stock!.rojas} en rojo` : armado.asunto
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },

@@ -19,7 +19,7 @@
  */
 import * as XLSX from "xlsx"
 import { sbAdmin } from "@/lib/wialon"
-import { parseHtmlTable, type Fila } from "@/lib/zomatik/parseo"
+import { parseHtmlTable, matrizDeTablaHtml, type Fila } from "@/lib/zomatik/parseo"
 import type { LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import { ZOMATIK_WEB, LISTADOS, rutaPermitida, rutaDeLocation, rutaEscrituraNp } from "@/lib/zomatik/web"
 import { camposFormulario } from "@/lib/zomatik/np"
@@ -361,6 +361,35 @@ export async function fetchExportEnSucursal(s: ZomatikSesion, path: string, form
   const html = buf.toString("latin1")
   if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
   return parseHtmlTable(html).rows
+}
+
+/**
+ * Un reporte como matriz (filas × celdas, con las filas sueltas como "Total acumulado: N"), con la sucursal confirmada
+ * antes y después como `fetchExportEnSucursal`. Acepta Excel (xlsx o xls) o, si Zomatik devuelve la página, su tabla.
+ */
+export async function fetchMatrizEnSucursal(s: ZomatikSesion, path: string, form: FormInfo, opts: OpcionesBusqueda, sucursal: string = SUCURSAL_REBUCRET): Promise<{ filas: (string | number)[][]; formato: "excel" | "html" }> {
+  const confirmar = async (cuando: string) => {
+    const suc = await sucursalVisible(s, path)
+    if (suc === null) throw new ZomatikError("formato", `No se ve la sucursal en ${path.split(".")[0]} (¿cambió la página?)`)
+    if (suc !== sucursal) throw new ZomatikError("formato", `La sesión estaba en otra sucursal (${suc}) ${cuando} del export: otro sistema la cambió`)
+  }
+  if (!(await elegirSucursal(s.cookie, sucursal))) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  await confirmar("antes")
+  const buf = await fetchRaw(s, `${path}?enviado=1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: armarParams(form, opts, true),
+  })
+  await confirmar("después")
+  const esXls = buf.length > 4 && buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0
+  if (esXlsx(buf) || esXls) {
+    const wb = XLSX.read(buf, { type: "buffer" })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    return { filas: ws ? XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, raw: true, defval: "" }) : [], formato: "excel" }
+  }
+  const html = buf.toString("latin1")
+  if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  return { filas: matrizDeTablaHtml(html), formato: "html" }
 }
 
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */

@@ -59,7 +59,8 @@ function porCategoria(difs: DiferenciaMail[]): string {
   }).join("")
 }
 
-export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[]; link: string; aviso?: string | null; hoy: string }): { asunto: string; html: string } {
+/** `extra`: HTML que se suma al final (el resumen del control de stock, lib/control-stock/calculo.ts). */
+export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[]; link: string; aviso?: string | null; hoy: string; extra?: string | null }): { asunto: string; html: string } {
   const total = d.nuevas.length + d.siguen.length
   const asunto = `Rebucret · Control de ingresos MP: ${d.nuevas.length} ${d.nuevas.length === 1 ? "nueva" : "nuevas"}, ${total} ${total === 1 ? "abierta" : "abiertas"}`
   const html = `
@@ -72,6 +73,7 @@ export function armarMail(d: { nuevas: DiferenciaMail[]; siguen: DiferenciaMail[
     <div style="font-size:14px;margin:14px 0 6px">Siguen abiertas (${d.siguen.length})</div>
     ${d.siguen.length ? porCategoria(d.siguen) : `<div style="color:#64748b">Ninguna.</div>`}
     <p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>
+    ${d.extra || ""}
     <p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>
   </div>`
   return { asunto, html }

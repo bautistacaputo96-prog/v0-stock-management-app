@@ -1,0 +1,25 @@
+{
+  "_nota": "Canning, CPC 40 / CCTS CEMENTO GRANEL (10000026), del 20 al 27/10/2026. 'zomatik': extracto real de INVENTARIO › MOVIMIENTOS STOCK (REBUCRET, depósito 116) leído el 28/10 (solo 4 renglones del período: no cierra entero). 'nuestro': lo real de la base (kg por día y tipo, desde el 15/10) con current_stock del 28/10 (75.770 kg). En el nuestro: 106,8 t de entradas y 122,2 t de consumo.",
+  "zomatik": [
+    ["Fecha", "Comprobante", "Descripcion", "Movimiento", "Saldo"],
+    ["20/10/2026", "RMP 0002-02742081", "FENOMIX - MATERIALES SAN FERNANDO", "34.120000", "102.847"],
+    ["20/10/2026", "RMI 0001-00006741", "", "-23.100000", "79.747"],
+    ["21/10/2026", "RMP 0002-02742384", "FENOMIX - MATERIALES SAN FERNANDO", "36.290000", "103.482"],
+    ["27/10/2026", "RMI 0001-00006773", "", "-33.810001", "112.540"],
+    ["Total acumulado: 68.727496"]
+  ],
+  "nuestro": {
+    "actualKg": 75770,
+    "movs": [
+      { "fecha": "2026-10-15", "tipo": "consumo", "kg": 21390 },
+      { "fecha": "2026-10-17", "tipo": "entrada", "kg": 31190 },
+      { "fecha": "2026-10-20", "tipo": "consumo", "kg": 58595 },
+      { "fecha": "2026-10-20", "tipo": "entrada", "kg": 34120 },
+      { "fecha": "2026-10-21", "tipo": "consumo", "kg": 23560 },
+      { "fecha": "2026-10-21", "tipo": "entrada", "kg": 36290 },
+      { "fecha": "2026-10-22", "tipo": "consumo", "kg": 5582.5 },
+      { "fecha": "2026-10-23", "tipo": "entrada", "kg": 36390 },
+      { "fecha": "2026-10-27", "tipo": "consumo", "kg": 34450 }
+    ]
+  }
+}

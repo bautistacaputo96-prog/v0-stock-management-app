@@ -40,6 +40,21 @@ export function sinComentarios(html: string): string {
  * Tabla de datos de un listado HTML. Zomatik arma el layout con tablas anidadas (el menú incluido): se elige
  * la que tenga más filas × columnas con al menos 3 columnas. Las columnas comentadas no cuentan.
  */
+/**
+ * La tabla más grande de una página como matriz de textos, con TODAS sus filas (también las de una sola celda, como
+ * "Total acumulado: N", que parseHtmlTable descarta).
+ */
+export function matrizDeTablaHtml(html: string): string[][] {
+  const limpio = sinComentarios(html)
+  let mejor: string[][] = []
+  // Solo las tablas sin otras tablas adentro (Zomatik arma el layout con tablas anidadas)
+  for (const t of limpio.match(/<table\b(?:(?!<table\b)[\s\S])*?<\/table>/gi) || []) {
+    const filas = (t.match(/<tr[\s\S]*?<\/tr>/gi) || []).map((tr) => (tr.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) || []).map(textoCelda)).filter((f) => f.some((c) => c !== ""))
+    if (filas.length > mejor.length) mejor = filas
+  }
+  return mejor
+}
+
 export function parseHtmlTable(html: string): TablaHtml {
   const limpio = sinComentarios(html)
   const tablas = limpio.match(/<table[\s\S]*?<\/table>/gi) || []
