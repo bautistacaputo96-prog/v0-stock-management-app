@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS public.zomatik_remitos (
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now(),
   ok_at                  timestamptz,
-  CONSTRAINT zomatik_remitos_tipo_check CHECK (tipo = 'suelto' OR (np_id IS NOT NULL AND comprobante IS NOT NULL))
+  CONSTRAINT zomatik_remitos_tipo_datos_check CHECK (tipo = 'suelto' OR (np_id IS NOT NULL AND comprobante IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS zomatik_remitos_trabajo_idx ON public.zomatik_remitos (estado, proximo_intento) WHERE estado IN ('pendiente', 'generando', 'error', 'revisar');
 COMMENT ON TABLE public.zomatik_remitos IS 'Zomatik Z1: OF + remito de un pedido, un día y una NP. La escribe solo el servidor; el navegador lee el estado.';
