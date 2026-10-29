@@ -3,7 +3,7 @@
  * navegador inyectado (en las pruebas, respuestas simuladas), cada paso avisado con `alPaso` y lo que se necesita para
  * verificar un corte guardado ANTES de grabar (la foto de las OF, el número del remito).
  *
- * OF (como el robot real de Concretus, relevado el 22/10 en la sucursal 17; acá en la 18):
+ * OF (como el robot real de Concretus, relevado el 22/10 en la sucursal 17; alta y lista capturadas en la 18 el 29/10):
  *   sucursal 18 → alta vacía → manage_ordenfabricacion con el artículo → foto del listado → sucursal 18 → Grabar →
  *   listado otra vez: exactamente UNA OF nueva PEN del depósito y la fecha, con la marca → ok. Si no, "revisar".
  * Remito (alta, Validarremito, manage_remitos y _validarnumeroremito capturados el 29/10):
@@ -143,9 +143,13 @@ async function listarOf(nav: NavegadorNp, deposito: number, hoy: string): Promis
   return filas.filter((x) => !nombre || x.deposito === nombre)
 }
 
-/** Las OF nuevas (respecto de la foto) que son la nuestra: PEN, del depósito, con la fecha y la marca en observaciones. */
+/**
+ * Las OF nuevas (respecto de la foto) que son la nuestra: del depósito, con la fecha y la marca en observaciones. PEN o
+ * FIN: en REBUCRET todas las del listado figuran FIN (columna "Remitido", 29/10); lo que asegura que es la nuestra es la
+ * marca.
+ */
 async function nuestraOf(nav: NavegadorNp, d: DatosOf, foto: string[], ahora: FilaOf[]): Promise<{ esta: FilaOf | null; nuevas: FilaOf[] }> {
-  const nuevas = ofNuevas(foto, ahora).filter((x) => x.estado === "PEN" && x.fechaEntrega === d.fecha)
+  const nuevas = ofNuevas(foto, ahora).filter((x) => x.fechaEntrega === d.fecha)
   for (const x of nuevas) {
     if (!x.codigo) continue
     const p = await nav.get(`modificar_ordenfabricacion.php?codigo=${x.codigo}`)
@@ -192,11 +196,11 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
     const foto = (await listarOf(nav, d.deposito, o.hoy)).map((x) => x.numero)
     await aRebucret(nav)
     await marcar("grabar_of", { foto })
+    // Como el robot real de Concretus (graba OF en vivo desde el 23/10): los campos del alta con fparam, nada más
     const campos = conValores(f.orden.filter((c: CampoForm) => !/^(codigo|cantidad)\d+$/i.test(c.nombre)), {
       deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones: d.marca, fparam, comprobante: COMPROBANTE_OF, ordenfabricacion: "0",
     })
-    const lista0 = [{ nombre: `codigo${lista[0].n}`, valor: lista[0].codigo }, { nombre: `cantidad${lista[0].n}`, valor: cantidadTexto(d.m3) }]
-    const g = await nav.post("grabar_ordenfabricacion.php?codigo=0", ascii(queryLatin1([...campos, ...lista0].map((c) => [c.nombre, c.valor]))), "application/x-www-form-urlencoded")
+    const g = await nav.post("grabar_ordenfabricacion.php?codigo=0", ascii(queryLatin1(campos.map((c) => [c.nombre, c.valor]))), "application/x-www-form-urlencoded")
     const no = rechazo(g)
 
     await marcar("verificar_of")
@@ -305,8 +309,12 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     const entregaLocalidad = f.campos.entrega_localidad || d.entrega.localidad || ""
     const lote = f.campos.lote || d.entrega.lote || ""
     if (!provinciaFiscal || provinciaFiscal === "0") throw dato("El cliente de la NP no tiene provincia en Zomatik: cargala antes de remitir.")
-    if (!entregaDireccion.trim() || !entregaLocalidad.trim()) throw dato("La obra no tiene dirección o localidad: cargalas antes de remitir.")
-    if (!lote.trim()) throw dato("Falta el lote de entrega (pregunta 26.9).")
+    const faltaObra = !entregaLocalidad.trim() ? "la localidad" : !entregaDireccion.trim() || !lote.trim() ? "el nombre o la dirección" : null
+    if (faltaObra) {
+      const fr = new Freno("revisar", `Completar ${faltaObra} de la obra y tocar "Remitir en Zomatik". No se grabó nada.`)
+      fr.aviso = `Completar ${faltaObra} de la obra`
+      throw fr
+    }
 
     await marcar("continuar_remito")
     const q = queryLatin1([

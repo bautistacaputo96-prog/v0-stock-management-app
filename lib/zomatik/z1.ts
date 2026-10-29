@@ -21,10 +21,11 @@ const corto = (id: string) => String(id).replace(/-/g, "").slice(0, 8)
 
 /**
  * "Sistema Rebucret - pedido 1a2b3c4d - 2026-10-29 - NP 1": va en las observaciones de la OF y del remito (ASCII).
- * `sufijo`: " - 2" para un segundo remito del mismo pedido, día y NP (despachos que llegaron después del primero).
+ * `vez`: 2, 3… para otro remito del mismo pedido, día y NP (despachos que llegaron después del primero):
+ * "… - 2026-10-29 - 2 - NP 1". Va antes de "NP" para que ninguna marca quede contenida en otra (tieneMarca).
  */
-export function marcaZ1(pedidoId: string, fecha: string, npN: number, sufijo = ""): string {
-  return `Sistema Rebucret - pedido ${corto(pedidoId)} - ${fecha} - NP ${npN}${sufijo}`
+export function marcaZ1(pedidoId: string, fecha: string, npN: number, vez = 1): string {
+  return `Sistema Rebucret - pedido ${corto(pedidoId)} - ${fecha}${vez > 1 ? ` - ${vez}` : ""} - NP ${npN}`
 }
 
 /** Despacho manual sin pedido (solo OF, 26.9): "Sistema Rebucret - despacho 1a2b3c4d - 2026-10-29". */
@@ -152,11 +153,25 @@ export function planificarRemitos(despachos: DespachoZ1[], nps: NpZ1[], yaRemiti
   return { remitos, problemas }
 }
 
-/** Observaciones del remito: la marca, las patentes y los remitos de papel (17.1, 7.4). ASCII (sin "·"). */
+/**
+ * Observaciones del remito, como los cargan hoy (12 remitos reales, 29/10):
+ *   observaciones    la obra (la "descripción"), las patentes y la marca del sistema;
+ *   observacionesimp (las impresas) los números de remito de planta del día separados por espacio: "934 935 936".
+ */
 export function observacionesRemito(marca: string, r: { patentes: string; remitos_papel: string }, obra: string | null): { observaciones: string; observacionesimp: string } {
-  const obs = [marca, r.patentes ? `Camiones: ${r.patentes}` : "", r.remitos_papel ? `Remitos: ${r.remitos_papel}` : ""].filter(Boolean).join(" - ")
-  const imp = [r.remitos_papel ? `Remitos ${r.remitos_papel}` : "", obra ? `Obra ${obra}` : ""].filter(Boolean).join(" - ")
+  const obs = [obra || "", r.patentes ? `Camiones: ${r.patentes}` : "", marca].filter(Boolean).join(" - ")
+  const imp = r.remitos_papel.split(",").map((x) => x.trim()).filter(Boolean).join(" ")
   return { observaciones: obs, observacionesimp: imp }
+}
+
+/**
+ * Lugar de entrega del remito, como lo cargan hoy (29/10): lote = el lote de la obra si lo tiene (barrio) o si no el
+ * nombre de la obra; dirección = la de la obra o su nombre; localidad = la de la obra (sin ella, "revisar").
+ */
+export function entregaRemito(obra: { nombre?: string | null; direccion?: string | null; localidad?: string | null; lote?: string | null } | null): { direccion: string | null; localidad: string | null; lote: string | null } {
+  const t = (s: string | null | undefined) => (s || "").trim() || null
+  const nombre = t(obra?.nombre)
+  return { lote: t(obra?.lote) || nombre, direccion: t(obra?.direccion) || nombre, localidad: t(obra?.localidad) }
 }
 
 // ---------------------------------------------------------------------------

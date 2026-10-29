@@ -1,3 +1,12 @@
-<table width="800"><tr><td class="itemformulario">Codigo</td><td class="itemformulario">Articulo</td><td class="itemformulario">Cantidad</td></tr>
-<tr><td class="itemformulario">10090020</td><td class="itemformulario">H21-620-10 C (CAN)<input type="hidden" name="codigo7001" value="7001"></td>
-<td class="campoformulario"><input type="TEXT" name="cantidad7001" value="0"></td></tr></table>
+<table width="800" border="0" cellspacing="1" cellpadding="2"><tr><td class="itemformulario">Codigo</td><td class="itemformulario">Articulo</td><td class="itemformulario">Cantidad</td><!--Pedido--><td background="images/fondo_tabl_borrar.gif">&nbsp;</td></tr>
+<tr>
+  <input type="hidden" size="10" name="codigo14850" id="codigo14850" value="14850">
+  <td class="itemformulario">10090020</td>
+  <td class="itemformulario">H21-620-10 C (CAN)</td>
+  <td class="campoformulario"><input type="TEXT" name="cantidad14850" id="cantidad14850" value="0.000" size="10" maxlength="20"></td>
+  <td><a href="#" onclick="return verificar(14850); return false;"><img src="images/ico_borrar.gif" border="0"></a></td>
+</tr>
+<input type="hidden" name="credito" id="credito" value="0">
+<input type="hidden" name="compraactual" id="compraactual" value="0">
+<input type="hidden" name="totalacopio" id="totalacopio" value="0">
+<tr><td colspan="8"><input type="image" id="botgrabar" src="images/bot_grabar.gif"></td></tr></table>

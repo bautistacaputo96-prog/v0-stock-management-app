@@ -1740,7 +1740,7 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
 
 ## 26. Z1: especificación — "Finalizar pedido" → OF + remito (29/10/2026, rama `loop/z1-remitir`)
 
-Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabricar". Manda sobre 8.4 y 15. Siguen 16.3 A (OF justo antes del remito, por pedido y día, y una pasada de control a la noche) y 17.1 (un remito por pedido y día; la patente del primer camión en `patente` y todas en observaciones). **Sin aplicar y sin probar contra Zomatik.** El remito y el alta de la OF se ajustaron con las capturas del 29/10 (26.9). Falta capturar la lista de la OF.
+Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabricar". Manda sobre 8.4 y 15. Siguen 16.3 A (OF justo antes del remito, por pedido y día, y una pasada de control a la noche) y 17.1 (un remito por pedido y día; la patente del primer camión en `patente` y todas en observaciones). **Sin aplicar y sin probar contra Zomatik.** El remito y el alta de la OF se ajustaron con las capturas del 29/10 (26.9).
 
 ### 26.1 Flujo
 1. **Cuándo:**
@@ -1778,7 +1778,7 @@ Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabric
 - Una fila se toma con `zomatik_remito_tomar` y el turno del robot es el mismo de la NP y de la lectura (una sola sesión).
 - Cada guardado del robot pide que la fila siga "generando".
 
-### 26.6 Lo que hay que capturar en vivo con Bautista (en el navegador, sucursal REBUCRET, **sin grabar**). Hecho el 29/10, menos el punto 2 (ver 26.9)
+### 26.6 Lo que hay que capturar en vivo con Bautista (en el navegador, sucursal REBUCRET, **sin grabar**). Hecho el 29/10 (ver 26.9)
 Con un pedido de prueba con su NP en Zomatik (por ejemplo, la de OBRA PROPIA REBUCRET, Canning, 1 m³ de H21-620-10 C (CAN)). Hace falta la **URL exacta** de cada pedido de la red (con todos sus parámetros) y **la respuesta completa**:
 1. **OF, alta:** `GET modificar_ordenfabricacion.php`, la página entera (el form, los depósitos 116/113 y el número que trae).
 2. **OF, "Continuar" o agregar artículo:** el `GET manage_ordenfabricacion.php?...` al agregar el H21 con depósito Canning. Hace falta saber:
@@ -1840,19 +1840,26 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 - **"Continuar"** (`manage_remitos.php?remitos=0&fcliente&fobra&fcomprobante&fstdeposito&fdeposito&fpedido&rnd`): un renglón por pendiente de la NP, **con la cantidad precargada con todo lo pendiente**. El robot pone los m³ del día en su renglón y **0 en todos los demás**.
 - **`_validarnumeroremito`:** vacío = libre; "… ya se encuentra utilizado"; "… no esta cargado en el sistema".
 
-**Lo que hace el robot con los campos obligatorios (supuestos, para confirmar en la primera prueba):**
-- `provincia_fiscal`: la provincia del cliente;
-- `entrega_direccion` y `entrega_localidad`: las de la obra;
-- **`lote`: si el alta no lo trae, frena con "Falta el lote" (pregunta 26.10.1)**;
-- `transporte` = 1.
+**Cómo se llenan hoy (12 remitos reales leídos el 29/10) y lo que hace el robot:**
+- **transporte = 1 y patente vacía.** Las patentes van en observaciones.
+- **lote:** el lote de la obra si es barrio ("112") o, si no, el nombre de la obra o el lugar. La obra no tiene columna de lote, así que va **su nombre**.
+- **entrega_direccion:** la dirección de la obra o su nombre.
+- **entrega_localidad:** la localidad de la obra. **Sin localidad, el remito queda en "revisar" con "Completar la localidad de la obra"** (aviso a gerenciales). Después de completarla, "Remitir en Zomatik" lo reintenta: es un "revisar" de antes de grabar.
+- **observaciones:** la obra, los camiones y la marca del sistema.
+- **observacionesimp** (lo que se imprime): **los remitos de planta del día, separados por espacio** ("934 935 936"). Confirma uno por pedido y día.
+- provincia_fiscal: la del cliente. No se pudo leer cómo la cargan (la pone el JavaScript).
 
-**Falta capturar con Bautista:**
-- la respuesta de `manage_ordenfabricacion` al agregar el artículo (`of-manage.html` sigue supuesto);
-- si una OF PEN ya da stock para remitir o hay que "Generarla" (en la captura, el stock del depósito estaba en 0).
+**OF, lista capturada** (`manage_ordenfabricacion` al agregar el H21-620-10 C (CAN), `farticulo=1000015959`): `codigo14850` / `cantidad14850` → `fparam` = "14850,<cantidad>|||". Es la misma URL que manda el robot. Al grabar se mandan solo los campos del alta con `fparam`, como el robot de Concretus (que graba OF en vivo desde el 23/10).
 
-### 26.10 Preguntas que quedan
-1. **¿Qué va en "lote"?** Validarremito lo pide siempre. **Recomendación:** si es el lote de un barrio, el de la obra (hay que agregarlo a la obra); si no aplica, "-".
-2. **¿Transporte 1 o 2?** Con el 2, Zomatik pide chofer, vehículo y horas. **Recomendación:** 1, con la patente del primer camión.
+**"FIN" y "Generar" en el listado de OF:**
+- En REBUCRET todas las OF figuran FIN (columna "Remitido") y tienen el link "Generar" (`modificar_CV.php?ordenfabricacion=N`, columna "Com.Ven.").
+- El robot de Concretus (`lib/zomatik-of.ts` en origin/main) **no hace nada después de grabar**: graba y verifica en el listado que haya una OF nueva **PEN**. No usa "Generar" ni `modificar_CV`, y en ese repo no aparece en ningún lado.
+- O sea, no sabemos si una OF da stock sola: lo tiene que decir Bautista o la primera prueba.
+- El robot de Rebucret ahora acepta la OF nueva **PEN o FIN**: lo que asegura que es la nuestra es la marca.
+- Si la OF no diera stock, el remito queda "pendiente" (sin stock) y se reintenta cada 10 min, sin grabar nada.
+
+### 26.10 Pregunta que queda
+1. **¿La OF da stock al grabarla o hay que tocar "Generar" (`modificar_CV.php`)?** Se le preguntó a Bautista el 29/10. Hasta saberlo, `modificar_CV` no está en la lista cerrada.
 
 - Migración: sigue **sin aplicar y sin probar contra la base**. Cambios desde la primera versión:
   - `zomatik_remitos.tipo` ('pedido'/'suelto'); `np_id` y `comprobante` pueden quedar nulos en 'suelto';

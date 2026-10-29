@@ -20,7 +20,7 @@ import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { actividadNp, avisarGerenciales } from "@/lib/zomatik/np-servidor"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { elegirNumeroRemito, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
-import { marcaOfSuelta, marcaZ1, observacionesRemito, planificarRemitos, type DespachoZ1, type NpZ1 } from "@/lib/zomatik/z1"
+import { entregaRemito, marcaOfSuelta, marcaZ1, observacionesRemito, planificarRemitos, type DespachoZ1, type NpZ1 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
 
 type SB = ReturnType<typeof sbServicio>
@@ -96,7 +96,7 @@ export async function prepararRemitos(pedidoId: string, dia: string, usuario: st
   let creados = 0
   for (const r of plan.remitos) {
     let marca = marcaZ1(ped.id, dia, r.np_n)
-    for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, ` - ${k}`)
+    for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, k)
     marcas.add(marca)
     const { data: id, error } = await sb.rpc("zomatik_remito_crear", {
       p: {
@@ -173,6 +173,9 @@ async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): 
 
 class Cambio extends Error {}
 
+/** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir"). */
+const PASOS_ANTES_DE_GRABAR = ["formulario_remito", "continuar_remito", "numero_remito"]
+
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
   const [{ data: np }, { data: f }, { data: ped }] = await Promise.all([
@@ -182,18 +185,15 @@ async function datos(sb: SB, r: RemitoDB) {
   ])
   const codArt = (f as { zomatik_articulo_codigo?: number | null } | null)?.zomatik_articulo_codigo ?? null
   const { data: a } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre, codigo_sistema").eq("codigo", codArt).maybeSingle() : { data: null }
+  const obra = (ped as { construction_sites?: { name?: string | null; address?: string | null; localidad?: string | null } | null } | null)?.construction_sites ?? null
   return {
     np: np as { numero: string | null; zomatik_codigo: number | null; estado: string } | null,
     articuloCodigo: codArt,
     articuloCodigoSistema: (a as { codigo_sistema?: number | null } | null)?.codigo_sistema ?? null,
     articuloNombre: (a as { nombre?: string } | null)?.nombre || (f as { zomatik_articulo_nombre?: string } | null)?.zomatik_articulo_nombre || "",
-    obra: (ped as { construction_sites?: { name?: string } | null } | null)?.construction_sites?.name ?? null,
-    entrega: {
-      direccion: (ped as { construction_sites?: { address?: string | null } | null } | null)?.construction_sites?.address ?? null,
-      localidad: (ped as { construction_sites?: { localidad?: string | null } | null } | null)?.construction_sites?.localidad ?? null,
-      /** Pregunta 26.9: qué va en "lote" (la obra no lo tiene). Hasta que conteste, el alta tiene que traerlo. */
-      lote: null as string | null,
-    },
+    obra: obra?.name ?? null,
+    // La obra no tiene columna de lote: va su nombre (como lo cargan hoy cuando no es barrio)
+    entrega: entregaRemito(obra ? { nombre: obra.name, direccion: obra.address, localidad: obra.localidad } : null),
   }
 }
 
@@ -209,14 +209,12 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
   const { data, error } = await q
   if (error) throw error
-  // "Remitir en Zomatik" después de cargar un talonario nuevo: el "revisar" del talonario terminado (no se grabó nada,
-  // el número quedó olvidado) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
+  // "Remitir en Zomatik" después de corregir: el "revisar" que frenó ANTES de grabar el remito (talonario terminado,
+  // obra sin localidad) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
   for (const r of (data as unknown as RemitoDB[]) || []) {
-    if (r.estado !== "revisar") continue
-    if (o.pedidoId && r.paso === "numero_remito" && !r.remito_numero) {
-      await sb.from("zomatik_remitos").update({ estado: "error", updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").eq("paso", "numero_remito").is("remito_numero", null)
-      r.estado = "error"
-    }
+    if (r.estado !== "revisar" || !o.pedidoId || !PASOS_ANTES_DE_GRABAR.includes(r.paso || "")) continue
+    const { data: ok } = await sb.from("zomatik_remitos").update({ estado: "error", updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").in("paso", PASOS_ANTES_DE_GRABAR).select("id")
+    if (((ok as unknown[]) || []).length) r.estado = "error"
   }
   const ahora = Date.now()
   const lista = ((data as unknown as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
@@ -308,7 +306,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         const obs = observacionesRemito(r.marca, { patentes: r.patentes || "", remitos_papel: r.remitos_papel || "" }, d.obra)
         const rm = await generarRemito(nav, {
           marca: r.marca, npCodigo: d.np.zomatik_codigo, comprobante: r.comprobante, deposito, fecha: String(r.fecha), m3: Number(r.m3),
-          articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre, patente: r.patente, observaciones: obs.observaciones, observacionesimp: obs.observacionesimp,
+          // Patente vacía, como hoy (29/10): las patentes van en observaciones
+          articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre, patente: null, observaciones: obs.observaciones, observacionesimp: obs.observacionesimp,
           numero, entrega: d.entrega, buscarAntes: cortadoRemito,
         }, { hoy: hoyAR(), alPaso })
         if (rm.estado !== "ok") {
