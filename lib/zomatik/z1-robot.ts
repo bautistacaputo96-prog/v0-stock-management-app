@@ -243,9 +243,14 @@ export type DatosRemito = {
   buscarAntes: boolean
 }
 
-/** El remito con ese número en el listado de REBUCRET, y si tiene la marca. Mira la primera página (sin filtro, lo
- *  último) y el buscador por número y fechas (con fechas vacías el POST no trajo filas, 29/10). */
-async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, desde: string, hoy: string): Promise<{ codigo: number; numero: string; conMarca: boolean } | null> {
+/**
+ * El remito con ese número en el listado de REBUCRET (la primera página, sin filtro, y el buscador por número y
+ * fechas: con fechas vacías el POST no trajo filas, 29/10). null si no está; si está, se abre y se lee la marca:
+ *   "nuestro"  tiene nuestra marca;
+ *   "otro"     se leyó y no la tiene (lo cargó otro);
+ *   "ilegible" no se pudo leer (sin formulario u observaciones): no se sabe de quién es.
+ */
+async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, desde: string, hoy: string): Promise<{ codigo: number; numero: string; de: "nuestro" | "otro" | "ilegible" } | null> {
   const pag = await nav.get("listado_remitos.php")
   const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("el remito", "buscador de remitos", pag.html)
@@ -255,7 +260,8 @@ async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, 
   if (!fila) return null
   const p = await nav.get(`modificar_remitos.php?codigo=${fila.codigo}`)
   const fr = formularioRemito(p.html)
-  return { ...fila, conMarca: !!fr && tieneMarca(fr.campos.observaciones, marca) }
+  if (!fr || !("observaciones" in fr.campos)) return { ...fila, de: "ilegible" }
+  return { ...fila, de: tieneMarca(fr.campos.observaciones, marca) ? "nuestro" : "otro" }
 }
 
 const restarDias = (f: string, n: number) => {
@@ -300,9 +306,11 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     if (d.buscarAntes) {
       await marcar("buscar_remito")
       const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
-      if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
-      // Con ese número hay OTRO remito (sin la marca): el nuestro no llegó. Se sigue con el siguiente número.
-      if (x) numero = siguiente(numero)
+      if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
+      // No se pudo leer: puede ser el nuestro. Nunca se pasa al siguiente número.
+      if (x?.de === "ilegible") return { estado: "revisar", mensaje: `El remito ${pref} ${numero} existe pero no se pudo leer: puede ser el nuestro de un corte. Revisalo en Zomatik antes de seguir.`, paso: "buscar_remito", grabado: true }
+      // Con ese número hay OTRO remito (leído, sin la marca): el nuestro no llegó. Se sigue con el siguiente número.
+      if (x?.de === "otro") numero = siguiente(numero)
       // No está en el listado: si después Zomatik dice que está usado, no se puede saber si es el nuestro
       else guardadoNoEsta = true
     }
@@ -383,8 +391,8 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
 
     await marcar("verificar_remito")
     const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
-    if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true }
+    if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true }
     if (!x && no) return { estado: "error", mensaje: `Zomatik no aceptó el remito: ${no}`, paso: "grabar_remito", recorte: recorte(g.html) }
-    return { estado: "revisar", mensaje: x ? `El remito ${pref} ${numero} existe pero sin la marca: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${pref} ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }
+    return { estado: "revisar", mensaje: x ? `El remito ${pref} ${numero} existe pero ${x.de === "ilegible" ? "no se pudo leer" : "sin la marca"}: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${pref} ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }
   })
 }

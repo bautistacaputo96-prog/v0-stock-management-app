@@ -155,11 +155,12 @@ export function planificarRemitos(despachos: DespachoZ1[], nps: NpZ1[], yaRemiti
 
 /**
  * Observaciones del remito, como los cargan hoy (12 remitos reales, 29/10):
- *   observaciones    la obra (la "descripción"), las patentes y la marca del sistema;
+ *   observaciones    la marca del sistema PRIMERO (si Zomatik recorta el texto, no se pierde), la obra (la
+ *                    "descripción") y las patentes;
  *   observacionesimp (las impresas) los números de remito de planta del día separados por espacio: "934 935 936".
  */
 export function observacionesRemito(marca: string, r: { patentes: string; remitos_papel: string }, obra: string | null): { observaciones: string; observacionesimp: string } {
-  const obs = [obra || "", r.patentes ? `Camiones: ${r.patentes}` : "", marca].filter(Boolean).join(" - ")
+  const obs = [marca, obra || "", r.patentes ? `Camiones: ${r.patentes}` : ""].filter(Boolean).join(" - ")
   const imp = r.remitos_papel.split(",").map((x) => x.trim()).filter(Boolean).join(" ")
   return { observaciones: obs, observacionesimp: imp }
 }

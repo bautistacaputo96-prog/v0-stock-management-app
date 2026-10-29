@@ -202,7 +202,9 @@ async function alDiaConDespachos(sb: SB, r: RemitoDB, o: { usuario: string; avis
   const c = cambiosDespachos(links, actuales, r.formula_id)
   if (!c.firma) return r
   const que = textoCambio(c)
-  if (r.of_estado !== "ok") {
+  // Cortado en grabar_of / verificar_of / buscar_of: la OF pudo quedar grabada. Se trata como OF hecha (no se ajusta)
+  const ofPudoGrabarse = r.of_estado === "ok" || /^(grabar_of|verificar_of|buscar_of)$/.test(r.paso || "")
+  if (!ofPudoGrabarse) {
     if (c.anulados.length) await sb.from("zomatik_remito_despachos").delete().eq("remito_id", r.id).in("dispatch_id", c.anulados)
     for (const e of c.editados) await sb.from("zomatik_remito_despachos").update({ m3: e.ahora } as never).eq("remito_id", r.id).eq("dispatch_id", e.id)
     const vivos = actuales.filter((d) => links.some((l) => l.dispatch_id === d.id))
@@ -214,7 +216,9 @@ async function alDiaConDespachos(sb: SB, r: RemitoDB, o: { usuario: string; avis
     await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": `Antes de la OF ${que}: ${c.m3 > 0 ? `ahora son ${c.m3} m³` : "no queda nada"}` } })
     return c.m3 > 0 ? { ...r, ...(cambios as Partial<RemitoDB>) } : null
   }
-  const m = `Después de la ${r.of_numero || "OF"} ${que}. No se hizo el remito: corregí la OF en Zomatik y cargá el remito a mano.`
+  const m = r.of_estado === "ok"
+    ? `Después de la ${r.of_numero || "OF"} ${que}. No se hizo el remito: corregí la OF en Zomatik y cargá el remito a mano.`
+    : `Se cortó al grabar la OF y después ${que}. La OF puede estar en Zomatik (marca "${r.marca}"): revisala, corregila y cargá el remito a mano.`
   await guardarSi(sb, r.id, { estado: "revisar", remito_estado: "revisar", en_curso_desde: null, mensaje: m, paso: "cambio_despachos", cambio_avisado: c.firma, proximo_intento: null })
   await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": m } })
   await o.avisar(sb, "Despacho anulado o editado después de la OF", [m, `Marca: ${r.marca}`])

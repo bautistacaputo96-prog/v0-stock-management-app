@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (27) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (29) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1879,3 +1879,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 - **Sin stock:** a los 6 intentos (1 hora), "revisar" con el aviso "Zomatik no tiene stock: ¿la OF necesita 'Generar'?" (`sin_stock`). "Remitir en Zomatik" lo reintenta.
 - **`_validarnumeroremito`:** una respuesta vacía solo cuenta como libre si el código HTTP es 200.
 - **Migración (sin aplicar):** suma `of_foto_dia`, `sin_stock` y `cambio_avisado` a `zomatik_remitos`.
+- **Pasada final (29/10):**
+  - Al buscar un remito por número hay tres resultados: con nuestra marca, leído sin la marca (de otro: se pasa al número siguiente) y no se pudo leer ("revisar", nunca el siguiente).
+  - La marca va **primero** en las observaciones del remito, así no se pierde si Zomatik recorta el texto. La búsqueda la encuentra en cualquier lugar.
+  - Si se cortó en `grabar_of`, `verificar_of` o `buscar_of`, la OF pudo quedar grabada: con despachos cambiados se trata como OF hecha ("revisar" y aviso, sin ajustar el remito).
