@@ -1,7 +1,8 @@
 /**
  * Zomatik Z2 · Pasada de las NP: sincroniza los pedidos de hoy en adelante (plantas con la llave prendida) y trabaja
  * las NP pendientes, las de un "Grabar" cortado (primero se busca la marca) y las que hay que vaciar. Después, Z1: la OF
- * de los despachos sin pedido y los reintentos de OF + remito (spec 26).
+ * de los despachos sin pedido (últimos 3 días), el aviso de despachos anulados o editados después de la OF y los
+ * reintentos de OF + remito (spec 26).
  *
  *   GET  /api/zomatik/np/procesar   cron: solo con `Authorization: Bearer <CRON_SECRET>` (lib/cron.ts). Cada 10 min
  *                                   desde un programador externo o pg_cron (pregunta 24.8.3); Vercel Hobby solo deja
@@ -15,7 +16,8 @@ import { puedeCon } from "@/lib/permisos"
 import { esLlamadaDeCron } from "@/lib/cron"
 import { faltaMigracion, pasadaNp, procesarNp } from "@/lib/zomatik/np-servidor"
 import { hoyAR } from "@/lib/zomatik/np"
-import { prepararOfSueltas, procesarZ1 } from "@/lib/zomatik/z1-servidor"
+import { controlarCambiosZ1, prepararOfSueltas, procesarZ1 } from "@/lib/zomatik/z1-servidor"
+import { ultimosDias } from "@/lib/zomatik/z1"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -39,8 +41,10 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     // remitir apagada (o sin su migración) no hace nada; un error acá no cambia la pasada de las NP.
     let z1: unknown = null
     try {
-      const ofSueltas = await prepararOfSueltas(hoyAR(), usuario)
-      z1 = { ofSueltas, ...(await procesarZ1({ usuario, inicio })) }
+      const dias = ultimosDias(hoyAR(), 3)
+      const ofSueltas = await prepararOfSueltas(dias, usuario)
+      const avisos = await controlarCambiosZ1(usuario, { dias })
+      z1 = { ofSueltas, avisos, ...(await procesarZ1({ usuario, inicio })) }
     } catch (e) {
       console.error("[zomatik-z1] pasada", (e as Error)?.message)
     }

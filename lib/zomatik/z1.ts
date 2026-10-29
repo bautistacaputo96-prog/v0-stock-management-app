@@ -406,9 +406,77 @@ export function listadoRemitos(html: string): { codigo: number; numero: string }
  * "El numero de comprobante: 0001-00002252 ya se encuentra utilizado" = usado; "… no esta cargado en el sistema" = fuera
  * del talonario. Cualquier otra cosa: no se sabe (no se graba).
  */
-export function numeroRemitoLibre(respuesta: string): { libre: true } | { libre: false; motivo: "usado" | "fuera" | "otro"; texto: string } {
+export function numeroRemitoLibre(respuesta: string, status = 200): { libre: true } | { libre: false; motivo: "usado" | "fuera" | "otro"; texto: string } {
   const t = String(respuesta ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+  // Vacío es libre SOLO con 200: un error (500, redirección al login) con cuerpo vacío no prueba nada
+  if (status !== 200) return { libre: false, motivo: "otro", texto: `HTTP ${status}${t ? `: ${t.slice(0, 150)}` : ""}` }
   if (!t) return { libre: true }
   const motivo = /ya se encuentra utilizado/i.test(t) ? "usado" : /no esta cargado en el sistema/i.test(t) ? "fuera" : "otro"
   return { libre: false, motivo, texto: t.slice(0, 200) }
 }
+
+// ---------------------------------------------------------------------------
+// Despachos que cambiaron después de armar el remito (anulados = borrados, o editados)
+// ---------------------------------------------------------------------------
+
+export type CambioDespachos = {
+  /** Despachos del remito que ya no existen (anular_despacho los borra) */
+  anulados: string[]
+  /** Despachos con otros m³ (o de otra fórmula) que los del remito */
+  editados: { id: string; antes: number; ahora: number }[]
+  /** m³ de los despachos que siguen */
+  m3: number
+  /** Firma del cambio (para avisar una sola vez); null si no cambió nada */
+  firma: string | null
+}
+
+/**
+ * Compara los despachos del remito (`zomatik_remito_despachos`: lo que se mandó o se va a mandar a Zomatik) con los que
+ * existen hoy. Un despacho que no está se anuló; uno con otros m³ o de otra fórmula, se editó.
+ */
+export function cambiosDespachos(
+  enRemito: { dispatch_id: string; m3: number }[],
+  actuales: { id: string; quantity_m3: number | null; formula_id?: string | null }[],
+  formulaRemito: string | null = null,
+): CambioDespachos {
+  const por = new Map(actuales.map((d) => [d.id, d]))
+  const anulados: string[] = []
+  const editados: CambioDespachos["editados"] = []
+  let m3 = 0
+  for (const x of enRemito) {
+    const d = por.get(x.dispatch_id)
+    if (!d) {
+      anulados.push(x.dispatch_id)
+      continue
+    }
+    const ahora = r3(Number(d.quantity_m3) || 0)
+    m3 += ahora
+    if (Math.abs(ahora - r3(x.m3)) > TOL || (formulaRemito && d.formula_id && d.formula_id !== formulaRemito)) editados.push({ id: x.dispatch_id, antes: r3(x.m3), ahora })
+  }
+  anulados.sort()
+  editados.sort((a, b) => a.id.localeCompare(b.id))
+  const firma = anulados.length || editados.length ? JSON.stringify({ a: anulados, e: editados.map((e) => [e.id, e.ahora]) }) : null
+  return { anulados, editados, m3: r3(m3), firma }
+}
+
+/** Texto corto del cambio para el aviso: "se anularon 1 despacho(s); se editaron 2 (8 → 6 m³)". */
+export function textoCambio(c: CambioDespachos): string {
+  const p: string[] = []
+  if (c.anulados.length) p.push(`se anuló${c.anulados.length > 1 ? "ron" : ""} ${c.anulados.length} despacho${c.anulados.length > 1 ? "s" : ""}`)
+  if (c.editados.length) p.push(`se editó${c.editados.length > 1 ? "ron" : ""} ${c.editados.map((e) => `${e.antes} → ${e.ahora} m³`).join(", ")}`)
+  return p.join("; ")
+}
+
+/** Los últimos `n` días hasta `hoy` (aaaa-mm-dd), de hoy para atrás. */
+export function ultimosDias(hoy: string, n: number): string[] {
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    const d = new Date(`${hoy}T12:00:00Z`)
+    d.setUTCDate(d.getUTCDate() - i)
+    out.push(d.toISOString().slice(0, 10))
+  }
+  return out
+}
+
+/** Intentos sin stock antes de "revisar" (cada 10 min: 1 hora). */
+export const MAX_SIN_STOCK = 6

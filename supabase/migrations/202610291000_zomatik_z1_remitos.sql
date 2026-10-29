@@ -48,10 +48,13 @@ CREATE TABLE IF NOT EXISTS public.zomatik_remitos (
   of_numero              text,
   of_codigo              integer,
   of_foto                text[],                                 -- OF del depósito que había antes de grabar (verifica un corte)
+  of_foto_dia            date,                                   -- desde qué día se sacó la foto (un corte a las 23:50 se busca desde ese día)
   -- El remito
   remito_estado          text NOT NULL DEFAULT 'pendiente' CHECK (remito_estado IN ('pendiente', 'ok', 'revisar', 'error', 'a_mano')),
   remito_numero          text,                                   -- "RM2 0099-00002746": el número usado (se ve en el pedido); antes de grabar, el elegido (verifica un corte)
   remito_codigo          integer,
+  sin_stock              integer NOT NULL DEFAULT 0,             -- intentos del remito sin stock: a los 6 (1 hora), "revisar"
+  cambio_avisado         text,                                   -- el último cambio de despachos (anulado/editado) ya avisado a gerenciales
   paso                   text,
   mensaje                text,
   intentos               integer NOT NULL DEFAULT 0,

@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (18) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (27) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1865,3 +1865,17 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - `zomatik_remitos.tipo` ('pedido'/'suelto'); `np_id` y `comprobante` pueden quedar nulos en 'suelto';
   - `remito_estado` acepta 'a_mano';
   - lo único que no se repite es la marca (ya no la combinación pedido + día + NP).
+
+### 26.11 Revisión del 29/10 (lo que cambió)
+- **Reintento después de un corte:**
+  - Si el número guardado lo tiene OTRO remito en el listado (sin nuestra marca), el nuestro no llegó: se sigue con el siguiente número.
+  - Si Zomatik dice "usado" pero el número no aparece en el listado, puede ser el nuestro: queda "revisar" sin grabar.
+- **OF cortada:** se guarda el día de la foto (`of_foto_dia`) y se busca desde ese día. Una OF grabada a las 23:50 no se repite pasada la medianoche.
+- **Despachos anulados o editados.** `anular_despacho` borra el despacho y `editar_despacho` cambia los m³; esas RPC no se tocan.
+  - Antes de la OF: el remito toma los m³ de hoy y saca los anulados. Si no queda nada, queda "anulado".
+  - Con la OF ya en Zomatik y el remito no: "revisar", sin remito, y aviso a gerenciales.
+  - Con la OF o el remito ya en Zomatik: la pasada de cada 10 min y la de la noche avisan a gerenciales, una vez por cambio (`cambio_avisado`).
+- **Últimos 3 días:** la pasada de la noche y las OF de los despachos sin pedido miran los últimos 3 días, no solo hoy.
+- **Sin stock:** a los 6 intentos (1 hora), "revisar" con el aviso "Zomatik no tiene stock: ¿la OF necesita 'Generar'?" (`sin_stock`). "Remitir en Zomatik" lo reintenta.
+- **`_validarnumeroremito`:** una respuesta vacía solo cuenta como libre si el código HTTP es 200.
+- **Migración (sin aplicar):** suma `of_foto_dia`, `sin_stock` y `cambio_avisado` a `zomatik_remitos`.

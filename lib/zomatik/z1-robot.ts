@@ -42,6 +42,8 @@ export type ResultadoZ1 = {
   aviso?: string
   /** El número guardado no sirve (talonario terminado): el próximo intento elige otro */
   olvidarNumero?: boolean
+  /** Pendiente porque Zomatik no tiene stock del artículo (se cuentan: a los MAX_SIN_STOCK, "revisar") */
+  sinStock?: boolean
 }
 
 export type OpcionesZ1 = {
@@ -59,6 +61,7 @@ class Freno extends Error {
   recorte?: string
   aviso?: string
   olvidarNumero?: boolean
+  sinStock?: boolean
   constructor(estado: ResultadoZ1["estado"], mensaje: string, reintentar = false, html?: string) {
     super(mensaje)
     this.estado = estado
@@ -104,7 +107,7 @@ async function ejecutar(o: OpcionesZ1, cuerpo: (marcar: (p: string, extra?: Reco
   try {
     return await cuerpo(marcar, estado)
   } catch (e) {
-    if (e instanceof Freno) return { estado: e.estado, mensaje: e.message, paso: estado.paso, reintentar: e.reintentar, recorte: e.recorte, grabado: estado.grabado, aviso: e.aviso, olvidarNumero: e.olvidarNumero }
+    if (e instanceof Freno) return { estado: e.estado, mensaje: e.message, paso: estado.paso, reintentar: e.reintentar, recorte: e.recorte, grabado: estado.grabado, aviso: e.aviso, olvidarNumero: e.olvidarNumero, sinStock: e.sinStock }
     const m = mensajeDe(e)
     if (estado.grabado) return { estado: "pendiente", mensaje: `Se cortó al grabar (${m}). Antes de reintentar se busca en Zomatik.`, paso: estado.paso, grabado: true, reintentar: true }
     return { estado: esDeRed(e) ? "pendiente" : "error", mensaje: m, paso: estado.paso, reintentar: esDeRed(e) }
@@ -125,16 +128,19 @@ export type DatosOf = {
   articuloNombre: string
   /** Foto de las OF del depósito que se guardó antes de un Grabar anterior (para verificar un corte) */
   foto: string[] | null
+  /** Desde qué día se sacó esa foto: un corte a las 23:50 se busca desde ese día, no desde hoy */
+  fotoDia: string | null
   /** Hubo un Grabar antes que pudo llegar: primero se busca la OF */
   buscarAntes: boolean
 }
 
-/** OF del depósito dadas de alta hoy (bus_fechah no incluye ese día: se pide hasta mañana, Concretus 22/10). */
-async function listarOf(nav: NavegadorNp, deposito: number, hoy: string): Promise<FilaOf[]> {
+/** OF del depósito dadas de alta desde `desde` hasta hoy (bus_fechah no incluye ese día: se pide hasta mañana,
+ *  Concretus 22/10). */
+async function listarOf(nav: NavegadorNp, deposito: number, desde: string, hoy: string): Promise<FilaOf[]> {
   const pag = await nav.get("listado_ordenfabricacion.php")
   const f = camposFormulario(pag.html, /listado_ordenfabricacion\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("la orden de fabricación", "buscador de OF", pag.html)
-  const campos = { ...f.campos, exportar: "0", bus_numero: "", bus_pendrem: "", bus_fechad: hoy, bus_fechah: diaSiguiente(hoy), bus_deposito: String(deposito) }
+  const campos = { ...f.campos, exportar: "0", bus_numero: "", bus_pendrem: "", bus_fechad: desde, bus_fechah: diaSiguiente(hoy), bus_deposito: String(deposito) }
   const r = await nav.post("listado_ordenfabricacion.php?enviado=1", ascii(queryLatin1(Object.entries(campos))), "application/x-www-form-urlencoded")
   if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de OF vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
   const filas = listadoOf(r.html)
@@ -169,7 +175,7 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
     if (d.buscarAntes) {
       await marcar("buscar_of")
       if (!d.foto) return { estado: "revisar", mensaje: "Se cortó una OF y no quedó la foto previa: buscala en Zomatik antes de seguir.", paso: "buscar_of", grabado: true }
-      const b = await nuestraOf(nav, d, d.foto, await listarOf(nav, d.deposito, o.hoy))
+      const b = await nuestraOf(nav, d, d.foto, await listarOf(nav, d.deposito, d.fotoDia && d.fotoDia < o.hoy ? d.fotoDia : o.hoy, o.hoy))
       if (b.esta) return { estado: "ok", mensaje: null, numero: `OF ${b.esta.numero}`, codigo: b.esta.codigo, paso: "buscar_of", grabado: true }
       if (b.nuevas.length) return { estado: "revisar", mensaje: `Hay OF nuevas sin la marca (${b.nuevas.map((x) => x.numero).join(", ")}): revisá en Zomatik antes de seguir.`, paso: "buscar_of", grabado: true }
     }
@@ -193,9 +199,9 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
     const fparam = fparamOf([{ codigo: lista[0].codigo, cantidad: cantidadTexto(d.m3) }])
 
     // Foto de las OF antes de grabar: solo una OF que no estaba puede ser la nuestra
-    const foto = (await listarOf(nav, d.deposito, o.hoy)).map((x) => x.numero)
+    const foto = (await listarOf(nav, d.deposito, o.hoy, o.hoy)).map((x) => x.numero)
     await aRebucret(nav)
-    await marcar("grabar_of", { foto })
+    await marcar("grabar_of", { foto, fotoDia: o.hoy })
     // Como el robot real de Concretus (graba OF en vivo desde el 23/10): los campos del alta con fparam, nada más
     const campos = conValores(f.orden.filter((c: CampoForm) => !/^(codigo|cantidad)\d+$/i.test(c.nombre)), {
       deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones: d.marca, fparam, comprobante: COMPROBANTE_OF, ordenfabricacion: "0",
@@ -204,7 +210,7 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
     const no = rechazo(g)
 
     await marcar("verificar_of")
-    const b = await nuestraOf(nav, d, foto, await listarOf(nav, d.deposito, o.hoy))
+    const b = await nuestraOf(nav, d, foto, await listarOf(nav, d.deposito, o.hoy, o.hoy))
     if (b.esta) return { estado: "ok", mensaje: null, numero: `OF ${b.esta.numero}`, codigo: b.esta.codigo, paso: "verificar_of", grabado: true }
     if (no && !b.nuevas.length) return { estado: "error", mensaje: `Zomatik no aceptó la OF: ${no}`, paso: "grabar_of", recorte: recorte(g.html) }
     return { estado: "revisar", mensaje: `Después de grabar hay ${b.nuevas.length} OF nuevas y ninguna con la marca. Mirá Zomatik.`, paso: "verificar_of", grabado: true, recorte: recorte(g.html) }
@@ -277,6 +283,8 @@ export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "1
   return numero
 }
 
+const siguiente = (numero: string) => `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`
+
 export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: OpcionesZ1): Promise<ResultadoZ1> {
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   const boundary = o.boundary || `----rebucret${Date.now().toString(36)}`
@@ -287,12 +295,16 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     let numero = numeroNormalizado(d.numero)
     if (!numero || numero.slice(0, 4) !== (d.comprobante === "7" ? "0001" : "0099")) throw dato(`El número de remito "${d.numero}" no es del talonario de ${pref}.`)
     await aRebucret(nav)
-    // Un Grabar anterior pudo llegar: el número se guardó antes de grabar
+    // Un Grabar anterior pudo llegar: el número se guardó antes de grabar y solo se graba con ese número
+    let guardadoNoEsta = false
     if (d.buscarAntes) {
       await marcar("buscar_remito")
       const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
       if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
-      if (x) return { estado: "revisar", mensaje: `El remito ${pref} ${numero} existe pero no tiene la marca: revisalo en Zomatik.`, paso: "buscar_remito", grabado: true }
+      // Con ese número hay OTRO remito (sin la marca): el nuestro no llegó. Se sigue con el siguiente número.
+      if (x) numero = siguiente(numero)
+      // No está en el listado: si después Zomatik dice que está usado, no se puede saber si es el nuestro
+      else guardadoNoEsta = true
     }
     await marcar("formulario_remito")
     const alta = await nav.get(`modificar_remitos.php?pedido=${d.npCodigo}`)
@@ -329,14 +341,21 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     if (mio.length !== 1) throw formato("el remito", `los pendientes no traen ${d.articuloNombre || "el artículo"} una sola vez`, man.html)
     const it = mio[0]
     if (it.pendiente === null || d.m3 > it.pendiente + 0.001) throw dato(`A la NP le quedan ${it.pendiente ?? "?"} m³ pendientes de ${it.nombreArticulo} y se despacharon ${cantidadTexto(d.m3)} m³: generá una NP adicional.`)
-    if (!it.sinControlStock && d.deposito !== 99 && (it.stock === null || d.m3 > it.stock + 0.001)) throw new Freno("pendiente", `No hay stock de ${it.nombreArticulo} en el depósito (${it.stock ?? "?"} m³): falta la OF. Se reintenta.`, true)
+    if (!it.sinControlStock && d.deposito !== 99 && (it.stock === null || d.m3 > it.stock + 0.001)) {
+      const fs = new Freno("pendiente", `No hay stock de ${it.nombreArticulo} en el depósito (${it.stock ?? "?"} m³). Se reintenta.`, true)
+      fs.sinStock = true
+      throw fs
+    }
 
     // El número, justo antes de grabar: usado → el siguiente (hasta 5); fuera del talonario → se terminó: revisar y aviso
     await aRebucret(nav)
     await marcar("numero_remito")
     for (let i = 0; ; i++) {
-      const v = numeroRemitoLibre((await nav.get(`_validarnumeroremito.php?fcomprobante=${d.comprobante}&fnumero=${numero}&rnd=${azar()}`)).html)
+      const rv = await nav.get(`_validarnumeroremito.php?fcomprobante=${d.comprobante}&fnumero=${numero}&rnd=${azar()}`)
+      const v = numeroRemitoLibre(rv.html, rv.status)
       if (v.libre) break
+      if (i === 0 && guardadoNoEsta && v.motivo === "usado")
+        return { estado: "revisar", mensaje: `El remito ${pref} ${numero} figura usado en Zomatik pero no aparece en el listado: puede ser el nuestro de un corte. Revisalo en Zomatik antes de seguir.`, paso: "buscar_remito", grabado: true }
       if (v.motivo === "fuera") {
         const f2 = new Freno("revisar", `El talonario de ${pref} se terminó (${pref} ${numero} no está cargado en Zomatik). Cargá un talonario nuevo y tocá "Remitir en Zomatik". No se grabó nada.`)
         f2.aviso = `Cargar talonario nuevo de ${pref} en Zomatik`
@@ -345,7 +364,7 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
       }
       if (v.motivo !== "usado") throw formato("el remito", `la validación del número respondió "${v.texto}"`)
       if (i >= 4) throw dato(`Los ${pref} ${d.numero} a ${numero} ya están usados en Zomatik. Revisá el talonario.`)
-      numero = `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`
+      numero = siguiente(numero)
     }
     await marcar("grabar_remito", { numero })
     const valores: Record<string, string> = {
