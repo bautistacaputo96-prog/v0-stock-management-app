@@ -1,5 +1,13 @@
-<table width="1000"><tr><td class="itemformulario">Codigo</td><td class="itemformulario">Articulo</td><td class="itemformulario">Pendiente</td><td>Stock</td><td>Cantidad</td></tr>
-<tr><td class="itemformulario">10090020</td><td class="itemformulario">H21-620-10 C (CAN)<input type="hidden" name="codigo8001" value="8001"></td>
-<td class="campoformulario"><input type="hidden" name="hcantidad8001" value="8.000">8.000</td>
-<td class="campoformulario"><input type="hidden" name="stock8001" value="8.000"><input type="hidden" name="novalidarstock8001" value="0">8.000</td>
-<td class="campoformulario"><input type="TEXT" name="cantidad8001" value="0.000"></td></tr></table>
+<div class="aviso">Los items de los campos en naranja provienen de un acopio</div>
+<select name="bus_deposito" onchange="FiltrarDeposito()"><option value="116" selected>Canning</option><option value="113">REBUCRET</option></select>
+<table width="1000">
+<tr><td class="itemformulario">Pedido</td><td class="itemformulario">Fecha</td><td class="itemformulario">Articulo</td><td class="itemformulario">Costo</td><td class="itemformulario">Cantidad</td><td class="itemformulario">Remito</td><td class="itemformulario">Lote</td><td class="itemformulario">Pend</td><td class="itemformulario">St Fis</td><td class="itemformulario" style="display:none">OC Pend</td><td class="itemformulario">St Disp.</td></tr>
+<tr><td class="campoformulario"><input type="hidden" name="peso5349096" value="2400"><a href="modificar_pedidos.php?codigo=157767">NP 0001-00001169</a></td><td class="campoformulario">16/10/2026</td><td class="campoformulario">10090040 - H25-620-15 B (CAN)</td><td class="campoformulario">187000.000</td><td class="campoformulario">32.000</td>
+<td class="campoformulario"><input type="text" name="cantidad5349096" class="validaracopio" alt="0" value="32"></td><td class="campoformulario"><input type="text" name="lote5349096" value=""></td>
+<td class="campoformulario"><input type="hidden" name="hcantidad5349096" value="32.000">32.000</td><td class="campoformulario"><input type="hidden" name="stock5349096" value="0.000000">0.000</td><td style="display:none">0</td><td class="campoformulario">-32<input type="hidden" name="novalidarstock5349096" value="0"></td></tr>
+<tr><td class="campoformulario"><input type="hidden" name="peso5349097" value="2400"><a href="modificar_pedidos.php?codigo=157767">NP 0001-00001169</a></td><td class="campoformulario">16/10/2026</td><td class="campoformulario">10090020 - H21-620-10 C (CAN)</td><td class="campoformulario">176500.000</td><td class="campoformulario">10.000</td>
+<td class="campoformulario"><input type="text" name="cantidad5349097" class="validaracopio" alt="0" value="10"></td><td class="campoformulario"><input type="text" name="lote5349097" value=""></td>
+<td class="campoformulario"><input type="hidden" name="hcantidad5349097" value="10.000">10.000</td><td class="campoformulario"><input type="hidden" name="stock5349097" value="8.000000">8.000</td><td style="display:none">0</td><td class="campoformulario">-2<input type="hidden" name="novalidarstock5349097" value="0"></td></tr>
+</table>
+<div>Total Peso: <span id="totalpeso">0</span></div>
+<input type="button" name="botgrabarremito" value="Grabar" onclick="if (Validarremito(1)) document.frm_remitos.submit();">

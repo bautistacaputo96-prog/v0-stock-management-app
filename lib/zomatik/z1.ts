@@ -2,12 +2,13 @@
  * Zomatik · Z1 · "Finalizar pedido" → OF + remito — funciones puras (sin red, sin base). Spec: zomatik.md, sección 26.
  * Se prueban con `npm run test:zomatik-z1`.
  *
- *   - Qué remitos lleva un pedido en un día: uno por NP que usó (17.1: uno por pedido y día), con los despachos de ese
- *     día que todavía no se remitieron, la patente del primer camión y todas en observaciones.
- *   - Serie de numeración del remito (en REBUCRET el número se TIPEA: RM 0001-…, RM2 0099-…, 5.2).
- *   - Lectura de las páginas de la OF (como el robot real de Concretus, 22/10) y del remito (SUPUESTA, 26.6).
+ *   - Qué remitos lleva un pedido en un día: uno por NP que usó (17.1: uno por pedido y día, confirmado el 29/10), con
+ *     los despachos de ese día que todavía no se remitieron, la patente del primer camión y todas en observaciones.
+ *   - Número del remito (Bautista 29/10: "del anterior"): el más alto del talonario de Zomatik + 1 (RM 0001, RM2 0099).
+ *   - Lectura de las páginas de la OF (alta y JavaScript capturados el 29/10; la lista, como el robot real de Concretus)
+ *     y del remito (alta, Validarremito, manage_remitos y _validarnumeroremito capturados el 29/10).
  */
-import { camposFormulario, numeroNormalizado, renglonesDetalle, type Renglon } from "@/lib/zomatik/np"
+import { camposFormulario, numeroNormalizado, type CampoForm } from "@/lib/zomatik/np"
 
 const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
 const TOL = 0.001
@@ -16,10 +17,21 @@ const TOL = 0.001
 // Marca, comprobantes y serie
 // ---------------------------------------------------------------------------
 
-/** "Sistema Rebucret - pedido 1a2b3c4d - 2026-10-29 - NP 1": va en las observaciones de la OF y del remito (ASCII). */
-export function marcaZ1(pedidoId: string, fecha: string, npN: number): string {
-  return `Sistema Rebucret - pedido ${String(pedidoId).replace(/-/g, "").slice(0, 8)} - ${fecha} - NP ${npN}`
+const corto = (id: string) => String(id).replace(/-/g, "").slice(0, 8)
+
+/**
+ * "Sistema Rebucret - pedido 1a2b3c4d - 2026-10-29 - NP 1": va en las observaciones de la OF y del remito (ASCII).
+ * `sufijo`: " - 2" para un segundo remito del mismo pedido, día y NP (despachos que llegaron después del primero).
+ */
+export function marcaZ1(pedidoId: string, fecha: string, npN: number, sufijo = ""): string {
+  return `Sistema Rebucret - pedido ${corto(pedidoId)} - ${fecha} - NP ${npN}${sufijo}`
 }
+
+/** Despacho manual sin pedido (solo OF, 26.9): "Sistema Rebucret - despacho 1a2b3c4d - 2026-10-29". */
+export function marcaOfSuelta(despachoId: string, fecha: string): string {
+  return `Sistema Rebucret - despacho ${corto(despachoId)} - ${fecha}`
+}
+
 
 /** NP (15) → Remito RM (7) · NP2 (16) → Remito 2 RM2 (19). Del número de la NP ("NP2 0001-…"). */
 export function comprobanteRemito(numeroNp: string | null | undefined): "7" | "19" | null {
@@ -33,15 +45,13 @@ export const PREFIJO_REMITO: Record<"7" | "19", "RM" | "RM2"> = { "7": "RM", "19
 /** El tipo del remito de papel que corresponde a cada comprobante (R con factura, X sin factura). */
 export const TIPO_DE_COMPROBANTE: Record<"7" | "19", "R" | "X"> = { "7": "R", "19": "X" }
 
-/**
- * Punto de venta de la serie de Zomatik de cada remito (5.2: RM 0001-…, RM2 0099-…). PREGUNTA 26.7.1: se confirma
- * con Bautista; si Zomatik tiene otro talonario activo, se cambia acá.
- */
+/** Punto de venta de cada remito (5.2 y captura del 29/10: RM 0001-…, RM2 0099-…). */
 export const PUNTO_REMITO: Record<"7" | "19", string> = { "7": "0001", "19": "0099" }
 
 /**
- * Siguiente número de la serie de Zomatik (no el del papel, 14.2): el mayor de los remitos del comprobante en su
- * punto + 1. `numeros`: los que trae el listado ("RM2 0099-00002746" o "0099-00002746").
+ * El número del remito (Bautista 29/10, "del anterior"): el MÁS ALTO del talonario del comprobante + 1 (no el más
+ * reciente por fecha: en REBUCRET no son correlativos por fecha). `numeros`: los del listado ("RM2 0099-00002746" o
+ * "0099-00002746"). Se valida con `_validarnumeroremito` justo antes de grabar.
  */
 export function siguienteNumeroRemito(numeros: string[], comprobante: "7" | "19"): string | null {
   const punto = PUNTO_REMITO[comprobante]
@@ -105,7 +115,7 @@ export function planificarRemitos(despachos: DespachoZ1[], nps: NpZ1[], yaRemiti
   if (!usables.length) return { remitos: [], problemas: ["El pedido no tiene una NP en Zomatik: no se puede remitir."] }
   // Lo que le queda a cada NP para este pedido: lo que reserva menos lo ya remitido contra ella (otros días o antes)
   const lugar = new Map(usables.map((x) => [x.np_id, r3((Number(x.m3_uso) || 0) - (remitidoPorNp.get(x.np_id) || 0))]))
-  const por = new Map<string, DespachoZ1[]>()
+  const porNp = new Map<string, DespachoZ1[]>()
   for (const d of pendientes) {
     const aptas = usables.filter((x) => {
       const comp = comprobanteRemito(x.numero)!
@@ -121,11 +131,11 @@ export function planificarRemitos(despachos: DespachoZ1[], nps: NpZ1[], yaRemiti
       continue
     }
     lugar.set(np.np_id, r3((lugar.get(np.np_id) || 0) - d.m3))
-    por.set(np.np_id, [...(por.get(np.np_id) || []), d])
+    porNp.set(np.np_id, [...(porNp.get(np.np_id) || []), d])
   }
   const remitos: RemitoPlan[] = []
   for (const x of usables) {
-    const ds = por.get(x.np_id)
+    const ds = porNp.get(x.np_id)
     if (!ds?.length) continue
     const patentes = [...new Set(ds.map((d) => (d.patente || "").trim()).filter(Boolean))]
     remitos.push({
@@ -156,7 +166,7 @@ export function observacionesRemito(marca: string, r: { patentes: string; remito
 /** Campos que el alta de OF tiene que traer (relevado el 22/10 en Concretus). Si falta alguno, no se graba. */
 export const CAMPOS_OF = ["ordenfabricacion_unico", "ordenfabricacion", "fparam", "estado", "deposito", "fecha_entrega", "observaciones", "comprobante", "numero"] as const
 export const COMPROBANTE_OF = "62"
-/** Nombre con que el listado de OF muestra cada depósito de Rebucret (5.1). SUPUESTO en mayúsculas, como en Concretus. */
+/** Nombre de cada depósito de Rebucret en mayúsculas (el select del alta, 29/10: 116 "Canning", 113 "REBUCRET"). */
 export const NOMBRE_DEPOSITO: Record<number, string> = { 116: "CANNING", 113: "REBUCRET" }
 
 /** Formulario de alta de OF: action grabar_ordenfabricacion.php?codigo=0 y los campos de CAMPOS_OF. */
@@ -235,47 +245,140 @@ export function ofNuevas(foto: string[], ahora: FilaOf[]): FilaOf[] {
 }
 
 // ---------------------------------------------------------------------------
-// Remito (SUPUESTO hasta la captura con Bautista, 26.6)
+// Remito (alta, Validarremito, manage_remitos y _validarnumeroremito capturados el 29/10 en REBUCRET)
 // ---------------------------------------------------------------------------
 
 /**
- * Campos que el alta del remito tiene que traer, según el `Validarremito()` relevado el 20/10 (4.4). SUPUESTO: los
- * nombres exactos (y el token de borrador) se confirman en la captura (26.6). Si falta alguno, no se graba.
+ * Campos de `frm_remitos` (modificar_remitos.php?pedido=N, 29/10) que el robot necesita. Validarremito() exige además
+ * `transporte` marcado (radio sin marcar: no viene en los campos, se busca en la página). Si falta alguno, no se graba.
  */
-export const CAMPOS_REMITO = ["idcliente", "comprobante", "numero", "fecha", "fentrega", "deposito", "provincia_fiscal", "patente", "observaciones", "observacionesimp"] as const
+export const CAMPOS_REMITO = [
+  "remitos", "idcliente", "provincia", "provincia_fiscal", "comprobante", "numero", "fecha", "fentrega", "deposito", "patente",
+  "observaciones", "observacionesimp", "lote", "entrega_direccion", "entrega_localidad",
+] as const
 
 export function formularioRemito(html: string) {
   return camposFormulario(html, /grabar_remitos/i)
 }
 
-/**
- * Ítems pendientes de la NP que trae "Continuar" (manage_remitos.php): un renglón por artículo con `hcantidad<id>`
- * (pendiente), `cantidad<id>` (a remitir) y `stock<id>`. SUPUESTO: se lee con el mismo parser que el detalle real de
- * la NP (código visible y nombre en las primeras celdas) más hcantidad y stock.
- */
-export type ItemRemito = Renglon & { pendiente: number | null; stock: number | null }
-
-export function itemsRemito(html: string): ItemRemito[] {
-  const num = (v: string | undefined) => {
-    if (v === undefined) return null
-    const t = v.replace(/[^\d.,-]/g, "")
-    const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t)
-    return Number.isFinite(n) ? n : null
-  }
-  return renglonesDetalle(html).map((r) => {
-    const val = (pref: string) => r.campos.find((c) => new RegExp(`^${pref}\\d+$`, "i").test(c.nombre))?.valor
-    return { ...r, pendiente: num(val("hcantidad")), stock: num(val("stock")) }
-  })
+/** ¿El form de esa action se manda como multipart? (enctype del tag) */
+export function esMultipart(html: string, action: RegExp): boolean {
+  const tag = (String(html ?? "").match(/<form\b[^>]*>/gi) || []).find((t) => action.test(t)) || ""
+  return /enctype\s*=\s*["']?multipart\/form-data/i.test(tag)
 }
 
-/** Listado de remitos (listado_remitos.php?enviado=1): número y código de cada fila (link modificar_remitos.php?codigo=N). */
+/** ¿La página trae el radio `transporte` con ese valor? */
+export function tieneTransporte(html: string, valor: string): boolean {
+  return (String(html ?? "").match(/<input\b[^>]*>/gi) || []).some((t) => /name\s*=\s*["']?transporte["'\s>]/i.test(t) && new RegExp(`value\\s*=\\s*["']?${valor}["'\\s>]`, "i").test(t))
+}
+
+/** Un renglón pendiente de la NP en "Continuar" (manage_remitos.php, 29/10). */
+export type ItemRemito = {
+  /** id del renglón (sufijo de cantidad<id>, hcantidad<id>…) */
+  id: string
+  /** NP del renglón: código del link modificar_pedidos.php?codigo=N */
+  pedido: number | null
+  /** "10090040 - H25-620-15 B (CAN)" → 10090040 y "H25-620-15 B (CAN)" */
+  codigoArticulo: string
+  nombreArticulo: string
+  /** hcantidad<id>: lo pendiente */
+  pendiente: number | null
+  /** stock<id>: el stock físico del depósito */
+  stock: number | null
+  /** novalidarstock<id> = 1: Zomatik no controla el stock de ese renglón */
+  sinControlStock: boolean
+  /** TODOS los campos del renglón (peso, cantidad, lote, hcantidad, stock, novalidarstock…), como los manda el form. */
+  campos: CampoForm[]
+}
+
+const numeroDe = (v: string | undefined) => {
+  if (v === undefined || v.trim() === "") return null
+  const t = v.replace(/[^\d.,-]/g, "")
+  const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t)
+  return Number.isFinite(n) ? n : null
+}
+
+const decod = (s: string) => s.replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&")
+
+/** Inputs y selects con nombre de un pedazo de HTML, en orden (los radios y checkboxes, solo si están marcados). */
+function camposDeHtml(html: string): CampoForm[] {
+  const out: CampoForm[] = []
+  for (const m of String(html ?? "").matchAll(/<input\b[^>]*>|<select\b[^>]*>[\s\S]*?<\/select>|<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi)) {
+    const t = m[0]
+    const cab = (t.match(/^<(?:input|select|textarea)\b[^>]*>/i) || [""])[0]
+    const nombre = cab.match(/\bname\s*=\s*["']?([^"'\s>]+)/i)?.[1]
+    if (!nombre) continue
+    const attr = (tag: string, a: string) => {
+      const x = tag.match(new RegExp(`\\b${a}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"))
+      return x ? (x[1] ?? x[2] ?? x[3] ?? "") : null
+    }
+    if (/^<input/i.test(t)) {
+      const tipo = (attr(t, "type") || "text").toLowerCase()
+      if (["submit", "button", "image", "file", "reset"].includes(tipo)) continue
+      if ((tipo === "radio" || tipo === "checkbox") && !/\bchecked\b/i.test(t)) continue
+      out.push({ nombre, valor: decod(attr(t, "value") ?? "") })
+    } else if (/^<select/i.test(t)) {
+      const ops = [...t.matchAll(/<option\b([^>]*)>/gi)]
+      const el = ops.find((o) => /\bselected\b/i.test(o[1])) || ops[0]
+      out.push({ nombre, valor: el ? decod(attr(`<option ${el[1]}>`, "value") ?? "") : "" })
+    } else {
+      out.push({ nombre, valor: decod(t.replace(/^<textarea[^>]*>/i, "").replace(/<\/textarea>$/i, "")) })
+    }
+  }
+  return out
+}
+
+/**
+ * Renglones de "Continuar" (manage_remitos.php, respuesta real del 29/10): un <tr> por renglón pendiente de la NP con
+ * `peso<id>`, link "NP 0001-…" (modificar_pedidos.php?codigo=N), "código - artículo", `cantidad<id>` (¡precargada con
+ * TODO lo pendiente!), `lote<id>`, `hcantidad<id>` (pendiente), `stock<id>` y `novalidarstock<id>`.
+ * null si una fila con hcantidad no tiene esa forma (falla cerrado).
+ */
+export function itemsRemito(html: string): ItemRemito[] | null {
+  const out: ItemRemito[] = []
+  for (const tr of String(html ?? "").replace(/<!--[\s\S]*?-->/g, "").match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []) {
+    const id = tr.match(/name\s*=\s*["']?hcantidad(\d+)/i)?.[1]
+    if (!id) continue
+    const campos = camposDeHtml(tr)
+    const v = (pref: string) => campos.find((c) => c.nombre.toLowerCase() === `${pref}${id}`)?.valor
+    if (v("cantidad") === undefined || v("stock") === undefined) return null
+    const celdas = [...tr.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => textoCelda(m[1].replace(/<input\b[^>]*>/gi, " ")))
+    const art = celdas.map((c) => c.match(/^(\d{3,})\s+-\s+(.+)$/)).find(Boolean)
+    if (!art) return null
+    const ped = tr.match(/modificar_pedidos\.php\?codigo=(\d+)/i)?.[1]
+    out.push({
+      id, pedido: ped ? Number(ped) : null, codigoArticulo: art[1], nombreArticulo: art[2].trim(),
+      pendiente: numeroDe(v("hcantidad")), stock: numeroDe(v("stock")), sinControlStock: (v("novalidarstock") || "0").trim() === "1", campos,
+    })
+  }
+  return out
+}
+
+/** Campos de "Continuar" que no son de ningún renglón (bus_deposito, totales…): el form los manda igual. */
+export function camposSueltosRemito(html: string): CampoForm[] {
+  let resto = String(html ?? "").replace(/<!--[\s\S]*?-->/g, "")
+  for (const tr of resto.match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []) if (/name\s*=\s*["']?hcantidad\d+/i.test(tr)) resto = resto.replace(tr, " ")
+  return camposDeHtml(resto)
+}
+
+/** ¿El renglón es del artículo? Por el código visible (zomatik_articulos.codigo) o por el nombre. */
+export function esItemDe(it: ItemRemito, art: { codigo?: number | string | null; nombre?: string | null }): boolean {
+  if (art.codigo && it.codigoArticulo === String(art.codigo)) return true
+  const plano = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase()
+  return !!art.nombre && plano(it.nombreArticulo) === plano(art.nombre)
+}
+
+/**
+ * Listado de remitos (listado_remitos.php, 29/10: Número | Cliente | … | Depósito | Fecha | …, link
+ * modificar_remitos.php?codigo=N): número y código de cada fila. El número, con o sin "RM"/"RM2" adelante.
+ */
 export function listadoRemitos(html: string): { codigo: number; numero: string }[] {
   const out: { codigo: number; numero: string }[] = []
   const vistos = new Set<number>()
   for (const fila of String(html ?? "").replace(/<!--[\s\S]*?-->/g, "").match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []) {
     const cod = fila.match(/modificar_remitos\.php\?codigo=(\d+)/i)?.[1]
     if (!cod || vistos.has(Number(cod))) continue
-    const numero = [...fila.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => textoCelda(m[1])).find((c) => /^RM2?\s+\d{4}-\d{8}$/i.test(c))
+    const numero = [...fila.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => textoCelda(m[1])).find((c) => /^(RM2?\s+)?\d{4}-\d{8}$/i.test(c))
     if (!numero) continue
     vistos.add(Number(cod))
     out.push({ codigo: Number(cod), numero: numero.toUpperCase().replace(/\s+/g, " ") })
@@ -283,9 +386,14 @@ export function listadoRemitos(html: string): { codigo: number; numero: string }
   return out
 }
 
-/** `_validarnumeroremito.php`: vacío = libre; cualquier texto = el motivo (repetido, fuera de talonario). SUPUESTO. */
-export function numeroRemitoLibre(respuesta: string): { libre: true } | { libre: false; motivo: string } {
+/**
+ * `_validarnumeroremito.php?fcomprobante=…&fnumero=…` (respuestas reales del 29/10): vacío = libre;
+ * "El numero de comprobante: 0001-00002252 ya se encuentra utilizado" = usado; "… no esta cargado en el sistema" = fuera
+ * del talonario. Cualquier otra cosa: no se sabe (no se graba).
+ */
+export function numeroRemitoLibre(respuesta: string): { libre: true } | { libre: false; motivo: "usado" | "fuera" | "otro"; texto: string } {
   const t = String(respuesta ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-  if (!t || /^(ok|0|1)$/i.test(t)) return { libre: true }
-  return { libre: false, motivo: t.slice(0, 200) }
+  if (!t) return { libre: true }
+  const motivo = /ya se encuentra utilizado/i.test(t) ? "usado" : /no esta cargado en el sistema/i.test(t) ? "fuera" : "otro"
+  return { libre: false, motivo, texto: t.slice(0, 200) }
 }

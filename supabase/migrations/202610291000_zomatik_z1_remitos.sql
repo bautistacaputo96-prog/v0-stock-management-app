@@ -8,9 +8,10 @@
 --   zomatik_np_config.remitir_activo  LLAVE PROPIA de Z1 por planta, APAGADA por defecto e independiente de la de la NP:
 --                         con la NP prendida y esta apagada, el sistema no hace OF ni remitos (se cargan a mano, como
 --                         hoy). Requiere la NP prendida (sin NP no hay contra qué remitir).
---   zomatik_remitos       un remito por pedido, día y NP (17.1: uno por pedido y día; si el pedido usó dos NP, uno por
---                         cada una), con SU OF antes (16.3 A): estado del par (pendiente, generando, ok, revisar,
---                         error), estado de la OF y del remito por separado, números, códigos, mensaje, paso y
+--   zomatik_remitos       tipo 'pedido': un remito por pedido, día y NP (17.1, confirmado el 29/10), con SU OF
+--                         antes (16.3 A). tipo 'suelto': despacho manual sin pedido ni NP: solo la OF (el remito, a
+--                         mano). Estado del par (pendiente, generando, ok, revisar, error), estado de la OF y del
+--                         remito por separado (el remito puede quedar 'a_mano'), números, códigos, mensaje, paso y
 --                         reintento, igual que zomatik_np.
 --   zomatik_remito_despachos  qué despachos quedaron en qué remito. UNIQUE por despacho: un despacho nunca entra en
 --                         dos remitos (no se puede duplicar).
@@ -29,11 +30,12 @@ COMMENT ON COLUMN public.zomatik_np_config.remitir_desde IS 'Zomatik Z1: cuándo
 CREATE TABLE IF NOT EXISTS public.zomatik_remitos (
   id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   scheduled_dispatch_id  uuid REFERENCES public.scheduled_dispatches(id) ON DELETE SET NULL,
-  np_id                  uuid NOT NULL REFERENCES public.zomatik_np(id),
+  tipo                   text NOT NULL DEFAULT 'pedido' CHECK (tipo IN ('pedido', 'suelto')),  -- suelto: despacho manual, solo OF
+  np_id                  uuid REFERENCES public.zomatik_np(id),
   fecha                  date NOT NULL,                          -- día de los despachos (Argentina)
   plant_id               uuid NOT NULL,
-  marca                  text NOT NULL UNIQUE,                   -- "Sistema Rebucret - pedido 1a2b3c4d - 2026-10-29 - NP 1"
-  comprobante            text NOT NULL CHECK (comprobante IN ('7', '19')),   -- 7 RM (con NP) · 19 RM2 (con NP2)
+  marca                  text NOT NULL UNIQUE,                   -- "Sistema Rebucret - pedido 1a2b3c4d - 2026-10-29 - NP 1" (no se duplica)
+  comprobante            text CHECK (comprobante IN ('7', '19')),   -- 7 RM (con NP) · 19 RM2 (con NP2) · nulo en 'suelto'
   m3                     numeric(10,3) NOT NULL CHECK (m3 > 0),
   formula_id             uuid,
   patente                text,                                   -- la del primer camión (17.1)
@@ -47,8 +49,8 @@ CREATE TABLE IF NOT EXISTS public.zomatik_remitos (
   of_codigo              integer,
   of_foto                text[],                                 -- OF del depósito que había antes de grabar (verifica un corte)
   -- El remito
-  remito_estado          text NOT NULL DEFAULT 'pendiente' CHECK (remito_estado IN ('pendiente', 'ok', 'revisar', 'error')),
-  remito_numero          text,                                   -- "RM2 0099-00002746" (al grabar: el número elegido, para verificar un corte)
+  remito_estado          text NOT NULL DEFAULT 'pendiente' CHECK (remito_estado IN ('pendiente', 'ok', 'revisar', 'error', 'a_mano')),
+  remito_numero          text,                                   -- "RM2 0099-00002746": el número usado (se ve en el pedido); antes de grabar, el elegido (verifica un corte)
   remito_codigo          integer,
   paso                   text,
   mensaje                text,
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS public.zomatik_remitos (
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now(),
   ok_at                  timestamptz,
-  CONSTRAINT zomatik_remitos_pedido_dia_np_key UNIQUE (scheduled_dispatch_id, fecha, np_id)
+  CONSTRAINT zomatik_remitos_tipo_check CHECK (tipo = 'suelto' OR (np_id IS NOT NULL AND comprobante IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS zomatik_remitos_trabajo_idx ON public.zomatik_remitos (estado, proximo_intento) WHERE estado IN ('pendiente', 'generando', 'error', 'revisar');
 COMMENT ON TABLE public.zomatik_remitos IS 'Zomatik Z1: OF + remito de un pedido, un día y una NP. La escribe solo el servidor; el navegador lee el estado.';
@@ -105,7 +107,7 @@ REVOKE ALL ON FUNCTION public.zomatik_remito_tomar(uuid, text[]) FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION public.zomatik_remito_tomar(uuid, text[]) TO service_role;
 
 -- Crear el remito (pendiente) y sus despachos en una sola transacción. Si algún despacho ya está en otro remito (UNIQUE)
--- o el remito de ese pedido, día y NP ya existe, no crea nada y devuelve nulo: nunca se duplica.
+-- o ya existe un remito con esa marca, no crea nada y devuelve nulo: nunca se duplica.
 CREATE OR REPLACE FUNCTION public.zomatik_remito_crear(p jsonb)
 RETURNS uuid
 LANGUAGE plpgsql
@@ -114,9 +116,10 @@ AS $$
 DECLARE
   v_id uuid;
 BEGIN
-  INSERT INTO zomatik_remitos (scheduled_dispatch_id, np_id, fecha, plant_id, marca, comprobante, m3, formula_id, patente, patentes, remitos_papel, proximo_intento, created_by)
-  VALUES ((p->>'scheduled_dispatch_id')::uuid, (p->>'np_id')::uuid, (p->>'fecha')::date, (p->>'plant_id')::uuid, p->>'marca', p->>'comprobante',
-          (p->>'m3')::numeric, nullif(p->>'formula_id', '')::uuid, p->>'patente', p->>'patentes', p->>'remitos_papel', now(), p->>'created_by')
+  INSERT INTO zomatik_remitos (tipo, scheduled_dispatch_id, np_id, fecha, plant_id, marca, comprobante, m3, formula_id, patente, patentes, remitos_papel, remito_estado, proximo_intento, created_by)
+  VALUES (coalesce(p->>'tipo', 'pedido'), nullif(p->>'scheduled_dispatch_id', '')::uuid, nullif(p->>'np_id', '')::uuid, (p->>'fecha')::date, (p->>'plant_id')::uuid, p->>'marca',
+          nullif(p->>'comprobante', ''), (p->>'m3')::numeric, nullif(p->>'formula_id', '')::uuid, p->>'patente', p->>'patentes', p->>'remitos_papel',
+          CASE WHEN p->>'tipo' = 'suelto' THEN 'a_mano' ELSE 'pendiente' END, now(), p->>'created_by')
   ON CONFLICT DO NOTHING
   RETURNING id INTO v_id;
   IF v_id IS NULL THEN

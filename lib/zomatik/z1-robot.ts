@@ -6,19 +6,22 @@
  * OF (como el robot real de Concretus, relevado el 22/10 en la sucursal 17; acá en la 18):
  *   sucursal 18 → alta vacía → manage_ordenfabricacion con el artículo → foto del listado → sucursal 18 → Grabar →
  *   listado otra vez: exactamente UNA OF nueva PEN del depósito y la fecha, con la marca → ok. Si no, "revisar".
- * Remito (SUPUESTO según 4.4 hasta la captura con Bautista, 26.6):
- *   sucursal 18 → modificar_remitos.php?pedido=<NP> → Continuar (manage_remitos: los pendientes de la NP) → el
- *   renglón del artículo con pendiente y stock suficientes → número de la serie (el mayor + 1, validado) → sucursal 18 →
- *   Grabar → listado por número + la marca → ok.
+ * Remito (alta, Validarremito, manage_remitos y _validarnumeroremito capturados el 29/10):
+ *   el número (entrada aparte, `elegirNumeroRemito`: el más alto del talonario + 1, Bautista 29/10) → sucursal 18 →
+ *   modificar_remitos.php?pedido=<NP> → Continuar (manage_remitos: los pendientes de la NP, con la cantidad precargada
+ *   con TODO lo pendiente) → el renglón del artículo con los m³ del día y los demás en 0 → _validarnumeroremito justo
+ *   antes de grabar (usado: el siguiente, hasta 5; talonario terminado: "revisar" y aviso) → sucursal 18 → Grabar →
+ *   listado por número + la marca → ok.
  * Si una respuesta no tiene la forma esperada, se frena SIN GRABAR y queda un recorte para Actividad.
  */
 import {
-  SUCURSAL_REBUCRET, alertasDe, cantidadTexto, camposFormulario, conValores, esRenglonDe, multipartLatin1, numeroNormalizado,
+  SUCURSAL_REBUCRET, alertasDe, cantidadTexto, camposFormulario, conValores, multipartLatin1, numeroNormalizado,
   queryLatin1, recorte, tieneMarca, type CampoForm,
 } from "@/lib/zomatik/np"
 import {
-  CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, fparamOf, formularioOf, formularioRemito, itemsRemito,
-  listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, siguienteNumeroRemito, tieneDeposito, type FilaOf,
+  CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, esItemDe, esMultipart, fparamOf, formularioOf,
+  formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, siguienteNumeroRemito, tieneDeposito,
+  tieneTransporte, type FilaOf,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 
@@ -35,6 +38,10 @@ export type ResultadoZ1 = {
   /** Quedó registrado que se mandó Grabar (un corte después no se repite a ciegas). */
   grabado?: boolean
   reintentar?: boolean
+  /** Título del aviso a los gerenciales (si no, "<OF|remito> para revisar") */
+  aviso?: string
+  /** El número guardado no sirve (talonario terminado): el próximo intento elige otro */
+  olvidarNumero?: boolean
 }
 
 export type OpcionesZ1 = {
@@ -50,6 +57,8 @@ class Freno extends Error {
   estado: ResultadoZ1["estado"]
   reintentar: boolean
   recorte?: string
+  aviso?: string
+  olvidarNumero?: boolean
   constructor(estado: ResultadoZ1["estado"], mensaje: string, reintentar = false, html?: string) {
     super(mensaje)
     this.estado = estado
@@ -95,7 +104,7 @@ async function ejecutar(o: OpcionesZ1, cuerpo: (marcar: (p: string, extra?: Reco
   try {
     return await cuerpo(marcar, estado)
   } catch (e) {
-    if (e instanceof Freno) return { estado: e.estado, mensaje: e.message, paso: estado.paso, reintentar: e.reintentar, recorte: e.recorte, grabado: estado.grabado }
+    if (e instanceof Freno) return { estado: e.estado, mensaje: e.message, paso: estado.paso, reintentar: e.reintentar, recorte: e.recorte, grabado: estado.grabado, aviso: e.aviso, olvidarNumero: e.olvidarNumero }
     const m = mensajeDe(e)
     if (estado.grabado) return { estado: "pendiente", mensaje: `Se cortó al grabar (${m}). Antes de reintentar se busca en Zomatik.`, paso: estado.paso, grabado: true, reintentar: true }
     return { estado: esDeRed(e) ? "pendiente" : "error", mensaje: m, paso: estado.paso, reintentar: esDeRed(e) }
@@ -199,7 +208,7 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
 }
 
 // ---------------------------------------------------------------------------
-// Remito (SUPUESTO hasta la captura, 26.6)
+// Remito (capturado el 29/10 en REBUCRET)
 // ---------------------------------------------------------------------------
 
 export type DatosRemito = {
@@ -215,35 +224,53 @@ export type DatosRemito = {
   patente: string | null
   observaciones: string
   observacionesimp: string
-  /** El número que eligió un intento anterior (se guardó antes de grabar) */
-  numeroPrevio: string | null
+  /** El número del remito ("0099-00002760"), de `elegirNumeroRemito` o el que se guardó en un intento anterior. Si
+   *  Zomatik dice que está usado se prueban los siguientes; el que se usa se guarda antes de grabar. */
+  numero: string
+  /** Lugar de entrega (Validarremito los exige siempre). Si el alta los trae precargados, se usan esos. */
+  entrega: { direccion: string | null; localidad: string | null; lote: string | null }
+  /** Hubo un Grabar antes que pudo llegar: primero se busca el remito por su número */
   buscarAntes: boolean
 }
 
-/** El remito con ese número en el listado de REBUCRET, y si tiene la marca. */
-async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string): Promise<{ codigo: number; numero: string; conMarca: boolean } | null> {
+/** El remito con ese número en el listado de REBUCRET, y si tiene la marca. Mira la primera página (sin filtro, lo
+ *  último) y el buscador por número y fechas (con fechas vacías el POST no trajo filas, 29/10). */
+async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, desde: string, hoy: string): Promise<{ codigo: number; numero: string; conMarca: boolean } | null> {
   const pag = await nav.get("listado_remitos.php")
   const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("el remito", "buscador de remitos", pag.html)
-  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: numero }))), "application/x-www-form-urlencoded")
+  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: numero, bus_fechad: desde, bus_fechah: diaSiguiente(hoy) }))), "application/x-www-form-urlencoded")
   if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
-  const fila = listadoRemitos(r.html).find((x) => numeroNormalizado(x.numero) === numeroNormalizado(numero))
+  const fila = [...listadoRemitos(r.html), ...listadoRemitos(pag.html)].find((x) => numeroNormalizado(x.numero) === numeroNormalizado(numero))
   if (!fila) return null
   const p = await nav.get(`modificar_remitos.php?codigo=${fila.codigo}`)
   const fr = formularioRemito(p.html)
   return { ...fila, conMarca: !!fr && tieneMarca(fr.campos.observaciones, marca) }
 }
 
-/** El mayor número de la serie del comprobante en el listado + 1 (el número se tipea en REBUCRET). */
-async function proximoNumero(nav: NavegadorNp, comprobante: "7" | "19"): Promise<string> {
+const restarDias = (f: string, n: number) => {
+  const d = new Date(`${f}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - n)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * El número del remito (Bautista 29/10, "del anterior"): el MÁS ALTO del talonario del comprobante en la sucursal 18
+ * (RM 0001, RM2 0099) + 1. Mira la primera página del listado (lo último) y el buscador de los últimos 60 días, y se
+ * queda con el más alto (no el más reciente por fecha). Es una entrada aparte: generarRemito lo valida justo antes de
+ * grabar y, si está usado, prueba los siguientes.
+ */
+export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "19", o: { hoy: string }): Promise<string> {
+  await aRebucret(nav)
   const pag = await nav.get("listado_remitos.php")
+  if (sucursalDe(pag.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, pag.html)
   const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("el remito", "buscador de remitos", pag.html)
-  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: "" }))), "application/x-www-form-urlencoded")
+  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: "", bus_fechad: restarDias(o.hoy, 60), bus_fechah: diaSiguiente(o.hoy) }))), "application/x-www-form-urlencoded")
   if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
-  const n = siguienteNumeroRemito(listadoRemitos(r.html).map((x) => x.numero), comprobante)
-  if (!n) throw formato("el remito", `no se encontró la serie de ${PREFIJO_REMITO[comprobante]}`, r.html)
-  return n
+  const numero = siguienteNumeroRemito([...listadoRemitos(pag.html), ...listadoRemitos(r.html)].map((x) => x.numero), comprobante)
+  if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`, r.html)
+  return numero
 }
 
 export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: OpcionesZ1): Promise<ResultadoZ1> {
@@ -253,13 +280,15 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
   return ejecutar(o, async (marcar) => {
     if (!d.npCodigo) throw dato("La NP no tiene código de Zomatik.")
     if (!(d.m3 > 0)) throw dato("No hay m³ para remitir.")
+    let numero = numeroNormalizado(d.numero)
+    if (!numero || numero.slice(0, 4) !== (d.comprobante === "7" ? "0001" : "0099")) throw dato(`El número de remito "${d.numero}" no es del talonario de ${pref}.`)
     await aRebucret(nav)
-    // Un Grabar anterior pudo llegar: el número se eligió y se guardó antes de grabar
-    if (d.buscarAntes && d.numeroPrevio) {
+    // Un Grabar anterior pudo llegar: el número se guardó antes de grabar
+    if (d.buscarAntes) {
       await marcar("buscar_remito")
-      const x = await remitoPorNumero(nav, d.numeroPrevio, d.marca)
-      if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numeroNormalizado(d.numeroPrevio)}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
-      if (x) return { estado: "revisar", mensaje: `El remito ${d.numeroPrevio} existe pero no tiene la marca: revisalo en Zomatik.`, paso: "buscar_remito", grabado: true }
+      const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
+      if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
+      if (x) return { estado: "revisar", mensaje: `El remito ${pref} ${numero} existe pero no tiene la marca: revisalo en Zomatik.`, paso: "buscar_remito", grabado: true }
     }
     await marcar("formulario_remito")
     const alta = await nav.get(`modificar_remitos.php?pedido=${d.npCodigo}`)
@@ -267,50 +296,68 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     if (!f) throw formato("el remito", "no se abrió el remito desde la NP", alta.html)
     const falta = CAMPOS_REMITO.filter((c) => !(c in f.campos))
     if (falta.length) throw formato("el remito", `faltan ${falta.join(", ")}`, alta.html)
-    if (!/^grabar_remitos\.php\?codigo=0$/i.test(f.action || "")) throw formato("el remito", "el alta graba en otro lado", alta.html)
+    if (!/^grabar_remitos\.php\?codigo=0$/i.test(f.action || "") || f.campos.remitos !== "0") throw formato("el remito", "el alta graba en otro lado", alta.html)
+    if (!f.campos.idcliente || f.campos.idcliente === "0") throw formato("el remito", "no trajo el cliente de la NP", alta.html)
+    if (!tieneDeposito(alta.html, d.deposito) || !tieneTransporte(alta.html, "1")) throw formato("el remito", `no está el depósito ${d.deposito} o el transporte`, alta.html)
+    // Validarremito: provincia fiscal (vacía en el alta: la del cliente), lote, dirección y localidad de entrega
+    const provinciaFiscal = f.campos.provincia_fiscal || f.campos.provincia
+    const entregaDireccion = f.campos.entrega_direccion || d.entrega.direccion || ""
+    const entregaLocalidad = f.campos.entrega_localidad || d.entrega.localidad || ""
+    const lote = f.campos.lote || d.entrega.lote || ""
+    if (!provinciaFiscal || provinciaFiscal === "0") throw dato("El cliente de la NP no tiene provincia en Zomatik: cargala antes de remitir.")
+    if (!entregaDireccion.trim() || !entregaLocalidad.trim()) throw dato("La obra no tiene dirección o localidad: cargalas antes de remitir.")
+    if (!lote.trim()) throw dato("Falta el lote de entrega (pregunta 26.9).")
 
     await marcar("continuar_remito")
     const q = queryLatin1([
-      ["fcliente", f.campos.idcliente], ["fobra", f.campos.idobra || "0"], ["fcomprobante", d.comprobante], ["fstdeposito", String(d.deposito)],
-      ["fpedido", String(d.npCodigo)], ...(f.campos.remitos_unico ? [["remitos_unico", f.campos.remitos_unico] as [string, string]] : []), ["rnd", String(azar())],
+      ["remitos", "0"], ["fcliente", f.campos.idcliente], ["fobra", f.campos.idobra || "0"], ["fcomprobante", d.comprobante], ["fstdeposito", String(d.deposito)],
+      ["fdeposito", String(d.deposito)], ["fpedido", String(d.npCodigo)], ["rnd", String(azar())],
     ])
     const man = await nav.get(`manage_remitos.php?${q}`)
     const items = itemsRemito(man.html)
-    const mio = items.filter((r) => esRenglonDe(r, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
-    if (mio.length !== 1) throw formato("el remito", items.length ? `los pendientes no traen ${d.articuloNombre || "el artículo"} una sola vez` : "no vinieron los pendientes de la NP", man.html)
+    if (!items || !items.length) throw formato("el remito", items ? "no vinieron los pendientes de la NP" : "los pendientes no se entendieron", man.html)
+    if (items.some((x) => x.pedido !== null && x.pedido !== d.npCodigo)) throw formato("el remito", "vinieron renglones de otra NP", man.html)
+    const mio = items.filter((x) => esItemDe(x, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
+    if (mio.length !== 1) throw formato("el remito", `los pendientes no traen ${d.articuloNombre || "el artículo"} una sola vez`, man.html)
     const it = mio[0]
-    if (it.pendiente !== null && d.m3 > it.pendiente + 0.001) throw dato(`A la NP le quedan ${it.pendiente} m³ pendientes y se despacharon ${cantidadTexto(d.m3)} m³: generá una NP adicional.`)
-    if (it.stock !== null && d.m3 > it.stock + 0.001) throw new Freno("pendiente", `No hay stock del artículo en el depósito (${it.stock} m³): falta la OF. Se reintenta.`, true)
+    if (it.pendiente === null || d.m3 > it.pendiente + 0.001) throw dato(`A la NP le quedan ${it.pendiente ?? "?"} m³ pendientes de ${it.nombreArticulo} y se despacharon ${cantidadTexto(d.m3)} m³: generá una NP adicional.`)
+    if (!it.sinControlStock && d.deposito !== 99 && (it.stock === null || d.m3 > it.stock + 0.001)) throw new Freno("pendiente", `No hay stock de ${it.nombreArticulo} en el depósito (${it.stock ?? "?"} m³): falta la OF. Se reintenta.`, true)
 
-    // Número: el mayor de la serie + 1, que Zomatik diga que está libre (hasta 5 intentos)
+    // El número, justo antes de grabar: usado → el siguiente (hasta 5); fuera del talonario → se terminó: revisar y aviso
+    await aRebucret(nav)
     await marcar("numero_remito")
-    let numero = d.numeroPrevio || (await proximoNumero(nav, d.comprobante))
     for (let i = 0; ; i++) {
       const v = numeroRemitoLibre((await nav.get(`_validarnumeroremito.php?fcomprobante=${d.comprobante}&fnumero=${numero}&rnd=${azar()}`)).html)
       if (v.libre) break
-      if (i >= 4) throw dato(`No se encontró un número libre de ${pref} (${v.motivo}). Revisá los talonarios en Zomatik.`)
-      const n = Number(numero.slice(5)) + 1
-      numero = `${numero.slice(0, 5)}${String(n).padStart(8, "0")}`
+      if (v.motivo === "fuera") {
+        const f2 = new Freno("revisar", `El talonario de ${pref} se terminó (${pref} ${numero} no está cargado en Zomatik). Cargá un talonario nuevo y tocá "Remitir en Zomatik". No se grabó nada.`)
+        f2.aviso = `Cargar talonario nuevo de ${pref} en Zomatik`
+        f2.olvidarNumero = true
+        throw f2
+      }
+      if (v.motivo !== "usado") throw formato("el remito", `la validación del número respondió "${v.texto}"`)
+      if (i >= 4) throw dato(`Los ${pref} ${d.numero} a ${numero} ya están usados en Zomatik. Revisá el talonario.`)
+      numero = `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`
     }
-
-    await aRebucret(nav)
     await marcar("grabar_remito", { numero })
     const valores: Record<string, string> = {
-      comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1",
-      patente: d.patente || "", observaciones: d.observaciones, observacionesimp: d.observacionesimp,
+      comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1", provincia_fiscal: provinciaFiscal,
+      entrega_direccion: entregaDireccion, entrega_localidad: entregaLocalidad, lote, patente: d.patente || "", observaciones: d.observaciones, observacionesimp: d.observacionesimp,
     }
-    // Los ítems: el del artículo con los m³ despachados; cualquier otro pendiente de la NP, en 0
-    const renglones = items.flatMap((r) => r.campos.map((c) => (/^cantidad\d+$/i.test(c.nombre) ? { nombre: c.nombre, valor: r === it ? cantidadTexto(d.m3) : "0" } : c)))
-    if ("fparam" in f.campos) valores.fparam = items.map((r) => `${r.codigo},${r === it ? cantidadTexto(d.m3) : "0"}|||`).join("")
-    const base = conValores(f.orden.filter((c: CampoForm) => !/^(codigo|cantidad|hcantidad|stock|novalidarstock)\d+$/i.test(c.nombre)), valores)
-    const { cuerpo, tipo } = multipartLatin1([...base, ...renglones], boundary)
-    const g = await nav.post("grabar_remitos.php?codigo=0", cuerpo, tipo)
+    // "Continuar" precarga TODO lo pendiente: el renglón del artículo va con los m³ del día y todos los demás en 0
+    const renglones = items.flatMap((x) => x.campos.map((c) => (c.nombre.toLowerCase() === `cantidad${x.id}` ? { nombre: c.nombre, valor: x === it ? cantidadTexto(d.m3) : "0" } : c)))
+    const nombresItems = new Set([...renglones, ...camposSueltosRemito(man.html)].map((c) => c.nombre))
+    const base = conValores(f.orden.filter((c: CampoForm) => !nombresItems.has(c.nombre)), valores)
+    const todos = [...base, ...camposSueltosRemito(man.html), ...renglones]
+    const g = esMultipart(alta.html, /grabar_remitos/i)
+      ? await (async () => { const m = multipartLatin1(todos, boundary); return nav.post("grabar_remitos.php?codigo=0", m.cuerpo, m.tipo) })()
+      : await nav.post("grabar_remitos.php?codigo=0", ascii(queryLatin1(todos.map((c) => [c.nombre, c.valor]))), "application/x-www-form-urlencoded")
     const no = rechazo(g)
 
     await marcar("verificar_remito")
-    const x = await remitoPorNumero(nav, numero, d.marca)
+    const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
     if (x?.conMarca) return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true }
     if (!x && no) return { estado: "error", mensaje: `Zomatik no aceptó el remito: ${no}`, paso: "grabar_remito", recorte: recorte(g.html) }
-    return { estado: "revisar", mensaje: x ? `El remito ${numero} existe pero sin la marca: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }
+    return { estado: "revisar", mensaje: x ? `El remito ${pref} ${numero} existe pero sin la marca: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${pref} ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }
   })
 }

@@ -1,18 +1,30 @@
-<html><body>
-<form method="post" action="" name="frm_selsuc"><select name="selsuc"><option value="18" selected>REBUCRET</option></select></form>
-<form enctype="multipart/form-data" action="grabar_remitos.php?codigo=0" method="POST" name="frm_remito">
-<input type="hidden" name="remitos_unico" value="0077001001793300002">
-<input type="hidden" name="idcliente" value="15893"><input type="text" name="cliente" value="OBRA PROPIA REBUCRET">
-<input type="hidden" name="idobra" value="0">
-<input type="TEXT" name="razon_social" value="OBRA PROPIA REBUCRET">
-<select name="provincia_fiscal"><option value="1" selected>Buenos Aires</option></select>
-<select name="comprobante"><option value="">--</option><option value="7">Remito</option><option value="19" selected>Remito 2</option></select>
-<input type="TEXT" name="numero" value="">
-<input name="fecha" value="2026-10-31"><input name="fentrega" value="2026-10-31">
-<select name="deposito"><option value="116" selected>Canning</option><option value="113">REBUCRET</option></select>
-<input type="radio" name="transporte" value="1" checked><input type="radio" name="transporte" value="2">
-<input type="TEXT" name="patente" value="">
+<html><body onload="MostrarItemsPendientes(157767);FiltrarDeposito();">
+<form method="post" action="" name="frm_selsuc"><select name="selsuc" onchange="this.form.submit()"><option value="17">RUTA 25</option><option value="18" selected>REBUCRET</option></select></form>
+<form action="grabar_remitos.php?codigo=0" method="POST" name="frm_remitos" onsubmit="return Validarremito(1);">
+<input type="hidden" name="remitos" value="0">
+<input type="hidden" name="idcliente" id="idcliente" value="24661"><input type="text" name="cliente" id="cliente" value="AVANCES AMBIENTALES">
+<input type="hidden" name="idobra" id="idobra" value="0">
+<input type="text" name="razon_social" value="AVANCES AMBIENTALES S.A.">
+<input type="text" name="direccion" value="AV. CORRIENTES 1234"><input type="text" name="localidad" value="CABA">
+<select name="provincia"><option value="1">Buenos Aires</option><option value="4" selected>Capital Federal</option></select>
+<input type="text" name="cp" value="1043"><input type="text" name="cuit" value="30-71234567-8">
+<input type="text" name="condicion_pago" value="">
+<select name="provincia_fiscal"><option value="" selected>--</option><option value="1">Buenos Aires</option><option value="4">Capital Federal</option></select>
+<select name="comprobante" id="comprobante"><option value="7" selected>Remito</option><option value="19">Remito 2</option></select>
+<input type="text" name="numero" id="numero" value="0000-00000000" onblur="MascaraNumero();ValidarNumeroRemito();"><span id="coderror"></span>
+<input type="text" name="entregadoa" value="">
+<input type="text" name="fecha" value="2026-10-31"><input type="text" name="fentrega" value="2026-10-31">
 <textarea name="observaciones"></textarea><textarea name="observacionesimp"></textarea>
-<input type="hidden" name="fparam" value="">
-<div id="itemspendientes"></div>
+<input type="text" name="entrega_localidad" value=""><input type="text" name="entrega_direccion" value=""><input type="text" name="lote" value="">
+<select name="tipo_viaje"><option value="3">Barrio</option><option value="1">Corto</option><option value="2">Largo</option><option value="5">No aplica</option><option value="4">Sale con otro remito</option></select>
+<select name="deposito" id="deposito" onchange="FiltrarDeposito()"><option value="116" selected>Canning</option><option value="113">REBUCRET</option></select>
+<input type="radio" name="transporte" value="1"> Propio <input type="radio" name="transporte" value="2"> Tercero
+<input type="text" name="patente" value=""><input type="text" name="acoplado" value="">
+<input type="text" name="comision" value="0"><input type="text" name="comisionespecial" value="0">
+<input type="hidden" name="idflete" value=""><input type="text" name="flete" value="">
+<input type="hidden" name="idchofer" value=""><input type="text" name="chofer" value="">
+<input type="hidden" name="idvehiculo" value=""><input type="text" name="vehiculo" value="">
+<input type="hidden" name="iddistancia" value=""><input type="text" name="distancia" value="">
+<input type="text" name="monto" value="0"><input type="text" name="hora_salida" value=""><input type="text" name="hora_llegada" value="">
+<div id="listaprecios"></div>
 </form></body></html>

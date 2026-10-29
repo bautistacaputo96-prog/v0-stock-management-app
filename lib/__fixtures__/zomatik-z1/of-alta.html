@@ -1,15 +1,19 @@
 <html><body>
-<form method="post" action="" name="frm_selsuc"><select name="selsuc"><option value="18" selected>REBUCRET</option></select></form>
-<form enctype="multipart/form-data" action="grabar_ordenfabricacion.php?codigo=0" method="POST" name="frm_ordenfabricacion">
-<input type="hidden" name="ordenfabricacion_unico" value="0090123001793300001">
+<form method="post" action="" name="frm_selsuc"><select name="selsuc" onchange="this.form.submit()"><option value="17">RUTA 25</option><option value="18" selected>REBUCRET</option></select></form>
+<form action="grabar_ordenfabricacion.php?codigo=0" method="POST" name="frm_ordenfabricacion" onsubmit="return validar();">
+<input type="hidden" name="ordenfabricacion_unico" value="0138383001793301957">
 <input type="hidden" name="ordenfabricacion" value="0">
 <input type="hidden" name="fparam" value="">
 <input type="hidden" name="estado" value="1">
-<select name="deposito"><option value="">--</option><option value="116">Canning</option><option value="117">MERCEDES</option><option value="104">PILAR</option><option value="114">RANCHOS</option><option value="113">REBUCRET</option></select>
-<input name="fecha_entrega" value="2026-10-31">
-<textarea name="observaciones"></textarea>
-<select name="comprobante"><option value="62" selected>Orden de Fabricacion</option></select>
-<input type="text" name="numero" value="0001-00003392" readonly>
-<input type="hidden" name="idarticulo" value=""><input type="text" name="articulo" value="">
-<div id="listaarticulos"></div>
+<table>
+<tr><td class="itemformulario">Deposito</td><td class="campoformulario"><select name="deposito" id="deposito"><option value="" selected>--Depositos--</option><option value="116">Canning</option><option value="117">MERCEDES</option><option value="104">PILAR</option><option value="114">RANCHOS</option><option value="113">REBUCRET</option></select></td></tr>
+<tr><td class="itemformulario">Fecha Entrega</td><td class="campoformulario"><input type="text" name="fecha_entrega" id="fecha_entrega" value="2026-10-31"></td></tr>
+<tr><td class="itemformulario">Observaciones</td><td class="campoformulario"><textarea name="observaciones" id="observaciones"></textarea></td></tr>
+<tr><td class="itemformulario">Comprobante</td><td class="campoformulario"><select name="comprobante" id="comprobante" onchange="GetNumeroFactura()"><option value="62" selected>Orden de Fabricacion</option></select></td></tr>
+<tr><td class="itemformulario">Numero</td><td class="campoformulario"><input type="text" name="numero" id="numero" value="0001-00003412"></td></tr>
+<tr><td class="itemformulario">Articulo</td><td class="campoformulario"><input type="hidden" name="idarticulo" id="idarticulo" value=""><input type="text" name="articulo" id="articulo" value="" onkeyup="MostrarDatos(this.value)"></td></tr>
+</table>
+<input type="button" value="Continuar" onclick="Crearordenfabricacion()">
+<div id="listaprecios"></div>
+<div id="Opciones_Articulo" style="display:none"></div>
 </form></body></html>

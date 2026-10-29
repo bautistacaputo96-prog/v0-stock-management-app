@@ -1,12 +1,16 @@
 /**
  * Zomatik · Z1 · "Finalizar pedido" → OF + remito: el lado del servidor (SOLO rutas de app/api). Spec zomatik.md 26.
  *
- *   prepararRemitos  arma los remitos de un pedido en un día (uno por NP usada) con los despachos que todavía no se
- *                    remitieron y los deja "pendiente" (zomatik_remito_crear: remito + despachos juntos, sin duplicar).
+ *   prepararRemitos  arma los remitos de un pedido en un día (uno por NP usada, 17.1) con los despachos que todavía no
+ *                    se remitieron y los deja "pendiente" (zomatik_remito_crear: remito + despachos juntos, sin duplicar).
+ *   prepararOfSueltas  los despachos manuales sin pedido (sin NP): solo la OF, el remito queda a mano (26.9).
  *   procesarZ1       con el turno del robot (el mismo que la NP y la lectura): por cada remito, primero la OF y después
  *                    el remito (16.3 A), guardando cada paso solo si la fila sigue "generando". La foto de las OF y el
  *                    número del remito se guardan ANTES de grabar: un corte nunca se repite a ciegas.
  *   pasadaZ1         la pasada de la noche: remite lo del día que quedó sin remitir (16.3).
+ *
+ * Número del remito (Bautista 29/10, "del anterior"): el más alto del talonario + 1, validado justo antes de grabar.
+ * Talonario terminado: "revisar", aviso "Cargar talonario nuevo de RM/RM2 en Zomatik" y se reintenta con "Remitir".
  *
  * LLAVE PROPIA: `zomatik_np_config.remitir_activo` (apagada por defecto), y además la de la NP. `llaveZ1()` es el único
  * lugar que arma la llave que pide `navegadorZ1()`.
@@ -15,8 +19,8 @@ import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { actividadNp, avisarGerenciales } from "@/lib/zomatik/np-servidor"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
-import { generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
-import { marcaZ1, observacionesRemito, planificarRemitos, type DespachoZ1, type NpZ1 } from "@/lib/zomatik/z1"
+import { elegirNumeroRemito, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
+import { marcaOfSuelta, marcaZ1, observacionesRemito, planificarRemitos, type DespachoZ1, type NpZ1 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
 
 type SB = ReturnType<typeof sbServicio>
@@ -36,10 +40,10 @@ export function llaveZ1(c: ConfigZ1 | undefined): LlaveZ1 | null {
 }
 
 const COLUMNAS_REMITO =
-  "id, scheduled_dispatch_id, np_id, fecha, plant_id, marca, comprobante, m3, formula_id, patente, patentes, remitos_papel, estado, of_estado, of_numero, of_codigo, of_foto, remito_estado, remito_numero, remito_codigo, paso, mensaje, intentos, proximo_intento, en_curso_desde, created_at"
+  "id, tipo, scheduled_dispatch_id, np_id, fecha, plant_id, marca, comprobante, m3, formula_id, patente, patentes, remitos_papel, estado, of_estado, of_numero, of_codigo, of_foto, remito_estado, remito_numero, remito_codigo, paso, mensaje, intentos, proximo_intento, en_curso_desde, created_at"
 
 export type RemitoDB = {
-  id: string; scheduled_dispatch_id: string | null; np_id: string; fecha: string; plant_id: string; marca: string; comprobante: "7" | "19"; m3: number
+  id: string; tipo: "pedido" | "suelto"; scheduled_dispatch_id: string | null; np_id: string | null; fecha: string; plant_id: string; marca: string; comprobante: "7" | "19" | null; m3: number
   formula_id: string | null; patente: string | null; patentes: string | null; remitos_papel: string | null; estado: string; of_estado: string
   of_numero: string | null; of_codigo: number | null; of_foto: string[] | null; remito_estado: string; remito_numero: string | null; remito_codigo: number | null
   paso: string | null; mensaje: string | null; intentos: number; proximo_intento: string | null; en_curso_desde: string | null; created_at: string
@@ -86,11 +90,17 @@ export async function prepararRemitos(pedidoId: string, dia: string, usuario: st
   const remitidoPorNp = new Map<string, number>()
   for (const x of (prev as { np_id: string; m3: number }[]) || []) remitidoPorNp.set(x.np_id, (remitidoPorNp.get(x.np_id) || 0) + Number(x.m3))
   const plan = planificarRemitos(despachos, nps, yaRemitidos, remitidoPorNp)
+  // Las marcas que ya tiene el pedido: un segundo remito del mismo día y NP lleva " - 2" (la marca no se repite)
+  const { data: mm } = await sb.from("zomatik_remitos").select("marca").eq("scheduled_dispatch_id", ped.id)
+  const marcas = new Set(((mm as { marca: string }[]) || []).map((x) => x.marca))
   let creados = 0
   for (const r of plan.remitos) {
+    let marca = marcaZ1(ped.id, dia, r.np_n)
+    for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, ` - ${k}`)
+    marcas.add(marca)
     const { data: id, error } = await sb.rpc("zomatik_remito_crear", {
       p: {
-        scheduled_dispatch_id: ped.id, np_id: r.np_id, fecha: dia, plant_id: ped.plant_id, marca: marcaZ1(ped.id, dia, r.np_n), comprobante: r.comprobante, m3: r.m3,
+        tipo: "pedido", scheduled_dispatch_id: ped.id, np_id: r.np_id, fecha: dia, plant_id: ped.plant_id, marca, comprobante: r.comprobante, m3: r.m3,
         formula_id: despachos.find((d) => d.id === r.despachos[0].id)?.formula_id ?? "", patente: r.patente, patentes: r.patentes, remitos_papel: r.remitos_papel,
         despachos: r.despachos, created_by: usuario,
       },
@@ -103,6 +113,46 @@ export async function prepararRemitos(pedidoId: string, dia: string, usuario: st
   }
   if (plan.problemas.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": "No se puede remitir todo", Aviso: plan.problemas.join(" · ") } })
   return { activo: true, creados, problemas: plan.problemas }
+}
+
+/**
+ * Despachos manuales sin pedido (sin NP) del día, de las plantas con la llave: una OF por despacho para que haya stock
+ * (Bautista 29/10); el remito queda a mano (`remito_estado = 'a_mano'`). Va en la pasada de cada 10 min y en la de la
+ * noche.
+ */
+export async function prepararOfSueltas(dia: string, usuario: string, sb: SB = sbServicio()): Promise<number> {
+  const cfg = await configZ1(sb)
+  const plantas = Object.values(cfg).filter((c) => llaveZ1(c))
+  if (!plantas.length) return 0
+  const fin = new Date(Date.parse(inicioDia(dia)) + 86400_000).toISOString()
+  let creados = 0
+  for (const c of plantas) {
+    let q = sb.from("dispatches").select("id, quantity_m3, remito, formula_id, plant_id, created_at, is_test_dispatch, mixers(license_plate)").eq("plant_id", c.plant_id).is("scheduled_dispatch_id", null).gte("dispatch_date", inicioDia(dia)).lt("dispatch_date", fin).limit(200)
+    if (c.remitir_desde) q = q.gte("created_at", c.remitir_desde)
+    const { data: ds, error } = await q
+    if (error) throw error
+    const sueltos = ((ds as any[]) || []).filter((d) => !d.is_test_dispatch && Number(d.quantity_m3) > 0)
+    if (!sueltos.length) continue
+    const { data: ya } = await sb.from("zomatik_remito_despachos").select("dispatch_id").in("dispatch_id", sueltos.map((d) => d.id))
+    const hechos = new Set(((ya as { dispatch_id: string }[]) || []).map((x) => x.dispatch_id))
+    for (const d of sueltos) {
+      if (hechos.has(d.id)) continue
+      const m3 = Math.round(Number(d.quantity_m3) * 1000) / 1000
+      const { data: id, error: e } = await sb.rpc("zomatik_remito_crear", {
+        p: {
+          tipo: "suelto", scheduled_dispatch_id: "", np_id: "", comprobante: "", fecha: dia, plant_id: c.plant_id, marca: marcaOfSuelta(d.id, dia), m3,
+          formula_id: d.formula_id ?? "", patente: d.mixers?.license_plate ?? null, patentes: d.mixers?.license_plate ?? "", remitos_papel: d.remito ?? "",
+          despachos: [{ id: d.id, m3 }], created_by: usuario,
+        },
+      })
+      if (e) throw e
+      if (id) {
+        creados++
+        await actividadNp(sb, { usuario, action: "crear", pedidoId: null, plantId: c.plant_id, referencia: `Despacho ${d.remito || d.id.slice(0, 8)}`, detalle: { "Qué pasó": `OF pendiente por ${m3} m³ (despacho sin pedido; el remito, a mano)` } })
+      }
+    }
+  }
+  return creados
 }
 
 // ---------------------------------------------------------------------------
@@ -126,9 +176,9 @@ class Cambio extends Error {}
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
   const [{ data: np }, { data: f }, { data: ped }] = await Promise.all([
-    sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado").eq("id", r.np_id).maybeSingle(),
+    r.np_id ? sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null }),
     r.formula_id ? sb.from("formulas").select("id, code, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", r.formula_id).maybeSingle() : Promise.resolve({ data: null }),
-    r.scheduled_dispatch_id ? sb.from("scheduled_dispatches").select("id, construction_sites(name)").eq("id", r.scheduled_dispatch_id).maybeSingle() : Promise.resolve({ data: null }),
+    r.scheduled_dispatch_id ? sb.from("scheduled_dispatches").select("id, construction_sites(name, address, localidad)").eq("id", r.scheduled_dispatch_id).maybeSingle() : Promise.resolve({ data: null }),
   ])
   const codArt = (f as { zomatik_articulo_codigo?: number | null } | null)?.zomatik_articulo_codigo ?? null
   const { data: a } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre, codigo_sistema").eq("codigo", codArt).maybeSingle() : { data: null }
@@ -138,6 +188,12 @@ async function datos(sb: SB, r: RemitoDB) {
     articuloCodigoSistema: (a as { codigo_sistema?: number | null } | null)?.codigo_sistema ?? null,
     articuloNombre: (a as { nombre?: string } | null)?.nombre || (f as { zomatik_articulo_nombre?: string } | null)?.zomatik_articulo_nombre || "",
     obra: (ped as { construction_sites?: { name?: string } | null } | null)?.construction_sites?.name ?? null,
+    entrega: {
+      direccion: (ped as { construction_sites?: { address?: string | null } | null } | null)?.construction_sites?.address ?? null,
+      localidad: (ped as { construction_sites?: { localidad?: string | null } | null } | null)?.construction_sites?.localidad ?? null,
+      /** Pregunta 26.9: qué va en "lote" (la obra no lo tiene). Hasta que conteste, el alta tiene que traerlo. */
+      lote: null as string | null,
+    },
   }
 }
 
@@ -149,12 +205,21 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   if (!quedaTiempo(o.inicio, Date.now())) return { sinTiempo: true, hechas: [] }
   const cfg = await configZ1(sb)
   if (!Object.values(cfg).some((c) => llaveZ1(c))) return { hechas: [] }
-  let q = sb.from("zomatik_remitos").select(COLUMNAS_REMITO).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error"] : [])]).order("created_at").limit(20)
+  let q = sb.from("zomatik_remitos").select(COLUMNAS_REMITO).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
   if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
   const { data, error } = await q
   if (error) throw error
+  // "Remitir en Zomatik" después de cargar un talonario nuevo: el "revisar" del talonario terminado (no se grabó nada,
+  // el número quedó olvidado) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
+  for (const r of (data as unknown as RemitoDB[]) || []) {
+    if (r.estado !== "revisar") continue
+    if (o.pedidoId && r.paso === "numero_remito" && !r.remito_numero) {
+      await sb.from("zomatik_remitos").update({ estado: "error", updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").eq("paso", "numero_remito").is("remito_numero", null)
+      r.estado = "error"
+    }
+  }
   const ahora = Date.now()
-  const lista = ((data as unknown as RemitoDB[]) || []).filter((r) =>
+  const lista = ((data as unknown as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
     r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : !!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora,
   )
   if (!lista.length) return { hechas: [] }
@@ -183,7 +248,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
       const pasoAnt = t.paso_anterior || ""
       const cortadoOf = /^(grabar_of|verificar_of|buscar_of)$/.test(pasoAnt) || (t.estado_anterior === "generando" && r.of_estado !== "ok" && !!r.of_foto)
       const cortadoRemito = /^(grabar_remito|verificar_remito|buscar_remito)$/.test(pasoAnt) || (t.estado_anterior === "generando" && !!r.remito_numero)
-      const ref = `Pedido ${(r.scheduled_dispatch_id || "").slice(0, 8)}`
+      const ref = r.tipo === "suelto" ? `Despacho ${r.remitos_papel || r.marca.slice(-19)}` : `Pedido ${(r.scheduled_dispatch_id || "").slice(0, 8)}`
       const alPaso = async (paso: string, extra?: Record<string, unknown>) => {
         await renovar()
         const cambios: Record<string, unknown> = { paso }
@@ -196,18 +261,15 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         await guardarSi(sb, r.id, {
           estado: est, en_curso_desde: null, mensaje: res.mensaje, paso: res.paso,
           proximo_intento: res.estado === "pendiente" || res.reintentar ? despuesDe(10) : null,
+          ...(res.olvidarNumero ? { remito_numero: null } : {}),
           ...(que === "OF" ? { of_estado: est === "pendiente" ? "pendiente" : est } : { remito_estado: est === "pendiente" ? "pendiente" : est }),
         })
         await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `${que} no salió en Zomatik`, Mensaje: res.mensaje, Paso: res.paso, ...(res.recorte ? { "Respuesta de Zomatik (recorte)": res.recorte } : {}) } })
-        if (res.estado === "revisar") await dep.avisar(sb, `${que} para revisar`, [res.mensaje || "", `Marca: ${r.marca}`])
+        if (res.estado === "revisar") await dep.avisar(sb, res.aviso || `${que} para revisar`, [res.mensaje || "", `Marca: ${r.marca}`])
         hechas.push({ id: r.id, estado: est, mensaje: res.mensaje })
       }
       try {
         const d = await datos(sb, r)
-        if (!d.np?.zomatik_codigo || d.np.estado !== "ok") {
-          await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, "remito")
-          continue
-        }
         if (!nav) nav = await dep.navegador(llave)
         const deposito = cfg[r.plant_id]?.deposito
         if (!deposito) {
@@ -224,12 +286,30 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           await guardarSi(sb, r.id, { of_estado: "ok", of_numero: of.numero, of_codigo: of.codigo, paso: "of_ok" })
           await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `OF en Zomatik: ${of.numero}`, "m³": r.m3 } })
         }
-        // 2) El remito contra la NP. Si falla, la OF queda hecha y el remito se reintenta solo (no se repite la OF)
+        // 2) El remito. Despacho sin pedido (sin NP): queda a mano
+        if (r.tipo === "suelto") {
+          const m = "OF hecha. Despacho sin pedido: el remito se carga a mano."
+          await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", en_curso_desde: null, mensaje: m, paso: "of_ok", ok_at: new Date().toISOString(), proximo_intento: null })
+          hechas.push({ id: r.id, estado: "ok", mensaje: m })
+          continue
+        }
+        if (!d.np?.zomatik_codigo || d.np.estado !== "ok" || !r.comprobante) {
+          await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, "remito")
+          continue
+        }
+        // El número es una entrada aparte: el que ya se eligió (y se guardó) o el más alto del talonario + 1
+        let numero = r.remito_numero ? r.remito_numero.replace(/^RM2?\s+/i, "") : null
+        if (!numero) {
+          await alPaso("elegir_numero")
+          numero = await elegirNumeroRemito(nav, r.comprobante, { hoy: hoyAR() })
+          await alPaso("numero_elegido", { numero })
+        }
+        // Si falla, la OF queda hecha y el remito se reintenta solo (no se repite la OF)
         const obs = observacionesRemito(r.marca, { patentes: r.patentes || "", remitos_papel: r.remitos_papel || "" }, d.obra)
         const rm = await generarRemito(nav, {
           marca: r.marca, npCodigo: d.np.zomatik_codigo, comprobante: r.comprobante, deposito, fecha: String(r.fecha), m3: Number(r.m3),
           articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre, patente: r.patente, observaciones: obs.observaciones, observacionesimp: obs.observacionesimp,
-          numeroPrevio: r.remito_numero, buscarAntes: cortadoRemito,
+          numero, entrega: d.entrega, buscarAntes: cortadoRemito,
         }, { hoy: hoyAR(), alPaso })
         if (rm.estado !== "ok") {
           await terminar(rm, "remito")
@@ -278,15 +358,22 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB } = {
       console.error("[zomatik-z1] preparar", id, (e as Error)?.message)
     }
   }
+  try {
+    creados += await prepararOfSueltas(dia, usuario, sb)
+  } catch (e) {
+    console.error("[zomatik-z1] OF sueltas", (e as Error)?.message)
+  }
   return { pedidos: ids.length, creados }
 }
 
-export async function estadoRemitos(ids: string[], sb: SB = sbServicio()): Promise<Record<string, { estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }[]>> {
+type EstadoRemito = { estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }
+
+export async function estadoRemitos(ids: string[], sb: SB = sbServicio()): Promise<Record<string, EstadoRemito[]>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_remitos").select("scheduled_dispatch_id, estado, of_numero, remito_numero, mensaje, fecha").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
+  const { data, error } = await sb.from("zomatik_remitos").select("scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
   if (error) return {}
-  const out: Record<string, { estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }[]> = {}
-  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ estado: r.estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha })
+  const out: Record<string, EstadoRemito[]> = {}
+  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha })
   return out
 }
 

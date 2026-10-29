@@ -1,10 +1,12 @@
-Respuestas SUPUESTAS de Zomatik para `lib/__tests__/zomatik-z1.test.mjs` (Z1: OF + remito). Ninguna es una captura de
-Rebucret (sucursal 18): se reemplazan por las reales de la captura con Bautista (spec 26.6).
+Respuestas de Zomatik para `lib/__tests__/zomatik-z1.test.mjs` (Z1: OF + remito). Armadas con las capturas reales del
+29/10/2026 en REBUCRET (sucursal 18, solo lectura, sin grabar; spec 26.9). Los valores (tokens, ids, clientes) son
+de ejemplo; los nombres de los campos, el orden de las columnas y las respuestas son los capturados.
 
-- OF (`of-*.html`): armadas con lo que relevó en vivo el robot de Concretus (sucursal 17, 22/10 y 26/10): alta con
-  `ordenfabricacion_unico`, `ordenfabricacion=0`, `fparam`, `estado=1`, `deposito`, `fecha_entrega`, `observaciones`,
-  `comprobante=62`, `numero`; lista temporal con pares `codigoN` / `cantidadN`; listado "Fecha | OF 0001-… | Depósito |
-  Fecha Entrega | PEN/FIN". Los depósitos de Rebucret (Canning 116, REBUCRET 113) y el nombre en el listado: supuestos.
-- Remito (`remito-*.html`): SUPUESTO completo según 4.4 (`Validarremito()` del 20/10): alta desde la NP
-  (`modificar_remitos.php?pedido=N`), "Continuar" con los pendientes (`hcantidad…`, `cantidad…`, `stock…`), número
-  tipeado validado con `_validarnumeroremito.php`.
+- `of-alta.html`: modificar_ordenfabricacion.php (form, depósitos, número, fecha_entrega = hoy + 2). Capturado.
+- `of-manage.html`: la lista de manage_ordenfabricacion.php al agregar el artículo. **SUPUESTO** (pares codigoN /
+  cantidadN, como la vio el robot real de Concretus el 22/10): falta capturarla en REBUCRET con Bautista.
+- `remito-alta.html`: modificar_remitos.php?pedido=N (frm_remitos; provincia_fiscal vacía, transporte sin marcar,
+  número 0000-00000000). Capturado.
+- `remito-pendientes.html`: "Continuar" (manage_remitos.php): un renglón por pendiente de la NP, con la cantidad
+  PRECARGADA con todo lo pendiente. Capturado.
+- `_validarnumeroremito.php` (en la prueba): "" libre, "… ya se encuentra utilizado", "… no esta cargado en el sistema".

@@ -1740,7 +1740,7 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
 
 ## 26. Z1: especificación — "Finalizar pedido" → OF + remito (29/10/2026, rama `loop/z1-remitir`)
 
-Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabricar". Manda sobre 8.4 y 15. Siguen 16.3 A (OF justo antes del remito, por pedido y día, y una pasada de control a la noche) y 17.1 (un remito por pedido y día; la patente del primer camión en `patente` y todas en observaciones). **Sin aplicar y sin probar contra Zomatik:** la OF se armó como el robot real de Concretus y el remito es **supuesto** hasta la captura (26.6).
+Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabricar". Manda sobre 8.4 y 15. Siguen 16.3 A (OF justo antes del remito, por pedido y día, y una pasada de control a la noche) y 17.1 (un remito por pedido y día; la patente del primer camión en `patente` y todas en observaciones). **Sin aplicar y sin probar contra Zomatik.** El remito y el alta de la OF se ajustaron con las capturas del 29/10 (26.9). Falta capturar la lista de la OF.
 
 ### 26.1 Flujo
 1. **Cuándo:**
@@ -1774,11 +1774,11 @@ Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabric
 
 ### 26.5 Que no se pueda duplicar
 - `zomatik_remito_despachos.dispatch_id` es UNIQUE: un despacho nunca entra en dos remitos. El remito y sus despachos se crean juntos (`zomatik_remito_crear`).
-- `zomatik_remitos` es UNIQUE por pedido, día y NP, y la marca es UNIQUE.
+- La marca de `zomatik_remitos` es UNIQUE (un segundo remito del mismo pedido, día y NP lleva "- 2").
 - Una fila se toma con `zomatik_remito_tomar` y el turno del robot es el mismo de la NP y de la lectura (una sola sesión).
 - Cada guardado del robot pide que la fila siga "generando".
 
-### 26.6 Lo que hay que capturar en vivo con Bautista (en el navegador, sucursal REBUCRET, **sin grabar**)
+### 26.6 Lo que hay que capturar en vivo con Bautista (en el navegador, sucursal REBUCRET, **sin grabar**). Hecho el 29/10, menos el punto 2 (ver 26.9)
 Con un pedido de prueba con su NP en Zomatik (por ejemplo, la de OBRA PROPIA REBUCRET, Canning, 1 m³ de H21-620-10 C (CAN)). Hace falta la **URL exacta** de cada pedido de la red (con todos sus parámetros) y **la respuesta completa**:
 1. **OF, alta:** `GET modificar_ordenfabricacion.php`, la página entera (el form, los depósitos 116/113 y el número que trae).
 2. **OF, "Continuar" o agregar artículo:** el `GET manage_ordenfabricacion.php?...` al agregar el H21 con depósito Canning. Hace falta saber:
@@ -1794,7 +1794,7 @@ Con un pedido de prueba con su NP en Zomatik (por ejemplo, la de OBRA PROPIA REB
 
 Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados SUPUESTOS) y se ajusta el robot. Después, la primera OF + remito real con Bautista mirando.
 
-### 26.7 Preguntas para Bautista (con recomendación)
+### 26.7 Preguntas para Bautista (con recomendación). Contestadas el 29/10 (ver 26.9)
 1. **¿Qué número de remito?** En REBUCRET se tipea. **Recomendación:** el siguiente de la serie de Zomatik (el mayor de RM 0001 o RM2 0099, + 1), validado con `_validarnumeroremito`, no el del papel (14.2). Antes de prender, cargar talonarios nuevos: a RM y RM2 les quedan unos 60 números (16.4).
 2. **R y X en el mismo pedido:** los despachos tienen su R/X y la NP es una sola (NP o NP2). **Recomendación:** el remito sigue a la NP (NP → RM, NP2 → RM2). Si un despacho tiene otro tipo que su NP, no se remite y queda el aviso; se corrige el despacho o se hace la NP del otro tipo.
 3. **¿Un remito por pedido y día, o por despacho?** Ya decidido en 17.1: por pedido y día. **Recomendación:** dejarlo así. Pasar a uno por despacho recién con talonarios nuevos y unas semanas sin errores.
@@ -1812,6 +1812,49 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (14) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (18) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
+
+### 26.9 Capturas y respuestas del 29/10
+**Respuestas de Bautista:**
+1. **Número de remito: "del anterior".** Es el número **más alto** del talonario en Zomatik (sucursal 18) + 1: RM en 0001 y RM2 en 0099. No el más reciente por fecha, porque no son correlativos (RM 0001-00002252 y 0001-00002233 son los dos del 28/10).
+   - Se lee la primera página del listado de remitos y el buscador de los últimos 60 días.
+   - Se valida con `_validarnumeroremito` **justo antes de grabar**. Si está usado, se prueba el siguiente (hasta 5).
+   - Si responde "no esta cargado en el sistema", el talonario se terminó: no se graba, el remito queda en "revisar" y va el aviso "Cargar talonario nuevo de RM/RM2 en Zomatik" a los gerenciales. Ese número se olvida. Después de cargar el talonario, "Remitir en Zomatik" lo reintenta: es el único "revisar" que se reintenta, porque no se grabó nada.
+   - El número usado queda en `zomatik_remitos.remito_numero` y se ve en el chip del pedido en Despacho. Los despachos de cada remito están en `zomatik_remito_despachos`; la tabla de despachos no se toca.
+2. R/X: ok (el remito sigue a la NP).
+3. Uno por pedido y día: **confirmado**. En Zomatik hoy se hace uno por camión (DANIEL FIOROTO, 26/10: RM2 2747, 2748 y 2749); con el sistema va uno por pedido y día. Si llegan despachos después del primer remito del día, sale otro remito (marca "… - 2").
+4. DEVOL: en otra etapa.
+5. Una OF por remito: ok.
+6. **Despacho manual sin pedido (sin NP): también lleva su OF**, "para que baje el stock". El remito sigue a mano. Va con la misma llave:
+   - `prepararOfSueltas` arma una OF por despacho (`zomatik_remitos.tipo = 'suelto'`, `remito_estado = 'a_mano'`);
+   - la hacen la pasada de cada 10 min (`/api/zomatik/np/procesar`, que ahora también reintenta OF + remitos) y la de la noche.
+
+**Lo capturado** (solo lectura; los fixtures nuevos se armaron con esto):
+- **OF:** alta con depósitos 116 Canning, 117, 104, 114 y 113 REBUCRET (ninguno elegido), `fecha_entrega` = hoy + 2 y el número que trae solo. `fparam` = "codigo,cantidad|||", sin costo. "Agregar artículo" = `manage_ordenfabricacion.php?ordenfabricacion&fcomprobante&ordenfabricacion_unico&fdeposito&fparam&farticulo&fsubtipo&rnd`, lo mismo que manda el robot.
+- **Remito desde la NP:**
+  - `frm_remitos` trae `remitos=0`, el cliente, la provincia y `provincia_fiscal` **vacía**. El número viene en 0000-00000000 y se tipea. El transporte viene sin marcar.
+  - Validarremito exige siempre provincia fiscal, **lote, dirección y localidad de entrega**, depósito, transporte, cantidad ≤ pendiente y cantidad ≤ stock (salvo `novalidarstock`).
+  - No hay `fparam`: se manda el form tal cual. Se manda urlencoded (el form no es multipart; el robot sigue el enctype).
+- **"Continuar"** (`manage_remitos.php?remitos=0&fcliente&fobra&fcomprobante&fstdeposito&fdeposito&fpedido&rnd`): un renglón por pendiente de la NP, **con la cantidad precargada con todo lo pendiente**. El robot pone los m³ del día en su renglón y **0 en todos los demás**.
+- **`_validarnumeroremito`:** vacío = libre; "… ya se encuentra utilizado"; "… no esta cargado en el sistema".
+
+**Lo que hace el robot con los campos obligatorios (supuestos, para confirmar en la primera prueba):**
+- `provincia_fiscal`: la provincia del cliente;
+- `entrega_direccion` y `entrega_localidad`: las de la obra;
+- **`lote`: si el alta no lo trae, frena con "Falta el lote" (pregunta 26.10.1)**;
+- `transporte` = 1.
+
+**Falta capturar con Bautista:**
+- la respuesta de `manage_ordenfabricacion` al agregar el artículo (`of-manage.html` sigue supuesto);
+- si una OF PEN ya da stock para remitir o hay que "Generarla" (en la captura, el stock del depósito estaba en 0).
+
+### 26.10 Preguntas que quedan
+1. **¿Qué va en "lote"?** Validarremito lo pide siempre. **Recomendación:** si es el lote de un barrio, el de la obra (hay que agregarlo a la obra); si no aplica, "-".
+2. **¿Transporte 1 o 2?** Con el 2, Zomatik pide chofer, vehículo y horas. **Recomendación:** 1, con la patente del primer camión.
+
+- Migración: sigue **sin aplicar y sin probar contra la base**. Cambios desde la primera versión:
+  - `zomatik_remitos.tipo` ('pedido'/'suelto'); `np_id` y `comprobante` pueden quedar nulos en 'suelto';
+  - `remito_estado` acepta 'a_mano';
+  - lo único que no se repite es la marca (ya no la combinación pedido + día + NP).

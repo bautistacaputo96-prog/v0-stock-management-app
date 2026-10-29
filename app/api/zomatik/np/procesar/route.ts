@@ -1,6 +1,7 @@
 /**
  * Zomatik Z2 · Pasada de las NP: sincroniza los pedidos de hoy en adelante (plantas con la llave prendida) y trabaja
- * las NP pendientes, las de un "Grabar" cortado (primero se busca la marca) y las que hay que vaciar.
+ * las NP pendientes, las de un "Grabar" cortado (primero se busca la marca) y las que hay que vaciar. Después, Z1: la OF
+ * de los despachos sin pedido y los reintentos de OF + remito (spec 26).
  *
  *   GET  /api/zomatik/np/procesar   cron: solo con `Authorization: Bearer <CRON_SECRET>` (lib/cron.ts). Cada 10 min
  *                                   desde un programador externo o pg_cron (pregunta 24.8.3); Vercel Hobby solo deja
@@ -13,6 +14,8 @@ import { exigirSesion, respuestaError, respuestaModoLocal, sbServicio } from "@/
 import { puedeCon } from "@/lib/permisos"
 import { esLlamadaDeCron } from "@/lib/cron"
 import { faltaMigracion, pasadaNp, procesarNp } from "@/lib/zomatik/np-servidor"
+import { hoyAR } from "@/lib/zomatik/np"
+import { prepararOfSueltas, procesarZ1 } from "@/lib/zomatik/z1-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -32,7 +35,16 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     // Primero la base (como mucho 20 s); el robot, con lo que quede (no arranca una NP con menos de 30 s)
     const pasada = await pasadaNp(usuario, { inicio, hastaMs: 20_000 })
     const proceso = await procesarNp({ usuario, inicio })
-    return NextResponse.json({ ok: true, pasada, proceso })
+    // Z1 (spec 26): OF de los despachos sin pedido y reintentos de OF + remito, con el tiempo que quede. Con la llave de
+    // remitir apagada (o sin su migración) no hace nada; un error acá no cambia la pasada de las NP.
+    let z1: unknown = null
+    try {
+      const ofSueltas = await prepararOfSueltas(hoyAR(), usuario)
+      z1 = { ofSueltas, ...(await procesarZ1({ usuario, inicio })) }
+    } catch (e) {
+      console.error("[zomatik-z1] pasada", (e as Error)?.message)
+    }
+    return NextResponse.json({ ok: true, pasada, proceso, z1 })
   } catch (e) {
     if (faltaMigracion(e)) return NextResponse.json({ ok: false, sinMigracion: true })
     throw e

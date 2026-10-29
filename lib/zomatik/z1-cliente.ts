@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 
-export type RemitoEstado = { estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }
+export type RemitoEstado = { estado: string; remito_estado?: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }
 
 /** Arma la OF + remito de lo despachado ese día. Con la llave apagada devuelve null (no hay nada que avisar). */
 export async function remitirPedido(pedidoId: string, fecha: string): Promise<{ titulo: string; texto: string; mal?: boolean } | null> {
@@ -50,8 +50,10 @@ export function useRemitos(ids: string[]) {
 /** Texto corto del chip: "RM2 …2746 ✓", "Remito pendiente", "Remito con error", "Remito: revisar". null = nada. */
 export function chipRemito(rs: RemitoEstado[] | undefined): { texto: string; clase: "ok" | "mal" | "aviso"; titulo: string } | null {
   if (!rs?.length) return null
-  const titulo = rs.map((r) => `${r.fecha}: ${r.of_numero || "OF pendiente"} · ${r.remito_numero || "remito pendiente"}${r.mensaje ? ` · ${r.mensaje}` : ""}`).join("\n")
+  const titulo = rs.map((r) => `${r.fecha}: ${r.of_numero || "OF pendiente"} · ${r.remito_estado === "a_mano" ? "remito a mano" : r.remito_numero || "remito pendiente"}${r.mensaje ? ` · ${r.mensaje}` : ""}`).join("\n")
   const malos = rs.filter((r) => r.estado !== "ok")
+  // Número del remito en pausa (26.9): la OF la hace el sistema y el remito se carga a mano
+  if (!malos.length && rs.some((r) => r.remito_estado === "a_mano")) return { texto: "OF ✓ · remito a mano", clase: "ok", titulo }
   if (!malos.length) return { texto: `${rs.map((r) => (r.remito_numero || "").replace(/^(RM2?) \d{4}-0+/, "$1 …")).join(" + ")} ✓`, clase: "ok", titulo }
   const peor = malos.find((r) => r.estado === "error") || malos.find((r) => r.estado === "revisar") || malos[0]
   return { texto: peor.estado === "error" ? "Remito con error" : peor.estado === "revisar" ? "Remito: revisar" : "Remito pendiente", clase: peor.estado === "revisar" || peor.estado === "generando" ? "aviso" : "mal", titulo }
