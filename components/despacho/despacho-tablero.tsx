@@ -50,6 +50,7 @@ import { HumedadAcopio } from "./humedad-acopio"
 import { usarArrastre } from "./usar-arrastre"
 import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 import { avisarNp, estadoNpDePedido, useNp, type NpFila } from "@/lib/zomatik/np-cliente"
+import { remitirPedido, useRemitos } from "@/lib/zomatik/z1-cliente"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 
 const MIN = 60_000
@@ -94,6 +95,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   // Zomatik Z2: NP de los pedidos del día (con la llave apagada viene vacío)
   const idsPedidos = useMemo(() => pedidos.map((p) => p.id), [pedidos])
   const np = useNp(idsPedidos)
+  // Zomatik Z1: OF + remito de cada pedido (con la llave de remitir apagada viene vacío)
+  const remitos = useRemitos(idsPedidos)
 
   // Pantalla
   const [selViaje, setSelViaje] = useState<string | null>(null)
@@ -569,9 +572,18 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     const { data, error } = await createClient().rpc("finalizar_pedido", { p_id: p.id, p_tipo: tipo, p_motivo: detalle || null, p_usuario: currentUserName() })
     if (error) return error.message
     toast({ title: "Pedido finalizado", description: `${(data as any)?.nota || ""} · ${textoMotivo(tipo)}` })
+    // Zomatik Z1: al finalizar, OF + remito de lo despachado en el día (Bautista, 29/10). Si falla, no frena: se reintenta
+    remitirAhora(p.id)
     setFinalizar(null)
     cargar()
     return null
+  }
+  /** OF + remito en Zomatik de lo despachado ese día (con la llave apagada no hace nada ni avisa). */
+  function remitirAhora(pedidoId: string) {
+    remitirPedido(pedidoId, format(dia, "yyyy-MM-dd")).then((r) => {
+      if (r) toast({ title: r.titulo, description: r.texto, variant: r.mal ? "destructive" : undefined })
+      remitos.recargarEn()
+    })
   }
   async function hacerCancelar(tipo: MotivoTipo, detalle: string) {
     if (!cancelar || !puedeCancelar) return null
@@ -644,6 +656,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       <ColumnaPedidos
         pedidos={pedidos} viajesPorPedido={viajesDePedido} totalPorPedido={totalPorPedido} tipos={tipos} empresas={empresas} puntualidad={puntualidad} numeroPedido={numeroPedido}
         npPorPedido={np.porPedido}
+        remitosPorPedido={remitos.porPedido}
+        onRemitir={(p) => remitirAhora(p.id)}
         permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}

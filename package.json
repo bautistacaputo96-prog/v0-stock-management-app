@@ -15,7 +15,8 @@
     "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs",
     "test:control-stock": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-stock.test.mjs",
     "test:control-ingresos": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-ingresos.test.mjs",
-    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs lib/__tests__/zomatik-np-servidor.test.mjs"
+    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs lib/__tests__/zomatik-np-servidor.test.mjs",
+    "test:zomatik-z1": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-z1.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

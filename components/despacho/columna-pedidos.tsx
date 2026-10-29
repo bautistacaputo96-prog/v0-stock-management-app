@@ -14,6 +14,7 @@ import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 import { NpChip } from "@/components/zomatik/np-chip"
 import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
+import { chipRemito, type RemitoEstado } from "@/lib/zomatik/z1-cliente"
 
 export type PermisosPedido = {
   despachar: boolean
@@ -22,7 +23,7 @@ export type PermisosPedido = {
 }
 
 export function ColumnaPedidos({
-  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido, npPorPedido = {},
+  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido, npPorPedido = {}, remitosPorPedido = {}, onRemitir,
   onConfirmar, onGerenciador, onEditarTotal, onVerEntregas, onSuspender, onReabrir, onFinalizar, onCancelar,
 }: {
   pedidos: PedidoT[]
@@ -36,6 +37,9 @@ export function ColumnaPedidos({
   numeroPedido: Record<string, number>
   /** Zomatik Z2: NP de cada pedido (vacío con la llave apagada) */
   npPorPedido?: Record<string, EstadoPedidoNp>
+  /** Zomatik Z1: OF + remito de cada pedido */
+  remitosPorPedido?: Record<string, RemitoEstado[]>
+  onRemitir?: (p: PedidoT) => void
   onConfirmar: (p: PedidoT) => void
   onGerenciador: (p: PedidoT) => void
   onEditarTotal: (p: PedidoT) => void
@@ -106,6 +110,10 @@ export function ColumnaPedidos({
               {permisos.despachar && susp && <><DropdownMenuSeparator /><DropdownMenuItem className="min-h-[32px]" onClick={() => onReabrir(p)}>▶ Reabrir</DropdownMenuItem></>}
               {permisos.despachar && (act || susp) && desp > 0 && <DropdownMenuItem className="min-h-[32px]" onClick={() => onFinalizar(p)}>✓ Finalizar con lo enviado</DropdownMenuItem>}
               {permisos.cancelar && (act || susp) && <DropdownMenuItem className="min-h-[32px] text-red-600" onClick={() => onCancelar(p)}>⊘ Cancelar pedido</DropdownMenuItem>}
+              {/* Zomatik Z1: OF + remito de lo despachado hoy (también lo hace "Finalizar" y la pasada de la noche) */}
+              {permisos.despachar && onRemitir && npPorPedido[p.id]?.activo && desp > 0 && !(remitosPorPedido[p.id] || []).some((r) => r.estado === "generando") && (
+                <DropdownMenuItem className="min-h-[32px]" onClick={() => onRemitir(p)}>📄 Remitir en Zomatik</DropdownMenuItem>
+              )}
               {!permisos.cancelar && permisos.despachar && (act || susp) && <DropdownMenuItem disabled className="text-xs">Cancelar: solo gerenciales</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -119,6 +127,10 @@ export function ColumnaPedidos({
         {(est === "completo" || est === "cancelado") && (
           <div className="px-2 pb-1 text-[11px] text-muted-foreground">
             {est === "completo" && !finalizado && "✓ Completo"}
+            {(() => {
+              const c = chipRemito(remitosPorPedido[p.id])
+              return c ? <span title={c.titulo} className={cn("ml-1 rounded px-1", c.clase === "ok" ? "bg-emerald-50 text-emerald-800" : c.clase === "mal" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>{c.texto}</span> : null
+            })()}
             {finalizado && `Finalizado con ${m3txt(desp)} de ${m3txt(p.quantity_m3)} m³${p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}`}
             {est === "cancelado" && <span className="text-red-700">Cancelado{p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}{p.cierre_motivo ? ` — ${p.cierre_motivo}` : ""}</span>}
           </div>

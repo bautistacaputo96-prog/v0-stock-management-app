@@ -21,6 +21,10 @@
       "schedule": "0 10 * * *"
     },
     {
+      "path": "/api/zomatik/remito/pasada",
+      "schedule": "30 2 * * *"
+    },
+    {
       "path": "/api/control-ingresos/controlar",
       "schedule": "25 19 * * *"
     }

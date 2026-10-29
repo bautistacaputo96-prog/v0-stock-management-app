@@ -92,3 +92,41 @@ export function rutaEscrituraNp(path: string, metodo: "GET" | "POST"): boolean {
 export function linkNp(codigo: number | null | undefined): string | null {
   return codigo && codigo > 0 ? `${ZOMATIK_WEB}/modificar_pedidos.php?codigo=${codigo}` : null
 }
+
+// ---------------------------------------------------------------------------
+// 3. OF + remito (Z1): otro grupo aparte, solo con la llave de remitir prendida (zomatik_np_config.remitir_activo)
+// ---------------------------------------------------------------------------
+
+/** Comprobantes de remito: 7 Remito (RM, con la NP) · 19 Remito 2 (RM2, con la NP2) (spec 5.2). */
+export const COMPROBANTES_REMITO = ["7", "19"] as const
+
+const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
+
+/**
+ * Rutas de la OF y el remito (spec 4.3, 4.4 y 26). La OF como el robot de Concretus (relevado en vivo el 22/10, en la
+ * sucursal 17); el remito según 4.4 (SUPUESTO hasta la captura con Bautista, 26.6):
+ *   GET  modificar_ordenfabricacion.php[?codigo=N]         alta de OF vacía (trae ordenfabricacion_unico) / abrir una
+ *                                                          OF para verificar la marca
+ *   GET  manage_ordenfabricacion.php?…ordenfabricacion_unico=…&farticulo=…   agregar el artículo a la lista temporal
+ *   GET  listado_ordenfabricacion.php / POST …?enviado=1   foto antes y después de grabar
+ *   POST grabar_ordenfabricacion.php?codigo=0              grabar la OF (solo alta)
+ *   GET  modificar_remitos.php?pedido=N                    remito desde la NP (link REMITO del listado de pedidos)
+ *   GET  modificar_remitos.php?codigo=N                    abrir un remito (verificar la marca)
+ *   GET  manage_remitos.php?…fpedido=N…                    "Continuar": los ítems pendientes de la NP
+ *   GET  _validarnumeroremito.php?fcomprobante=7|19&fnumero=…   el número tipeado está libre y dentro del talonario
+ *   GET  listado_remitos.php / POST …?enviado=1            el mayor número de la serie y la verificación
+ *   POST grabar_remitos.php?codigo=0                       grabar el remito (solo alta)
+ * Nunca borrar, anular ni modificar uno existente.
+ */
+export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
+  const p = path.replace(/^\/+/, "")
+  if (Z1_PROHIBIDO.test(p)) return false
+  if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p)
+  if (/^modificar_ordenfabricacion\.php(\?codigo=\d+)?$/i.test(p)) return true
+  if (/^listado_(ordenfabricacion|remitos)\.php$/i.test(p)) return true
+  if (/^manage_ordenfabricacion\.php\?/i.test(p)) return /[?&]ordenfabricacion_unico=[A-Za-z0-9._-]+/.test(p) && /[?&]ordenfabricacion=0(&|$)/.test(p)
+  if (/^modificar_remitos\.php\?(pedido|codigo)=\d+$/i.test(p)) return true
+  if (/^manage_remitos\.php\?/i.test(p)) return /[?&]fpedido=\d+/.test(p)
+  if (/^_validarnumeroremito\.php\?fcomprobante=(7|19)&fnumero=\d{4}-\d{8}(&rnd=\d+)?$/i.test(p)) return true
+  return false
+}

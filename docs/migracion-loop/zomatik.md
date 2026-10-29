@@ -1735,3 +1735,83 @@ La NP n=2 de `42a614e6` frenó en "articulo" ("el detalle trajo otros renglones"
   - "vaciada" solo si el detalle cargó bien (tabla con `#totalcosto`) y no tiene renglones. El total 0 del listado y de `#totalcosto` es una confirmación más: con costo 0 puede haber renglones y total 0.
 - El fixture de la NP abierta es el detalle real de la 157767 (`detalle-np-abierta.html`): celda OC con `AsignarNPDetalle`, totales y bloque de comprobantes.
 - `facopio` va vacío, como en la captura real.
+
+---
+
+## 26. Z1: especificación — "Finalizar pedido" → OF + remito (29/10/2026, rama `loop/z1-remitir`)
+
+Bautista (29/10): "agregar desde el mismo botón la función de remitir y fabricar". Manda sobre 8.4 y 15. Siguen 16.3 A (OF justo antes del remito, por pedido y día, y una pasada de control a la noche) y 17.1 (un remito por pedido y día; la patente del primer camión en `patente` y todas en observaciones). **Sin aplicar y sin probar contra Zomatik:** la OF se armó como el robot real de Concretus y el remito es **supuesto** hasta la captura (26.6).
+
+### 26.1 Flujo
+1. **Cuándo:**
+   - **"Finalizar pedido"** en Despacho (`finalizar-dialog` → `finalizar_pedido`); si falla Zomatik, el pedido se finaliza igual;
+   - **"📄 Remitir en Zomatik"** en el menú del pedido (pedidos con despachos, por ejemplo uno que se completó solo al despachar todo);
+   - **la pasada de la noche** (23:30, `/api/zomatik/remito/pasada`, con `CRON_SECRET`): todo lo del día que quedó sin remitir, finalizado o no.
+2. **Qué se arma** (`prepararRemitos`): los despachos del pedido en ese día que todavía no están en un remito (sin los de prueba, desde que se prendió la llave).
+   - Se agrupan **un remito por NP** que usa el pedido (normalmente una; dos si tuvo una NP adicional o usó una con saldo). Cada despacho va entero a la primera NP en la que entra.
+   - Comprobante: **NP → RM (7)** y **NP2 → RM2 (19)**.
+   - Patente del primer camión, todas las patentes y los números de papel en observaciones (7.4).
+   - **No se remite** (queda el aviso en Actividad) si el despacho no coincide con la NP en R/X, fórmula o planta, o si supera lo que le queda a la NP.
+3. **El robot, por cada remito:**
+   - **primero la OF** (depósito de la planta, artículo de la fórmula y m³ despachados);
+   - **después el remito** contra la NP (`modificar_remitos.php?pedido=<código de la NP>`).
+   - Sucursal 18 antes de leer, antes del número y antes de grabar. La misma marca ASCII en las observaciones de los dos: "Sistema Rebucret - pedido N - aaaa-mm-dd - NP n".
+
+### 26.2 Estados y reintentos (igual que la NP)
+- Por remito, un estado del par: pendiente, generando, ok, revisar o error. Por separado, el de la OF y el del remito (`zomatik_remitos`).
+- Pendiente (red, sin stock todavía, Zomatik caído): reintento cada 10 min (la pasada de las NP) y a la noche.
+- Error (falta un dato o Zomatik dijo que no): no se reintenta solo; se reintenta con "Remitir en Zomatik".
+- **Si sale la OF y falla el remito:** la OF queda "ok" con su número y el reintento hace **solo el remito** (nunca otra OF).
+- "Revisar": aviso por mail a Bautista, Juan y Fernando, y recorte de la respuesta en Actividad.
+
+### 26.3 Llave
+**Propia:** `zomatik_np_config.remitir_activo`, apagada por defecto, y además la de la NP. Con la NP prendida y esta apagada, OF y remito siguen a mano. Se prende con SQL, después de la captura y la primera prueba con Bautista (no hay botón todavía, a propósito).
+
+### 26.4 Verificación después de cada Grabar
+- **OF** (como Concretus): antes de grabar se saca y se guarda la foto de las OF del depósito dadas de alta hoy. Después, tiene que haber **exactamente una OF nueva PEN** del depósito y la fecha, **con la marca**. Si no, "revisar". Si se corta, el reintento busca con esa foto antes de grabar otra.
+- **Remito:** el número se elige y **se guarda antes de grabar**. Después se busca por ese número en el listado y se abre para ver la marca. Si se corta, el reintento busca primero ese número: con la marca es ok; sin la marca, revisar. Nunca un segundo Grabar a ciegas.
+- Cualquier respuesta que no tenga la forma esperada **frena sin grabar** con el recorte en Actividad.
+
+### 26.5 Que no se pueda duplicar
+- `zomatik_remito_despachos.dispatch_id` es UNIQUE: un despacho nunca entra en dos remitos. El remito y sus despachos se crean juntos (`zomatik_remito_crear`).
+- `zomatik_remitos` es UNIQUE por pedido, día y NP, y la marca es UNIQUE.
+- Una fila se toma con `zomatik_remito_tomar` y el turno del robot es el mismo de la NP y de la lectura (una sola sesión).
+- Cada guardado del robot pide que la fila siga "generando".
+
+### 26.6 Lo que hay que capturar en vivo con Bautista (en el navegador, sucursal REBUCRET, **sin grabar**)
+Con un pedido de prueba con su NP en Zomatik (por ejemplo, la de OBRA PROPIA REBUCRET, Canning, 1 m³ de H21-620-10 C (CAN)). Hace falta la **URL exacta** de cada pedido de la red (con todos sus parámetros) y **la respuesta completa**:
+1. **OF, alta:** `GET modificar_ordenfabricacion.php`, la página entera (el form, los depósitos 116/113 y el número que trae).
+2. **OF, "Continuar" o agregar artículo:** el `GET manage_ordenfabricacion.php?...` al agregar el H21 con depósito Canning. Hace falta saber:
+   - qué parámetros lleva (en Concretus: `ordenfabricacion=0&fcomprobante=62&ordenfabricacion_unico=…&fdeposito=…&fparam=&farticulo=<código sistema>&fsubtipo=0`);
+   - la tabla que devuelve;
+   - y **si acepta cantidad con decimales** (por ejemplo, 7,5 m³).
+3. **OF, listado:** `POST listado_ordenfabricacion.php?enviado=1` filtrando hoy y Canning: la página entera (cómo se llama el depósito en la columna).
+4. **Remito desde la NP:** el link REMITO del listado de pedidos, `GET modificar_remitos.php?pedido=N`, la página entera (qué viene precargado: cliente, comprobante, depósito, número, el token de borrador si lo hay).
+5. **Remito, "Continuar":** el `GET manage_remitos.php?...` que dispara (`MostrarItemsPendientes`), con todos sus parámetros y la tabla que devuelve (pendiente, stock, cantidad, `novalidarstock`, el tacho).
+6. **Número:** el `GET _validarnumeroremito.php?...` al tipear un número libre y uno ya usado (las dos respuestas), y el `_traerentregadoa.php` si aparece.
+7. **El JavaScript de `modificar_remitos.php`:** `Validarremito()` y cómo arma lo que manda al grabar (si hay `fparam` y con qué formato).
+8. **Listado de remitos:** `POST listado_remitos.php?enviado=1` sin filtros y con `bus_numero`: la página entera (para el mayor número de la serie, el link al remito y la paginación).
+
+Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados SUPUESTOS) y se ajusta el robot. Después, la primera OF + remito real con Bautista mirando.
+
+### 26.7 Preguntas para Bautista (con recomendación)
+1. **¿Qué número de remito?** En REBUCRET se tipea. **Recomendación:** el siguiente de la serie de Zomatik (el mayor de RM 0001 o RM2 0099, + 1), validado con `_validarnumeroremito`, no el del papel (14.2). Antes de prender, cargar talonarios nuevos: a RM y RM2 les quedan unos 60 números (16.4).
+2. **R y X en el mismo pedido:** los despachos tienen su R/X y la NP es una sola (NP o NP2). **Recomendación:** el remito sigue a la NP (NP → RM, NP2 → RM2). Si un despacho tiene otro tipo que su NP, no se remite y queda el aviso; se corrige el despacho o se hace la NP del otro tipo.
+3. **¿Un remito por pedido y día, o por despacho?** Ya decidido en 17.1: por pedido y día. **Recomendación:** dejarlo así. Pasar a uno por despacho recién con talonarios nuevos y unas semanas sin errores.
+4. **Sobrante con DEVOL (25.3):** **recomendación:** en otra etapa (Z1b), después de probar DEVOL en vivo. Por ahora el saldo queda en "NP con saldo" y se devuelve a mano.
+5. **¿Una OF por remito o una por día y artículo?** **Recomendación:** una por remito, justo antes (16.3 A), porque el remito exige stock.
+6. **Despacho manual (sin pedido programado):** no tiene NP. **Recomendación:** que quede a mano, con el aviso en Actividad, hasta definir su NP (21.4).
+
+### 26.8 Archivos
+| Archivo | Qué |
+|---|---|
+| `lib/zomatik/z1.ts` | Puro: plan de remitos, serie, lectura de OF (como Concretus) y remito (supuesta) |
+| `lib/zomatik/z1-robot.ts` | `generarOf` y `generarRemito` |
+| `lib/zomatik/z1-servidor.ts` | `prepararRemitos`, `procesarZ1`, `pasadaZ1`, `estadoRemitos` y la llave |
+| `lib/zomatik/web.ts` | Grupo aparte `rutaEscrituraZ1` (solo con `escrituraZ1`, en `navegadorZ1`) |
+| `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
+| `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
+| `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (14) |
+
+- La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
