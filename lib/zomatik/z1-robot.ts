@@ -15,11 +15,11 @@
  * Si una respuesta no tiene la forma esperada, se frena SIN GRABAR y queda un recorte para Actividad.
  */
 import {
-  SUCURSAL_REBUCRET, alertasDe, cantidadTexto, camposFormulario, conValores, multipartLatin1, numeroNormalizado,
+  SUCURSAL_REBUCRET, alertasDe, cantidadTexto, camposFormulario, conValores, datosSecundarios, multipartLatin1, numeroNormalizado,
   queryLatin1, recorte, tieneMarca, type CampoForm,
 } from "@/lib/zomatik/np"
 import {
-  CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, esItemDe, esMultipart, fparamOf, formularioOf,
+  CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, datosClienteRemito, esItemDe, esMultipart, fparamOf, formularioOf,
   formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, opcionDeSelect, paginadoDe, registrosTotal,
   siguienteNumeroRemito, tieneDeposito,
   tieneTransporte, type FilaOf,
@@ -370,12 +370,15 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     if (!/^grabar_remitos\.php\?codigo=0$/i.test(f.action || "") || f.campos.remitos !== "0") throw formato("el remito", "el alta graba en otro lado", alta.html)
     if (!f.campos.idcliente || f.campos.idcliente === "0") throw formato("el remito", "no trajo el cliente de la NP", alta.html)
     if (!tieneDeposito(alta.html, d.deposito) || !tieneTransporte(alta.html, "1")) throw formato("el remito", `no está el depósito ${d.deposito} o el transporte`, alta.html)
-    // Validarremito: provincia fiscal (vacía en el alta: la del cliente), lote, dirección y localidad de entrega
-    const provinciaFiscal = f.campos.provincia_fiscal || f.campos.provincia
+    // Los datos del cliente no vienen en el HTML: los pide la página a traerdatossecundarios.php (30/10)
+    const sec = await nav.get(`traerdatossecundarios.php?fcliente=${f.campos.idcliente}&rnd=${azar()}`)
+    const cliente = datosSecundarios(sec.html)
+    if (!cliente) throw formato("el remito", "los datos del cliente no se entendieron", sec.html)
+    const delCliente = datosClienteRemito(f.campos, cliente)
+    // Validarremito: lote, dirección y localidad de entrega
     const entregaDireccion = f.campos.entrega_direccion || d.entrega.direccion || ""
     const entregaLocalidad = f.campos.entrega_localidad || d.entrega.localidad || ""
     const lote = f.campos.lote || d.entrega.lote || ""
-    if (!provinciaFiscal || provinciaFiscal === "0") throw dato("El cliente de la NP no tiene provincia en Zomatik: cargala antes de remitir.")
     const faltaObra = !entregaLocalidad.trim() ? "la localidad" : !entregaDireccion.trim() || !lote.trim() ? "el nombre o la dirección" : null
     if (faltaObra) {
       const fr = new Freno("revisar", `Completar ${faltaObra} de la obra y tocar "Remitir en Zomatik". No se grabó nada.`)
@@ -423,7 +426,7 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     }
     await marcar("grabar_remito", { numero })
     const valores: Record<string, string> = {
-      comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1", provincia_fiscal: provinciaFiscal,
+      ...delCliente, comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1",
       entrega_direccion: entregaDireccion, entrega_localidad: entregaLocalidad, lote, patente: d.patente || "", observaciones: d.observaciones, observacionesimp: d.observacionesimp,
     }
     // "Continuar" precarga TODO lo pendiente: el renglón del artículo va con los m³ del día y todos los demás en 0

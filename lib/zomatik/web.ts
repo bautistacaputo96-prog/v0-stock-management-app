@@ -112,6 +112,7 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   POST grabar_ordenfabricacion.php?codigo=0              grabar la OF (solo alta)
  *   GET  modificar_remitos.php?pedido=N                    remito desde la NP (link REMITO del listado de pedidos)
  *   GET  modificar_remitos.php?codigo=N                    abrir un remito (verificar la marca)
+ *   GET  traerdatossecundarios.php?fcliente=N              los datos del cliente que el alta del remito no trae en el HTML
  *   GET  manage_remitos.php?…fpedido=N…                    "Continuar": los ítems pendientes de la NP
  *   GET  _validarnumeroremito.php?fcomprobante=7|19&fnumero=…   el número tipeado está libre y dentro del talonario
  *   GET  listado_remitos.php / POST …?enviado=1            el buscador: arma el sql del paginado con los filtros
@@ -128,6 +129,7 @@ export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
   if (/^listado_(ordenfabricacion|remitos)\.php$/i.test(p)) return true
   if (/^manage_ordenfabricacion\.php\?/i.test(p)) return /[?&]ordenfabricacion_unico=[A-Za-z0-9._-]+/.test(p) && /[?&]ordenfabricacion=0(&|$)/.test(p)
   if (/^modificar_remitos\.php\?(pedido|codigo)=\d+$/i.test(p)) return true
+  if (/^traerdatossecundarios\.php\?fcliente=\d+(&rnd=\d+)?$/i.test(p)) return true
   if (/^manage_remitos\.php\?/i.test(p)) return /[?&]fpedido=\d+/.test(p)
   if (/^_validarnumeroremito\.php\?fcomprobante=(7|19)&fnumero=\d{4}-\d{8}(&rnd=\d+)?$/i.test(p)) return true
   return false

@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (33) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (35) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1912,3 +1912,14 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - `elegirNumeroRemito` corre dentro de `ejecutar` y devuelve un resultado.
 - **Errores:** toda excepción que no sea de Zomatik queda como `Error interno: <mensaje>` en `zomatik_remitos.mensaje` y en Actividad (una vez por mensaje), con el stack en `console.error`. Los `Freno` llegan con su mensaje y su recorte.
 - Si `elegir_numero` queda en "revisar", "Remitir en Zomatik" lo reintenta: es antes de grabar.
+
+### 26.14 Datos del cliente y provincia fiscal (30/10, rama `fix/z1-provincia`)
+- Segunda prueba real: el listado se leyó y eligió 0099-00002756, pero frenó en `formulario_remito` con "no tiene provincia", sin grabar.
+- `modificar_remitos.php?pedido=N` **no trae** dirección ni provincia en el HTML: la página las pide a `traerdatossecundarios.php?fcliente=N`, igual que la NP.
+- **Arreglo:**
+  - el robot pide `traerdatossecundarios.php` y completa `direccion`, `localidad`, `provincia`, `cp`, `cuit` y `condicion_pago` si vienen vacíos;
+  - esa ruta se sumó al grupo de Z1 (solo estaba en el de la NP);
+  - `provincia_fiscal` = **1 Buenos Aires** salvo que el formulario traiga otra: es la de la entrega (remito de La Tercera: provincia 4, fiscal 1);
+  - sin provincia del cliente va 1: ya no se frena por eso;
+  - si la respuesta no se entiende, frena sin grabar, como todo el robot.
+- **Reintento con número guardado:** "Remitir en Zomatik" usa ese número; si ya está usado, sigue con el siguiente (hasta 5). No rehace la OF.

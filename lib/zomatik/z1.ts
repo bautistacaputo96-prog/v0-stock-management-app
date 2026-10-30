@@ -8,7 +8,7 @@
  *   - Lectura de las páginas de la OF (alta y JavaScript capturados el 29/10; la lista, como el robot real de Concretus)
  *     y del remito (alta, Validarremito, manage_remitos y _validarnumeroremito capturados el 29/10).
  */
-import { camposFormulario, numeroNormalizado, type CampoForm } from "@/lib/zomatik/np"
+import { camposFormulario, numeroNormalizado, type CampoForm, type DatosCliente } from "@/lib/zomatik/np"
 
 const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
 const TOL = 0.001
@@ -272,6 +272,24 @@ export const CAMPOS_REMITO = [
   "remitos", "idcliente", "provincia", "provincia_fiscal", "comprobante", "numero", "fecha", "fentrega", "deposito", "patente",
   "observaciones", "observacionesimp", "lote", "entrega_direccion", "entrega_localidad",
 ] as const
+
+/** Provincia de la entrega: 1 Buenos Aires (remitos reales, 30/10: fiscal 1 aunque el cliente sea de Capital). */
+export const PROVINCIA_BUENOS_AIRES = "1"
+
+const vacioForm = (v: string | undefined) => !v || !v.trim() || v.trim() === "0"
+
+/**
+ * Los datos del cliente que `frm_remitos` no trae en el HTML: la página los pide a traerdatossecundarios.php (índices
+ * en `datosSecundarios`). Solo se completa lo que el formulario trae vacío. `provincia_fiscal` es la de la entrega:
+ * Buenos Aires, salvo que el formulario traiga otra.
+ */
+export function datosClienteRemito(campos: Record<string, string>, c: DatosCliente): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of ["direccion", "localidad", "provincia", "cp", "cuit", "condicion_pago"] as const) if (vacioForm(campos[k]) && c[k]) out[k] = c[k]
+  if (vacioForm(campos.provincia) && !out.provincia) out.provincia = PROVINCIA_BUENOS_AIRES
+  out.provincia_fiscal = vacioForm(campos.provincia_fiscal) ? PROVINCIA_BUENOS_AIRES : campos.provincia_fiscal
+  return out
+}
 
 export function formularioRemito(html: string) {
   return camposFormulario(html, /grabar_remitos/i)
