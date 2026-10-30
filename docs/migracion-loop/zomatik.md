@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (30) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (33) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1898,3 +1898,17 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 - **Búsqueda por número** (corte y verificación): por fechas (del día del remito a hoy), sin `bus_numero`, porque no sabemos qué formato toma ese filtro.
 - `listado_ordenfabricacion` y `listado_pedidos` **no** usan paginar: traen las filas en el HTML. La OF 3412 se verificó así, el robot de Concretus graba OF en vivo así y `listado_pedidos` pagina del lado del servidor (`?pagina=2`).
 - La fila `e3cb1f6c` sigue en "pendiente" con la OF ok y sin número de remito: con el arreglo publicado, la pasada de cada 10 min hace solo el remito. No hay que tocar la base.
+
+### 26.13 "Error leyendo Zomatik" tapaba el error real (30/10, rama `fix/z1-error-real`)
+- Después de `70c76be`, la fila `e3cb1f6c` siguió en `elegir_numero` con "Error leyendo Zomatik".
+- **Por qué se tapaba (seguro):** `elegirNumeroRemito` corría fuera de `ejecutar`, así que sus `Freno` llegaban al `catch` de `procesarZ1`, y `mensajeZomatik` devuelve ese texto para todo lo que no sea `ZomatikError`.
+- **Causa probable (reproducida solo con simulación; no se pudo mirar la página real):** `valorDeInput` cortaba el tag en el primer `>`. El `#sql` trae `>=` crudo dentro de `value="…"` al filtrar por fechas, así que `fsql` quedaba en `"select`, el paginado no traía `registros_total` y el robot frenaba.
+- **Arreglo:**
+  - el tag se lee respetando las comillas;
+  - un sql que no sea un `select … from` entero nunca se manda;
+  - `fsql` va en UTF-8, como `$.post`, y con las entidades decodificadas como el navegador;
+  - `bus_sucursal` se busca por /REBUCRET/ sin anclar;
+  - los hidden del paginado no se reenvían al buscador;
+  - `elegirNumeroRemito` corre dentro de `ejecutar` y devuelve un resultado.
+- **Errores:** toda excepción que no sea de Zomatik queda como `Error interno: <mensaje>` en `zomatik_remitos.mensaje` y en Actividad (una vez por mensaje), con el stack en `console.error`. Los `Freno` llegan con su mensaje y su recorte.
+- Si `elegir_numero` queda en "revisar", "Remitir en Zomatik" lo reintenta: es antes de grabar.

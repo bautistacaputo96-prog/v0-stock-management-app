@@ -19,7 +19,7 @@ import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { actividadNp, avisarGerenciales } from "@/lib/zomatik/np-servidor"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
-import { elegirNumeroRemito, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
+import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
   MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
   type DespachoZ1, type NpZ1,
@@ -178,7 +178,9 @@ async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): 
   return ((data as unknown[]) || []).length > 0
 }
 
-class Cambio extends Error {}
+class Cambio extends Error {
+  name = "Cambio"
+}
 
 /** Los despachos del remito, como están hoy (anular_despacho los borra; editar_despacho cambia los m³). */
 async function despachosActuales(sb: SB, ids: string[]) {
@@ -255,7 +257,7 @@ export async function controlarCambiosZ1(usuario: string, o: { dias?: string[]; 
 }
 
 /** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir"). */
-const PASOS_ANTES_DE_GRABAR = ["formulario_remito", "continuar_remito", "numero_remito"]
+const PASOS_ANTES_DE_GRABAR = ["elegir_numero", "formulario_remito", "continuar_remito", "numero_remito"]
 
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
@@ -394,8 +396,12 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         // El número es una entrada aparte: el que ya se eligió (y se guardó) o el más alto del talonario + 1
         let numero = r.remito_numero ? r.remito_numero.replace(/^RM2?\s+/i, "") : null
         if (!numero) {
-          await alPaso("elegir_numero")
-          numero = await dep.robot.elegirNumeroRemito(nav, r.comprobante, { hoy: hoyAR() })
+          const el = await dep.robot.elegirNumeroRemito(nav, r.comprobante, { hoy: hoyAR(), alPaso })
+          if (el.estado !== "ok" || !el.numero) {
+            await terminar(el, "remito")
+            continue
+          }
+          numero = el.numero
           await alPaso("numero_elegido", { numero })
         }
         // Si falla, la OF queda hecha y el remito se reintenta solo (no se repite la OF)
@@ -418,8 +424,11 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           hechas.push({ id: r.id, estado: "cambió", mensaje: e.message })
           continue
         }
-        const m = mensajeZomatik(e) || (e as Error)?.message || "Error"
+        // Lo que no es de Zomatik no se tapa: "Error interno: …" en la fila y en Actividad (una vez), el stack en console.error
+        const interno = errorInterno(e)
+        const m = interno ?? mensajeZomatik(e)
         await guardarSi(sb, r.id, { estado: "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(10) })
+        if (interno && interno !== r.mensaje) await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": "OF o remito: error interno", Mensaje: interno, Paso: r.paso } })
         hechas.push({ id: r.id, estado: "pendiente", mensaje: m })
         if (/sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break
       }

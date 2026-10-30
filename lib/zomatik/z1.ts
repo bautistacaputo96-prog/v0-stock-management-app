@@ -489,35 +489,50 @@ export const MAX_SIN_STOCK = 6
 
 /** Entidades HTML como las decodifica el navegador al leer `.value` (con nombre comunes y numéricas). */
 export function decodificarEntidades(s: string): string {
-  const nombres: Record<string, string> = { quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: "\u00a0" }
+  const nombres: Record<string, string> = {
+    quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: "\u00a0",
+    aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ", uuml: "ü", Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú", Ntilde: "Ñ", Uuml: "Ü",
+  }
   return String(s ?? "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
     if (e[0] === "#") {
       const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
       return Number.isFinite(n) ? String.fromCharCode(n) : m
     }
-    return nombres[e.toLowerCase()] ?? m
+    return nombres[e] ?? nombres[e.toLowerCase()] ?? m
   })
 }
 
-/** El valor (decodificado) del input con ese id o name; null si no está. */
+/** Los atributos de un tag, respetando las comillas (un valor puede traer ">" o "name="). */
+function atributosDe(tag: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const m of tag.replace(/^<\w+/, "").matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)) {
+    const k = m[1].toLowerCase()
+    if (!(k in out)) out[k] = m[2] ?? m[3] ?? m[4] ?? ""
+  }
+  return out
+}
+
+/**
+ * El valor (decodificado) del input con ese id o name; null si no está. El tag se corta respetando las comillas: el
+ * `#sql` trae ">=" y "<>" crudos dentro de value="…" (con `<input[^>]*>` el valor quedaba en `"select`).
+ */
 export function valorDeInput(html: string, id: string): string | null {
-  for (const tag of String(html ?? "").match(/<input\b[^>]*>/gi) ?? []) {
-    const re = new RegExp(`\\b(?:id|name)\\s*=\\s*["']?${id}["'\\s>/]`, "i")
-    if (!re.test(tag)) continue
-    const m = tag.match(/\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
-    return decodificarEntidades(m ? (m[1] ?? m[2] ?? m[3] ?? "") : "")
+  for (const tag of String(html ?? "").match(/<input\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi) ?? []) {
+    const a = atributosDe(tag)
+    if (a.id === id || a.name === id) return decodificarEntidades(a.value ?? "")
   }
   return null
 }
 
 /**
  * Lo que necesita el paginado del listado (TraerPaginado): `#paginar_archivo` ("remitos"), `#sql` (la consulta que arma
- * Zomatik con los filtros) y `#query_string`. null si falta el sql o el archivo.
+ * Zomatik con los filtros) y `#query_string`. null si falta el archivo o el sql no es una consulta entera (un sql
+ * cortado nunca se manda).
  */
 export function paginadoDe(html: string): { archivo: string; sql: string; qs: string } | null {
   const archivo = valorDeInput(html, "paginar_archivo")
   const sql = valorDeInput(html, "sql")
-  if (!archivo || !sql) return null
+  if (!archivo || !sql || !/^\s*select\b[\s\S]*\bfrom\b/i.test(sql)) return null
   return { archivo, sql, qs: valorDeInput(html, "query_string") ?? "" }
 }
 

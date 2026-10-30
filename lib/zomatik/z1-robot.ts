@@ -73,7 +73,17 @@ class Freno extends Error {
 const formato = (que: string, m: string, html?: string) => new Freno("error", `Zomatik cambió el formulario de ${que} (${m}). No se mandó nada.`, false, html)
 const dato = (m: string) => new Freno("error", m, false)
 const esDeRed = (e: unknown) => ["sin_respuesta", "sesion_caida", "login_bloqueado", "sin_credenciales"].includes(String((e as { codigo?: string })?.codigo || ""))
-const mensajeDe = (e: unknown) => (e instanceof Error ? e.message : String(e || "Error de Zomatik"))
+/**
+ * Una excepción que no es de Zomatik (ZomatikError trae `codigo`) es un error nuestro: no se tapa. Va "Error interno:
+ * <mensaje>" a la fila y a Actividad, y el stack a console.error.
+ */
+export function errorInterno(e: unknown): string | null {
+  const x = e as { codigo?: unknown; name?: string; message?: string; stack?: string } | null
+  if (typeof x?.codigo === "string" || x?.name === "Cambio") return null
+  console.error("[zomatik-z1] error interno:", x?.stack || x?.message || e)
+  return `Error interno: ${x?.message || String(e)}`
+}
+const mensajeDe = (e: unknown) => errorInterno(e) ?? (e instanceof Error ? e.message : String(e || "Error de Zomatik"))
 const ascii = (s: string) => {
   const out = new Uint8Array(s.length)
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 255
@@ -261,15 +271,18 @@ async function filasRemitos(nav: NavegadorNp, filtros: Record<string, string>, a
   const pag = await nav.get("listado_remitos.php")
   const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("el remito", "buscador de remitos", pag.html)
-  const suc = opcionDeSelect(pag.html, "bus_sucursal", /^REBUCRET$/i)
+  const suc = opcionDeSelect(pag.html, "bus_sucursal", /REBUCRET/i)
   if (!suc) throw formato("el remito", "el buscador de remitos no tiene la sucursal REBUCRET", pag.html)
-  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: "", bus_sucursal: suc, ...filtros }))), "application/x-www-form-urlencoded")
+  // Sin los hidden del paginado: los arma Zomatik con los filtros, no son filtros
+  const { sql: _sql, paginar_archivo: _archivo, query_string: _qs, ...buscador } = f.campos
+  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...buscador, exportar: "0", bus_numero: "", bus_sucursal: suc, ...filtros }))), "application/x-www-form-urlencoded")
   if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
   const p = paginadoDe(r.html)
   if (!p || p.archivo !== "remitos") throw formato("el remito", p ? `el listado pagina con "${p.archivo}"` : "el listado no trae el sql del paginado", r.html)
   const out: { codigo: number; numero: string }[] = []
   for (let pagina = 1; ; pagina++) {
-    const body = queryLatin1([["fpagina", String(pagina)], ["fregistros", "100"], ["fsql", p.sql], ["fqs", p.qs]])
+    // Como $.post de la página: encodeURIComponent (UTF-8), no latin1. fsql va tal cual vino.
+    const body = [["fpagina", String(pagina)], ["fregistros", "100"], ["fsql", p.sql], ["fqs", p.qs]].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&")
     const res = await nav.post(`paginar_remitos.php?rnd=${azar()}`, ascii(body), "application/x-www-form-urlencoded")
     if (res.status !== 200) throw formato("el remito", `el paginado respondió HTTP ${res.status}`, res.html)
     const total = registrosTotal(res.html)
@@ -311,13 +324,16 @@ const restarDias = (f: string, n: number) => {
  * el más reciente por fecha. Es una entrada aparte: generarRemito lo valida justo antes de
  * grabar y, si está usado, prueba los siguientes.
  */
-export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "19", o: { hoy: string; azar?: () => number }): Promise<string> {
+export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "19", o: OpcionesZ1): Promise<ResultadoZ1> {
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
-  await aRebucret(nav)
-  const filas = await filasRemitos(nav, { bus_fechad: restarDias(o.hoy, 60), bus_fechah: diaSiguiente(o.hoy) }, azar)
-  const numero = siguienteNumeroRemito(filas.map((x) => x.numero), comprobante)
-  if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`)
-  return numero
+  return ejecutar(o, async (marcar) => {
+    await marcar("elegir_numero")
+    await aRebucret(nav)
+    const filas = await filasRemitos(nav, { bus_fechad: restarDias(o.hoy, 60), bus_fechah: diaSiguiente(o.hoy) }, azar)
+    const numero = siguienteNumeroRemito(filas.map((x) => x.numero), comprobante)
+    if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`)
+    return { estado: "ok", mensaje: null, numero, paso: "elegir_numero" }
+  })
 }
 
 const siguiente = (numero: string) => `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`
