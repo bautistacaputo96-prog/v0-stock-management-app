@@ -114,14 +114,16 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   GET  modificar_remitos.php?codigo=N                    abrir un remito (verificar la marca)
  *   GET  manage_remitos.php?…fpedido=N…                    "Continuar": los ítems pendientes de la NP
  *   GET  _validarnumeroremito.php?fcomprobante=7|19&fnumero=…   el número tipeado está libre y dentro del talonario
- *   GET  listado_remitos.php / POST …?enviado=1            el mayor número de la serie y la verificación
+ *   GET  listado_remitos.php / POST …?enviado=1            el buscador: arma el sql del paginado con los filtros
+ *   POST paginar_remitos.php[?rnd=N]                       LECTURA: las filas del listado (las trae el JavaScript,
+ *                                                          TraerPaginado; fsql = el hidden #sql de la página, tal cual)
  *   POST grabar_remitos.php?codigo=0                       grabar el remito (solo alta)
  * Nunca borrar, anular ni modificar uno existente.
  */
 export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
   const p = path.replace(/^\/+/, "")
   if (Z1_PROHIBIDO.test(p)) return false
-  if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p)
+  if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p) || /^paginar_remitos\.php(\?rnd=\d+)?$/i.test(p)
   if (/^modificar_ordenfabricacion\.php(\?codigo=\d+)?$/i.test(p)) return true
   if (/^listado_(ordenfabricacion|remitos)\.php$/i.test(p)) return true
   if (/^manage_ordenfabricacion\.php\?/i.test(p)) return /[?&]ordenfabricacion_unico=[A-Za-z0-9._-]+/.test(p) && /[?&]ordenfabricacion=0(&|$)/.test(p)

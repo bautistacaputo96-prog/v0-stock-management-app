@@ -20,7 +20,8 @@ import {
 } from "@/lib/zomatik/np"
 import {
   CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, esItemDe, esMultipart, fparamOf, formularioOf,
-  formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, siguienteNumeroRemito, tieneDeposito,
+  formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, opcionDeSelect, paginadoDe, registrosTotal,
+  siguienteNumeroRemito, tieneDeposito,
   tieneTransporte, type FilaOf,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
@@ -243,20 +244,54 @@ export type DatosRemito = {
   buscarAntes: boolean
 }
 
+/** Tope de páginas del paginado de remitos (si hay más, se frena sin grabar). */
+const MAX_PAGINAS_REMITOS = 40
+
 /**
- * El remito con ese número en el listado de REBUCRET (la primera página, sin filtro, y el buscador por número y
- * fechas: con fechas vacías el POST no trajo filas, 29/10). null si no está; si está, se abre y se lee la marca:
+ * Las filas del listado de remitos de REBUCRET con esos filtros. Las filas NO vienen en el HTML (prueba real del
+ * 29/10): las carga el JavaScript (TraerPaginado) con POST paginar_remitos.php y `fsql` = el hidden `#sql`.
+ *   1. GET listado_remitos.php (el buscador) y la sucursal REBUCRET de su select;
+ *   2. POST listado_remitos.php?enviado=1 con los filtros, y de ESA respuesta los hidden sql, paginar_archivo y
+ *      query_string;
+ *   3. POST paginar_remitos.php con fsql TAL CUAL vino (nunca se arma ni se modifica), página por página hasta
+ *      registros_total.
+ * Si algo no tiene esa forma (otro archivo, sin sql, sin total, demasiadas páginas), error sin grabar.
+ */
+async function filasRemitos(nav: NavegadorNp, filtros: Record<string, string>, azar: () => number): Promise<{ codigo: number; numero: string }[]> {
+  const pag = await nav.get("listado_remitos.php")
+  const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
+  if (!f) throw formato("el remito", "buscador de remitos", pag.html)
+  const suc = opcionDeSelect(pag.html, "bus_sucursal", /^REBUCRET$/i)
+  if (!suc) throw formato("el remito", "el buscador de remitos no tiene la sucursal REBUCRET", pag.html)
+  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: "", bus_sucursal: suc, ...filtros }))), "application/x-www-form-urlencoded")
+  if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
+  const p = paginadoDe(r.html)
+  if (!p || p.archivo !== "remitos") throw formato("el remito", p ? `el listado pagina con "${p.archivo}"` : "el listado no trae el sql del paginado", r.html)
+  const out: { codigo: number; numero: string }[] = []
+  for (let pagina = 1; ; pagina++) {
+    const body = queryLatin1([["fpagina", String(pagina)], ["fregistros", "100"], ["fsql", p.sql], ["fqs", p.qs]])
+    const res = await nav.post(`paginar_remitos.php?rnd=${azar()}`, ascii(body), "application/x-www-form-urlencoded")
+    if (res.status !== 200) throw formato("el remito", `el paginado respondió HTTP ${res.status}`, res.html)
+    const total = registrosTotal(res.html)
+    if (total === null) throw formato("el remito", "el paginado no trae registros_total", res.html)
+    const filas = listadoRemitos(res.html)
+    out.push(...filas)
+    if (!filas.length || out.length >= total) break
+    if (pagina >= MAX_PAGINAS_REMITOS) throw formato("el remito", `el listado tiene más de ${MAX_PAGINAS_REMITOS} páginas`)
+  }
+  return out
+}
+
+/**
+ * El remito con ese número en el listado de REBUCRET (por fechas: del día del remito a hoy). null si no está; si está,
+ * se abre y se lee la marca:
  *   "nuestro"  tiene nuestra marca;
  *   "otro"     se leyó y no la tiene (lo cargó otro);
  *   "ilegible" no se pudo leer (sin formulario u observaciones): no se sabe de quién es.
  */
-async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, desde: string, hoy: string): Promise<{ codigo: number; numero: string; de: "nuestro" | "otro" | "ilegible" } | null> {
-  const pag = await nav.get("listado_remitos.php")
-  const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
-  if (!f) throw formato("el remito", "buscador de remitos", pag.html)
-  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: numero, bus_fechad: desde, bus_fechah: diaSiguiente(hoy) }))), "application/x-www-form-urlencoded")
-  if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
-  const fila = [...listadoRemitos(r.html), ...listadoRemitos(pag.html)].find((x) => numeroNormalizado(x.numero) === numeroNormalizado(numero))
+async function remitoPorNumero(nav: NavegadorNp, numero: string, marca: string, desde: string, hoy: string, azar: () => number): Promise<{ codigo: number; numero: string; de: "nuestro" | "otro" | "ilegible" } | null> {
+  const filas = await filasRemitos(nav, { bus_fechad: desde, bus_fechah: diaSiguiente(hoy) }, azar)
+  const fila = filas.find((x) => numeroNormalizado(x.numero) === numeroNormalizado(numero))
   if (!fila) return null
   const p = await nav.get(`modificar_remitos.php?codigo=${fila.codigo}`)
   const fr = formularioRemito(p.html)
@@ -272,20 +307,16 @@ const restarDias = (f: string, n: number) => {
 
 /**
  * El número del remito (Bautista 29/10, "del anterior"): el MÁS ALTO del talonario del comprobante en la sucursal 18
- * (RM 0001, RM2 0099) + 1. Mira la primera página del listado (lo último) y el buscador de los últimos 60 días, y se
- * queda con el más alto (no el más reciente por fecha). Es una entrada aparte: generarRemito lo valida justo antes de
+ * (RM 0001, RM2 0099) + 1, entre los remitos de REBUCRET de los últimos 60 días (todas las páginas del paginado), no
+ * el más reciente por fecha. Es una entrada aparte: generarRemito lo valida justo antes de
  * grabar y, si está usado, prueba los siguientes.
  */
-export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "19", o: { hoy: string }): Promise<string> {
+export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "19", o: { hoy: string; azar?: () => number }): Promise<string> {
+  const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   await aRebucret(nav)
-  const pag = await nav.get("listado_remitos.php")
-  if (sucursalDe(pag.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, pag.html)
-  const f = camposFormulario(pag.html, /listado_remitos\.php\?enviado=1|name="formulario"/i)
-  if (!f) throw formato("el remito", "buscador de remitos", pag.html)
-  const r = await nav.post("listado_remitos.php?enviado=1", ascii(queryLatin1(Object.entries({ ...f.campos, exportar: "0", bus_numero: "", bus_fechad: restarDias(o.hoy, 60), bus_fechah: diaSiguiente(o.hoy) }))), "application/x-www-form-urlencoded")
-  if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) throw new Freno("revisar", "El listado de remitos vino de otra sucursal (otro sistema la cambió). No se sigue.", false, r.html)
-  const numero = siguienteNumeroRemito([...listadoRemitos(pag.html), ...listadoRemitos(r.html)].map((x) => x.numero), comprobante)
-  if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`, r.html)
+  const filas = await filasRemitos(nav, { bus_fechad: restarDias(o.hoy, 60), bus_fechah: diaSiguiente(o.hoy) }, azar)
+  const numero = siguienteNumeroRemito(filas.map((x) => x.numero), comprobante)
+  if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`)
   return numero
 }
 
@@ -305,7 +336,7 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     let guardadoNoEsta = false
     if (d.buscarAntes) {
       await marcar("buscar_remito")
-      const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
+      const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy, azar)
       if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "buscar_remito", grabado: true }
       // No se pudo leer: puede ser el nuestro. Nunca se pasa al siguiente número.
       if (x?.de === "ilegible") return { estado: "revisar", mensaje: `El remito ${pref} ${numero} existe pero no se pudo leer: puede ser el nuestro de un corte. Revisalo en Zomatik antes de seguir.`, paso: "buscar_remito", grabado: true }
@@ -390,7 +421,7 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     const no = rechazo(g)
 
     await marcar("verificar_remito")
-    const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy)
+    const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy, azar)
     if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true }
     if (!x && no) return { estado: "error", mensaje: `Zomatik no aceptó el remito: ${no}`, paso: "grabar_remito", recorte: recorte(g.html) }
     return { estado: "revisar", mensaje: x ? `El remito ${pref} ${numero} existe pero ${x.de === "ilegible" ? "no se pudo leer" : "sin la marca"}: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${pref} ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }

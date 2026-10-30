@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (29) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (30) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1883,3 +1883,18 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - Al buscar un remito por número hay tres resultados: con nuestra marca, leído sin la marca (de otro: se pasa al número siguiente) y no se pudo leer ("revisar", nunca el siguiente).
   - La marca va **primero** en las observaciones del remito, así no se pierde si Zomatik recorta el texto. La búsqueda la encuentra en cualquier lugar.
   - Si se cortó en `grabar_of`, `verificar_of` o `buscar_of`, la OF pudo quedar grabada: con despachos cambiados se trata como OF hecha ("revisar" y aviso, sin ajustar el remito).
+
+### 26.12 Primera prueba real (29/10, 18:44): el listado de remitos se pagina con JavaScript
+- La OF salió bien: OF 0001-00003412, código 8188. El remito frenó en `elegir_numero` sin grabar nada: `listado_remitos.php` **no trae las filas en el HTML**, ni por GET ni por POST.
+- Las filas las carga `TraerPaginado` con `POST paginar_<#paginar_archivo>.php`, mandando `fpagina`, `fregistros`, `fsql` = el hidden `#sql` y `fqs` = `#query_string`.
+- **Arreglo** (rama `fix/z1-listado-remitos`):
+  - el robot hace `POST listado_remitos.php?enviado=1` con los filtros: la sucursal REBUCRET del select `bus_sucursal` y las fechas;
+  - de **esa** respuesta lee `sql`, `paginar_archivo` y `query_string`, con las entidades decodificadas como el navegador;
+  - postea `paginar_remitos.php` con `fsql` **tal cual**: nunca se arma ni se modifica;
+  - recorre las páginas hasta `registros_total`, con un tope de 40.
+  - Si `paginar_archivo` no es "remitos", falta `sql` o falta el total: error sin grabar.
+  - `paginar_remitos.php` (POST) es una lectura en el grupo de Z1: solo la usa el navegador de Z1, no la lectura general.
+- **Número más alto:** entre los remitos de REBUCRET de los últimos 60 días, todas las páginas. Se filtra por sucursal: el listado tiene remitos de todas las sucursales (había un RM 0001-00017456).
+- **Búsqueda por número** (corte y verificación): por fechas (del día del remito a hoy), sin `bus_numero`, porque no sabemos qué formato toma ese filtro.
+- `listado_ordenfabricacion` y `listado_pedidos` **no** usan paginar: traen las filas en el HTML. La OF 3412 se verificó así, el robot de Concretus graba OF en vivo así y `listado_pedidos` pagina del lado del servidor (`?pagina=2`).
+- La fila `e3cb1f6c` sigue en "pendiente" con la OF ok y sin número de remito: con el arreglo publicado, la pasada de cada 10 min hace solo el remito. No hay que tocar la base.

@@ -481,3 +481,62 @@ export function ultimosDias(hoy: string, n: number): string[] {
 
 /** Intentos sin stock antes de "revisar" (cada 10 min: 1 hora). */
 export const MAX_SIN_STOCK = 6
+
+// ---------------------------------------------------------------------------
+// Listado de remitos: las filas NO vienen en el HTML (prueba real del 29/10). Las trae después el JavaScript
+// (TraerPaginado) con POST paginar_<#paginar_archivo>.php y fsql = el hidden #sql de la página, tal cual.
+// ---------------------------------------------------------------------------
+
+/** Entidades HTML como las decodifica el navegador al leer `.value` (con nombre comunes y numéricas). */
+export function decodificarEntidades(s: string): string {
+  const nombres: Record<string, string> = { quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: "\u00a0" }
+  return String(s ?? "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === "#") {
+      const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
+      return Number.isFinite(n) ? String.fromCharCode(n) : m
+    }
+    return nombres[e.toLowerCase()] ?? m
+  })
+}
+
+/** El valor (decodificado) del input con ese id o name; null si no está. */
+export function valorDeInput(html: string, id: string): string | null {
+  for (const tag of String(html ?? "").match(/<input\b[^>]*>/gi) ?? []) {
+    const re = new RegExp(`\\b(?:id|name)\\s*=\\s*["']?${id}["'\\s>/]`, "i")
+    if (!re.test(tag)) continue
+    const m = tag.match(/\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+    return decodificarEntidades(m ? (m[1] ?? m[2] ?? m[3] ?? "") : "")
+  }
+  return null
+}
+
+/**
+ * Lo que necesita el paginado del listado (TraerPaginado): `#paginar_archivo` ("remitos"), `#sql` (la consulta que arma
+ * Zomatik con los filtros) y `#query_string`. null si falta el sql o el archivo.
+ */
+export function paginadoDe(html: string): { archivo: string; sql: string; qs: string } | null {
+  const archivo = valorDeInput(html, "paginar_archivo")
+  const sql = valorDeInput(html, "sql")
+  if (!archivo || !sql) return null
+  return { archivo, sql, qs: valorDeInput(html, "query_string") ?? "" }
+}
+
+/** `id="registros_total"` del paginado (input o texto): el total de filas. */
+export function registrosTotal(html: string): number | null {
+  const v = valorDeInput(html, "registros_total")
+  const t = v ?? String(html ?? "").match(/id\s*=\s*["']?registros_total["']?[^>]*>([^<]*)</i)?.[1]
+  const n = Number(String(t ?? "").replace(/[^\d]/g, ""))
+  return t !== undefined && t !== null && String(t).trim() !== "" && Number.isFinite(n) ? n : null
+}
+
+/** El value de la opción de un select cuyo texto coincide (p. ej. la sucursal REBUCRET del buscador). */
+export function opcionDeSelect(html: string, nombre: string, texto: RegExp): string | null {
+  const sel = String(html ?? "").match(new RegExp(`<select\\b[^>]*name\\s*=\\s*["']?${nombre}["'\\s>][\\s\\S]*?</select>`, "i"))?.[0]
+  if (!sel) return null
+  for (const m of sel.matchAll(/<option\b([^>]*)>([\s\S]*?)(?=<option\b|<\/select>)/gi)) {
+    if (!texto.test(m[2].replace(/<[^>]+>/g, " ").trim())) continue
+    const v = m[1].match(/\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+    return v ? (v[1] ?? v[2] ?? v[3] ?? "") : null
+  }
+  return null
+}
