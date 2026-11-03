@@ -63,23 +63,39 @@ const inicioDia = (dia: string) => new Date(`${dia}T03:00:00.000Z`).toISOString(
 
 export type ResultadoPreparar = { activo: false; motivo: string } | { activo: true; creados: number; problemas: string[] }
 
-export async function prepararRemitos(pedidoId: string, dia: string, usuario: string, sb: SB = sbServicio()): Promise<ResultadoPreparar> {
+/** Cuántos días para atrás se miran los despachos sin remitir de un pedido. */
+const DIAS_SIN_REMITIR = 7
+
+/**
+ * Los remitos de un pedido: TODOS sus despachos que todavía no están en un remito (desde que se prendió la llave y de
+ * los últimos 7 días), agrupados por el DÍA REAL del despacho en Argentina (no el día programado: un pedido del 04/11
+ * despachado el 03/11 se remite con fecha 03/11). Un remito por día y por NP, con la marca de ese día.
+ * `diaPantalla`: el día que mostraba la pantalla; ya no filtra (solo para el mensaje).
+ */
+export async function prepararRemitos(pedidoId: string, diaPantalla: string | null, usuario: string, sb: SB = sbServicio()): Promise<ResultadoPreparar> {
+  void diaPantalla
   const { data: p } = await sb.from("scheduled_dispatches").select("id, plant_id, construction_site_id").eq("id", pedidoId).maybeSingle()
   if (!p) return { activo: false, motivo: "El pedido no existe" }
   const ped = p as { id: string; plant_id: string }
   const cfg = (await configZ1(sb))[ped.plant_id]
   if (!llaveZ1(cfg)) return { activo: false, motivo: "OF y remito: se cargan a mano en Zomatik" }
-  const fin = new Date(Date.parse(inicioDia(dia)) + 86400_000).toISOString()
-  let q = sb.from("dispatches").select("id, quantity_m3, remito, remito_tipo, formula_id, plant_id, created_at, is_test_dispatch, mixers(license_plate)").eq("scheduled_dispatch_id", ped.id).gte("dispatch_date", inicioDia(dia)).lt("dispatch_date", fin)
+  const dias = ultimosDias(hoyAR(), DIAS_SIN_REMITIR)
+  let q = sb.from("dispatches").select("id, quantity_m3, remito, remito_tipo, formula_id, plant_id, created_at, dispatch_date, is_test_dispatch, mixers(license_plate)").eq("scheduled_dispatch_id", ped.id).gte("dispatch_date", inicioDia(dias[dias.length - 1]))
   if (cfg!.remitir_desde) q = q.gte("created_at", cfg!.remitir_desde)
   const { data: ds, error: ed } = await q
   if (ed) throw ed
-  const despachos: DespachoZ1[] = ((ds as any[]) || [])
-    .filter((d) => !d.is_test_dispatch)
-    .map((d) => ({ id: d.id, m3: Number(d.quantity_m3) || 0, remito: d.remito ?? null, remito_tipo: d.remito_tipo ?? null, patente: d.mixers?.license_plate ?? null, formula_id: d.formula_id ?? null, plant_id: d.plant_id ?? null, created_at: d.created_at }))
-  if (!despachos.length) return { activo: true, creados: 0, problemas: [] }
-  const { data: ya } = await sb.from("zomatik_remito_despachos").select("dispatch_id").in("dispatch_id", despachos.map((d) => d.id))
+  const todos = ((ds as any[]) || []).filter((d) => !d.is_test_dispatch && d.dispatch_date)
+  if (!todos.length) return { activo: true, creados: 0, problemas: [] }
+  const { data: ya } = await sb.from("zomatik_remito_despachos").select("dispatch_id").in("dispatch_id", todos.map((d) => d.id))
   const yaRemitidos = new Set(((ya as { dispatch_id: string }[]) || []).map((x) => x.dispatch_id))
+  // Por el día real del despacho (Argentina)
+  const porDia = new Map<string, DespachoZ1[]>()
+  for (const d of todos) {
+    if (yaRemitidos.has(d.id)) continue
+    const dia = diaAR(d.dispatch_date)
+    porDia.set(dia, [...(porDia.get(dia) || []), { id: d.id, m3: Number(d.quantity_m3) || 0, remito: d.remito ?? null, remito_tipo: d.remito_tipo ?? null, patente: d.mixers?.license_plate ?? null, formula_id: d.formula_id ?? null, plant_id: d.plant_id ?? null, created_at: d.created_at }])
+  }
+  if (!porDia.size) return { activo: true, creados: 0, problemas: [] }
   // Las NP que usa el pedido (en el orden de sus usos)
   const { data: us } = await sb.from("zomatik_np_uso").select("np_id, m3, created_at").eq("scheduled_dispatch_id", ped.id).eq("activo", true).order("created_at")
   const usos = (us as { np_id: string; m3: number; created_at: string }[]) || []
@@ -93,30 +109,37 @@ export async function prepararRemitos(pedidoId: string, dia: string, usuario: st
   const { data: prev } = await sb.from("zomatik_remitos").select("np_id, m3").eq("scheduled_dispatch_id", ped.id).neq("estado", "anulado")
   const remitidoPorNp = new Map<string, number>()
   for (const x of (prev as { np_id: string; m3: number }[]) || []) remitidoPorNp.set(x.np_id, (remitidoPorNp.get(x.np_id) || 0) + Number(x.m3))
-  const plan = planificarRemitos(despachos, nps, yaRemitidos, remitidoPorNp)
   // Las marcas que ya tiene el pedido: un segundo remito del mismo día y NP lleva " - 2" (la marca no se repite)
   const { data: mm } = await sb.from("zomatik_remitos").select("marca").eq("scheduled_dispatch_id", ped.id)
   const marcas = new Set(((mm as { marca: string }[]) || []).map((x) => x.marca))
   let creados = 0
-  for (const r of plan.remitos) {
-    let marca = marcaZ1(ped.id, dia, r.np_n)
-    for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, k)
-    marcas.add(marca)
-    const { data: id, error } = await sb.rpc("zomatik_remito_crear", {
-      p: {
-        tipo: "pedido", scheduled_dispatch_id: ped.id, np_id: r.np_id, fecha: dia, plant_id: ped.plant_id, marca, comprobante: r.comprobante, m3: r.m3,
-        formula_id: despachos.find((d) => d.id === r.despachos[0].id)?.formula_id ?? "", patente: r.patente, patentes: r.patentes, remitos_papel: r.remitos_papel,
-        despachos: r.despachos, created_by: usuario,
-      },
-    })
-    if (error) throw error
-    if (id) {
-      creados++
-      await actividadNp(sb, { usuario, action: "crear", pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": `OF + remito pendientes por ${r.m3} m³ (${dia})`, Despachos: r.remitos_papel || r.despachos.length } })
+  const problemas: string[] = []
+  for (const dia of [...porDia.keys()].sort()) {
+    const despachos = porDia.get(dia)!
+    const plan = planificarRemitos(despachos, nps, yaRemitidos, remitidoPorNp)
+    problemas.push(...plan.problemas.map((x) => `${dia}: ${x}`))
+    for (const r of plan.remitos) {
+      let marca = marcaZ1(ped.id, dia, r.np_n)
+      for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, k)
+      marcas.add(marca)
+      const { data: id, error } = await sb.rpc("zomatik_remito_crear", {
+        p: {
+          tipo: "pedido", scheduled_dispatch_id: ped.id, np_id: r.np_id, fecha: dia, plant_id: ped.plant_id, marca, comprobante: r.comprobante, m3: r.m3,
+          formula_id: despachos.find((d) => d.id === r.despachos[0].id)?.formula_id ?? "", patente: r.patente, patentes: r.patentes, remitos_papel: r.remitos_papel,
+          despachos: r.despachos, created_by: usuario,
+        },
+      })
+      if (error) throw error
+      // Lo de este día cuenta para el lugar que le queda a la NP en el día siguiente
+      remitidoPorNp.set(r.np_id, (remitidoPorNp.get(r.np_id) || 0) + r.m3)
+      if (id) {
+        creados++
+        await actividadNp(sb, { usuario, action: "crear", pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": `OF + remito pendientes por ${r.m3} m³ (despachado el ${dia})`, Despachos: r.remitos_papel || r.despachos.length } })
+      }
     }
   }
-  if (plan.problemas.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": "No se puede remitir todo", Aviso: plan.problemas.join(" · ") } })
-  return { activo: true, creados, problemas: plan.problemas }
+  if (problemas.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": "No se puede remitir todo", Aviso: problemas.join(" · ") } })
+  return { activo: true, creados, problemas }
 }
 
 /**
@@ -469,19 +492,17 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB; avis
   const plantas = Object.values(cfg).filter((c) => llaveZ1(c)).map((c) => c.plant_id)
   if (!plantas.length) return { pedidos: 0, creados: 0, avisos: 0 }
   let creados = 0
-  let pedidos = 0
-  for (const dia of dias) {
-    const fin = new Date(Date.parse(inicioDia(dia)) + 86400_000).toISOString()
-    const { data } = await sb.from("dispatches").select("id, scheduled_dispatch_id").in("plant_id", plantas).gte("dispatch_date", inicioDia(dia)).lt("dispatch_date", fin).not("scheduled_dispatch_id", "is", null).limit(1000)
-    const ids = [...new Set(((data as { scheduled_dispatch_id: string }[]) || []).map((d) => d.scheduled_dispatch_id))]
-    pedidos += ids.length
-    for (const id of ids) {
-      try {
-        const r = await prepararRemitos(id, dia, usuario, sb)
-        if (r.activo) creados += r.creados
-      } catch (e) {
-        console.error("[zomatik-z1] preparar", id, (e as Error)?.message)
-      }
+  // Los pedidos con despachos de esos días; cada uno se prepara UNA vez, por el día real de cada despacho
+  const desde = inicioDia([...dias].sort()[0])
+  const { data } = await sb.from("dispatches").select("id, scheduled_dispatch_id").in("plant_id", plantas).gte("dispatch_date", desde).not("scheduled_dispatch_id", "is", null).limit(2000)
+  const ids = [...new Set(((data as { scheduled_dispatch_id: string }[]) || []).map((d) => d.scheduled_dispatch_id))]
+  const pedidos = ids.length
+  for (const id of ids) {
+    try {
+      const r = await prepararRemitos(id, null, usuario, sb)
+      if (r.activo) creados += r.creados
+    } catch (e) {
+      console.error("[zomatik-z1] preparar", id, (e as Error)?.message)
     }
   }
   try {

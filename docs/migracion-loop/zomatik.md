@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (40) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (41) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1947,3 +1947,12 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - `POST _autorizarpedido.php` (solo esa ruta exacta) en los grupos de la NP y de Z1;
   - el cliente rechaza cualquier cuerpo que no sea `autorizar=<entero>`;
   - Z1 suma `GET modificar_pedidos.php?codigo=N` para mirar la marca.
+
+### 26.16 El remito va con el día real del despacho (03/11, rama `fix/z1-dia-despacho`)
+- **Prueba real:** el pedido `25567bec`, programado para el 04/11, se despachó el 03/11 (despacho `f635b9ed`, 1 m³). "Remitir en Zomatik" mandaba el día de la pantalla (04/11) y `prepararRemitos` filtraba por ese día, así que respondía "No había despachos nuevos para remitir".
+- **Ahora:**
+  - `prepararRemitos` toma **todos** los despachos del pedido que todavía no están en un remito, desde `remitir_desde` y de los últimos 7 días;
+  - los agrupa por el **día real del despacho** en Argentina: un remito por día y NP, con la marca de ese día;
+  - lo remitido un día cuenta para el lugar que le queda a la NP al día siguiente;
+  - la `fecha` que manda la pantalla ya no filtra.
+- **Pasada de la noche:** prepara una sola vez cada pedido con despachos de los últimos 3 días (cada despacho va con su día).
