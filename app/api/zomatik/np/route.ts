@@ -8,12 +8,13 @@
  *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar): espera al robot
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
  *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
+ *   POST /api/zomatik/np {accion: "eliminar", pedido_id, motivo, copia}   eliminar un pedido con NP en Zomatik (programacion.borrar)
  *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
  */
 import { NextResponse, after } from "next/server"
 import { exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, tipoDe } from "@/lib/permisos"
-import { decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { decidirSaldo, eliminarPedido, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -82,6 +83,16 @@ export async function POST(req: Request) {
 
     const pedidoId = uuid(body?.pedido_id)
     if (!pedidoId) return NextResponse.json({ error: "Falta el pedido" }, { status: 400 })
+
+    // Eliminar un pedido con NP en Zomatik: se vacía la NP y después se borra (o, con remitos, queda cancelado + mail)
+    if (accion === "eliminar") {
+      if (!puedeCon(u, "programacion", "borrar") && !puedeCon(u, "historial", "borrar")) return NextResponse.json({ error: "No tenés permiso para eliminar pedidos." }, { status: 403 })
+      const motivo = String(body?.motivo || "").trim().slice(0, 300) || null
+      const copia = body?.copia && typeof body.copia === "object" ? Object.fromEntries(Object.entries(body.copia).slice(0, 20).map(([k, v]) => [String(k).slice(0, 40), String(v ?? "").slice(0, 200)])) : null
+      const out = await eliminarPedido(pedidoId, u.name, { motivo, copia })
+      if (out.estado === "vaciando") after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
+      return NextResponse.json(out, { status: out.estado === "error" ? 409 : 200 })
+    }
     const puedeProg = puedeCon(u, "programacion", "cargar")
     if (accion === "generar" && !puedeProg) return NextResponse.json({ error: "\"Generar NP ahora\" es de Programación." }, { status: 403 })
     if (accion === "sincronizar" && !puedeProg && !puedeCon(u, "despacho", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })

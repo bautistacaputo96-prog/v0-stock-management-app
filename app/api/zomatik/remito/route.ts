@@ -5,12 +5,15 @@
  *   POST /api/zomatik/remito {accion: "remitir", pedido_id, fecha?}
  *        Al finalizar el pedido (o "Remitir en Zomatik"): arma los remitos del día con lo despachado (uno por NP) y el
  *        robot hace la OF y el remito después de responder. Con la llave de remitir apagada no hace nada.
+ *   POST /api/zomatik/remito {accion: "despacho_borrado", dispatch_id, motivo?}
+ *        Después de anular (borrar) un despacho: si estaba en un remito ya en Zomatik, mail "Anular en Zomatik" a Juan
+ *        (copia a Bautista); si no, se saca de la fila pendiente (y se anula si queda vacía).
  */
 import { NextResponse, after } from "next/server"
-import { exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
+import { exigirSesion, respuestaError, respuestaModoLocal, sbServicio } from "@/lib/auth/servidor"
 import { puedeCon } from "@/lib/permisos"
 import { hoyAR } from "@/lib/zomatik/np"
-import { estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
+import { despachoBorrado, estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -39,8 +42,23 @@ export async function POST(req: Request) {
     if (r.respuesta) return r.respuesta
     if (r.sesion.local) return respuestaModoLocal()
     const u = r.sesion.usuario
-    if (!puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
     const body = await req.json().catch(() => ({}))
+    // Se borró un despacho (anular_despacho): si estaba en un remito, mail a Juan o se saca de la fila pendiente
+    if (body?.accion === "despacho_borrado") {
+      if (!puedeCon(u, "historial", "borrar") && !puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "borrar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
+      const id = uuid(body?.dispatch_id)
+      if (!id) return NextResponse.json({ error: "Falta el despacho" }, { status: 400 })
+      // Solo un despacho que ya no existe (si no, alguien podría sacar uno vivo de su remito)
+      const { data: vivo } = await sbServicio().from("dispatches").select("id").eq("id", id).maybeSingle()
+      if (vivo) return NextResponse.json({ error: "El despacho todavía existe." }, { status: 409 })
+      try {
+        return NextResponse.json(await despachoBorrado(id, u.name, { motivo: typeof body?.motivo === "string" ? body.motivo.slice(0, 300) : null }))
+      } catch (e) {
+        if (/zomatik_remito|does not exist|schema cache/i.test(String((e as Error)?.message || ""))) return NextResponse.json({ estado: "nada", mensaje: null, sinMigracion: true })
+        throw e
+      }
+    }
+    if (!puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
     const pedidoId = uuid(body?.pedido_id)
     if (body?.accion !== "remitir" || !pedidoId) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
     const fecha = typeof body?.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha) ? body.fecha : hoyAR()

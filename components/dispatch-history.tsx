@@ -20,6 +20,7 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
 import { logActivity, logCambio, logDeletion, notifyDeletion } from "@/lib/activity-log"
+import { avisarDespachoBorrado, eliminarPedidoNp, esFrenoNpZomatik } from "@/lib/zomatik/np-cliente"
 import { agregarMuestraDespacho } from "@/lib/muestra"
 import { currentUserName, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
@@ -550,10 +551,20 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         })
         if (error) throw new Error(error.message)
         await notifyDeletion({ entity: "despacho", reference: deleteDispatch.remito || null, details: deletionDetails })
+        // Si estaba en un remito del sistema: ya en Zomatik → mail a Juan; si no, se saca de la fila pendiente
+        const z = await avisarDespachoBorrado(deleteDispatch.id, motivoBorrado)
+        if (z) toast({ title: "Zomatik", description: z })
       } else {
         // Es una programación (tabla "scheduled_dispatches"). Primero se borra (dispatch_status_log se borra solo, en
         // cascada): si la base lo frena (pedido con NP en Zomatik) no queda nada anotado como borrado.
         const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
+        if (error && esFrenoNpZomatik(error)) {
+          // Con NP en Zomatik (03/11): el servidor vacía la NP y después borra el pedido (o, con remitos, lo cancela)
+          const r = await eliminarPedidoNp(deleteDispatch.id, motivoBorrado, deletionDetails)
+          toast({ title: r.mal ? "No se pudo eliminar" : r.estado === "vaciando" ? "Eliminando el pedido" : "El pedido quedó cancelado", description: r.mensaje, variant: r.mal ? "destructive" : undefined })
+          if (!r.mal) loadData()
+          return
+        }
         if (error) throw error
         // Queda asentado en Actividad (con el motivo, que ya va en el detalle) y se avisa a los gerenciales
         await logDeletion({

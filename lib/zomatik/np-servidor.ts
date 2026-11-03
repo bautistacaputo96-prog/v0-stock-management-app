@@ -135,6 +135,45 @@ export async function avisarGerenciales(sb: SB, titulo: string, lineas: string[]
   }
 }
 
+/** "Anular en Zomatik" (03/11): a Juan con copia a Bautista, como el mail del control de remitos (control-ingresos). */
+export const MAIL_ANULAR_A = ["Juan Oreguy"]
+export const MAIL_ANULAR_CC = ["Bautista Caputo"]
+
+export type DatosAnular = { cliente: string; np: string | null; of: string | null; remito: string | null; m3: number | null; fecha: string | null; quien: string; motivo?: string | null; que: string }
+
+/**
+ * Mail "Rebucret · Anular en Zomatik: <cliente>": se borró algo del sistema que ya estaba en Zomatik (un despacho
+ * remitido, un pedido con remitos) y hay que anularlo a mano allá.
+ */
+export async function mailAnularZomatik(sb: SB, d: DatosAnular): Promise<{ enviado: boolean; motivo?: string }> {
+  try {
+    if (!process.env.RESEND_API_KEY) return { enviado: false, motivo: "falta RESEND_API_KEY" }
+    const { data } = await sb.from("app_users").select("name, email").eq("active", true).not("email", "is", null)
+    const usuarios = (data || []) as { name: string; email: string }[]
+    const de = (nombres: string[]) => usuarios.filter((u) => nombres.some((n) => n.toLowerCase() === u.name.trim().toLowerCase())).map((u) => u.email)
+    const to = de(MAIL_ANULAR_A)
+    const cc = de(MAIL_ANULAR_CC)
+    if (!to.length) return { enviado: false, motivo: `${MAIL_ANULAR_A.join(", ")} sin mail cargado` }
+    const fila = (k: string, v: unknown) => (v === null || v === undefined || v === "" ? "" : `<tr><td style="padding:4px 0;color:#64748b">${esc(k)}</td><td style="padding:4px 0;font-weight:600;text-align:right">${esc(v)}</td></tr>`)
+    const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
+      <div style="background:#b91c1c;color:#fff;padding:12px 16px;border-radius:8px 8px 0 0;font-weight:700">Anular en Zomatik: ${esc(d.cliente)}</div>
+      <div style="border:1px solid #e2e8f0;border-top:none;padding:12px 16px;border-radius:0 0 8px 8px;font-size:13px">
+      <p style="margin:0 0 8px">${esc(d.que)}</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        ${fila("OF", d.of)}${fila("Remito", d.remito)}${fila("NP", d.np)}${fila("Cliente", d.cliente)}${fila("m³", d.m3)}${fila("Fecha", d.fecha)}${fila("Lo borró", d.quien)}${fila("Motivo", d.motivo)}
+      </table>
+      <p style="font-size:11px;color:#94a3b8;margin-top:12px">Queda en Actividad · produccionrebucret.com</p></div></div>`
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: `Rebucret - Zomatik <${FROM}>`, to, cc: cc.length ? cc : undefined, subject: `Rebucret · Anular en Zomatik: ${d.cliente}`, html }),
+    })
+    return r.ok ? { enviado: true } : { enviado: false, motivo: `Resend respondió ${r.status}` }
+  } catch (e) {
+    return { enviado: false, motivo: (e as Error)?.message || "no se pudo mandar" }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Usos y saldo de las NP (Z2b: una NP puede servir a varios pedidos)
 // ---------------------------------------------------------------------------
@@ -542,6 +581,15 @@ export type Dependencias = {
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** Autorizar la NP en Zomatik (en las pruebas, uno simulado) */
   autorizar?: typeof autorizarNp
+  /** Mail "Anular en Zomatik" (en las pruebas, uno simulado) */
+  mail?: typeof mailAnularZomatik
+}
+
+/** El pedido se pidió eliminar y espera que se vacíe su NP (null si no, o sin la migración). */
+async function pedidoABorrar(sb: SB, pedidoId: string | null): Promise<{ motivo: string | null; pedido: Record<string, unknown> | null; pedido_por: string } | null> {
+  if (!pedidoId) return null
+  const { data, error } = await sb.from("zomatik_pedido_borrar").select("motivo, pedido, pedido_por").eq("scheduled_dispatch_id", pedidoId).maybeSingle()
+  return error ? null : ((data as { motivo: string | null; pedido: Record<string, unknown> | null; pedido_por: string } | null) ?? null)
 }
 
 type Contexto = {
@@ -757,6 +805,13 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
     const msg = `La ${np.numero} tiene remitos en Zomatik: no se vació. Hace falta una devolución de pedido (DEVOL) por el saldo: hacela a mano y tocá "Ya la devolví".`
     if (await guardarSi(sb, np.id, V, { estado: "ok", en_curso_desde: null, mensaje: null, saldo_decision: "devolver", saldo_mensaje: msg, proximo_intento: null })) {
       await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Devolver el saldo: la NP tiene remitos, falta la DEVOL a mano", NP: np.numero } })
+      // Se había pedido eliminar el pedido: con remitos no se borra; queda cancelado y va el mail a Juan
+      const b = await pedidoABorrar(sb, np.scheduled_dispatch_id)
+      if (b && np.scheduled_dispatch_id) {
+        await sb.from("zomatik_pedido_borrar").delete().eq("scheduled_dispatch_id", np.scheduled_dispatch_id)
+        const m = await (ctx.dep.mail ?? mailAnularZomatik)(sb, { cliente: String(b.pedido?.Cliente || "-"), np: np.numero, of: null, remito: null, m3: Number(np.m3) || null, fecha: String(np.fecha), quien: b.pedido_por, motivo: b.motivo, que: "Se pidió eliminar un pedido cuya NP tiene remitos en Zomatik. En el sistema quedó cancelado; en Zomatik hay que anular lo que corresponda a mano." })
+        await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "La NP tiene remitos: el pedido no se borró (quedó cancelado). Mail a Juan para anular en Zomatik", Mail: m.enviado ? "enviado" : m.motivo } })
+      }
     }
     return { estado: "ok", mensaje: msg }
   }
@@ -772,14 +827,18 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
   let guardo: boolean
   if (r.estado === "vaciada") {
     guardo = await guardarSi(sb, np.id, V, { estado: "vaciada", en_curso_desde: null, mensaje: null, vaciada_at: ahora, proximo_intento: null, paso: "vaciada", saldo_decision: "cerrada", saldo_mensaje: "Vaciada en Zomatik" })
-    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (devolver el saldo): ${np.numero}` } })
+    if (guardo) {
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP vaciada en Zomatik (devolver el saldo): ${np.numero}` } })
+      // Si el pedido se pidió eliminar: ahora que la NP quedó vaciada, se borra
+      await borrarSiVaciado(sb, np.scheduled_dispatch_id, { usuario: ctx.usuario, avisar: ctx.dep.avisar })
+    }
   } else if (r.estado === "vaciar") {
     guardo = await guardarSi(sb, np.id, V, { estado: "vaciar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: despuesDe(MIN_REINTENTO) })
   } else {
     guardo = await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
     if (guardo) {
       await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
-      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
+      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, ...(await pedidoABorrar(sb, np.scheduled_dispatch_id) ? ["Se había pedido eliminar el pedido: NO se borró, quedó cancelado."] : [])])
     }
   }
   if (!guardo) await noSePudoGuardar(sb, np, ctx, r.estado)
@@ -1004,4 +1063,119 @@ export async function revisarNp(npId: string, decision: "otra" | "buena", usuari
   }
   await actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { "Qué pasó": decision === "buena" ? `NP revisada: queda ${np.numero}` : "NP revisada: se genera otra", NP: np.numero, Antes: np.mensaje } })
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Eliminar un pedido con NP en Zomatik (03/11, Bautista: "borrar la programación también saca la NP")
+// ---------------------------------------------------------------------------
+
+export type ResultadoEliminar =
+  | { estado: "borrado"; mensaje: string }
+  | { estado: "vaciando"; mensaje: string }
+  | { estado: "cancelado"; mensaje: string }
+  | { estado: "error"; mensaje: string }
+
+/** Lo que mira eliminarPedido (en las pruebas, el mail se reemplaza). */
+export type DependenciasEliminar = { mail: typeof mailAnularZomatik }
+
+/**
+ * Eliminar un pedido cuya NP ya está en Zomatik (la base lo frena con "Cancelalo…"). En Zomatik no se puede borrar
+ * una NP: se VACÍA (como "Sí, cancelarla").
+ *   - Con remitos u OF del sistema (tuvo despachos): no se toca Zomatik. El pedido queda CANCELADO y se manda el mail
+ *     "Anular en Zomatik" a Juan (copia a Bautista).
+ *   - Sin remitos: el pedido queda cancelado y en `zomatik_pedido_borrar`; sus NP pasan a "vaciar" y el robot las
+ *     vacía. Cuando todas quedan vaciadas (y verificadas por el robot), se borra el pedido (`borrarSiVaciado`). Si el
+ *     vaciado falla, la NP queda "revisar" con aviso y el pedido NO se borra (queda cancelado).
+ */
+export async function eliminarPedido(pedidoId: string, usuario: string, o: { motivo?: string | null; copia?: Record<string, unknown> | null; sb?: SB; dep?: DependenciasEliminar } = {}): Promise<ResultadoEliminar> {
+  const sb = o.sb ?? sbServicio()
+  const dep = o.dep ?? { mail: mailAnularZomatik }
+  const { data: p, error } = await sb.from("scheduled_dispatches").select("id, status, plant_id, client_id, quantity_m3, scheduled_arrival_time, clients(name)").eq("id", pedidoId).maybeSingle()
+  if (error) throw error
+  if (!p) return { estado: "error", mensaje: "El pedido no existe (¿ya se borró?). Actualizá la pantalla." }
+  const ped = p as unknown as { id: string; status: string; plant_id: string; quantity_m3: number; scheduled_arrival_time: string; clients?: { name?: string } | null }
+  const cliente = ped.clients?.name || String(o.copia?.Cliente || "-")
+  const ref = `Pedido ${ped.id.slice(0, 8)}`
+  const usos = await usosDe(sb, "scheduled_dispatch_id", [ped.id])
+  const nps = await npsPorId(sb, [...new Set(usos.map((u) => u.np_id))])
+  const enZomatik = nps.filter((x) => !["anulada", "vaciada"].includes(x.estado) && !(["pendiente", "error"].includes(x.estado) && !puedeEstarGrabada({ paso: x.paso })))
+  if (!enZomatik.length) return { estado: "error", mensaje: "El pedido no tiene NP en Zomatik: eliminalo de nuevo." }
+  const trabajando = enZomatik.find((x) => ["generando", "vaciando", "revisar", "pendiente", "error"].includes(x.estado))
+  if (trabajando) return { estado: "error", mensaje: `La ${trabajando.numero || "NP"} se está generando o está para revisar: esperá a que termine o resolvela antes de eliminar el pedido.` }
+  const otro = usos.find((u) => u.activo && u.scheduled_dispatch_id !== ped.id && enZomatik.some((x) => x.id === u.np_id))
+  if (otro) return { estado: "error", mensaje: "La NP la usa otro pedido: cancelá este pedido en vez de eliminarlo." }
+
+  // ¿Ya tuvo despachos (remitos en Zomatik) u OF / remito del sistema?
+  const { data: ds } = await sb.from("dispatches").select("id, quantity_m3, dispatch_date").eq("scheduled_dispatch_id", ped.id).limit(50)
+  const { data: rs } = await sb.from("zomatik_remitos").select("of_numero, remito_numero, of_estado, remito_estado, m3, fecha").eq("scheduled_dispatch_id", ped.id).neq("estado", "anulado")
+  const despachos = (ds as { id: string; quantity_m3: number; dispatch_date: string }[]) || []
+  const remitos = ((rs as { of_numero: string | null; remito_numero: string | null; of_estado: string; remito_estado: string; m3: number; fecha: string }[]) || []).filter((r) => r.of_estado === "ok" || r.remito_estado === "ok")
+  const ahora = new Date().toISOString()
+  const cancelar = async () => {
+    if (ped.status !== "cancelled") {
+      const { error: ec } = await sb.from("scheduled_dispatches").update({ status: "cancelled" } as never).eq("id", ped.id)
+      if (ec) throw ec
+    }
+  }
+  if (despachos.length || remitos.length) {
+    await cancelar()
+    const m3 = despachos.reduce((s, d) => s + Number(d.quantity_m3 || 0), 0)
+    const datos: DatosAnular = {
+      cliente, np: enZomatik.map((x) => x.numero).filter(Boolean).join(", ") || null, of: remitos.map((r) => r.of_numero).filter(Boolean).join(", ") || null,
+      remito: remitos.map((r) => r.remito_numero).filter(Boolean).join(", ") || null, m3: Math.round(m3 * 1000) / 1000 || Number(ped.quantity_m3) || null,
+      fecha: [...new Set(despachos.map((d) => diaAR(d.dispatch_date)))].sort().join(", ") || diaAR(ped.scheduled_arrival_time), quien: usuario, motivo: o.motivo ?? null,
+      que: "Se pidió eliminar un pedido que ya tiene remitos en Zomatik. En el sistema quedó cancelado; en Zomatik hay que anular lo que corresponda a mano.",
+    }
+    const mail = await dep.mail(sb, datos)
+    await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Pedido con remitos en Zomatik: no se borra, quedó cancelado. Mail a Juan para anular en Zomatik", NP: datos.np, OF: datos.of, Remito: datos.remito, Motivo: o.motivo, Mail: mail.enviado ? "enviado" : mail.motivo } })
+    await sincronizarPedido(ped.id, usuario, null, sb)
+    return { estado: "cancelado", mensaje: `Tiene remitos en Zomatik: no se borra. Quedó cancelado y se avisó a Juan para anularlo en Zomatik${mail.enviado ? "" : ` (el mail no salió: ${mail.motivo})`}.` }
+  }
+
+  // Sin remitos: se vacía la NP y después se borra el pedido
+  const { error: eb } = await sb.from("zomatik_pedido_borrar").upsert({ scheduled_dispatch_id: ped.id, motivo: o.motivo ?? null, pedido: o.copia ?? null, pedido_por: usuario, created_at: ahora } as never, { onConflict: "scheduled_dispatch_id" })
+  if (eb) {
+    if (/zomatik_pedido_borrar/i.test(String(eb.message || ""))) return { estado: "error", mensaje: "Eliminar un pedido con NP todavía no se puede (falta actualizar la base). Cancelalo." }
+    throw eb
+  }
+  await cancelar()
+  await sincronizarPedido(ped.id, usuario, null, sb)
+  const malos: string[] = []
+  for (const x of enZomatik) {
+    const r = (await rpc(sb, "zomatik_np_devolver", { p_np: x.id, p_usuario: usuario })) as { error?: string; modo?: string; mensaje?: string } | null
+    if (!r || r.error || r.modo !== "vaciar") malos.push(`${x.numero || "NP"}: ${r?.error || r?.mensaje || "no se pudo"}`)
+  }
+  if (malos.length) {
+    await sb.from("zomatik_pedido_borrar").delete().eq("scheduled_dispatch_id", ped.id)
+    await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Se pidió eliminar el pedido: no se pudo vaciar la NP, quedó cancelado", Aviso: malos.join(" · "), Motivo: o.motivo } })
+    return { estado: "cancelado", mensaje: `No se pudo vaciar la NP (${malos.join(" · ")}): el pedido quedó cancelado, no se borró.` }
+  }
+  await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Se pidió eliminar el pedido: se vacía la NP en Zomatik y después se borra", NP: enZomatik.map((x) => x.numero).join(", "), Motivo: o.motivo } })
+  return { estado: "vaciando", mensaje: "Se está vaciando la NP en Zomatik: el pedido se elimina cuando quede vaciada (queda cancelado mientras tanto)." }
+}
+
+/**
+ * Después de vaciar una NP: si su pedido se pidió eliminar y TODAS sus NP quedaron vaciadas o anuladas, se borra el
+ * pedido (el trigger de 202611031400 lo deja) con Actividad y aviso a gerenciales. Si no, no hace nada.
+ */
+export async function borrarSiVaciado(sb: SB, pedidoId: string | null, o: { usuario: string; avisar: Dependencias["avisar"] }): Promise<boolean> {
+  if (!pedidoId) return false
+  const { data: b, error } = await sb.from("zomatik_pedido_borrar").select("scheduled_dispatch_id, motivo, pedido, pedido_por").eq("scheduled_dispatch_id", pedidoId).maybeSingle()
+  if (error || !b) return false
+  const pend = b as { motivo: string | null; pedido: Record<string, unknown> | null; pedido_por: string }
+  const usos = await usosDe(sb, "scheduled_dispatch_id", [pedidoId])
+  const nps = await npsPorId(sb, [...new Set(usos.map((u) => u.np_id))])
+  if (nps.some((x) => !["vaciada", "anulada"].includes(x.estado))) return false
+  const { data: p } = await sb.from("scheduled_dispatches").select("id, plant_id").eq("id", pedidoId).maybeSingle()
+  const plantId = (p as { plant_id?: string } | null)?.plant_id ?? null
+  const { error: ed } = await sb.from("scheduled_dispatches").delete().eq("id", pedidoId)
+  if (ed) {
+    await actividadNp(sb, { usuario: o.usuario, pedidoId, plantId, referencia: `Pedido ${pedidoId.slice(0, 8)}`, detalle: { "Qué pasó": "La NP quedó vaciada pero el pedido no se pudo borrar (quedó cancelado)", Mensaje: ed.message } })
+    return false
+  }
+  const ref = pend.pedido ? `${pend.pedido.Cliente || "-"} · ${pend.pedido.Obra || "-"}` : `Pedido ${pedidoId.slice(0, 8)}`
+  const { error: ea } = await sb.from("activity_log").insert({ user_name: pend.pedido_por, action: "borrar", entity: "pedido", entity_id: pedidoId, reference: ref, plant_id: plantId, details: { ...(pend.pedido || {}), Motivo: pend.motivo, "Qué pasó": "Pedido eliminado después de vaciar su NP en Zomatik" } } as never)
+  if (ea) console.error("[zomatik-np] actividad:", ea.message)
+  await o.avisar(sb, "Pedido eliminado (NP vaciada en Zomatik)", [`${ref} · lo pidió ${pend.pedido_por}`, pend.motivo ? `Motivo: ${pend.motivo}` : ""].filter(Boolean))
+  return true
 }

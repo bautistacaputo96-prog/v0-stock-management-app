@@ -46,7 +46,7 @@ import { NpChip } from "@/components/zomatik/np-chip"
 import { NpSaldos } from "@/components/zomatik/np-saldos"
 import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
-import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { avisarNp, eliminarPedidoNp, esFrenoNpZomatik, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
@@ -854,8 +854,16 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setSaving(true)
     const supabase = createClient()
     const { error } = await supabase.from("scheduled_dispatches").delete().eq("id", deleteDispatch.id)
-    if (error) {
-      // Un pedido con NP en Zomatik no se borra (lo frena la base con "Cancelalo…"): se muestra el mensaje de la base
+    if (error && esFrenoNpZomatik(error)) {
+      // Con NP en Zomatik (03/11): el servidor vacía la NP y después borra el pedido; con remitos queda cancelado y
+      // se avisa a Juan. Lo asienta el servidor en Actividad.
+      const r = await eliminarPedidoNp(deleteDispatch.id, motivoBorrado, copiaPedido(deleteDispatch))
+      toast({ title: r.mal ? "No se pudo eliminar el pedido" : r.estado === "vaciando" ? "Eliminando el pedido" : "El pedido quedó cancelado", description: r.mensaje, variant: r.mal ? "destructive" : undefined })
+      if (!r.mal) {
+        loadData()
+        np.recargarEn()
+      }
+    } else if (error) {
       toast({ title: "No se pudo eliminar el pedido", description: error.message || "No se pudo eliminar el pedido", variant: "destructive" })
     } else {
       toast({ title: "Despacho eliminado" })

@@ -198,3 +198,32 @@ export function chipNp(e: EstadoPedidoNp | undefined | null): { texto: string; c
   const t = peor.estado === "error" ? "NP con error" : peor.estado === "revisar" ? "NP: revisar" : peor.estado === "generando" ? "Generando NP…" : "NP pendiente"
   return { texto: t, clase: peor.estado === "revisar" || peor.estado === "generando" ? "aviso" : "mal", titulo }
 }
+
+/** La base frena borrar un pedido con NP en Zomatik con este texto ("Cancelalo…"). */
+export const esFrenoNpZomatik = (m: unknown) => /nota de pedido en Zomatik/i.test(String((m as { message?: string })?.message ?? m ?? ""))
+
+/**
+ * Eliminar un pedido con NP en Zomatik (03/11): el servidor vacía la NP y después borra el pedido; con remitos, lo deja
+ * cancelado y avisa a Juan. Devuelve el texto para el aviso.
+ */
+export async function eliminarPedidoNp(pedidoId: string, motivo: string, copia: Record<string, unknown>): Promise<{ estado: string; mensaje: string; mal: boolean }> {
+  try {
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar", pedido_id: pedidoId, motivo, copia }) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok && !j?.estado) return { estado: "error", mensaje: j?.error || `Error ${r.status}`, mal: true }
+    return { estado: j.estado, mensaje: j.mensaje || j.error || "", mal: j.estado === "error" }
+  } catch {
+    return { estado: "error", mensaje: "Sin conexión", mal: true }
+  }
+}
+
+/** Después de anular (borrar) un despacho: si estaba en un remito, el servidor avisa a Juan o lo saca de la fila. */
+export async function avisarDespachoBorrado(dispatchId: string, motivo: string): Promise<string | null> {
+  try {
+    const r = await fetch("/api/zomatik/remito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "despacho_borrado", dispatch_id: dispatchId, motivo }) })
+    const j = await r.json().catch(() => ({}))
+    return j?.mensaje || null
+  } catch {
+    return null
+  }
+}

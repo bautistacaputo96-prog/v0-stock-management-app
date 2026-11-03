@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (41) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (42) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1956,3 +1956,29 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - lo remitido un día cuenta para el lugar que le queda a la NP al día siguiente;
   - la `fecha` que manda la pantalla ya no filtra.
 - **Pasada de la noche:** prepara una sola vez cada pedido con despachos de los últimos 3 días (cada despacho va con su día).
+
+---
+
+## 28. Borrar en cascada (03/11/2026, rama `feat/borrar-en-cascada`)
+Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta "remitir" la OF para que dé stock: lapicito de "Remitido" en `listado_ordenfabricacion` → `remitir_ordenfabricacion.php?codigo=N` → botón verde. **Todavía no se automatiza:** se captura con la próxima OF.
+
+### 28.1 Eliminar un pedido con NP en Zomatik
+- Hoy la base lo frena ("Cancelalo…"). Ahora, si el borrado choca con ese freno, Programación y el historial llaman a `POST /api/zomatik/np {accion: "eliminar"}` (`eliminarPedido`, solo `programacion.borrar` o `historial.borrar`).
+- **Con remitos** (tuvo despachos, u OF/remito del sistema): no se toca Zomatik. El pedido queda **cancelado** y va el mail **"Rebucret · Anular en Zomatik: <cliente>"** a Juan Oreguy con copia a Bautista. El mail es como el del control de remitos y lleva OF, remito, NP, cliente, m³, fecha, quién y motivo. Queda en Actividad.
+- **Sin remitos:** en Zomatik no se puede borrar una NP (`listado_pedidos` no tiene link de borrar), así que se **vacía**, como "Sí, cancelarla".
+  - el pedido queda cancelado y en `zomatik_pedido_borrar` (motivo, quién y una copia);
+  - sus NP pasan a "vaciar" y el robot las vacía y verifica;
+  - cuando **todas** quedan vaciadas, `borrarSiVaciado` borra el pedido, con Actividad (entidad pedido, borrar) y aviso a gerenciales;
+  - si el vaciado falla, la NP queda "revisar" con aviso ("el pedido NO se borró, quedó cancelado");
+  - si Zomatik dice que la NP tiene remitos, queda cancelado y va el mail a Juan.
+- No se elimina (sale el motivo) si la NP se está generando o está para revisar, o si la usa otro pedido.
+- **Migración `202611031400_zomatik_borrar_pedido.sql` (sin aplicar):**
+  - el trigger `zomatik_np_no_borrar_pedido` deja borrar cuando la NP está **vaciada** (además de anulada);
+  - crea `zomatik_pedido_borrar` (solo `service_role`);
+  - no cambia datos. Hasta aplicarla, eliminar un pedido con NP responde "falta actualizar la base, cancelalo".
+
+### 28.2 Borrar un despacho que estaba en un remito
+- Después de `anular_despacho` (que borra el despacho), el historial llama a `POST /api/zomatik/remito {accion: "despacho_borrado"}` (`despachoBorrado`). Solo vale para un despacho que ya no existe.
+- **Ya en Zomatik** (OF o remito ok): mail "Anular en Zomatik" a Juan, con copia a Bautista, y Actividad. La fila del remito no se toca (es lo que hay en Zomatik) y el cambio queda marcado como avisado: la pasada no lo repite.
+- **Todavía no en Zomatik:** se saca de la fila pendiente (m³, patentes y remitos de papel se recalculan). Si queda sin despachos, se anula.
+- Si la fila se está generando, no se toca: el robot la ajusta antes de la OF (26.11).
