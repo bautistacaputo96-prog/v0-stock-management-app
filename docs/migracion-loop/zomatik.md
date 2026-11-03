@@ -1964,21 +1964,33 @@ Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta 
 
 ### 28.1 Eliminar un pedido con NP en Zomatik
 - Hoy la base lo frena ("Cancelalo…"). Ahora, si el borrado choca con ese freno, Programación y el historial llaman a `POST /api/zomatik/np {accion: "eliminar"}` (`eliminarPedido`, solo `programacion.borrar` o `historial.borrar`).
-- **Con remitos** (tuvo despachos, u OF/remito del sistema): no se toca Zomatik. El pedido queda **cancelado** y va el mail **"Rebucret · Anular en Zomatik: <cliente>"** a Juan Oreguy con copia a Bautista. El mail es como el del control de remitos y lleva OF, remito, NP, cliente, m³, fecha, quién y motivo. Queda en Actividad.
-- **Sin remitos:** en Zomatik no se puede borrar una NP (`listado_pedidos` no tiene link de borrar), así que se **vacía**, como "Sí, cancelarla".
-  - el pedido queda cancelado y en `zomatik_pedido_borrar` (motivo, quién y una copia);
-  - sus NP pasan a "vaciar" y el robot las vacía y verifica;
-  - cuando **todas** quedan vaciadas, `borrarSiVaciado` borra el pedido, con Actividad (entidad pedido, borrar) y aviso a gerenciales;
-  - si el vaciado falla, la NP queda "revisar" con aviso ("el pedido NO se borró, quedó cancelado");
-  - si Zomatik dice que la NP tiene remitos, queda cancelado y va el mail a Juan.
-- No se elimina (sale el motivo) si la NP se está generando o está para revisar, o si la usa otro pedido.
-- **Migración `202611031400_zomatik_borrar_pedido.sql` (sin aplicar):**
-  - el trigger `zomatik_np_no_borrar_pedido` deja borrar cuando la NP está **vaciada** (además de anulada);
-  - crea `zomatik_pedido_borrar` (solo `service_role`);
+- **NP automática apagada:** queda cancelado, con el mensaje "La NP automática está apagada: vaciala a mano en Zomatik; el pedido queda cancelado".
+- **Con remitos o despachos** (OF/remito del sistema, o despachos todavía sin remitir):
+  - no se toca Zomatik: el pedido queda **cancelado** y en `zomatik_pedido_borrar` con modo `remitos`;
+  - el Z1 no lo prepara ni lo procesa: el sistema no hace OF ni remito de ese pedido;
+  - va **una sola vez** el mail "Rebucret · Anular en Zomatik: <cliente>" a Juan, con copia a Bautista (queda `aviso_at`);
+  - el texto cambia si ya hay remitos o solo despachos: "todavía no hay OF ni remito del sistema; el sistema no los va a remitir; si se cargaron a mano, anulalos";
+  - si el mail no sale, se avisa a gerenciales y la pasada de cada 10 min lo reintenta (`reintentarAvisosBorrado`).
+- **Sin remitos:** en Zomatik no se puede borrar una NP, así que se **vacía**.
+  - el pedido queda cancelado y en `zomatik_pedido_borrar` con modo `vaciar`;
+  - sus NP pasan a "vaciar" y el robot las toma en el momento: `procesarNp({npIds})`, aunque la NP sea de otro pedido (NP con saldo);
+  - Programación y el historial muestran **"Eliminando…"** en vez de "Eliminar";
+  - volver a tocar Eliminar mientras tanto responde "vaciando" sin tocar nada.
+- **Después de vaciar** una NP, se miran **todos** los pedidos que la usan (`zomatik_np_uso.np_id`). Cada uno que espera borrarse, sigue **cancelado** y tiene todas sus NP vaciadas o anuladas se borra (`borrarSiVaciado`), con Actividad (pedido, borrar) y aviso a gerenciales.
+  - Si lo reactivaron (ya no está cancelado), se descarta el pedido de borrado y no se borra.
+  - Si el vaciado falla, la NP queda "revisar" con aviso: el pedido NO se borra y queda cancelado.
+  - Si Zomatik dice que la NP tiene remitos, el pedido pasa a modo `remitos` (cancelado + mail, con reintento).
+- No se elimina (sale el motivo) si la NP se está generando, vaciando o está para revisar, o si la usa otro pedido activo.
+- **Migración `202611031400_zomatik_borrar_pedido.sql`** (sin aplicar, BEGIN/COMMIT, repetible):
+  - el trigger deja borrar cuando la NP está **vaciada**;
+  - crea `zomatik_pedido_borrar` (con `modo` y `aviso_at`) y `zomatik_remito_despachos.borrado_aviso_at`;
   - no cambia datos. Hasta aplicarla, eliminar un pedido con NP responde "falta actualizar la base, cancelalo".
 
 ### 28.2 Borrar un despacho que estaba en un remito
-- Después de `anular_despacho` (que borra el despacho), el historial llama a `POST /api/zomatik/remito {accion: "despacho_borrado"}` (`despachoBorrado`). Solo vale para un despacho que ya no existe.
-- **Ya en Zomatik** (OF o remito ok): mail "Anular en Zomatik" a Juan, con copia a Bautista, y Actividad. La fila del remito no se toca (es lo que hay en Zomatik) y el cambio queda marcado como avisado: la pasada no lo repite.
+- Después de `anular_despacho`, el historial llama a `POST /api/zomatik/remito {accion: "despacho_borrado"}` (`despachoBorrado`). Solo con `historial.borrar` y solo para un despacho que ya no existe.
+- **Ya en Zomatik** (OF o remito ok):
+  - **un despacho = un mail**: se toma la marca `borrado_aviso_at` antes de mandar "Anular en Zomatik" a Juan con copia a Bautista, y queda en Actividad;
+  - si el mail no sale, se suelta la marca y no se marca el cambio como avisado: se puede reintentar y la pasada lo sigue viendo;
+  - solo si salió queda `cambio_avisado`, y la pasada no lo repite.
 - **Todavía no en Zomatik:** se saca de la fila pendiente (m³, patentes y remitos de papel se recalculan). Si queda sin despachos, se anula.
 - Si la fila se está generando, no se toca: el robot la ajusta antes de la OF (26.11).

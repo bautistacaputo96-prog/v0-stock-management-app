@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}))
     // Se borró un despacho (anular_despacho): si estaba en un remito, mail a Juan o se saca de la fila pendiente
     if (body?.accion === "despacho_borrado") {
-      if (!puedeCon(u, "historial", "borrar") && !puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "borrar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
+      if (!puedeCon(u, "historial", "borrar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
       const id = uuid(body?.dispatch_id)
       if (!id) return NextResponse.json({ error: "Falta el despacho" }, { status: 400 })
       // Solo un despacho que ya no existe (si no, alguien podría sacar uno vivo de su remito)

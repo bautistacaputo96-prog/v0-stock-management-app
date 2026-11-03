@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -20,7 +20,7 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, parseISO, differenceInMinutes, subDays, startOfMonth, endOfMonth, addDays } from "date-fns"
 import { logActivity, logCambio, logDeletion, notifyDeletion } from "@/lib/activity-log"
-import { avisarDespachoBorrado, eliminarPedidoNp, esFrenoNpZomatik } from "@/lib/zomatik/np-cliente"
+import { avisarDespachoBorrado, eliminarPedidoNp, esFrenoNpZomatik, useNp } from "@/lib/zomatik/np-cliente"
 import { agregarMuestraDespacho } from "@/lib/muestra"
 import { currentUserName, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
@@ -306,6 +306,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     setLoading(false)
   }
 
+  // Pedidos que se pidió eliminar y esperan que se vacíe su NP en Zomatik: "Eliminando…" en vez de "Eliminar"
+  const np = useNp(useMemo(() => dispatches.filter((d) => d.source !== "manual" && d.status === "cancelled").map((d) => d.id).slice(0, 300), [dispatches]))
   const filteredDispatches = dispatches.filter((d) => {
     const term = searchTerm.trim().toLowerCase()
     const matchesSearch =
@@ -1155,12 +1157,17 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                   Editar
                                 </DropdownMenuItem>
                               )}
-                              {puede("historial", "borrar") && (
+                              {puede("historial", "borrar") && (np.porPedido[dispatch.id]?.eliminando ? (
+                                <DropdownMenuItem disabled>
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Eliminando… (vaciando la NP en Zomatik)
+                                </DropdownMenuItem>
+                              ) : (
                                 <DropdownMenuItem onClick={() => setDeleteDispatch(dispatch)} className="text-destructive">
                                   <Trash2 className="h-4 w-4 mr-2" />
                                   Eliminar
                                 </DropdownMenuItem>
-                              )}
+                              ))}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>

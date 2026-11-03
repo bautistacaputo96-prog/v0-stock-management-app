@@ -948,12 +948,17 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Generar NP ahora
             </DropdownMenuItem>
           )}
-          {puede("programacion", "borrar") && (
+          {puede("programacion", "borrar") && (np.porPedido[d.id]?.eliminando ? (
+            <DropdownMenuItem disabled>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Eliminando… (vaciando la NP en Zomatik)
+            </DropdownMenuItem>
+          ) : (
             <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
               <Trash2 className="h-4 w-4 mr-2" />
               Eliminar
             </DropdownMenuItem>
-          )}
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     )

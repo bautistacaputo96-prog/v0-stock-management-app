@@ -17,7 +17,7 @@
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
-import { PASO_AUTORIZADA, actividadNp, avisarGerenciales, mailAnularZomatik, registrarAutorizacion } from "@/lib/zomatik/np-servidor"
+import { PASO_AUTORIZADA, actividadNp, avisarGerenciales, mailAnularZomatik, pedidosABorrar, registrarAutorizacion } from "@/lib/zomatik/np-servidor"
 import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
@@ -79,6 +79,8 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
   const ped = p as { id: string; plant_id: string }
   const cfg = (await configZ1(sb))[ped.plant_id]
   if (!llaveZ1(cfg)) return { activo: false, motivo: "OF y remito: se cargan a mano en Zomatik" }
+  // Un pedido que se pidió eliminar no se remite (lo avisa el mail "Anular en Zomatik")
+  if ((await pedidosABorrar(sb, [ped.id])).length) return { activo: true, creados: 0, problemas: ["El pedido se pidió eliminar: no se remite."] }
   const dias = ultimosDias(hoyAR(), DIAS_SIN_REMITIR)
   let q = sb.from("dispatches").select("id, quantity_m3, remito, remito_tipo, formula_id, plant_id, created_at, dispatch_date, is_test_dispatch, mixers(license_plate)").eq("scheduled_dispatch_id", ped.id).gte("dispatch_date", inicioDia(dias[dias.length - 1]))
   if (cfg!.remitir_desde) q = q.gte("created_at", cfg!.remitir_desde)
@@ -327,6 +329,9 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   const lista = ((data as unknown as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
     r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : !!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora,
   )
+  // Los de pedidos que se pidió eliminar no se trabajan (no se hace OF ni remito)
+  const aBorrar = new Set((await pedidosABorrar(sb, [...new Set(lista.map((r) => r.scheduled_dispatch_id).filter((x): x is string => !!x))])).map((b) => b.scheduled_dispatch_id))
+  for (let i = lista.length - 1; i >= 0; i--) if (lista[i].scheduled_dispatch_id && aBorrar.has(lista[i].scheduled_dispatch_id!)) lista.splice(i, 1)
   if (!lista.length) return { hechas: [] }
   const quien = `z1·${o.usuario}·${o.inicio.toString(36)}`
   const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
@@ -569,13 +574,21 @@ export async function despachoBorrado(dispatchId: string, usuario: string, o: { 
       m3: Number(link.m3), fecha: String(r.fecha), quien: usuario, motivo: o.motivo ?? null,
       que: `Se borró un despacho (${Number(link.m3)} m³) que ya estaba en Zomatik${r.remito_estado === "ok" ? " (OF y remito)" : " (OF)"}. Hay que anularlo a mano en Zomatik.`,
     }
+    // Un despacho = un mail: se toma la marca antes de mandar (si ya estaba, no se repite)
+    const { data: tomado, error: et } = await sb.from("zomatik_remito_despachos").update({ borrado_aviso_at: new Date().toISOString() } as never).eq("remito_id", r.id).eq("dispatch_id", dispatchId).is("borrado_aviso_at", null).select("dispatch_id")
+    if (!et && !((tomado as unknown[]) || []).length) return { estado: "mail", mensaje: "Ya se había avisado a Juan para anularlo en Zomatik." }
     const m = await mail(sb, datos)
-    // Que la pasada no lo vuelva a avisar: el cambio de despachos de este remito queda marcado como avisado
-    const { data: ls } = await sb.from("zomatik_remito_despachos").select("dispatch_id, m3").eq("remito_id", r.id)
-    const lista = (ls as { dispatch_id: string; m3: number }[]) || []
-    const { data: ds } = lista.length ? await sb.from("dispatches").select("id, quantity_m3, formula_id").in("id", lista.map((x) => x.dispatch_id)) : { data: [] }
-    const c = cambiosDespachos(lista, (ds as { id: string; quantity_m3: number | null; formula_id: string | null }[]) || [], r.formula_id)
-    if (c.firma) await sb.from("zomatik_remitos").update({ cambio_avisado: c.firma, updated_at: new Date().toISOString() } as never).eq("id", r.id)
+    if (!m.enviado) {
+      // No salió: se suelta la marca (vuelve a intentarse) y la pasada lo sigue viendo como cambio sin avisar
+      if (!et) await sb.from("zomatik_remito_despachos").update({ borrado_aviso_at: null } as never).eq("remito_id", r.id).eq("dispatch_id", dispatchId)
+    } else {
+      // Que la pasada no lo vuelva a avisar: el cambio de despachos de este remito queda marcado como avisado
+      const { data: ls } = await sb.from("zomatik_remito_despachos").select("dispatch_id, m3").eq("remito_id", r.id)
+      const lista = (ls as { dispatch_id: string; m3: number }[]) || []
+      const { data: ds } = lista.length ? await sb.from("dispatches").select("id, quantity_m3, formula_id").in("id", lista.map((x) => x.dispatch_id)) : { data: [] }
+      const c = cambiosDespachos(lista, (ds as { id: string; quantity_m3: number | null; formula_id: string | null }[]) || [], r.formula_id)
+      if (c.firma) await sb.from("zomatik_remitos").update({ cambio_avisado: c.firma, updated_at: new Date().toISOString() } as never).eq("id", r.id)
+    }
     await actividadNp(sb, { usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": "Se borró un despacho que ya estaba en Zomatik: mail a Juan para anularlo", OF: datos.of, Remito: datos.remito, NP: datos.np, "m³": datos.m3, Fecha: datos.fecha, Motivo: o.motivo, Mail: m.enviado ? "enviado" : m.motivo } })
     return { estado: "mail", mensaje: m.enviado ? "Ya estaba en Zomatik: se avisó a Juan para anularlo." : `Ya estaba en Zomatik y el mail no salió (${m.motivo}): avisale a Juan.` }
   }

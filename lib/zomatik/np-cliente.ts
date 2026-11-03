@@ -20,6 +20,8 @@ export type EstadoPedidoNp = {
   control: ControlDespacho
   /** NP nueva o de un proyecto, guardada en el servidor (null = todavía no se eligió). */
   eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null } | null
+  /** Se pidió eliminar el pedido y se está vaciando su NP en Zomatik. */
+  eliminando?: boolean
 }
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
 export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }

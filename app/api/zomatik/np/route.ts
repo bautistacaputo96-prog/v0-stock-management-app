@@ -90,7 +90,8 @@ export async function POST(req: Request) {
       const motivo = String(body?.motivo || "").trim().slice(0, 300) || null
       const copia = body?.copia && typeof body.copia === "object" ? Object.fromEntries(Object.entries(body.copia).slice(0, 20).map(([k, v]) => [String(k).slice(0, 40), String(v ?? "").slice(0, 200)])) : null
       const out = await eliminarPedido(pedidoId, u.name, { motivo, copia })
-      if (out.estado === "vaciando") after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
+      // El robot toma en el momento las NP a vaciar, aunque sean de otro pedido (NP con saldo)
+      if (out.estado === "vaciando") after(() => procesarNp({ usuario: u.name, pedidoId, npIds: out.npIds, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
       return NextResponse.json(out, { status: out.estado === "error" ? 409 : 200 })
     }
     const puedeProg = puedeCon(u, "programacion", "cargar")

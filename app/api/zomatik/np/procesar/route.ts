@@ -14,7 +14,7 @@ import { NextResponse } from "next/server"
 import { exigirSesion, respuestaError, respuestaModoLocal, sbServicio } from "@/lib/auth/servidor"
 import { puedeCon } from "@/lib/permisos"
 import { esLlamadaDeCron } from "@/lib/cron"
-import { faltaMigracion, pasadaNp, procesarNp } from "@/lib/zomatik/np-servidor"
+import { faltaMigracion, pasadaNp, procesarNp, reintentarAvisosBorrado } from "@/lib/zomatik/np-servidor"
 import { hoyAR } from "@/lib/zomatik/np"
 import { controlarCambiosZ1, prepararOfSueltas, procesarZ1 } from "@/lib/zomatik/z1-servidor"
 import { ultimosDias } from "@/lib/zomatik/z1"
@@ -37,6 +37,8 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     // Primero la base (como mucho 20 s); el robot, con lo que quede (no arranca una NP con menos de 30 s)
     const pasada = await pasadaNp(usuario, { inicio, hastaMs: 20_000 })
     const proceso = await procesarNp({ usuario, inicio })
+    // Los mails "Anular en Zomatik" de pedidos a borrar que no salieron
+    const avisosBorrado = await reintentarAvisosBorrado().catch(() => 0)
     // Z1 (spec 26): OF de los despachos sin pedido y reintentos de OF + remito, con el tiempo que quede. Con la llave de
     // remitir apagada (o sin su migración) no hace nada; un error acá no cambia la pasada de las NP.
     let z1: unknown = null
@@ -48,7 +50,7 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     } catch (e) {
       console.error("[zomatik-z1] pasada", (e as Error)?.message)
     }
-    return NextResponse.json({ ok: true, pasada, proceso, z1 })
+    return NextResponse.json({ ok: true, pasada, proceso, z1, avisosBorrado })
   } catch (e) {
     if (faltaMigracion(e)) return NextResponse.json({ ok: false, sinMigracion: true })
     throw e
