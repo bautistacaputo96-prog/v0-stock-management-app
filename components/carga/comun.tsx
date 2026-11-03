@@ -39,7 +39,7 @@ export function CartelSimulada({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md border border-l-[3px] border-amber-300 border-l-amber-500 bg-amber-50 px-2.5 py-0.5 text-amber-950", className)}>
       <span className="text-xs font-medium tracking-wide">PLANTA SIMULADA — no mueve la planta real</span>
-      <span className="text-[11px]">Las cargas de esta pantalla son de prueba: no tocan Indumix, no ajustan el stock y no corrigen despachos. La conexión con Indumix se programa después del jueves 23/10.</span>
+      <span className="text-[11px]">Las cargas de esta pantalla son de prueba: no tocan Indumix, no ajustan el stock y no corrigen despachos. La conexión con Indumix se programa con lo que se vea en la planta.</span>
     </div>
   )
 }

@@ -122,8 +122,12 @@ export function usarDatosCarga(plantId: string, cadaMs: number) {
       f.despacho = d ? { created_at: d.created_at, dispatch_date: d.dispatch_date, quantity_m3: Number(d.quantity_m3), cliente: d.clients?.name || "", obra: d.construction_sites?.name || "" } : null
       f.salida_gps = f.dispatch_id ? salida.get(f.dispatch_id) || null : null
     }
+    // Fuera de la cola: cargas de despachos ya borrados y órdenes de prueba de otros días
+    const ok = !(ds as any).error
+    const enCola = (f: CargaFila) => ESTADOS_COLA.includes(f.estado)
+    const visibles = filas.filter((f) => !(enCola(f) && ((ok && f.origen === "sistema" && f.dispatch_id && !f.despacho) || (f.origen === "prueba" && f.created_at < hoy0()))))
     setCtx(c)
-    setCargas(filas)
+    setCargas(visibles)
     setAlertas((al.data || []) as AlertaFila[])
     setExtras(((ex.data || []) as AguaExtraFila[]).map((x) => ({ ...x, litros: Number(x.litros) })))
     setCargando(false)
