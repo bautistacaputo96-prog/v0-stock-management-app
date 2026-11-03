@@ -58,6 +58,17 @@ export function rutaDeLocation(location: string, desde: string): string | null {
 // 2. Nota de pedido (Z2): grupo aparte, solo con la llave prendida
 // ---------------------------------------------------------------------------
 
+/**
+ * Autorizar una NP del sistema (03/11, Bautista: "se autoriza sola en el momento"): el form `frm_autorizar` del listado.
+ * Solo POST a esta ruta exacta y, en el cuerpo, solo `autorizar=<entero>` (lo controla `cuerpoAutorizarValido` en el
+ * cliente antes de mandar). El robot autoriza solo NP con nuestra marca.
+ */
+export const RUTA_AUTORIZAR_NP = "_autorizarpedido.php?orden=fechaord%20desc,%20codigo%20desc&torden="
+const esRutaAutorizar = (p: string, metodo: "GET" | "POST") => metodo === "POST" && p === RUTA_AUTORIZAR_NP
+export function cuerpoAutorizarValido(cuerpo: string | null | undefined): boolean {
+  return /^autorizar=\d{1,12}$/.test(String(cuerpo ?? ""))
+}
+
 /** Comprobantes de NP que puede pedir el robot: 15 Nota de Pedido, 16 Nota de Pedido 2 (spec 5.2). */
 export const COMPROBANTES_NP = ["15", "16"] as const
 
@@ -74,9 +85,11 @@ const MANAGE_PROHIBIDO = /[?&](fautorizar|faccion|fitems)=/i
  *   GET  listado_listas.php                          listas de precios (la activa "en 1" / "en 2")
  *   GET  manage_pedidos.php?pedidos_unico=…          Continuar, agregar artículo y borrar renglón (fborrar)
  *   POST grabar_pedidos.php?codigo=N                 Grabar (0 = nueva)
+ *   POST _autorizarpedido.php?orden=…&torden=        autorizar la NP del sistema (solo autorizar=<entero>)
  */
 export function rutaEscrituraNp(path: string, metodo: "GET" | "POST"): boolean {
   const p = path.replace(/^\/+/, "")
+  if (esRutaAutorizar(p, metodo)) return true
   if (metodo === "POST") return /^grabar_pedidos\.php\?codigo=\d+$/i.test(p)
   if (/^modificar_pedidos\.php$/i.test(p)) return true
   if (/^modificar_pedidos\.php\?proyecto=\d+&tipo=1$/i.test(p)) return true
@@ -119,16 +132,21 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   POST paginar_remitos.php[?rnd=N]                       LECTURA: las filas del listado (las trae el JavaScript,
  *                                                          TraerPaginado; fsql = el hidden #sql de la página, tal cual)
  *   POST grabar_remitos.php?codigo=0                       grabar el remito (solo alta)
+ *   GET  modificar_pedidos.php?codigo=N                    abrir la NP para ver la marca antes de autorizarla
+ *   POST _autorizarpedido.php?orden=…&torden=              autorizar la NP antes del remito (solo autorizar=<entero>)
  * Nunca borrar, anular ni modificar uno existente.
  */
 export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
   const p = path.replace(/^\/+/, "")
+  if (esRutaAutorizar(p, metodo)) return true
   if (Z1_PROHIBIDO.test(p)) return false
   if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p) || /^paginar_remitos\.php(\?rnd=\d+)?$/i.test(p)
   if (/^modificar_ordenfabricacion\.php(\?codigo=\d+)?$/i.test(p)) return true
   if (/^listado_(ordenfabricacion|remitos)\.php$/i.test(p)) return true
   if (/^manage_ordenfabricacion\.php\?/i.test(p)) return /[?&]ordenfabricacion_unico=[A-Za-z0-9._-]+/.test(p) && /[?&]ordenfabricacion=0(&|$)/.test(p)
   if (/^modificar_remitos\.php\?(pedido|codigo)=\d+$/i.test(p)) return true
+  // Abrir la NP para ver la marca antes de autorizarla (solo GET, no graba)
+  if (/^modificar_pedidos\.php\?codigo=\d+$/i.test(p)) return true
   if (/^traerdatossecundarios\.php\?fcliente=\d+(&rnd=\d+)?$/i.test(p)) return true
   if (/^manage_remitos\.php\?/i.test(p)) return /[?&]fpedido=\d+/.test(p)
   if (/^_validarnumeroremito\.php\?fcomprobante=(7|19)&fnumero=\d{4}-\d{8}(&rnd=\d+)?$/i.test(p)) return true

@@ -1812,7 +1812,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 | `app/api/zomatik/remito/*` | Remitir, estado y la pasada de la noche (`vercel.json`, 02:30 UTC) |
 | `lib/zomatik/z1-cliente.ts`, `components/despacho/{despacho-tablero,columna-pedidos}.tsx` | "Finalizar" remite, el menú "Remitir en Zomatik" y el chip del remito en el pedido |
 | `supabase/migrations/202610291000_zomatik_z1_remitos.sql` | **Sin aplicar.** `remitir_activo`/`remitir_desde`, `zomatik_remitos`, `zomatik_remito_despachos`, `zomatik_remito_crear`, `zomatik_remito_tomar`. No cambia ningún dato |
-| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (35) |
+| `lib/__tests__/zomatik-z1.test.mjs` + `lib/__fixtures__/zomatik-z1/` | `npm run test:zomatik-z1` (40) |
 
 - La migración **no se probó contra la base**: el lector de la base ahora es solo lectura y no corre ROLLBACK. Probarla antes de aplicarla.
 
@@ -1923,3 +1923,27 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - sin provincia del cliente va 1: ya no se frena por eso;
   - si la respuesta no se entiende, frena sin grabar, como todo el robot.
 - **Reintento con número guardado:** "Remitir en Zomatik" usa ese número; si ya está usado, sigue con el siguiente (hasta 5). No rehace la OF.
+
+### 26.15 La NP del sistema se autoriza sola (03/11, rama `fix/np-autorizar`)
+- En Zomatik las NP nuevas quedan **"pendientes de autorización"**: van en rojo (`bgcolor="#fe8181"`), con el ícono `Autorizar(<codigo>)`, y sin autorizar no aparece REMITO ni se ven pendientes en `manage_remitos`. Bautista: la NP que genera el sistema **se autoriza sola en el momento**.
+- **Robot** (`autorizarNp`, `np-robot.ts`):
+  1. sucursal 18 y la fila de la NP en el listado (por número);
+  2. si ya está autorizada (en blanco, con REMITO), no hace nada;
+  3. abre la NP y exige **nuestra marca**: nunca se autoriza una NP sin ella;
+  4. el form `frm_autorizar` del listado tiene que ser el leído;
+  5. sucursal 18 y `POST _autorizarpedido.php?orden=fechaord%20desc,%20codigo%20desc&torden=` con `autorizar=<codigo>`;
+  6. lee el listado otra vez: sin `Autorizar(` y con REMITO es "autorizada".
+- Nunca tira. Lo que no sale queda "sin_autorizar" con el recorte.
+- **Cuándo:**
+  - al generar y verificar la NP (`trabajarGenerar`);
+  - en la pasada de cada 10 min, las NP "ok" con `paso = sin_autorizar` (hasta 5 por pasada);
+  - **antes de cada remito de Z1**, si la NP no tiene `paso = autorizada`. Así entran también las NP que ya existían.
+- **Estados:** la NP queda "ok" y se usa `zomatik_np.paso`, sin cambiar el schema:
+  - `autorizada`: Actividad "NP autorizada en Zomatik";
+  - `sin_autorizar`: mensaje "NP sin autorizar en Zomatik", chip ámbar "NP sin autorizar en Zomatik"; se reintenta;
+  - `autorizar_revisar`: no tiene la marca; aviso a gerenciales, no se reintenta.
+  - El remito de Z1 espera ("pendiente", 10 min) mientras la NP no esté autorizada.
+- **Lista cerrada:**
+  - `POST _autorizarpedido.php` (solo esa ruta exacta) en los grupos de la NP y de Z1;
+  - el cliente rechaza cualquier cuerpo que no sea `autorizar=<entero>`;
+  - Z1 suma `GET modificar_pedidos.php?codigo=N` para mirar la marca.

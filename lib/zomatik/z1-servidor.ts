@@ -17,7 +17,8 @@
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
-import { actividadNp, avisarGerenciales } from "@/lib/zomatik/np-servidor"
+import { PASO_AUTORIZADA, actividadNp, avisarGerenciales, registrarAutorizacion } from "@/lib/zomatik/np-servidor"
+import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
@@ -168,9 +169,9 @@ export type DependenciasZ1 = {
   navegador: (llave: LlaveZ1) => Promise<NavegadorNp>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
-  robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito }
+  robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp }
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito } }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp } }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -262,7 +263,7 @@ const PASOS_ANTES_DE_GRABAR = ["elegir_numero", "formulario_remito", "continuar_
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
   const [{ data: np }, { data: f }, { data: ped }] = await Promise.all([
-    r.np_id ? sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null }),
+    r.np_id ? sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado, marca, paso, scheduled_dispatch_id, plant_id").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null }),
     r.formula_id ? sb.from("formulas").select("id, code, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", r.formula_id).maybeSingle() : Promise.resolve({ data: null }),
     r.scheduled_dispatch_id ? sb.from("scheduled_dispatches").select("id, construction_sites(name, address, localidad)").eq("id", r.scheduled_dispatch_id).maybeSingle() : Promise.resolve({ data: null }),
   ])
@@ -270,7 +271,7 @@ async function datos(sb: SB, r: RemitoDB) {
   const { data: a } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre, codigo_sistema").eq("codigo", codArt).maybeSingle() : { data: null }
   const obra = (ped as { construction_sites?: { name?: string | null; address?: string | null; localidad?: string | null } | null } | null)?.construction_sites ?? null
   return {
-    np: np as { numero: string | null; zomatik_codigo: number | null; estado: string } | null,
+    np: np as { id: string; numero: string | null; zomatik_codigo: number | null; estado: string; marca: string; paso: string | null; scheduled_dispatch_id: string | null; plant_id: string | null } | null,
     articuloCodigo: codArt,
     articuloCodigoSistema: (a as { codigo_sistema?: number | null } | null)?.codigo_sistema ?? null,
     articuloNombre: (a as { nombre?: string } | null)?.nombre || (f as { zomatik_articulo_nombre?: string } | null)?.zomatik_articulo_nombre || "",
@@ -392,6 +393,20 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         if (!d.np?.zomatik_codigo || d.np.estado !== "ok" || !r.comprobante) {
           await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, "remito")
           continue
+        }
+        // La NP tiene que estar autorizada en Zomatik (03/11): si no, no aparece el remito ni sus pendientes
+        if (d.np.paso !== PASO_AUTORIZADA) {
+          const a = await dep.robot.autorizarNp(nav, { codigo: d.np.zomatik_codigo, numero: d.np.numero, marca: d.np.marca }, { latir: renovar })
+          await registrarAutorizacion(sb, d.np, a, { usuario: o.usuario, avisar: dep.avisar })
+          if (a.estado === "sin_autorizar") {
+            await terminar({ estado: "pendiente", mensaje: `La ${d.np.numero || "NP"} no está autorizada en Zomatik (${a.mensaje}). Se reintenta.`, paso: "autorizar_np", reintentar: true }, "remito")
+            continue
+          }
+          if (a.estado === "revisar") {
+            // Ya se avisó a gerenciales al registrar la autorización: el remito queda en error (se reintenta con el botón)
+            await terminar({ estado: "error", mensaje: a.mensaje, paso: "autorizar_np" }, "remito")
+            continue
+          }
         }
         // El número es una entrada aparte: el que ya se eligió (y se guardó) o el más alto del talonario + 1
         let numero = r.remito_numero ? r.remito_numero.replace(/^RM2?\s+/i, "") : null

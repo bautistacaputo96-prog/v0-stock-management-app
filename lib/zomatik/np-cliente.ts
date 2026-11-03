@@ -8,7 +8,7 @@ import type { ControlDespacho, EstadoNp, ModoNp, TipoNp } from "@/lib/zomatik/np
 
 export type NpFila = {
   id: string; n: number; estado: EstadoNp; tipo: TipoNp; m3: number; numero: string | null; zomatik_codigo: number | null
-  mensaje: string | null; proyecto_codigo: number | null; es_adicional: boolean; disponible_m3: number | null; updated_at: string
+  mensaje: string | null; paso?: string | null; proyecto_codigo: number | null; es_adicional: boolean; disponible_m3: number | null; updated_at: string
   /** m³ que el pedido usa de esta NP y lo libre de la NP (una NP puede servir a varios pedidos). */
   m3_uso: number; libre: number; fecha: string; fecha_zomatik: string | null; saldo_mensaje: string | null
 }
@@ -190,6 +190,9 @@ export function chipNp(e: EstadoPedidoNp | undefined | null): { texto: string; c
   }
   const malas = vivas.filter((x) => x.estado !== "ok")
   const titulo = vivas.map((x) => `${x.numero || `NP ${x.n}`} · ${x.m3} m³${x.tipo === "proyecto" ? " · proyecto" : ""}${x.estado !== "ok" ? ` · ${x.mensaje || x.estado}` : ""}`).join("\n")
+  // NP generada pero sin autorizar en Zomatik (03/11): sin autorizar no se puede remitir
+  const sinAut = vivas.filter((x) => x.estado === "ok" && (x.paso === "sin_autorizar" || x.paso === "autorizar_revisar"))
+  if (!malas.length && sinAut.length) return { texto: "NP sin autorizar en Zomatik", clase: "aviso", titulo: sinAut.map((x) => `${x.numero || "NP"}: ${x.mensaje || "sin autorizar"}`).join("\n") }
   if (!malas.length) return { texto: `${vivas.map((x) => corto(x.numero)).join(" + ")} ✓`, clase: "ok", titulo }
   const peor = malas.find((x) => x.estado === "error") || malas.find((x) => x.estado === "revisar") || malas[0]
   const t = peor.estado === "error" ? "NP con error" : peor.estado === "revisar" ? "NP: revisar" : peor.estado === "generando" ? "Generando NP…" : "NP pendiente"

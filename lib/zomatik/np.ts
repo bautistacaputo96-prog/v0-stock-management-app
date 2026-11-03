@@ -458,6 +458,31 @@ export function pedidosDeListado(html: string): FilaPedido[] {
 }
 
 /** "Pagina 1 de 10" al pie del listado → 10 (null si no lo dice: una sola página). */
+/**
+ * Autorización de una NP en el listado de pedidos (03/11, leído del listado real): las NP nuevas quedan "pendientes de
+ * autorización", en rojo (`bgcolor="#fe8181"`) y con el ícono `Autorizar(<codigo>)`; sin autorizar no aparece REMITO ni
+ * se ven pendientes en manage_remitos. Una autorizada va en blanco, sin el ícono y con `modificar_remitos.php?pedido=N`.
+ * null si la fila de esa NP no está.
+ */
+export function autorizacionEnListado(html: string, codigo: number): { porAutorizar: boolean; otroAutorizar: boolean; conRemito: boolean; roja: boolean } | null {
+  for (const tr of filasInternas(html)) {
+    if (!new RegExp(`modificar_pedidos\\.php\\?codigo=${codigo}(?!\\d)`, "i").test(tr)) continue
+    const porAutorizar = new RegExp(`Autorizar\\(\\s*${codigo}\\s*\\)`).test(tr)
+    return {
+      porAutorizar,
+      otroAutorizar: !porAutorizar && /Autorizar\(/.test(tr),
+      conRemito: new RegExp(`modificar_remitos\\.php\\?pedido=${codigo}(?!\\d)`, "i").test(tr),
+      roja: /bgcolor\s*=\s*["']?#fe8181/i.test(tr),
+    }
+  }
+  return null
+}
+
+/** El form de autorizar del listado (`frm_autorizar`, action _autorizarpedido.php?orden=…&torden=), como se leyó el 03/11. */
+export function tieneFormAutorizar(html: string): boolean {
+  return /<form\b[^>]*name\s*=\s*["']?frm_autorizar["'\s>][^>]*>/i.test(html) && /action\s*=\s*["']_autorizarpedido\.php\?orden=fechaord desc, codigo desc&torden=\s*["']/i.test(html) && /name\s*=\s*["']?autorizar["'\s>]/i.test(html)
+}
+
 export function paginasDeListado(html: string): number | null {
   const m = texto(sinComentarios(html)).match(/P[aá]gina\s+\d+\s+de\s+(\d+)/i)
   return m ? Number(m[1]) : null

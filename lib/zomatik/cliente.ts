@@ -22,7 +22,7 @@ import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, matrizDeTablaHtml, type Fila } from "@/lib/zomatik/parseo"
 import type { LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import type { LlaveZ1 } from "@/lib/zomatik/z1-robot"
-import { ZOMATIK_WEB, LISTADOS, rutaPermitida, rutaDeLocation, rutaEscrituraNp, rutaEscrituraZ1 } from "@/lib/zomatik/web"
+import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, cuerpoAutorizarValido, rutaPermitida, rutaDeLocation, rutaEscrituraNp, rutaEscrituraZ1 } from "@/lib/zomatik/web"
 import { camposFormulario } from "@/lib/zomatik/np"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
@@ -94,6 +94,11 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
   for (let salto = 0; ; salto++) {
     if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo)))
       throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida: ${metodo} ${ruta.split("?")[0]}`)
+    // Autorizar una NP: en el cuerpo solo "autorizar=<entero>" (nada más se puede mandar a esa ruta)
+    if (ruta === RUTA_AUTORIZAR_NP) {
+      const texto = typeof cuerpo === "string" ? cuerpo : cuerpo instanceof Uint8Array ? Buffer.from(cuerpo).toString("latin1") : null
+      if (!cuerpoAutorizarValido(texto)) throw new ZomatikError("ruta_no_permitida", "Autorizar NP: el cuerpo tiene que ser solo autorizar=<código>")
+    }
     await pausa()
     const ctrl = new AbortController()
     const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)

@@ -18,8 +18,9 @@ import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
-  type CampoForm, type Renglon,
+  autorizacionEnListado, tieneFormAutorizar, type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
+import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -175,6 +176,7 @@ async function listado(nav: NavegadorNp, filtros: Record<string, string>, sucurs
   const campos = { ...f.campos, exportar: "0", bus_sucursal: sucursal === SUCURSAL_REBUCRET ? SUCURSAL_REBUCRET : "", ...filtros }
   const r = await nav.post("listado_pedidos.php?enviado=1", bytes(queryLatin1(Object.entries(campos))), "application/x-www-form-urlencoded")
   return {
+    html: r.html,
     filas: pedidosDeListado(r.html),
     paginas: paginasDeListado(r.html),
     paginado: hayPaginado(r.html),
@@ -561,5 +563,57 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     if (e instanceof Corte) return { estado: e.estado === "pendiente" ? "vaciar" : e.estado === "ok" ? "vaciada" : (e.estado as "revisar" | "error"), mensaje: e.message, paso, recorte: e.recorte }
     // Corte de red: queda para vaciar; la próxima vez se abre de nuevo y se mira (vaciar es idempotente)
     return { estado: "vaciar", mensaje: `${mensajeDe(e)}. Se reintenta en 10 min.`, paso }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Autorizar la NP del sistema (03/11, Bautista: "se autoriza sola en el momento")
+// ---------------------------------------------------------------------------
+
+export type ResultadoAutorizar = {
+  /** autorizada = la autorizó el robot; ya = ya estaba autorizada; sin_autorizar = no se pudo (se reintenta);
+   *  revisar = no tiene nuestra marca (nunca se autoriza: lo mira una persona) */
+  estado: "autorizada" | "ya" | "sin_autorizar" | "revisar"
+  mensaje: string | null
+  recorte?: string
+}
+
+/**
+ * Autoriza una NP en Zomatik si está "pendiente de autorización" (fila en rojo con el ícono `Autorizar(<codigo>)`, sin
+ * REMITO). Sin autorizar no aparece el remito ni sus pendientes. Solo una NP con NUESTRA marca: se abre y se mira antes.
+ *   sucursal 18 → listado por número → (ya autorizada: fin) → abrir la NP y ver la marca → el form frm_autorizar del
+ *   listado tiene que ser el leído → POST _autorizarpedido.php con autorizar=<codigo> → listado otra vez: sin
+ *   "Autorizar(" y con el link REMITO.
+ * Nunca tira: lo que no se pueda vuelve como "sin_autorizar" (la NP sigue "ok"; se reintenta en la pasada).
+ */
+export async function autorizarNp(nav: NavegadorNp, d: { codigo: number; numero: string | null; marca: string }, o: { latir?: () => Promise<void> } = {}): Promise<ResultadoAutorizar> {
+  const sin = (m: string, html?: string): ResultadoAutorizar => ({ estado: "sin_autorizar", mensaje: m, ...(html ? { recorte: recorte(html) } : {}) })
+  try {
+    if (!Number.isInteger(d.codigo) || d.codigo <= 0 || !d.numero) return sin("la NP no tiene código o número de Zomatik")
+    const fila = async () => {
+      await o.latir?.()
+      await aRebucret(nav)
+      const l = await listado(nav, { bus_numero: numeroNormalizado(d.numero) || d.numero! }, SUCURSAL_REBUCRET)
+      if (l.sucursalPagina !== SUCURSAL_REBUCRET) return { l, a: null, otraSucursal: true }
+      return { l, a: autorizacionEnListado(l.html, d.codigo), otraSucursal: false }
+    }
+    const antes = await fila()
+    if (antes.otraSucursal) return sin("el listado de pedidos vino de otra sucursal")
+    if (!antes.a) return sin(`no se encontró la ${d.numero} en el listado de pedidos`, antes.l.html)
+    if (antes.a.otroAutorizar) return sin("la fila trae el ícono de autorizar de otro código", antes.l.html)
+    if (!antes.a.porAutorizar) return antes.a.conRemito ? { estado: "ya", mensaje: null } : sin("la NP no muestra ni Autorizar ni REMITO", antes.l.html)
+    // Solo una NP con nuestra marca
+    const np = await abrir(nav, d.codigo)
+    if (!np.form) return sin(`no se pudo abrir la ${d.numero}`, np.html)
+    if (!tieneMarca(np.form.campos.observaciones, d.marca)) return { estado: "revisar", mensaje: `La ${d.numero} no tiene la marca del sistema: no se autoriza sola. Autorizala a mano si corresponde.` }
+    if (!tieneFormAutorizar(antes.l.html)) return sin("Zomatik cambió el formulario de autorizar", antes.l.html)
+    await o.latir?.()
+    await aRebucret(nav)
+    const r = await nav.post(RUTA_AUTORIZAR_NP, bytes(`autorizar=${d.codigo}`), "application/x-www-form-urlencoded")
+    const despues = await fila()
+    if (!despues.otraSucursal && despues.a && !despues.a.porAutorizar && !despues.a.otroAutorizar && despues.a.conRemito) return { estado: "autorizada", mensaje: null }
+    return sin(`Zomatik no la autorizó${rechazo(r) ? ` (${rechazo(r)})` : ""}`, despues.l.html || r.html)
+  } catch (e) {
+    return sin(mensajeDe(e))
   }
 }

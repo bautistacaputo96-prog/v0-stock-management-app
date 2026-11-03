@@ -18,8 +18,8 @@
 import { sbServicio } from "@/lib/auth/servidor"
 import { discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
-import { generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoNp } from "@/lib/zomatik/np-robot"
-import { quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
+import { autorizarNp, generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
+import { SUCURSAL_REBUCRET, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
   pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
@@ -540,6 +540,8 @@ export type Dependencias = {
   navegador: (llave: LlaveNp) => Promise<NavegadorNp>
   remitos: (numero: string | null, desde: string) => Promise<boolean | null>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
+  /** Autorizar la NP en Zomatik (en las pruebas, uno simulado) */
+  autorizar?: typeof autorizarNp
 }
 
 type Contexto = {
@@ -611,7 +613,40 @@ async function tieneRemitos(numero: string | null, desde: string): Promise<boole
   }
 }
 
-export const DEPENDENCIAS: Dependencias = { navegador: navegadorNp, remitos: tieneRemitos, avisar: avisarGerenciales }
+export const DEPENDENCIAS: Dependencias = { navegador: navegadorNp, remitos: tieneRemitos, avisar: avisarGerenciales, autorizar: autorizarNp }
+
+/** `zomatik_np.paso` de una NP "ok" sin autorizar en Zomatik: se reintenta en la pasada; la ve el chip. */
+export const PASO_SIN_AUTORIZAR = "sin_autorizar"
+/** NP "ok" sin nuestra marca en Zomatik: no se autoriza sola, no se reintenta (la mira una persona). */
+export const PASO_AUTORIZAR_REVISAR = "autorizar_revisar"
+export const PASO_AUTORIZADA = "autorizada"
+
+/**
+ * Guarda el resultado de autorizar una NP "ok" (03/11). Autorizada: Actividad "NP autorizada en Zomatik". Sin
+ * autorizar: queda "ok" con el aviso "NP sin autorizar en Zomatik" (paso sin_autorizar, se reintenta). Sin la marca:
+ * aviso a gerenciales, no se reintenta.
+ */
+export async function registrarAutorizacion(
+  sb: SB,
+  np: { id: string; numero: string | null; marca: string; paso: string | null; scheduled_dispatch_id: string | null; plant_id?: string | null },
+  a: ResultadoAutorizar,
+  o: { usuario: string; avisar: Dependencias["avisar"] },
+): Promise<void> {
+  const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
+  const ahora = new Date().toISOString()
+  if (a.estado === "autorizada" || a.estado === "ya") {
+    if (np.paso === PASO_AUTORIZADA) return
+    await sb.from("zomatik_np").update({ paso: PASO_AUTORIZADA, ...(np.paso === PASO_SIN_AUTORIZAR || np.paso === PASO_AUTORIZAR_REVISAR ? { mensaje: null } : {}), updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
+    if (a.estado === "autorizada") await actividadNp(sb, { usuario: o.usuario, action: "editar", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP autorizada en Zomatik", NP: np.numero } })
+    return
+  }
+  const paso = a.estado === "revisar" ? PASO_AUTORIZAR_REVISAR : PASO_SIN_AUTORIZAR
+  const mensaje = a.estado === "revisar" ? a.mensaje : `NP sin autorizar en Zomatik: ${a.mensaje || "no se pudo"}. Se reintenta.`
+  await sb.from("zomatik_np").update({ paso, mensaje, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
+  if (np.paso === paso) return // ya avisado
+  await actividadNp(sb, { usuario: o.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP sin autorizar en Zomatik", Mensaje: a.mensaje, NP: np.numero, ...(a.recorte ? { "Respuesta de Zomatik (recorte)": a.recorte } : {}) } })
+  if (a.estado === "revisar") await o.avisar(sb, `NP sin autorizar: ${np.numero || "NP"}`, [a.mensaje || "", `Marca: ${np.marca}`])
+}
 
 /**
  * Guarda SOLO si la NP sigue en `esperado` ("generando" / "vaciando"): si otro proceso o un gerencial la cambió en el
@@ -672,6 +707,11 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     if (guardo) {
       if (np.scheduled_dispatch_id) await sb.from("zomatik_np_excepciones").update({ regularizado_at: ahora } as never).eq("scheduled_dispatch_id", np.scheduled_dispatch_id).is("regularizado_at", null)
       await actividadNp(sb, { usuario: ctx.usuario, action: "crear", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP generada en Zomatik: ${r.numero}`, "m³": np.m3, Tipo: np.tipo === "proyecto" ? `Proyecto ${np.proyecto_codigo}` : "NP nueva" } })
+      // Generada y verificada con la marca: se autoriza en el momento (03/11), si no el remito no la ve
+      if (r.codigo && r.sucursal === SUCURSAL_REBUCRET) {
+        const a = await (ctx.dep.autorizar ?? autorizarNp)(ctx.nav, { codigo: r.codigo, numero: r.numero ?? null, marca: np.marca }, { latir: ctx.renovar })
+        await registrarAutorizacion(sb, { ...np, numero: r.numero ?? np.numero, paso: "ok" }, a, { usuario: ctx.usuario, avisar: ctx.dep.avisar })
+      }
     }
   } else if (r.estado === "revisar") {
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "revisar", numero: r.numero ?? null, zomatik_codigo: r.codigo ?? null, sucursal: r.sucursal ?? null, paso: r.paso, proximo_intento: null })
@@ -761,7 +801,8 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
   const plantas = await plantasNp(sb)
   if (!Object.values(plantas).some((p) => p.zomatik_np_activo)) return { hechas: [], quedan: 0 }
   const lista = await aTrabajar(sb, o.pedidoId)
-  if (!lista.length) return { hechas: [], quedan: 0 }
+  const porAutorizar = await sinAutorizar(sb, plantas, o.pedidoId)
+  if (!lista.length && !porAutorizar.length) return { hechas: [], quedan: 0 }
   const quien = `${o.usuario}·${o.inicio.toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`
   const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
   if (et) throw et
@@ -816,10 +857,33 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
         if (/sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break // no se insiste con la sesión caída
       }
     }
+    // NP "ok" que quedaron sin autorizar en Zomatik: se reintenta (con el tiempo que quede)
+    for (const np of porAutorizar) {
+      if (!quedaTiempo(o.inicio, Date.now(), total, minimo)) break
+      const llave = llaveDe(plantas[np.plant_id || ""])
+      if (!llave || !np.zomatik_codigo) continue
+      try {
+        if (!ctx.nav) ctx.nav = await dep.navegador(llave)
+        const a = await (dep.autorizar ?? autorizarNp)(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, { latir: ctx.renovar })
+        await registrarAutorizacion(sb, np, a, { usuario: ctx.usuario, avisar: dep.avisar })
+        hechas.push({ id: np.id, estado: a.estado, mensaje: a.mensaje })
+      } catch (e) {
+        console.error("[zomatik-np] autorizar", (e as Error)?.message)
+      }
+    }
   } finally {
     await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
   }
   return { hechas, quedan }
+}
+
+/** NP "ok" de REBUCRET que quedaron sin autorizar (paso sin_autorizar), de plantas con la llave prendida. */
+async function sinAutorizar(sb: SB, plantas: Record<string, PlantaNpDB>, pedidoId?: string | null): Promise<FilaNpDB[]> {
+  let q = sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "ok").eq("paso", PASO_SIN_AUTORIZAR).order("updated_at").limit(5)
+  if (pedidoId) q = q.eq("scheduled_dispatch_id", pedidoId)
+  const { data, error } = await q
+  if (error) throw error
+  return ((data as unknown as FilaNpDB[]) || []).filter((x) => x.zomatik_codigo && (!x.sucursal || x.sucursal === SUCURSAL_REBUCRET) && llaveDe(plantas[x.plant_id || ""]))
 }
 
 // ---------------------------------------------------------------------------
