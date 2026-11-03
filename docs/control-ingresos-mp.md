@@ -62,7 +62,7 @@ Cada diferencia tiene una `clave` estable: la categoría, el tipo y los renglone
 - **Hora:** cron de Vercel `25 19 * * *`, o sea 16:25 de Argentina. Lee Zomatik justo antes, así entra lo cargado ese día.
   - Queda después de `cajas-whatsapp` de Concretus (18:50 UTC, lun a vie, 60 s, usa el mismo usuario de Zomatik) y entre dos pasadas del pg_cron de las NP (cada 10 min); si el robot tiene el turno, espera hasta 20 s.
   - En el plan Hobby, Vercel puede dispararlo hasta las 16:59. Si en ese momento Concretus cambia la sucursal, el control lo detecta y reintenta el tramo.
-- **A quién:** Juan Oreguy, con copia a Bautista, por nombre en `app_users` (como `lib/carga/servidor.ts`).
+- **A quién:** Juan Oreguy, con copia a Bautista, por nombre en `app_users` (como `lib/carga/servidor.ts`). El semanal de los lunes también va con copia a Felipe Calvo (f.calvo@concretus.com.ar, fijo en `MAIL_CC_SEMANAL`; Bautista, 03/11).
 - **Cuándo sale:** todos los días, una vez como mucho, siempre a Juan (Bautista, 28/10).
 - **Diario:** **solo** las inconsistencias de remitos detectadas ese día, es decir, las que aparecieron desde el mail anterior. Van en tablas por las 4 categorías, con fecha, material, nuestro sistema y Zomatik (número, toneladas, planta y fecha), proveedor y qué pasa. Sin stock y sin "siguen abiertas".
   - Si no hay ninguna, sale igual: asunto "Rebucret · Control de ingresos MP: sin inconsistencias hoy" y una línea, "Hoy no hay inconsistencias nuevas entre el sistema y Zomatik", con el link.

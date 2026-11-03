@@ -67,6 +67,8 @@ export const LINK_PANTALLA = "https://www.produccionrebucret.com/materias-primas
 /** Mail: a Juan, con copia a Bautista (por nombre en app_users, como lib/carga/servidor.ts). */
 export const MAIL_A = ["Juan Oreguy"]
 export const MAIL_CC = ["Bautista Caputo"]
+/** El semanal de los lunes además le llega a Felipe Calvo (Bautista, 03/11/2026; su usuario no tiene mail cargado) */
+export const MAIL_CC_SEMANAL = ["f.calvo@concretus.com.ar"]
 const FROM = process.env.REPORTE_CALIDAD_FROM || "reportes@produccionrebucret.com"
 
 // ---------------------------------------------------------------------------
@@ -388,6 +390,7 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   const cc = await mailsDe(sb, MAIL_CC)
   if (!to.length) return { enviado: false, a: [], motivo: `${MAIL_A.join(", ")} sin mail cargado` }
   const semanal = esDiaSemanal(hoy)
+  if (semanal) cc.push(...MAIL_CC_SEMANAL.filter((m) => !cc.includes(m) && !to.includes(m)))
   const stock = semanal ? await seccionStockParaMail(sb, hoy, null) : null
   const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html })
   const r = await fetch("https://api.resend.com/emails", {
