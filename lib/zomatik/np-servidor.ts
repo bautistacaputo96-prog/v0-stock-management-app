@@ -828,7 +828,7 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
       // "remitos" y va el mail a Juan (si no sale, queda para reintentar en la pasada)
       for (const b of (await pedidosABorrar(sb, await pedidosDeNp(sb, np.id))).filter((x) => x.modo === "vaciar")) {
         await sb.from("zomatik_pedido_borrar").update({ modo: "remitos", aviso_at: null } as never).eq("scheduled_dispatch_id", b.scheduled_dispatch_id)
-        const m = await mandarAvisoBorrado(sb, { ...b, modo: "remitos", aviso_at: null }, { np: np.numero, m3: Number(np.m3) || null, fecha: String(np.fecha), conRemitos: true }, ctx.dep)
+        const m = await mandarAvisoBorrado(sb, { ...b, modo: "remitos", aviso_at: null }, { np: np.numero, m3: Number(np.m3) || null, fecha: String(np.fecha) }, ctx.dep)
         await actividadNp(sb, { usuario: ctx.usuario, pedidoId: b.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "La NP tiene remitos: el pedido no se borró (quedó cancelado). Mail a Juan para anular en Zomatik", Mail: m.enviado ? "enviado" : `no salió (${m.motivo}): se reintenta` } })
       }
     }
@@ -1113,7 +1113,7 @@ export type DependenciasEliminar = { mail: typeof mailAnularZomatik; avisar?: De
  */
 async function mandarAvisoBorrado(
   sb: SB, b: PedidoBorrar,
-  d: { np: string | null; of?: string | null; remito?: string | null; m3: number | null; fecha: string | null; conRemitos: boolean },
+  d: { np: string | null; of?: string | null; remito?: string | null; m3: number | null; fecha: string | null },
   dep: { mail?: typeof mailAnularZomatik; avisar?: Dependencias["avisar"] },
 ): Promise<{ enviado: boolean; motivo?: string; yaSalio?: boolean }> {
   if (b.aviso_at) return { enviado: true, yaSalio: true }
@@ -1121,9 +1121,8 @@ async function mandarAvisoBorrado(
   const { data: tomado, error: et } = await sb.from("zomatik_pedido_borrar").update({ aviso_at: new Date().toISOString() } as never).eq("scheduled_dispatch_id", b.scheduled_dispatch_id).is("aviso_at", null).select("scheduled_dispatch_id")
   if (et) throw et
   if (!((tomado as unknown[]) || []).length) return { enviado: true, yaSalio: true }
-  const que = d.conRemitos
-    ? "Se pidió eliminar un pedido que ya tiene remitos en Zomatik. En el sistema quedó cancelado; en Zomatik hay que anular lo que corresponda a mano."
-    : "Se pidió eliminar un pedido que ya tuvo despachos, pero todavía no hay OF ni remito del sistema en Zomatik. En el sistema quedó cancelado y el sistema NO va a remitir esos despachos: si se cargaron a mano en Zomatik, anulalos; si no, no hay nada que anular."
+  // Solo con remitos (del sistema, o hechos a mano y descubiertos al vaciar): con despachos no se deja eliminar
+  const que = "Se pidió eliminar un pedido que ya tiene remitos en Zomatik. En el sistema quedó cancelado; en Zomatik hay que anular lo que corresponda a mano."
   const m = await (dep.mail ?? mailAnularZomatik)(sb, { cliente: String(b.pedido?.Cliente || "-"), np: d.np, of: d.of ?? null, remito: d.remito ?? null, m3: d.m3, fecha: d.fecha, quien: b.pedido_por, motivo: b.motivo, que })
   if (!m.enviado) await sb.from("zomatik_pedido_borrar").update({ aviso_at: null } as never).eq("scheduled_dispatch_id", b.scheduled_dispatch_id) // se suelta: se reintenta
   if (!m.enviado) await (dep.avisar ?? avisarGerenciales)(sb, "No salió el mail \"Anular en Zomatik\"", [`${b.pedido?.Cliente || "Pedido"}: ${m.motivo || "no se pudo mandar"}. Se reintenta en la próxima pasada.`])
@@ -1166,9 +1165,10 @@ async function datosAvisoBorrado(sb: SB, pedidoId: string): Promise<{ np: string
 /**
  * Eliminar un pedido cuya NP ya está en Zomatik (la base lo frena con "Cancelalo…"). En Zomatik no se puede borrar
  * una NP: se VACÍA (como "Sí, cancelarla").
- *   - Llave de la NP apagada: el pedido queda cancelado y la NP se vacía a mano.
- *   - Con remitos u OF del sistema, o con despachos: no se toca Zomatik. El pedido queda CANCELADO, en
- *     `zomatik_pedido_borrar` modo "remitos" (el Z1 no lo remite) y va UNA vez el mail "Anular en Zomatik" a Juan.
+ *   - Con despachos: NO se deja (Bautista, 03/11): "borrá primero los despachos o cancelalo".
+ *   - Con OF / remito del sistema (sin despachos: se borraron): no se toca Zomatik. El pedido queda CANCELADO, en
+ *     `zomatik_pedido_borrar` modo "remitos" y va UNA vez el mail "Anular en Zomatik" a Juan.
+ *   - Llave de la NP apagada (sin remitos): el pedido queda cancelado y la NP se vacía a mano.
  *   - Sin remitos: el pedido queda cancelado y en `zomatik_pedido_borrar` modo "vaciar"; sus NP pasan a "vaciar" y el
  *     robot las vacía. Cuando todas quedan vaciadas, se borra el pedido (`borrarSiVaciado`). Si el vaciado falla, la NP
  *     queda "revisar" con aviso y el pedido NO se borra (queda cancelado). Volver a tocar Eliminar mientras se vacía no
@@ -1207,9 +1207,11 @@ export async function eliminarPedido(pedidoId: string, usuario: string, o: { mot
   }
   const copia = { ...(o.copia || {}), Cliente: ped.clients?.name || o.copia?.Cliente || "-" }
 
-  // ¿Ya tuvo despachos o hay OF / remito del sistema? No se toca Zomatik: cancelado + mail a Juan (una vez)
+  // Con despachos no se deja eliminar (Bautista, 03/11: opción B): primero se borran los despachos o se cancela
   const datos = await datosAvisoBorrado(sb, ped.id)
-  if (datos.despachos > 0 || datos.conRemitos) {
+  if (datos.despachos > 0) return { estado: "error", mensaje: "Este pedido tiene despachos: borrá primero los despachos o cancelalo." }
+  // OF / remito del sistema sin despachos (se borraron y ya se avisó cada uno): no se toca Zomatik, cancelado + mail
+  if (datos.conRemitos) {
     const fila = { scheduled_dispatch_id: ped.id, modo: "remitos" as const, motivo: o.motivo ?? null, pedido: copia, pedido_por: usuario }
     if (!previo) {
       const { error: eb } = await sb.from("zomatik_pedido_borrar").insert({ ...fila, created_at: new Date().toISOString() } as never)
@@ -1220,9 +1222,9 @@ export async function eliminarPedido(pedidoId: string, usuario: string, o: { mot
     await cancelar()
     const b: PedidoBorrar = { ...fila, aviso_at: previo?.modo === "remitos" ? previo.aviso_at : null }
     const m = await mandarAvisoBorrado(sb, b, { ...datos, m3: datos.m3 || Number(ped.quantity_m3) || null, fecha: datos.fecha || diaAR(ped.scheduled_arrival_time) }, dep)
-    if (!m.yaSalio) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": `Pedido ${datos.conRemitos ? "con remitos" : "con despachos"} en Zomatik: no se borra, quedó cancelado. Mail a Juan para anular en Zomatik`, NP: datos.np, OF: datos.of, Remito: datos.remito, Motivo: o.motivo, Mail: m.enviado ? "enviado" : `no salió (${m.motivo}): se reintenta` } })
+    if (!m.yaSalio) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle: { "Qué pasó": "Pedido con remitos en Zomatik: no se borra, quedó cancelado. Mail a Juan para anular en Zomatik", NP: datos.np, OF: datos.of, Remito: datos.remito, Motivo: o.motivo, Mail: m.enviado ? "enviado" : `no salió (${m.motivo}): se reintenta` } })
     await sincronizarPedido(ped.id, usuario, null, sb)
-    const que = datos.conRemitos ? "Tiene remitos en Zomatik" : "Ya tuvo despachos"
+    const que = "Tiene remitos en Zomatik"
     return { estado: "cancelado", mensaje: m.yaSalio ? `${que}: no se borra. Ya quedó cancelado y Juan ya está avisado.` : `${que}: no se borra. Quedó cancelado y se avisó a Juan para anularlo en Zomatik${m.enviado ? "" : ` (el mail no salió: ${m.motivo}; se reintenta)`}.` }
   }
 

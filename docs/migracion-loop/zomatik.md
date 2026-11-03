@@ -1964,13 +1964,13 @@ Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta 
 
 ### 28.1 Eliminar un pedido con NP en Zomatik
 - Hoy la base lo frena ("Cancelalo…"). Ahora, si el borrado choca con ese freno, Programación y el historial llaman a `POST /api/zomatik/np {accion: "eliminar"}` (`eliminarPedido`, solo `programacion.borrar` o `historial.borrar`).
-- **NP automática apagada:** queda cancelado, con el mensaje "La NP automática está apagada: vaciala a mano en Zomatik; el pedido queda cancelado".
-- **Con remitos o despachos** (OF/remito del sistema, o despachos todavía sin remitir):
+- **NP automática apagada** (sin despachos ni remitos): queda cancelado, con el mensaje "La NP automática está apagada: vaciala a mano en Zomatik; el pedido queda cancelado".
+- **Con despachos: no se deja** (Bautista, 03/11: opción B). Sale el cartel "Este pedido tiene despachos: borrá primero los despachos o cancelalo". No pasa por `zomatik_pedido_borrar` ni toca Zomatik. Cada despacho que se borra manda su propio mail a Juan si ya estaba en Zomatik (28.2).
+- **Con OF/remito del sistema pero sin despachos** (se borraron antes):
   - no se toca Zomatik: el pedido queda **cancelado** y en `zomatik_pedido_borrar` con modo `remitos`;
-  - el Z1 no lo prepara ni lo procesa: el sistema no hace OF ni remito de ese pedido;
-  - va **una sola vez** el mail "Rebucret · Anular en Zomatik: <cliente>" a Juan, con copia a Bautista (queda `aviso_at`);
-  - el texto cambia si ya hay remitos o solo despachos: "todavía no hay OF ni remito del sistema; el sistema no los va a remitir; si se cargaron a mano, anulalos";
+  - va **una sola vez** el mail "Rebucret · Anular en Zomatik: <cliente>" a Juan, con copia a Bautista (`aviso_at`);
   - si el mail no sale, se avisa a gerenciales y la pasada de cada 10 min lo reintenta (`reintentarAvisosBorrado`).
+- El Z1 no saltea nada por `zomatik_pedido_borrar`: sin despachos no hay nada que remitir, y los pedidos con despachos se remiten como antes.
 - **Sin remitos:** en Zomatik no se puede borrar una NP, así que se **vacía**.
   - el pedido queda cancelado y en `zomatik_pedido_borrar` con modo `vaciar`;
   - sus NP pasan a "vaciar" y el robot las toma en el momento: `procesarNp({npIds})`, aunque la NP sea de otro pedido (NP con saldo);
