@@ -60,9 +60,8 @@ export function NpPregunta({ valor, plantId, onNueva, onProyecto, onSaldo }: {
       <div className="flex items-start gap-1.5">
         <div className="grid min-w-0 flex-1 grid-cols-1 gap-1.5 md:grid-cols-3">
           {OPCIONES_PREGUNTA.map(([k, l, ayuda]) => (
-            <button key={k} type="button" onClick={() => elegir(k)} className={cn("rounded-md border-2 px-2 py-1 text-left text-xs font-medium", (tipo ?? valor.tipo) === k && tipo !== null ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50")}>
+            <button key={k} type="button" title={ayuda} onClick={() => elegir(k)} className={cn("h-8 rounded-md border-2 px-2 text-left text-xs font-medium", (tipo ?? valor.tipo) === k && tipo !== null ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50")}>
               {l}
-              <span className="block text-[11px] font-normal text-slate-500">{ayuda}</span>
             </button>
           ))}
         </div>
