@@ -22,6 +22,8 @@ export type EstadoPedidoNp = {
   eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null } | null
   /** Se pidió eliminar el pedido y se está vaciando su NP en Zomatik. */
   eliminando?: boolean
+  /** Se pidió eliminar pero tenía remitos: quedó cancelado y se avisó a Juan. */
+  cancelado_avisado?: boolean
 }
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
 export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }

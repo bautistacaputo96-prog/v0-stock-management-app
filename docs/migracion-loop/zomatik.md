@@ -1970,6 +1970,9 @@ Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta 
   - no se toca Zomatik: el pedido queda **cancelado** y en `zomatik_pedido_borrar` con modo `remitos`;
   - va **una sola vez** el mail "Rebucret · Anular en Zomatik: <cliente>" a Juan, con copia a Bautista (`aviso_at`);
   - si el mail no sale, se avisa a gerenciales y la pasada de cada 10 min lo reintenta (`reintentarAvisosBorrado`).
+  - el mail aclara si los despachos se borraron antes y ya se avisaron uno por uno;
+  - volver a tocar Eliminar responde "Ya quedó cancelado y Juan ya está avisado" sin tocar la fila ni la NP, y no sale otro mail. Programación y el historial lo muestran como **"Cancelado · Juan avisado"**;
+  - si al vaciar aparecen remitos hechos a mano y falla la base al avisar, no se corta la pasada: se avisa a gerenciales.
 - El Z1 no saltea nada por `zomatik_pedido_borrar`: sin despachos no hay nada que remitir, y los pedidos con despachos se remiten como antes.
 - **Sin remitos:** en Zomatik no se puede borrar una NP, así que se **vacía**.
   - el pedido queda cancelado y en `zomatik_pedido_borrar` con modo `vaciar`;

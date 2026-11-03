@@ -1157,7 +1157,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                   Editar
                                 </DropdownMenuItem>
                               )}
-                              {puede("historial", "borrar") && (np.porPedido[dispatch.id]?.eliminando ? (
+                              {puede("historial", "borrar") && (np.porPedido[dispatch.id]?.cancelado_avisado ? (
+            <DropdownMenuItem disabled>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Cancelado · Juan avisado
+            </DropdownMenuItem>
+          ) : np.porPedido[dispatch.id]?.eliminando ? (
                                 <DropdownMenuItem disabled>
                                   <Trash2 className="h-4 w-4 mr-2" />
                                   Eliminando… (vaciando la NP en Zomatik)

@@ -948,7 +948,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Generar NP ahora
             </DropdownMenuItem>
           )}
-          {puede("programacion", "borrar") && (np.porPedido[d.id]?.eliminando ? (
+          {puede("programacion", "borrar") && (np.porPedido[d.id]?.cancelado_avisado ? (
+            <DropdownMenuItem disabled>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Cancelado · Juan avisado
+            </DropdownMenuItem>
+          ) : np.porPedido[d.id]?.eliminando ? (
             <DropdownMenuItem disabled>
               <Trash2 className="h-4 w-4 mr-2" />
               Eliminando… (vaciando la NP en Zomatik)
