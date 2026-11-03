@@ -16,6 +16,12 @@ export type ProyectoAlta = { codigo: number; numero: string; obra: string | null
 const m3t = (n: number) => n.toLocaleString("es-AR", { maximumFractionDigits: 1 })
 const dia = (s: string | null) => (s ? new Date(s.length === 10 ? `${s}T12:00:00Z` : s).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }) : "")
 
+const OPCIONES_PREGUNTA = [
+  ["nueva", "NP nueva", "Se crea una nota de pedido nueva en Zomatik por estos m³."],
+  ["proyecto", "NP de un proyecto", "Para obras con proyecto (acopio) en Zomatik: la NP descuenta de lo que le queda al proyecto."],
+  ["saldo", "Usar NP con saldo", "Usa una NP que quedó con m³ sin despachar (por ejemplo, un pedido cancelado por lluvia)."],
+] as const
+
 export function NpPregunta({ valor, plantId, onNueva, onProyecto, onSaldo }: {
   valor: EleccionNp
   plantId: string
@@ -51,12 +57,16 @@ export function NpPregunta({ valor, plantId, onNueva, onProyecto, onSaldo }: {
 
   return (
     <div className="space-y-1.5">
-      <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3">
-        {([["nueva", "NP nueva"], ["proyecto", "NP de un proyecto"], ["saldo", "Usar NP con saldo"]] as const).map(([k, l]) => (
-          <button key={k} type="button" onClick={() => elegir(k)} className={cn("h-8 rounded-md border-2 px-2 text-left text-xs font-medium", (tipo ?? valor.tipo) === k && tipo !== null ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50")}>
-            {l}
-          </button>
-        ))}
+      <div className="flex items-start gap-1.5">
+        <div className="grid min-w-0 flex-1 grid-cols-1 gap-1.5 md:grid-cols-3">
+          {OPCIONES_PREGUNTA.map(([k, l, ayuda]) => (
+            <button key={k} type="button" onClick={() => elegir(k)} className={cn("rounded-md border-2 px-2 py-1 text-left text-xs font-medium", (tipo ?? valor.tipo) === k && tipo !== null ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50")}>
+              {l}
+              <span className="block text-[11px] font-normal text-slate-500">{ayuda}</span>
+            </button>
+          ))}
+        </div>
+        <span className="mt-1 shrink-0 cursor-help rounded-full border px-1.5 text-[11px] text-muted-foreground" title="Elegí de dónde sale la nota de pedido. Si no sabés, NP nueva.">?</span>
       </div>
       {(tipo === "proyecto" || tipo === "saldo") && (
         <Input className="h-8 text-xs" placeholder={tipo === "proyecto" ? "Buscar cliente, proyecto u obra" : "Buscar cliente, obra o NP"} value={buscar} onChange={(e) => setBuscar(e.target.value)} />
