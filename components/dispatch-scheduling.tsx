@@ -587,7 +587,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     const aplicar = (est: EstadoPedidoNp) => {
       const el = est.eleccion
       setNpDialogo(est)
-      setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3, np_id: el.np_id } : NP_NUEVA)
+      setNpEleccion(el ? { tipo: el.tipo, proyecto_codigo: el.proyecto_codigo, tope_m3: el.tope_m3, np_id: el.np_id, precio_m3: el.precio_m3 ?? null } : NP_NUEVA)
       setNpEleccionLista(true)
       setNpLectura("ok")
     }
@@ -1626,6 +1626,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 estado={editingDispatch ? npDialogo : null}
                 fallo={npLectura === "fallo"}
                 proponer={!editingDispatch ? !npPreguntada : npEleccionLista && npLectura === "ok" && !npDialogo?.eleccion}
+                puedePrecio={puedeCrear}
+                remitoTipo={form.remito_tipo || null}
               />
             </SeccionPedido>
 

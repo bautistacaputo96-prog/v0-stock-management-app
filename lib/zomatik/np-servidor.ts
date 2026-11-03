@@ -176,7 +176,11 @@ export async function saldosDe(sb: SB, nps: { id: string; m3: number }[]): Promi
 // Sincronizar un pedido (sin Zomatik)
 // ---------------------------------------------------------------------------
 
-export type Eleccion = { tipo: TipoNp | "saldo"; proyecto_codigo?: number | null; tope_m3?: number | null; np_id?: string | null }
+export type Eleccion = {
+  tipo: TipoNp | "saldo"; proyecto_codigo?: number | null; tope_m3?: number | null; np_id?: string | null
+  /** Precio por m³ sin IVA que elige quien programa (null = el de la lista; undefined = no se tocó). Validado. */
+  precio_m3?: number | null
+}
 
 export type ResultadoSync =
   | { activo: false; motivo: string }
@@ -187,18 +191,37 @@ type PedidoDB = {
   scheduled_arrival_time: string; created_at: string; created_by: string | null
 }
 
-export type EleccionDB = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null }
+export type EleccionDB = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null; precio_m3?: number | null; updated_by?: string | null }
+
+/** ¿Falta la columna del precio (migración 202611031200 sin aplicar)? */
+const sinColumnaPrecio = (e: unknown) => /precio_m3|precio_lista_m3/i.test(String((e as { message?: string })?.message || "")) && /column|columna|schema cache/i.test(String((e as { message?: string })?.message || ""))
 
 export async function eleccionesDe(sb: SB, ids: string[]): Promise<Record<string, EleccionDB>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3, np_id").in("scheduled_dispatch_id", ids)
+  let { data, error }: { data: unknown; error: unknown } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3, np_id, precio_m3, updated_by").in("scheduled_dispatch_id", ids)
+  // Sin la migración del precio: como antes (sin precio)
+  if (error && sinColumnaPrecio(error)) ({ data, error } = await sb.from("zomatik_np_pedido").select("scheduled_dispatch_id, tipo, proyecto_codigo, tope_m3, np_id, updated_by").in("scheduled_dispatch_id", ids))
   if (error) throw error
   return Object.fromEntries(
     ((data as (EleccionDB & { scheduled_dispatch_id: string })[]) || []).map((e) => [
       e.scheduled_dispatch_id,
-      { tipo: e.tipo, proyecto_codigo: e.proyecto_codigo ?? null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined ? null : Number(e.tope_m3), np_id: e.np_id ?? null },
+      {
+        tipo: e.tipo, proyecto_codigo: e.proyecto_codigo ?? null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined ? null : Number(e.tope_m3), np_id: e.np_id ?? null,
+        precio_m3: e.precio_m3 === null || e.precio_m3 === undefined ? null : Number(e.precio_m3), updated_by: e.updated_by ?? null,
+      },
     ]),
   )
+}
+
+const pesos = (n: number | null | undefined) => (n === null || n === undefined ? "?" : `$${Number(n).toLocaleString("es-AR", { maximumFractionDigits: 3 })}`)
+
+/** El último precio de lista que vio el robot para la fórmula y el tipo de NP (NP / NP2), de las NP generadas. */
+export async function ultimoPrecioLista(sb: SB, formulaId: string, comprobante: "15" | "16" | null): Promise<{ precio: number; numero: string | null; fecha: string | null } | null> {
+  const { data, error } = await sb.from("zomatik_np").select("numero, precio_lista_m3, ok_at, tipo").eq("formula_id", formulaId).eq("estado", "ok").not("precio_lista_m3", "is", null).order("ok_at", { ascending: false }).limit(20)
+  if (error) return null // sin la migración: no hay copia
+  const pref = comprobante === "16" ? /^NP2\s/i : comprobante === "15" ? /^NP\s/i : /^NP2?\s/i
+  const x = ((data as { numero: string | null; precio_lista_m3: number; ok_at: string | null; tipo: string }[]) || []).find((r) => r.tipo === "nueva" && pref.test(r.numero || ""))
+  return x ? { precio: Number(x.precio_lista_m3), numero: x.numero, fecha: x.ok_at ? diaAR(x.ok_at) : null } : null
 }
 
 /** El proyecto tiene que estar abierto y ser del cliente (no se confía en lo que manda el navegador). */
@@ -276,7 +299,8 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   if (!pedidoConNp(planta, ped.created_at) && !usos.length && !propias.length) return vacio([], { fuera: true })
 
   // Elección del formulario (NP nueva, de un proyecto o una NP con saldo): se valida y se guarda (solo el servidor)
-  let el: EleccionDB = (await eleccionesDe(sb, [ped.id]))[ped.id] || { tipo: "nueva", proyecto_codigo: null, tope_m3: null, np_id: null }
+  let el: EleccionDB = (await eleccionesDe(sb, [ped.id]))[ped.id] || { tipo: "nueva", proyecto_codigo: null, tope_m3: null, np_id: null, precio_m3: null }
+  const precioAntes = el.precio_m3 ?? null
   if (eleccion && (eleccion.tipo === "nueva" || eleccion.tipo === "proyecto" || eleccion.tipo === "saldo")) {
     const proy = eleccion.tipo === "proyecto" && Number(eleccion.proyecto_codigo) > 0 ? Number(eleccion.proyecto_codigo) : null
     const npSaldo = eleccion.tipo === "saldo" && typeof eleccion.np_id === "string" && eleccion.np_id.length > 0 && eleccion.np_id.length <= 64 ? eleccion.np_id : null
@@ -290,10 +314,18 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
       const v = await validarSaldo(sb, ped, npSaldo)
       if ("error" in v) return vacio(propias, { error: v.error })
     }
-    if (tipo !== el.tipo || proy !== el.proyecto_codigo || tope !== el.tope_m3 || npSaldo !== el.np_id) {
-      const { error: e1 } = await sb.from("zomatik_np_pedido").upsert({ scheduled_dispatch_id: ped.id, tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo, updated_by: usuario, updated_at: new Date().toISOString() } as never, { onConflict: "scheduled_dispatch_id" })
+    // Precio por m³: undefined = no se tocó (queda el guardado)
+    const precio = eleccion.precio_m3 === undefined ? (el.precio_m3 ?? null) : eleccion.precio_m3
+    if (precio !== null && !(precio > 0 && Math.round(precio * 1000) / 1000 === precio)) return vacio(propias, { error: "El precio por m³ tiene que ser un número mayor que 0, con hasta 3 decimales." })
+    if (tipo !== el.tipo || proy !== el.proyecto_codigo || tope !== el.tope_m3 || npSaldo !== el.np_id || precio !== (el.precio_m3 ?? null)) {
+      const fila = { scheduled_dispatch_id: ped.id, tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo, updated_by: usuario, updated_at: new Date().toISOString() }
+      let { error: e1 } = await sb.from("zomatik_np_pedido").upsert({ ...fila, precio_m3: precio } as never, { onConflict: "scheduled_dispatch_id" })
+      if (e1 && sinColumnaPrecio(e1)) {
+        if (precio !== null) return vacio(propias, { error: "El precio de la NP todavía no se puede guardar (falta actualizar la base). Dejalo vacío o avisá a Bautista." })
+        ;({ error: e1 } = await sb.from("zomatik_np_pedido").upsert(fila as never, { onConflict: "scheduled_dispatch_id" }))
+      }
       if (e1) throw e1
-      el = { tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo }
+      el = { tipo, proyecto_codigo: proy, tope_m3: tope, np_id: npSaldo, precio_m3: precio, updated_by: usuario }
     }
     if (proy && ped.construction_site_id) await sb.from("construction_sites").update({ zomatik_proyecto_codigo: proy } as never).eq("id", ped.construction_site_id)
   }
@@ -321,6 +353,19 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   const ahora = new Date().toISOString()
   const ref = `Pedido ${ped.id.slice(0, 8)}`
   const log = (detalle: Record<string, unknown>, action: "crear" | "editar" = "editar") => actividadNp(sb, { usuario, action, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle })
+  // El precio cambió: Actividad (con quién) y a las NP que todavía no están en Zomatik; las ya generadas no cambian
+  const precioEl = el.precio_m3 ?? null
+  if (precioEl !== precioAntes) {
+    const { data: rt } = await sb.rpc("remito_tipo_para", { p_pedido_id: ped.id })
+    const lista = await ultimoPrecioLista(sb, ped.formula_id, comprobanteDe((rt as { tipo?: string } | null)?.tipo || null))
+    await log({ "Qué pasó": precioEl === null ? `Precio NP: el de la lista${lista ? ` (${pesos(lista.precio)}/m³)` : ""}` : `Precio NP: ${pesos(precioEl)}/m³ (lista ${lista ? pesos(lista.precio) : "se ve al generar"})`, "Lo cambió": usuario })
+    const vivas = propias.filter((x) => x.estado === "pendiente" || x.estado === "error")
+    if (vivas.length) {
+      const { error: ep } = await sb.from("zomatik_np").update({ precio_m3: precioEl, updated_at: ahora } as never).in("id", vivas.map((x) => x.id)).in("estado", ["pendiente", "error"])
+      if (ep && !sinColumnaPrecio(ep)) throw ep
+    }
+    if (propias.some((x) => ["ok", "generando", "revisar"].includes(x.estado))) plan.avisos.push("La NP ya está en Zomatik con el precio de antes: el precio nuevo vale para las NP que se generen desde ahora (por ejemplo, si se agranda el pedido).")
+  }
 
   // Anular lo que no llegó a Zomatik. Si el robot tomó alguna en el medio (ya no está pendiente/error), se anulan
   // menos de las planeadas: entonces NO se crea ni se usa nada; la próxima sincronización vuelve a planear.
@@ -391,6 +436,11 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
     const npId = await rpc(sb, "zomatik_np_crear_con_uso", { p: fila })
     if (!npId) continue // otro proceso la creó recién (marca o número repetidos)
     creadas++
+    // El precio elegido va con la NP (columna aparte: sin la migración, la NP sale con el de la lista)
+    if (precioEl !== null) {
+      const { error: ep } = await sb.from("zomatik_np").update({ precio_m3: precioEl } as never).eq("id", npId as string).eq("estado", "pendiente")
+      if (ep && !sinColumnaPrecio(ep)) throw ep
+    }
     await log({ "Qué pasó": c.es_adicional ? `NP adicional por ${c.m3} m³ (el pedido se agrandó)` : `NP ${c.tipo === "proyecto" ? `contra el proyecto ${c.proyecto_codigo}` : "nueva"} por ${c.m3} m³: pendiente de generar`, Marca: fila.marca }, "crear")
   }
   // Los avisos no se repiten: si el último aviso de este pedido dice lo mismo, no se vuelve a grabar
@@ -575,6 +625,9 @@ async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefin
   // Vendedor: el de quien guardó el pedido cuando se creó esta NP (usuario de la sesión del servidor, respuesta 4 del
   // 23/10); si no tiene, el robot usa el del cliente
   const vendedor = await vendedorDe(sb, np.vendedor_usuario_id)
+  // Precio por m³ elegido (columna de la migración del precio: sin ella, el de la lista)
+  const { data: pr, error: epr } = await sb.from("zomatik_np").select("precio_m3").eq("id", np.id).maybeSingle()
+  const precio = !epr && (pr as { precio_m3?: number | null } | null)?.precio_m3 != null ? Number((pr as { precio_m3: number }).precio_m3) : null
   const obra = (ped as { construction_sites?: { name?: string; address?: string | null; localidad?: string | null } | null } | null)?.construction_sites
   const entrega = obra ? [`Obra: ${obra.name || ""}`, obra.address, obra.localidad].filter(Boolean).join(" · ") : ""
   return {
@@ -595,6 +648,7 @@ async function datosParaRobot(sb: SB, np: FilaNpDB, planta: PlantaNpDB | undefin
     creadaEl: np.created_at ? diaAR(np.created_at) : null,
     vendedorId: vendedor?.id ?? null,
     vendedorNombre: vendedor?.nombre ?? null,
+    precioM3: precio && precio > 0 ? precio : null,
   }
 }
 
@@ -707,6 +761,12 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     if (guardo) {
       if (np.scheduled_dispatch_id) await sb.from("zomatik_np_excepciones").update({ regularizado_at: ahora } as never).eq("scheduled_dispatch_id", np.scheduled_dispatch_id).is("regularizado_at", null)
       await actividadNp(sb, { usuario: ctx.usuario, action: "crear", pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `NP generada en Zomatik: ${r.numero}`, "m³": np.m3, Tipo: np.tipo === "proyecto" ? `Proyecto ${np.proyecto_codigo}` : "NP nueva" } })
+      // El precio de lista que traía el renglón (copia para "Ver precio de lista") y, si se eligió otro, cuál quedó
+      if (r.precioLista !== undefined && r.precioLista !== null) await sb.from("zomatik_np").update({ precio_lista_m3: r.precioLista } as never).eq("id", np.id)
+      if (datos.precioM3) {
+        const el = np.scheduled_dispatch_id ? (await eleccionesDe(sb, [np.scheduled_dispatch_id]))[np.scheduled_dispatch_id] : null
+        await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": `Precio NP: ${pesos(r.precio ?? datos.precioM3)}/m³ (lista ${pesos(r.precioLista)})`, NP: r.numero, "Lo cambió": el?.updated_by || "?" } })
+      }
       // Generada y verificada con la marca: se autoriza en el momento (03/11), si no el remito no la ve
       if (r.codigo && r.sucursal === SUCURSAL_REBUCRET) {
         const a = await (ctx.dep.autorizar ?? autorizarNp)(ctx.nav, { codigo: r.codigo, numero: r.numero ?? null, marca: np.marca }, { latir: ctx.renovar })

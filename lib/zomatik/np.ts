@@ -413,6 +413,31 @@ export function conCantidad(r: Renglon, m3: number): Renglon {
   return { ...r, cantidad: c, campos: r.campos.map((x) => (x.nombre.toLowerCase().startsWith("cantidad") ? { ...x, valor: c } : x)) }
 }
 
+/** Precio con 3 decimales y punto, como lo trae el renglón ("176500.000"). */
+export function costoTexto(precio: number): string {
+  return (Math.round(Number(precio) * 1000) / 1000).toFixed(3)
+}
+
+/** Cambia el precio de un renglón: `costo<id>` y `hcosto<id>` (y el costo que va en fparam). */
+export function conCosto(r: Renglon, precio: number): Renglon {
+  const c = costoTexto(precio)
+  const re = new RegExp(`^h?costo${r.sufijo}$`, "i")
+  return { ...r, costo: c, campos: r.campos.map((x) => (re.test(x.nombre) ? { ...x, valor: c } : x)) }
+}
+
+/**
+ * Precio por m³ (sin IVA) que elige quien programa: vacío = el de la lista (null). Número mayor que 0, con 3 decimales
+ * como máximo (acepta coma). `{ error }` si no sirve.
+ */
+export function precioM3(v: unknown): { precio: number | null } | { error: string } {
+  if (v === null || v === undefined) return { precio: null }
+  const t = String(v).trim().replace(/\s/g, "")
+  if (!t) return { precio: null }
+  const n = t.replace(",", ".")
+  if (!/^\d{1,9}(\.\d{1,3})?$/.test(n) || !(Number(n) > 0)) return { error: "El precio por m³ tiene que ser un número mayor que 0, con hasta 3 decimales." }
+  return { precio: Math.round(Number(n) * 1000) / 1000 }
+}
+
 /** "823,4" / "823.4" / "1.234,5" → número. */
 export function numeroZomatik(s: unknown): number | null {
   let t = String(s ?? "").replace(/[^\d.,-]/g, "")

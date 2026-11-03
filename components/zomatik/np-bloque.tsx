@@ -12,7 +12,8 @@
  */
 import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
-import { cargarNpSaldos, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen } from "@/lib/zomatik/np-cliente"
+import { Input } from "@/components/ui/input"
+import { cargarNpSaldos, verPrecioLista, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen } from "@/lib/zomatik/np-cliente"
 import { NpChip } from "@/components/zomatik/np-chip"
 
 type Proyecto = {
@@ -37,7 +38,8 @@ const OPCIONES = [
 ] as const
 
 export function NpBloque({
-  planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha,
+  planta, clientId, siteId, formulaId, m3, valor, onCambio: onCambioPadre, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha,
+  puedePrecio, remitoTipo,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -60,7 +62,28 @@ export function NpBloque({
   fechaCambiada: boolean
   moverFecha: boolean | null
   onMoverFecha: (v: boolean) => void
+  /** Quien programa (programacion.cargar) puede cambiar el precio de la NP. */
+  puedePrecio?: boolean
+  /** R / X del pedido (para el precio de lista de NP o NP2). */
+  remitoTipo?: string | null
 }) {
+  // Cambiar NP nueva / proyecto / saldo no borra el precio elegido
+  const onCambio = (v: EleccionNp) => onCambioPadre({ ...v, precio_m3: "precio_m3" in v ? v.precio_m3 : valor.precio_m3 })
+  const [precioTexto, setPrecioTexto] = useState(valor.precio_m3 === null || valor.precio_m3 === undefined ? "" : String(valor.precio_m3).replace(".", ","))
+  const [precioLista, setPrecioLista] = useState<string | null>(null)
+  useEffect(() => {
+    // La elección guardada llegó (al editar): se muestra su precio
+    const v = valor.precio_m3 === null || valor.precio_m3 === undefined ? "" : String(valor.precio_m3).replace(".", ",")
+    if (v.replace(",", ".") !== precioTexto.trim().replace(",", ".")) setPrecioTexto(v)
+  }, [valor.precio_m3]) // eslint-disable-line react-hooks/exhaustive-deps
+  const precioMal = precioTexto.trim() !== "" && !(/^\d{1,9}([.,]\d{1,3})?$/.test(precioTexto.trim()) && Number(precioTexto.trim().replace(",", ".")) > 0)
+  const verLista = async () => {
+    if (!formulaId) return setPrecioLista("Elegí la fórmula.")
+    setPrecioLista("Buscando…")
+    const r = await verPrecioLista(formulaId, remitoTipo)
+    if (r.error) return setPrecioLista(r.error)
+    setPrecioLista(r.precio === null ? "Todavía no hay: se ve al generar la primera NP de esta fórmula." : `Lista: $${Number(r.precio).toLocaleString("es-AR", { maximumFractionDigits: 3 })}/m³ + IVA${r.numero ? ` (${r.numero}${r.fecha ? `, ${fechaCorta(r.fecha)}` : ""})` : ""}`)
+  }
   const [proyectos, setProyectos] = useState<Proyecto[] | null>(null)
   const [sinVinculo, setSinVinculo] = useState(false)
   const [saldos, setSaldos] = useState<NpSaldo[] | null>(null)
@@ -133,6 +156,30 @@ export function NpBloque({
           </button>
         ))}
       </div>
+
+      {puedePrecio && (
+        <div className="space-y-0.5">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span>Precio por m³ (sin IVA)</span>
+            <Input
+              className={cn("h-7 w-28 text-xs", precioMal && "border-red-400")}
+              inputMode="decimal"
+              placeholder="el de la lista"
+              disabled={deshabilitado}
+              value={precioTexto}
+              onChange={(e) => {
+                setPrecioTexto(e.target.value)
+                onCambio({ ...valor, precio_m3: e.target.value.trim() === "" ? null : e.target.value.trim() })
+              }}
+            />
+            <button type="button" className="underline" onClick={verLista}>Ver precio de lista</button>
+            <span className="cursor-help rounded-full border px-1.5 text-[11px] text-muted-foreground" title="Vacío: el precio de la lista de Zomatik. Con un número, la NP sale con ese precio por m³ (sin IVA).">?</span>
+            {precioLista && <span className="text-muted-foreground">{precioLista}</span>}
+          </div>
+          {precioMal && <p className="text-xs text-red-700">Un número mayor que 0, con hasta 3 decimales.</p>}
+          {valor.tipo === "proyecto" && precioTexto.trim() !== "" && !precioMal && <p className="text-xs text-amber-700">El proyecto trae su precio: con este valor se reemplaza en la NP.</p>}
+        </div>
+      )}
 
       {valor.tipo === "proyecto" && (
         <div className="space-y-1">

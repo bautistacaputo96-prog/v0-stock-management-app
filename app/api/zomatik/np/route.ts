@@ -8,12 +8,14 @@
  *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar): espera al robot
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
  *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
- *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
+ *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP, y
+ *   `eleccion.precio_m3` (vacío = el de la lista): solo programacion.cargar, número > 0 con hasta 3 decimales.
  */
 import { NextResponse, after } from "next/server"
 import { exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, tipoDe } from "@/lib/permisos"
 import { decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { precioM3 } from "@/lib/zomatik/np"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -88,9 +90,20 @@ export async function POST(req: Request) {
     if (accion !== "sincronizar" && accion !== "generar") return NextResponse.json({ error: "Acción desconocida" }, { status: 400 })
 
     const e = body?.eleccion
+    // El precio de la NP lo cambia solo quien programa (programacion.cargar): número > 0 con hasta 3 decimales
+    let precio: number | null | undefined = undefined
+    if (e && typeof e === "object" && "precio_m3" in e) {
+      const p = precioM3(e.precio_m3)
+      if (!puedeProg) {
+        if (!("precio" in p) || p.precio !== null) return NextResponse.json({ error: "El precio de la NP lo cambia quien programa." }, { status: 403 })
+      } else {
+        if ("error" in p) return NextResponse.json({ error: p.error }, { status: 400 })
+        precio = p.precio
+      }
+    }
     const eleccion: Eleccion | null =
       puedeProg && e && (e.tipo === "nueva" || e.tipo === "proyecto" || e.tipo === "saldo")
-        ? { tipo: e.tipo, proyecto_codigo: Number(e.proyecto_codigo) || null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined || e.tope_m3 === "" ? null : Number(e.tope_m3), np_id: uuid(e.np_id) }
+        ? { tipo: e.tipo, proyecto_codigo: Number(e.proyecto_codigo) || null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined || e.tope_m3 === "" ? null : Number(e.tope_m3), np_id: uuid(e.np_id), precio_m3: precio }
         : null
     const moverFecha = body?.mover_fecha === true ? true : body?.mover_fecha === false ? false : null
     let sync

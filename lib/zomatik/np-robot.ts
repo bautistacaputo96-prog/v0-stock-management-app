@@ -15,7 +15,7 @@
  * Si no aparece en REBUCRET, se busca por la marca en RUTA 25 (23.3 c): si está ahí, queda "revisar".
  */
 import {
-  SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
+  SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conCosto, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   autorizacionEnListado, tieneFormAutorizar, type CampoForm, type Renglon,
@@ -64,6 +64,8 @@ export type DatosNp = {
   /** Vendedor de Zomatik de quien programó el pedido (respuesta 4 del 23/10). Sin él, el del cliente (o del proyecto). */
   vendedorId?: number | null
   vendedorNombre?: string | null
+  /** Precio por m³ sin IVA que eligió quien programa (null = el de la lista; en la de proyecto, el del proyecto). */
+  precioM3?: number | null
 }
 
 /** Sin vendedor de quien programa ni del cliente/proyecto: no se genera. */
@@ -86,6 +88,9 @@ export type ResultadoNp = {
   grabado?: boolean
   /** Recorte de la respuesta de Zomatik que no se entendió (~2 KB), para Actividad. */
   recorte?: string
+  /** El precio por m³ que traía el renglón (la lista o el proyecto) y el que quedó grabado (si se eligió otro). */
+  precioLista?: number | null
+  precio?: number | null
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
@@ -301,7 +306,7 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.buscarAntes) {
       await marcar("buscar_marca")
       const x = await dondeQuedo(nav, d, o.hoy, latir)
-      if (x.estado === "esta") return encontrada(x, paso)
+      if (x.estado === "esta") return await conPrecioVerificado(nav, d, encontrada(x, paso), azar, marcar)
       if (x.estado === "dudosa") return dudosa(x, paso)
     }
     // Controles antes de tocar Zomatik
@@ -312,7 +317,9 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.tipo === "nueva" && !d.comprobante) throw dato("Falta el tipo de remito (R o X): define si es NP o NP2.")
     if (d.tipo === "proyecto" && !d.proyectoCodigo) throw dato("Falta elegir el proyecto.")
 
-    return d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
+    const info = { precioLista: null as number | null }
+    const r = d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir, info) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir, info)
+    return await conPrecioVerificado(nav, d, { ...r, precioLista: info.precioLista }, azar, marcar)
   } catch (e) {
     if (e instanceof Corte) return { estado: e.estado, mensaje: e.message, paso, reintentar: e.reintentar, grabado, recorte: e.recorte }
     // Red o sesión. Antes de Grabar: se reintenta en 10 min. Durante o después: queda para buscar la marca primero.
@@ -322,7 +329,32 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
   }
 }
 
-async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
+/** El precio que eligió quien programa, en el renglón (costo y hcosto). Guarda el que traía (lista o proyecto). */
+function aplicarPrecio(r: Renglon, d: DatosNp, info: { precioLista: number | null }): Renglon {
+  info.precioLista = numeroZomatik(r.costo)
+  return d.precioM3 ? conCosto(r, d.precioM3) : r
+}
+
+/** Después de grabar, con un precio elegido: la NP tiene que haber quedado con ese costo; si no (o no se puede leer), "revisar". */
+async function conPrecioVerificado(nav: NavegadorNp, d: DatosNp, r: ResultadoNp, azar: () => number, marcar: (p: string) => Promise<void>): Promise<ResultadoNp> {
+  if (r.estado !== "ok" || !d.precioM3 || !r.codigo) return r
+  await marcar("verificar_precio")
+  const a = await abrir(nav, r.codigo)
+  let costo: number | null = null
+  if (a.form) {
+    const c = a.form.campos
+    const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
+    const leido = await detalleGrabado(nav, a, base, Number(c.proyecto || 0) || null, azar)
+    const mio = leido.valido ? leido.renglones.filter((x) => esRenglonDe(x, { codigo: d.articuloCodigo, nombre: d.articuloNombre })) : []
+    if (mio.length === 1) costo = numeroZomatik(mio[0].costo)
+  }
+  const pedido = d.precioM3.toLocaleString("es-AR", { maximumFractionDigits: 3 })
+  if (costo === null) return { ...r, estado: "revisar", mensaje: `No se pudo confirmar el precio de la ${r.numero || "NP"} (se pidió $${pedido}/m³). Revisala en Zomatik.`, paso: "verificar_precio" }
+  if (Math.abs(costo - d.precioM3) > 0.001) return { ...r, estado: "revisar", mensaje: `La ${r.numero || "NP"} quedó con $${costo.toLocaleString("es-AR")}/m³ y se pidió $${pedido}/m³: corregila en Zomatik.`, paso: "verificar_precio", precio: costo }
+  return { ...r, precio: costo }
+}
+
+async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>, info: { precioLista: number | null }): Promise<ResultadoNp> {
   const comp = d.comprobante as "15" | "16"
   await marcar("formulario")
   await aRebucret(nav)
@@ -364,7 +396,7 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   // El renglón del artículo se reconoce por el código visible (o el nombre), no por codigo<id> (id del renglón)
   const art = det.renglones.filter((r) => esRenglonDe(r, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
   if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
-  const rs = [conCantidad(art[0], d.m3)]
+  const rs = [aplicarPrecio(conCantidad(art[0], d.m3), d, info)]
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
   await marcar("numero")
@@ -400,7 +432,7 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true }
 }
 
-async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
+async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>, info: { precioLista: number | null }): Promise<ResultadoNp> {
   await marcar("material")
   await aRebucret(nav)
   const mat = await nav.get(`modificar_pedidos.php?proyecto=${d.proyectoCodigo}&tipo=1`)
@@ -445,7 +477,8 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   }
   const elegido = rs.filter((r) => esRenglonDe(r, delPedido))
   if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
-  rs = [conCantidad(elegido[0], d.m3)]
+  // El precio lo trae el proyecto; si quien programa eligió otro, va ese (con advertencia en el formulario)
+  rs = [aplicarPrecio(conCantidad(elegido[0], d.m3), d, info)]
 
   await marcar("grabar")
   alGrabar()

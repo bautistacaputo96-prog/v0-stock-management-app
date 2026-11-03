@@ -19,10 +19,25 @@ export type EstadoPedidoNp = {
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
   control: ControlDespacho
   /** NP nueva o de un proyecto, guardada en el servidor (null = todavía no se eligió). */
-  eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null } | null
+  eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null; precio_m3?: number | null } | null
 }
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
-export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }
+export type EleccionNp = {
+  tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null
+  /** Precio por m³ sin IVA (vacío/null = el de la lista). Texto tal cual lo escribió quien programa: lo valida el servidor. */
+  precio_m3?: number | string | null
+}
+
+/** "Ver precio de lista": el último que vio el robot para la fórmula (NP o NP2 según R/X). No entra a Zomatik. */
+export async function verPrecioLista(formulaId: string, remitoTipo: string | null | undefined): Promise<{ precio: number | null; numero?: string | null; fecha?: string | null; error?: string }> {
+  try {
+    const r = await fetch(`/api/zomatik/np/precio?formula_id=${encodeURIComponent(formulaId)}${remitoTipo ? `&remito_tipo=${remitoTipo}` : ""}`, { cache: "no-store" })
+    const j = await r.json().catch(() => ({}))
+    return r.ok ? j : { precio: null, error: j?.error || `Error ${r.status}` }
+  } catch {
+    return { precio: null, error: "Sin conexión" }
+  }
+}
 
 /** Una NP del sistema con saldo (lista de Programación y opción "Usar NP con saldo"). */
 export type NpSaldo = {

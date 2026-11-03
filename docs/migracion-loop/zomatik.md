@@ -1947,3 +1947,28 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - `POST _autorizarpedido.php` (solo esa ruta exacta) en los grupos de la NP y de Z1;
   - el cliente rechaza cualquier cuerpo que no sea `autorizar=<entero>`;
   - Z1 suma `GET modificar_pedidos.php?codigo=N` para mirar la marca.
+
+---
+
+## 27. Precio de la NP elegido por quien programa (03/11/2026, rama `feat/np-precio`)
+Bautista: el precio de la NP lo puede cambiar quien programa (`programacion.cargar`).
+- **Formulario del pedido**, bloque de la NP: campo opcional **"Precio por m³ (sin IVA)"** con su (?).
+  - Vacío: el precio de la lista, como hoy (NP2 0001-00002094: costo 176.500, total con IVA 213.565).
+  - En la NP de un proyecto, el precio lo trae el proyecto. Se puede cambiar igual, con la advertencia "El proyecto trae su precio: con este valor se reemplaza en la NP".
+  - Vale también para la NP adicional (agrandar): sale con el precio que esté guardado.
+- **Robot:**
+  - con un precio, lo pone en `costo<id>` y `hcosto<id>` del renglón, y en `fparam` (`codigo,costo,cantidad,obs|||`) antes de grabar;
+  - después de grabar abre la NP (el detalle, como la página) y exige ese costo. Si quedó otro o no se puede leer: **"revisar"**, sin grabar otra;
+  - guarda el precio que traía el renglón (`zomatik_np.precio_lista_m3`).
+- **Servidor:**
+  - acepta el precio solo de `programacion.cargar`: número > 0 con hasta 3 decimales (acepta coma); vacío = la lista;
+  - lo guarda en la elección (`zomatik_np_pedido.precio_m3`) y en cada NP que se crea, o que todavía no está en Zomatik (`zomatik_np.precio_m3`);
+  - una NP ya generada no cambia: queda el aviso de que el precio nuevo vale para las próximas.
+  - Actividad: "Precio NP: $X/m³ (lista $Y)" con "Lo cambió", al guardar y al generar.
+- **"Ver precio de lista"** (`GET /api/zomatik/np/precio`): **no entra a Zomatik.**
+  - Leer el precio de una lista sin crear un borrador no se puede con lo relevado: `manage_pedidos` crea uno, y de la lista solo conocemos `listado_listas` (código, nombre, vigencia y estado, sin precios).
+  - Por ahora muestra el **último precio de lista que vio el robot** para esa fórmula y NP/NP2 (copia en `zomatik_np.precio_lista_m3`), con la NP y el día. Hasta la primera NP de la fórmula dice "se ve al generar".
+  - Para leerlo directo de Zomatik habría que capturar la página o el export de una lista de precios de ventas.
+- **Migración `202611031200_zomatik_np_precio.sql` (sin aplicar):** suma `zomatik_np_pedido.precio_m3`, `zomatik_np.precio_m3` y `zomatik_np.precio_lista_m3`. No cambia datos.
+  - Hasta aplicarla, todo sigue como hoy.
+  - Si alguien carga un precio, el servidor responde "falta actualizar la base" y no guarda nada.
