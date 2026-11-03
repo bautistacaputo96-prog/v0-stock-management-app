@@ -19,7 +19,8 @@
 -- Candados (cortos, igual conviene correrla fuera de horario):
 --   - crear zomatik_pedido_borrar con su FK a scheduled_dispatches pide SHARE ROW EXCLUSIVE sobre scheduled_dispatches
 --     (frena las escrituras de pedidos un instante, no las lecturas);
---   - el ADD COLUMN sin default pide ACCESS EXCLUSIVE sobre zomatik_remito_despachos (un instante);
+--   - los ADD COLUMN piden ACCESS EXCLUSIVE sobre zomatik_remito_despachos y zomatik_pedido_borrar (un instante; la
+--     segunda está vacía o recién creada);
 --   - el CREATE OR REPLACE de la función del trigger no bloquea tablas.
 -- Si algún candado no se consigue en 3 s, falla entera (BEGIN/COMMIT) y no queda nada a medias.
 
@@ -37,6 +38,9 @@ CREATE TABLE IF NOT EXISTS public.zomatik_pedido_borrar (
   created_at             timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.zomatik_pedido_borrar IS 'Zomatik: pedidos que se pidió eliminar (vaciar su NP o, con remitos, cancelado + mail a Juan). Se borra con el pedido.';
+-- Si la tabla ya existía de una versión anterior de esta migración (sin modo ni aviso_at), se agregan
+ALTER TABLE public.zomatik_pedido_borrar ADD COLUMN IF NOT EXISTS modo text NOT NULL DEFAULT 'vaciar' CHECK (modo IN ('vaciar', 'remitos'));
+ALTER TABLE public.zomatik_pedido_borrar ADD COLUMN IF NOT EXISTS aviso_at timestamptz;
 REVOKE ALL ON TABLE public.zomatik_pedido_borrar FROM anon, authenticated;
 GRANT ALL ON TABLE public.zomatik_pedido_borrar TO service_role;
 

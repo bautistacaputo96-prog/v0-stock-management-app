@@ -541,7 +541,7 @@ export { diaAR }
 // Se borró un despacho (anular_despacho) que estaba en un remito (03/11)
 // ---------------------------------------------------------------------------
 
-export type ResultadoDespachoBorrado = { estado: "nada" | "mail" | "ajustado" | "anulado" | "en_curso"; mensaje: string | null }
+export type ResultadoDespachoBorrado = { estado: "nada" | "mail" | "ajustado" | "anulado" | "en_curso" | "falta_base"; mensaje: string | null }
 
 /**
  * Después de `anular_despacho` (que borra el despacho). Si el despacho estaba en un remito del sistema:
@@ -576,11 +576,17 @@ export async function despachoBorrado(dispatchId: string, usuario: string, o: { 
     }
     // Un despacho = un mail: se toma la marca antes de mandar (si ya estaba, no se repite)
     const { data: tomado, error: et } = await sb.from("zomatik_remito_despachos").update({ borrado_aviso_at: new Date().toISOString() } as never).eq("remito_id", r.id).eq("dispatch_id", dispatchId).is("borrado_aviso_at", null).select("dispatch_id")
-    if (!et && !((tomado as unknown[]) || []).length) return { estado: "mail", mensaje: "Ya se había avisado a Juan para anularlo en Zomatik." }
+    // Sin la columna (migración 202611031400 sin aplicar) no se puede asegurar un solo mail: no se manda
+    if (et && /borrado_aviso_at/i.test(String(et.message || ""))) {
+      await actividadNp(sb, { usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": "Se borró un despacho que ya estaba en Zomatik: falta actualizar la base para avisar a Juan", OF: r.of_numero, Remito: r.remito_numero } })
+      return { estado: "falta_base", mensaje: "Ya estaba en Zomatik, pero falta actualizar la base para mandar el aviso: avisale a Juan para anularlo." }
+    }
+    if (et) throw et
+    if (!((tomado as unknown[]) || []).length) return { estado: "mail", mensaje: "Ya se había avisado a Juan para anularlo en Zomatik." }
     const m = await mail(sb, datos)
     if (!m.enviado) {
       // No salió: se suelta la marca (vuelve a intentarse) y la pasada lo sigue viendo como cambio sin avisar
-      if (!et) await sb.from("zomatik_remito_despachos").update({ borrado_aviso_at: null } as never).eq("remito_id", r.id).eq("dispatch_id", dispatchId)
+      await sb.from("zomatik_remito_despachos").update({ borrado_aviso_at: null } as never).eq("remito_id", r.id).eq("dispatch_id", dispatchId)
     } else {
       // Que la pasada no lo vuelva a avisar: el cambio de despachos de este remito queda marcado como avisado
       const { data: ls } = await sb.from("zomatik_remito_despachos").select("dispatch_id, m3").eq("remito_id", r.id)

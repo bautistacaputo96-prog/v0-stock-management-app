@@ -26,7 +26,8 @@ export async function GET(req: Request) {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
     const u = r.sesion.usuario
-    if (!puedeCon(u, "programacion", "ver") && !puedeCon(u, "despacho", "ver")) return NextResponse.json({ error: "No tenés acceso." }, { status: 403 })
+    // El historial también lee el estado (para mostrar "Eliminando…")
+    if (!puedeCon(u, "programacion", "ver") && !puedeCon(u, "despacho", "ver") && !puedeCon(u, "historial", "ver")) return NextResponse.json({ error: "No tenés acceso." }, { status: 403 })
     const ids = (new URL(req.url).searchParams.get("pedidos") || "").split(",").map(uuid).filter(Boolean).slice(0, 300) as string[]
     try {
       const res = NextResponse.json(await estadoPedidos(ids))

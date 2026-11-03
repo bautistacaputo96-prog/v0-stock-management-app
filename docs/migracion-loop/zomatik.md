@@ -1986,6 +1986,14 @@ Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta 
   - crea `zomatik_pedido_borrar` (con `modo` y `aviso_at`) y `zomatik_remito_despachos.borrado_aviso_at`;
   - no cambia datos. Hasta aplicarla, eliminar un pedido con NP responde "falta actualizar la base, cancelalo".
 
+- **Segunda revisión (98bf4ec):**
+  - la llave de la NP se mira **después** de los despachos y remitos: con la llave apagada y remitos, igual va el mail;
+  - `aviso_at` y `borrado_aviso_at` se toman con un update condicional **antes** de mandar: dos procesos no mandan dos mails, y si el mail no sale se sueltan;
+  - si dos personas eliminan a la vez, choca la clave y la segunda recibe "ya se está eliminando" (no "falta actualizar la base");
+  - `GET /api/zomatik/np` también se lee con `historial.ver`;
+  - la validación de otro pedido activo mira todos los usos de la NP;
+  - la migración agrega `modo` y `aviso_at` con `ADD COLUMN IF NOT EXISTS`.
+
 ### 28.2 Borrar un despacho que estaba en un remito
 - Después de `anular_despacho`, el historial llama a `POST /api/zomatik/remito {accion: "despacho_borrado"}` (`despachoBorrado`). Solo con `historial.borrar` y solo para un despacho que ya no existe.
 - **Ya en Zomatik** (OF o remito ok):
@@ -1993,4 +2001,5 @@ Prueba real del 03/11: el RM2 0099-00002759 (código 218190) salió solo. Falta 
   - si el mail no sale, se suelta la marca y no se marca el cambio como avisado: se puede reintentar y la pasada lo sigue viendo;
   - solo si salió queda `cambio_avisado`, y la pasada no lo repite.
 - **Todavía no en Zomatik:** se saca de la fila pendiente (m³, patentes y remitos de papel se recalculan). Si queda sin despachos, se anula.
+- Sin la columna `borrado_aviso_at` (migración sin aplicar) no se manda el mail, porque no se puede asegurar que salga uno solo. Se contesta "falta actualizar la base: avisale a Juan" y queda en Actividad.
 - Si la fila se está generando, no se toca: el robot la ajusta antes de la OF (26.11).
