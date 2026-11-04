@@ -10,16 +10,13 @@ import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon } from "@/lib/permisos"
 import { hoyAR } from "@/lib/zomatik/np"
-import { avisarFallaInesperada } from "@/lib/zomatik/np-servidor"
+import { avisarFallaInesperada, esDeZomatik } from "@/lib/zomatik/np-servidor"
 import { estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 const uuid = (s: unknown) => (typeof s === "string" && /^[0-9a-f-]{36}$/i.test(s) ? s : null)
-
-/** ¿El error es de Zomatik (un `ZomatikError`) o nuestro (base, código)? */
-const deZomatik = (e: unknown) => typeof (e as { codigo?: unknown } | null)?.codigo === "string"
 
 /**
  * Un error inesperado con "Remitir en Zomatik" (04/11): lo despachado no se toca y queda sin remitir (la pasada de la
@@ -33,7 +30,7 @@ async function fallaInesperada(e: unknown, o: { pedidoId: string; fecha: string;
     `Error: ${m}`,
     "Lo despachado queda sin remitir: la pasada de la noche lo vuelve a armar, o tocá \"Remitir en Zomatik\" otra vez.",
   ])
-  const que = deZomatik(e) ? "No se pudo remitir en Zomatik" : "No se pudo preparar el remito (error del sistema)"
+  const que = esDeZomatik(e) ? "No se pudo remitir en Zomatik" : "No se pudo preparar el remito (error del sistema)"
   return NextResponse.json({ error: `${que}: queda pendiente y ${avisado ? "ya le avisamos a Bautista" : "avisale a Bautista"}.` }, { status: 500 })
 }
 

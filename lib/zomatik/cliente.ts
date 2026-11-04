@@ -39,7 +39,9 @@ const BLOQUEO_FALLA_MS = 10 * 60 * 1000
 const TIMEOUT_MS = 25_000
 
 const CLAVE_SESION = "zomatik_sesion"
-const CLAVE_BLOQUEO = "zomatik_login_bloqueado"
+/** Bloqueo de login después de una entrada que falló (lo mira también el aviso de errores, np-servidor.ts). */
+export const CLAVE_BLOQUEO_LOGIN = "zomatik_login_bloqueado"
+const CLAVE_BLOQUEO = CLAVE_BLOQUEO_LOGIN
 
 export class ZomatikError extends Error {
   codigo: "sin_credenciales" | "login_rechazado" | "login_bloqueado" | "sin_respuesta" | "ruta_no_permitida" | "sesion_caida" | "formato"

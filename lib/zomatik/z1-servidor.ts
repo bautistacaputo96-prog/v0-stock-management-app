@@ -516,7 +516,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           const parte = r.of_estado === "ok" ? `el remito (la ${r.of_numero || "OF"} ya está hecha)` : "la OF"
           if (esFallaDeAcceso(e)) {
             // No se puede entrar a Zomatik: un solo aviso para todo el robot, no uno por remito
-            await avisarFallaAcceso(sb, avisarError, { que: `${parte} (${ref})`, mensaje: m })
+            await avisarFallaAcceso(sb, avisarError, { que: `${parte} (${ref})`, mensaje: m, codigo: tipoDeFalla(e) })
           } else {
             // Un aviso por episodio (tipo de falla + paso). Va en Actividad; el interno, con su "Qué pasó" de siempre
             await avisarCaidaFila(sb, avisarError, {

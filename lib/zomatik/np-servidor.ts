@@ -16,7 +16,7 @@
  * "generando"/"vaciando" (si otro la cambió en el medio, no se pisa y se avisa).
  */
 import { sbServicio } from "@/lib/auth/servidor"
-import { discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
+import { CLAVE_BLOQUEO_LOGIN, discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import { autorizarNp, generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
@@ -158,40 +158,82 @@ export type AvisarFn = (sb: SB, titulo: string, lineas: string[]) => Promise<{ e
 /** Códigos de `ZomatikError` que son "no se puede entrar o hablar con Zomatik": un solo problema para todo el robot. */
 const CODIGOS_ACCESO = ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida", "sin_respuesta"]
 export const esFallaDeAcceso = (e: unknown) => CODIGOS_ACCESO.includes(String((e as { codigo?: unknown } | null)?.codigo ?? ""))
+/** ¿La excepción es de Zomatik (trae el `codigo` de `ZomatikError`) o nuestra (base, código)? */
+export const esDeZomatik = (e: unknown) => typeof (e as { codigo?: unknown } | null)?.codigo === "string"
 /** Tipo de una excepción, para comparar episodios: el código de `ZomatikError` o "interno" (no el texto, que cambia). */
 export const tipoDeFalla = (e: unknown) => {
   const c = (e as { codigo?: unknown } | null)?.codigo
   return typeof c === "string" ? c : "interno"
 }
 
-/** Clave de `integraciones`: desde cuándo el robot no puede entrar a Zomatik (ya se le avisó a Bautista). */
+/**
+ * Clave de `integraciones`: el robot no puede entrar a Zomatik y ya se le avisó a Bautista. `valor` = desde cuándo;
+ * `actualizado` = el último mail (el primero o el recordatorio de cada 24 h).
+ */
 export const CLAVE_AVISO_ENTRADA = "zomatik_aviso_entrada"
+/** Cada cuánto se recuerda que Zomatik sigue sin dejar entrar (así la clave no queda pegada para siempre). */
+export const RECORDATORIO_ENTRADA_MS = 24 * 60 * 60_000
 const horaAR = (iso: string) => new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" })
 
 /**
- * El robot no puede entrar a Zomatik (usuario, sesión, red): UN aviso para todo el robot (NP y Z1 juntos), no uno por
- * fila. La marca queda en `integraciones` y se borra cuando vuelve a entrar (`avisarZomatikVolvio`). Devuelve "enviado"
- * (mail de ahora), "ya" (ya se había avisado) o "no" (no salió el mail: se vuelve a probar en la próxima falla).
+ * ¿Hay un bloqueo de login por una entrada que falló de verdad? (`zomatik_login_bloqueado`, lo graba `login()` en
+ * cliente.ts). Si no está, un `login_bloqueado` es solo la espera de 10 min entre entradas del proceso: la última entrada
+ * anduvo y no es una falla de entrada.
  */
-export async function avisarFallaAcceso(sb: SB, avisar: AvisarFn, o: { que: string; mensaje: string }): Promise<"enviado" | "ya" | "no"> {
+async function hayBloqueoDeLogin(sb: SB): Promise<boolean> {
+  const { data } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_BLOQUEO_LOGIN).maybeSingle()
+  const hasta = Date.parse((data as { valor?: string } | null)?.valor || "")
+  return Number.isFinite(hasta) && hasta > Date.now()
+}
+
+/**
+ * El robot no puede entrar a Zomatik (usuario, sesión, red): UN aviso para todo el robot (NP y Z1 juntos), no uno por
+ * fila. La marca queda en `integraciones` y se borra cuando vuelve a entrar (`avisarZomatikVolvio`); si sigue más de
+ * 24 h, un recordatorio y se renueva. Devuelve "enviado" (mail de ahora), "ya" (ya se había avisado) o "no" (no salió
+ * el mail, o no era una falla de entrada: se vuelve a mirar en la próxima).
+ */
+export async function avisarFallaAcceso(sb: SB, avisar: AvisarFn, o: { que: string; mensaje: string; codigo?: string }): Promise<"enviado" | "ya" | "no"> {
   try {
-    const { data } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_AVISO_ENTRADA).maybeSingle()
-    if (data) return "ya"
+    const { data } = await sb.from("integraciones").select("valor, actualizado").eq("clave", CLAVE_AVISO_ENTRADA).maybeSingle()
+    const ya = data as { valor: string; actualizado: string | null } | null
+    if (ya) {
+      // Sigue caída: nada más, salvo el recordatorio cada 24 h (lo manda un solo proceso: el que renueva la fecha)
+      const ultimo = ya.actualizado || ya.valor
+      if (Date.now() - Date.parse(ultimo) <= RECORDATORIO_ENTRADA_MS) return "ya"
+      const ahora = new Date().toISOString()
+      const q = sb.from("integraciones").update({ actualizado: ahora } as never).eq("clave", CLAVE_AVISO_ENTRADA)
+      const { data: renovada } = await (ya.actualizado ? q.eq("actualizado", ya.actualizado) : q).select("clave")
+      if (!((renovada as unknown[] | null) || []).length) return "ya"
+      const r = await avisar(sb, `Zomatik sigue sin dejar entrar (desde ${horaAR(ya.valor)})`, [
+        `El robot no puede entrar a Zomatik desde ${horaAR(ya.valor)}.`,
+        `Último intento: ${o.que}`,
+        `Mensaje: ${o.mensaje}`,
+        "Las NP, OF y remitos siguen pendientes. Este recordatorio llega cada 24 horas mientras siga.",
+        "Si habla de usuario o clave: revisar ZOMATIK_USER / ZOMATIK_PASS en Vercel.",
+      ])
+      if (r.enviado) return "enviado"
+      console.error("[zomatik] recordatorio de entrada:", r.motivo)
+      await sb.from("integraciones").update({ actualizado: ultimo } as never).eq("clave", CLAVE_AVISO_ENTRADA).eq("actualizado", ahora) // se vuelve a probar
+      return "ya"
+    }
+    // "Ya se intentó entrar hace menos de 10 min": si la última entrada anduvo, no es una falla (sin falso "volvió")
+    if (o.codigo === "login_bloqueado" && !(await hayBloqueoDeLogin(sb))) return "no"
     const ahora = new Date().toISOString()
-    // La clave es única: si otro proceso la grabó recién, este no manda otro mail
+    // La clave es única: si otro proceso la grabó recién (23505), este no manda otro mail. Otro error: el mail va igual
     const { error } = await sb.from("integraciones").insert({ clave: CLAVE_AVISO_ENTRADA, valor: ahora, actualizado: ahora, conectado_por: "sistema" } as never)
-    if (error) return "ya"
+    if (error && (error as { code?: string }).code === "23505") return "ya"
+    if (error) console.error("[zomatik] no se pudo grabar la marca de entrada:", error.message)
     const r = await avisar(sb, "Zomatik: el robot no puede entrar", [
       `Desde: ${horaAR(ahora)}`,
       `Qué se estaba haciendo: ${o.que}`,
       `Mensaje: ${o.mensaje}`,
       "Las NP, OF y remitos quedan pendientes y se retoman en la próxima pasada cuando Zomatik vuelva a andar.",
-      "No llegan más mails de esto mientras siga. Cuando vuelva a entrar, llega uno corto.",
+      "No llegan más mails de esto mientras siga (salvo un recordatorio cada 24 horas). Cuando vuelva a entrar, llega uno corto.",
       "Si habla de usuario o clave: revisar ZOMATIK_USER / ZOMATIK_PASS en Vercel.",
     ])
     if (r.enviado) return "enviado"
     console.error("[zomatik] aviso de entrada:", r.motivo)
-    await sb.from("integraciones").delete().eq("clave", CLAVE_AVISO_ENTRADA)
+    if (!error) await sb.from("integraciones").delete().eq("clave", CLAVE_AVISO_ENTRADA)
     return "no"
   } catch (e) {
     console.error("[zomatik] aviso de entrada:", (e as Error)?.message)
@@ -221,7 +263,7 @@ export async function avisarFallaInesperada(e: unknown, titulo: string, lineas: 
   try {
     const m = errorInterno(e) ?? mensajeZomatik(e)
     const s = sb ?? sbServicio()
-    if (esFallaDeAcceso(e)) return (await avisarFallaAcceso(s, avisarErrorZomatik, { que: titulo, mensaje: m })) !== "no"
+    if (esFallaDeAcceso(e)) return (await avisarFallaAcceso(s, avisarErrorZomatik, { que: titulo, mensaje: m, codigo: tipoDeFalla(e) })) !== "no"
     const r = await avisarErrorZomatik(s, titulo, lineas(m))
     if (!r.enviado) console.error("[zomatik] aviso de la falla:", r.motivo)
     return r.enviado
@@ -231,11 +273,17 @@ export async function avisarFallaInesperada(e: unknown, titulo: string, lineas: 
   }
 }
 
-/** Actividad de una fila del robot (NP o remito), buscada por su marca, lo más nuevo primero. */
+/**
+ * Actividad de una fila del robot (NP o remito), lo más nuevo primero. Se filtra por la marca en la base
+ * (`details->>Marca`), así una marca vieja no queda afuera por otras entradas del mismo pedido.
+ */
 async function actividadDeFila(sb: SB, ref: string, marca: string): Promise<Record<string, unknown>[]> {
-  const { data } = await sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np").eq("reference", ref).order("created_at", { ascending: false }).limit(100)
+  const { data } = await sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np").eq("reference", ref).eq("details->>Marca", marca).order("created_at", { ascending: false }).limit(50)
   return ((data as { details: Record<string, unknown> | null }[] | null) || []).map((x) => x.details || {}).filter((d) => d.Marca === marca)
 }
+
+/** Lo que queda en Actividad cuando se mandó (o no) un aviso: "no" no cuenta como avisado y se vuelve a probar. */
+const avisado = (r: { enviado: boolean }) => (r.enviado ? "sí" : "no")
 
 /** "Qué pasó" de la Actividad cuando el robot se cae con una excepción (la fila vuelve a "pendiente"). */
 export const QUE_CAIDA = "El robot se cayó"
@@ -251,11 +299,12 @@ type FilaAviso = { usuario: string; pedidoId: string | null; plantId?: string | 
 export async function avisarCaidaFila(sb: SB, avisar: AvisarFn, o: FilaAviso & { firma: string; mensaje: string; paso: string | null; quePaso?: string }): Promise<boolean> {
   try {
     // Solo las caídas llevan Firma: si lo último de la fila es esta misma caída, es el mismo episodio
+    // (si el mail de esa caída no salió, "Avisado: no", se vuelve a probar)
     const ultimo = (await actividadDeFila(sb, o.ref, o.marca))[0]
-    if (ultimo?.Firma === o.firma) return false
-    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": o.quePaso || QUE_CAIDA, Mensaje: o.mensaje, Paso: o.paso, Marca: o.marca, Firma: o.firma } })
+    if (ultimo?.Firma === o.firma && ultimo.Avisado !== "no") return false
     const r = await avisar(sb, o.titulo, o.lineas)
     if (!r.enviado) console.error("[zomatik] aviso de la caída:", r.motivo)
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": o.quePaso || QUE_CAIDA, Mensaje: o.mensaje, Paso: o.paso, Marca: o.marca, Firma: o.firma, Avisado: avisado(r) } })
     return r.enviado
   } catch (e) {
     console.error("[zomatik] aviso de la caída:", (e as Error)?.message)
@@ -277,10 +326,11 @@ export async function avisarPendienteLargo(sb: SB, avisar: AvisarFn, o: FilaAvis
     if (o.intentos < PENDIENTE_LARGO_INTENTOS || !(Date.now() - Date.parse(o.creada) > PENDIENTE_LARGO_MS)) return false
     const { data: caida } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_AVISO_ENTRADA).maybeSingle()
     if (caida) return false
-    if ((await actividadDeFila(sb, o.ref, o.marca)).some((d) => d["Qué pasó"] === QUE_PENDIENTE_LARGO)) return false
-    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": QUE_PENDIENTE_LARGO, Intentos: o.intentos, Marca: o.marca } })
+    // Una vez por fila: solo cuenta el aviso que salió ("Avisado: no" se vuelve a probar en el próximo intento)
+    if ((await actividadDeFila(sb, o.ref, o.marca)).some((d) => d["Qué pasó"] === QUE_PENDIENTE_LARGO && d.Avisado !== "no")) return false
     const r = await avisar(sb, o.titulo, o.lineas)
     if (!r.enviado) console.error("[zomatik] aviso de pendiente:", r.motivo)
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": QUE_PENDIENTE_LARGO, Intentos: o.intentos, Marca: o.marca, Avisado: avisado(r) } })
     return r.enviado
   } catch (e) {
     console.error("[zomatik] aviso de pendiente:", (e as Error)?.message)
@@ -1061,7 +1111,7 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
           const que = vaciando ? `vaciar la ${np.numero || "NP"}` : "generar la NP"
           if (esFallaDeAcceso(e)) {
             // No se puede entrar a Zomatik: un solo aviso para todo el robot, no uno por NP
-            await avisarFallaAcceso(sb, avisarError, { que: `${que} (${ref})`, mensaje: m })
+            await avisarFallaAcceso(sb, avisarError, { que: `${que} (${ref})`, mensaje: m, codigo: tipoDeFalla(e) })
           } else {
             await avisarCaidaFila(sb, avisarError, {
               usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, ref, marca: np.marca,

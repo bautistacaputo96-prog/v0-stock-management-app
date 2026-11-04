@@ -13,15 +13,12 @@
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, tipoDe } from "@/lib/permisos"
-import { avisarFallaInesperada, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { avisarFallaInesperada, esDeZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 const uuid = (s: unknown) => (typeof s === "string" && /^[0-9a-f-]{36}$/i.test(s) ? s : null)
-
-/** ¿El error es de Zomatik (un `ZomatikError`) o nuestro (base, código)? */
-const deZomatik = (e: unknown) => typeof (e as { codigo?: unknown } | null)?.codigo === "string"
 
 /**
  * Un error inesperado al programar el pedido o con "Generar NP ahora" (04/11): el pedido ya está guardado y la NP queda
@@ -35,7 +32,7 @@ async function fallaInesperada(e: unknown, o: { accion: string; pedidoId: string
     `Error: ${m}`,
     "El pedido está guardado. La NP queda pendiente: la próxima pasada (cada 10 minutos) vuelve a mirar el pedido, o tocá \"Generar NP ahora\".",
   ])
-  const que = deZomatik(e) ? "No se pudo generar la NP en Zomatik" : "No se pudo preparar la NP (error del sistema)"
+  const que = esDeZomatik(e) ? "No se pudo generar la NP en Zomatik" : "No se pudo preparar la NP (error del sistema)"
   return NextResponse.json({ error: `${que}: queda pendiente y ${avisado ? "ya le avisamos a Bautista" : "avisale a Bautista"}.` }, { status: 500 })
 }
 
