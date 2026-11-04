@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { verificarClave, esClaveComun } from "@/lib/auth/clave"
-import { decidirIngreso, errorBloqueado, errorTrasIntentoFallido, ERROR_INCORRECTO, MINUTOS_BLOQUEO } from "@/lib/auth/ingreso"
+import { decidirIngreso, errorTrasIntentoFallido, ERROR_INCORRECTO } from "@/lib/auth/ingreso"
 import { exigirSecreto } from "@/lib/auth/token"
 import {
   sbServicio,
@@ -55,10 +55,16 @@ export async function POST(req: Request) {
     }
     if (!usuario || !credencial) return NextResponse.json({ error: ERROR_INCORRECTO }, { status: 401 })
 
-    // Bien: intentos a 0 y último ingreso, solo si en este momento no está bloqueado
+    // Bien: intentos a 0 y último ingreso. Sin bloqueo por intentos (04/11/2026): si la base todavía tenía
+    // bloqueado_hasta (registrar_ingreso_ok no graba en ese caso), se limpia acá y entra igual
     const { data: puedeEntrar, error: eOk } = await sbServicio().rpc("registrar_ingreso_ok", { p_user_id: usuarioId })
     if (eOk) throw eOk
-    if (puedeEntrar !== true) return NextResponse.json({ error: errorBloqueado(MINUTOS_BLOQUEO) }, { status: 401 })
+    if (puedeEntrar !== true) {
+      const { error: eLimpia } = await sbServicio().from("app_user_credenciales")
+        .update({ intentos_fallidos: 0, bloqueado_hasta: null, ultimo_ingreso_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("user_id", usuarioId)
+      if (eLimpia) throw eLimpia
+    }
 
     const res = NextResponse.json({ usuario: usuarioParaElNavegador(usuario), debeCambiarClave: r.debeCambiar })
     ponerCookieSesion(res, usuario.id, credencial.sesion_version)

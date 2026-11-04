@@ -118,7 +118,7 @@ export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null |
     veFuncionesNuevas: u.ve_funciones_nuevas === true,
     estadoClave: estadoClave(c),
     ultimoIngreso: c?.ultimo_ingreso_at || null,
-    bloqueado: !!(c?.bloqueado_hasta && new Date(c.bloqueado_hasta).getTime() > ahora),
+    bloqueado: false, // sin bloqueo por intentos desde el 04/11/2026
     permisosActualizadosAt: u.permisos_actualizados_at || null,
     permisosActualizadosPor: u.permisos_actualizados_por || null,
   }

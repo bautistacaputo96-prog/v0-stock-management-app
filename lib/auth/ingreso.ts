@@ -28,6 +28,7 @@ export type ResultadoIngreso = {
   cambios: CambiosIngreso | null
 }
 
+/** Ya no se usan para bloquear (Bautista sacó el bloqueo por intentos el 04/11/2026); quedan por compatibilidad. */
 export const MAX_INTENTOS = 5
 export const MINUTOS_BLOQUEO = 10
 
@@ -58,11 +59,7 @@ export async function decidirIngreso(opts: {
   // 5 (sin fila). Sin credencial no hay nada que probar
   if (!c) return { ok: false, debeCambiar: false, error: ERROR_SIN_CLAVE, cambios: null }
 
-  // 2. Bloqueado
-  const hasta = c.bloqueado_hasta ? new Date(c.bloqueado_hasta).getTime() : NaN
-  if (Number.isFinite(hasta) && hasta > ahora.getTime()) {
-    return { ok: false, debeCambiar: false, error: errorBloqueado((hasta - ahora.getTime()) / 60000), cambios: null }
-  }
+  // 2. Sin bloqueo por intentos (Bautista, 04/11/2026): bloqueado_hasta se ignora
 
   let bien: boolean
   let debeCambiar = c.debe_cambiar === true
@@ -79,16 +76,8 @@ export async function decidirIngreso(opts: {
   }
 
   if (!bien) {
-    // 6. Contraseña mal: suma un intento; al quinto, 10 minutos de bloqueo y vuelve a cero
+    // 6. Contraseña mal: suma un intento (solo para ver; ya no bloquea)
     const intentos = (Number.isInteger(c.intentos_fallidos) ? c.intentos_fallidos : 0) + 1
-    if (intentos >= MAX_INTENTOS) {
-      return {
-        ok: false,
-        debeCambiar: false,
-        error: errorBloqueado(MINUTOS_BLOQUEO),
-        cambios: { intentos_fallidos: 0, bloqueado_hasta: new Date(ahora.getTime() + MINUTOS_BLOQUEO * 60000).toISOString() },
-      }
-    }
     return { ok: false, debeCambiar: false, error: ERROR_INCORRECTO, cambios: { intentos_fallidos: intentos } }
   }
 
@@ -106,10 +95,9 @@ export async function decidirIngreso(opts: {
  * (`registrar_ingreso_fallido`), que devuelve el estado que quedó grabado.
  */
 export function errorTrasIntentoFallido(
-  r: { intentos: number | null; bloqueado: string | null; ya_bloqueado: boolean | null } | null | undefined,
-  ahora: Date,
+  _r: { intentos: number | null; bloqueado: string | null; ya_bloqueado: boolean | null } | null | undefined,
+  _ahora: Date,
 ): string {
-  const hasta = r?.bloqueado ? new Date(r.bloqueado).getTime() : NaN
-  if (Number.isFinite(hasta) && hasta > ahora.getTime()) return errorBloqueado((hasta - ahora.getTime()) / 60000)
+  // Sin bloqueo por intentos (04/11/2026): aunque la base deje bloqueado_hasta, el mensaje es siempre el mismo
   return ERROR_INCORRECTO
 }
