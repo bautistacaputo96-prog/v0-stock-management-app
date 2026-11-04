@@ -33,7 +33,7 @@ async function fallaInesperada(e: unknown, o: { accion: string; pedidoId: string
     `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
     `Botón: ${o.accion === "generar" ? "Generar NP ahora" : "Guardar, cancelar o finalizar el pedido"} · ${o.usuario}`,
     `Error: ${m}`,
-    "El pedido está guardado. La NP queda pendiente: la próxima pasada vuelve a mirar el pedido, o tocá \"Generar NP ahora\".",
+    "El pedido está guardado. La NP queda pendiente: la próxima pasada (cada 10 minutos) vuelve a mirar el pedido, o tocá \"Generar NP ahora\".",
   ])
   const que = deZomatik(e) ? "No se pudo generar la NP en Zomatik" : "No se pudo preparar la NP (error del sistema)"
   return NextResponse.json({ error: `${que}: queda pendiente y ${avisado ? "ya le avisamos a Bautista" : "avisale a Bautista"}.` }, { status: 500 })
@@ -49,7 +49,7 @@ async function caidaDespues(e: unknown, o: { pedidoId: string; usuario: string }
     `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
     `Qué se estaba haciendo: generar la NP después de guardar el pedido · ${o.usuario}`,
     `Error: ${m}`,
-    "El pedido está guardado. La NP queda pendiente: la próxima pasada (cada 10 minutos mientras Programación está abierta) la vuelve a tomar, o tocá \"Generar NP ahora\".",
+    "El pedido está guardado. La NP queda pendiente: la próxima pasada (cada 10 minutos) la vuelve a tomar, o tocá \"Generar NP ahora\".",
   ])
 }
 

@@ -47,7 +47,7 @@ async function caidaDespues(e: unknown, o: { pedidoId: string; fecha: string; us
     `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
     `Qué se estaba haciendo: la OF y el remito después de "Remitir en Zomatik" · ${o.usuario}`,
     `Error: ${m}`,
-    "Lo despachado queda pendiente de remitir: la próxima pasada lo vuelve a tomar, o tocá \"Remitir en Zomatik\" otra vez.",
+    "Lo despachado queda pendiente de remitir: la próxima pasada (cada 10 minutos) lo vuelve a tomar, o tocá \"Remitir en Zomatik\" otra vez.",
   ])
 }
 

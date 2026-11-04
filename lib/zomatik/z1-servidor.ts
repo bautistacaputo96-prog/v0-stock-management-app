@@ -373,7 +373,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
             `${r.of_estado === "ok" ? `El remito (la ${r.of_numero || "OF"} ya está hecha)` : "La OF"} lleva más de 1 hora sin salir (${intentos} intentos), por red o sesión de Zomatik.`,
             `Último mensaje: ${mensaje || "(sin mensaje)"}`,
             `Marca: ${r.marca}`,
-            "Se sigue reintentando en cada pasada (cada 10 minutos mientras Programación está abierta). Este aviso llega una sola vez por remito.",
+            "Se sigue reintentando en la próxima pasada (cada 10 minutos). Este aviso llega una sola vez por remito.",
           ],
         })
       }
@@ -528,7 +528,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
                 `Qué se estaba haciendo: ${parte}${ultimoPaso ? ` · paso ${ultimoPaso}` : ""}`,
                 `Mensaje: ${m || "(sin mensaje)"}`,
                 `Marca: ${r.marca}`,
-                "Queda pendiente: se reintenta en la próxima pasada (cada 10 minutos mientras Programación está abierta). Mientras se caiga igual, no llega otro mail.",
+                "Queda pendiente: se reintenta en la próxima pasada (cada 10 minutos). Mientras se caiga igual, no llega otro mail.",
               ],
             })
           }

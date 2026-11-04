@@ -839,7 +839,7 @@ async function avisarPendienteNp(sb: SB, np: FilaNpDB, ctx: Contexto, mensaje: s
       `Lleva más de 1 hora sin poder generarse (${intentos} intentos), por red o sesión de Zomatik.`,
       `Último mensaje: ${mensaje || "(sin mensaje)"}`,
       `Marca en observaciones: ${np.marca}`,
-      "Se sigue reintentando en cada pasada (cada 10 minutos mientras Programación está abierta). Este aviso llega una sola vez por NP.",
+      "Se sigue reintentando en la próxima pasada (cada 10 minutos). Este aviso llega una sola vez por NP.",
     ],
   })
 }
@@ -1072,7 +1072,7 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
                 `Qué se estaba haciendo: ${que}${ctx.paso ? ` · paso ${ctx.paso}` : ""}`,
                 `Mensaje: ${m}`,
                 `Marca en observaciones: ${np.marca}`,
-                `La NP queda ${vaciando ? "para vaciar" : "pendiente"}: se reintenta en la próxima pasada (cada 10 minutos mientras Programación está abierta). Mientras se caiga igual, no llega otro mail.`,
+                `La NP queda ${vaciando ? "para vaciar" : "pendiente"}: se reintenta en la próxima pasada (cada 10 minutos). Mientras se caiga igual, no llega otro mail.`,
               ],
             })
           }
