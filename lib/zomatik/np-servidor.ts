@@ -882,8 +882,21 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
         }
         // Falla de nuestro lado o de la sesión (antes de que el robot devuelva): se deja para el reintento
         const m = mensajeZomatik(e) || (e as Error)?.message || "Error"
-        await guardarSi(sb, np.id, a, { estado: vaciando ? "vaciar" : "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(MIN_REINTENTO) })
+        const volvio = await guardarSi(sb, np.id, a, { estado: vaciando ? "vaciar" : "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(MIN_REINTENTO) })
         hechas.push({ id: np.id, estado: vaciando ? "vaciar" : "pendiente", mensaje: m })
+        // Aviso a Bautista, un solo mail por episodio: si el intento anterior ya había quedado con este mismo mensaje
+        // (la pasada de cada 10 min la volvió a tomar y volvió a caer), no se repite
+        if (volvio && m !== (np.mensaje ?? null)) {
+          const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
+          const aviso = await (dep.avisarError ?? avisarErrorZomatik)(sb, `El robot de Zomatik se cayó ${vaciando ? "vaciando" : "generando"} la NP · ${ref}`, [
+            `${ref} · ${np.m3} m³ · ${np.fecha}${plantas[np.plant_id || ""]?.name ? ` · ${plantas[np.plant_id || ""]!.name}` : ""}`,
+            `Qué se estaba haciendo: ${vaciando ? `vaciar la ${np.numero || "NP"}` : "generar la NP"}`,
+            `Mensaje: ${m}`,
+            `Marca en observaciones: ${np.marca}`,
+            `La NP queda ${vaciando ? "para vaciar" : "pendiente"} y se reintenta cada 10 minutos (si vuelve a caer igual, no llega otro mail).`,
+          ])
+          if (!aviso.enviado) console.error("[zomatik-np] aviso de la caída:", aviso.motivo)
+        }
         if (/sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break // no se insiste con la sesión caída
       }
     }

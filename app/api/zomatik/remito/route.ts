@@ -41,6 +41,26 @@ async function fallaInesperada(e: unknown, o: { pedidoId: string; fecha: string;
   return NextResponse.json({ error: "No se pudo remitir en Zomatik: queda pendiente y ya le avisamos a Bautista." }, { status: 500 })
 }
 
+/**
+ * El robot que hace la OF y el remito DESPUÉS de responder (`after`) se cayó con una excepción: el usuario ya vio
+ * "Haciendo la OF y el remito…", así que se le avisa a Bautista. Los remitos quedan pendientes como estaban.
+ */
+async function caidaDespues(e: unknown, o: { pedidoId: string; fecha: string; usuario: string }) {
+  const m = (e as { message?: string })?.message || String(e)
+  console.error("[zomatik-z1] procesar", m)
+  try {
+    const aviso = await avisarErrorZomatik(sbServicio(), `El robot de Zomatik se cayó con la OF y el remito · Pedido ${o.pedidoId.slice(0, 8)}`, [
+      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
+      `Qué se estaba haciendo: la OF y el remito después de "Remitir en Zomatik" · ${o.usuario}`,
+      `Error: ${m}`,
+      "Lo despachado queda pendiente de remitir: la pasada lo vuelve a tomar, o tocá \"Remitir en Zomatik\" otra vez.",
+    ])
+    if (!aviso.enviado) console.error("[zomatik-z1] aviso de la caída:", aviso.motivo)
+  } catch (err) {
+    console.error("[zomatik-z1] aviso de la caída", (err as Error)?.message)
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const r = await exigirSesion()
@@ -78,7 +98,7 @@ export async function POST(req: Request) {
       if (/zomatik_remito|remitir_activo|does not exist|schema cache/i.test(String((e as Error)?.message || ""))) return NextResponse.json({ activo: false, motivo: "OF y remito: se cargan a mano en Zomatik", sinMigracion: true })
       throw e
     }
-    if (prep.activo) after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => console.error("[zomatik-z1] procesar", e?.message)))
+    if (prep.activo) after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => caidaDespues(e, { pedidoId, fecha, usuario: u.name })))
     return NextResponse.json(prep)
   } catch (e) {
     if (boton && !esDeConfiguracion(e)) return fallaInesperada(e, boton)

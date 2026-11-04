@@ -43,6 +43,26 @@ async function fallaInesperada(e: unknown, o: { accion: string; pedidoId: string
   return NextResponse.json({ error: "No se pudo generar la NP en Zomatik: queda pendiente y ya le avisamos a Bautista." }, { status: 500 })
 }
 
+/**
+ * El robot que trabaja DESPUÉS de responder (`after`) se cayó con una excepción: el usuario ya vio "Generando la NP…",
+ * así que se le avisa a Bautista. La NP queda como estaba (pendiente) y la pasada de cada 10 min la vuelve a tomar.
+ */
+async function caidaDespues(e: unknown, o: { pedidoId: string; usuario: string }) {
+  const m = (e as { message?: string })?.message || String(e)
+  console.error("[zomatik-np] procesar", m)
+  try {
+    const aviso = await avisarErrorZomatik(sbServicio(), `El robot de Zomatik se cayó generando la NP · Pedido ${o.pedidoId.slice(0, 8)}`, [
+      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
+      `Qué se estaba haciendo: generar la NP después de guardar el pedido · ${o.usuario}`,
+      `Error: ${m}`,
+      "El pedido está guardado. La NP queda pendiente: la pasada de cada 10 minutos la vuelve a tomar, o tocá \"Generar NP ahora\".",
+    ])
+    if (!aviso.enviado) console.error("[zomatik-np] aviso de la caída:", aviso.motivo)
+  } catch (err) {
+    console.error("[zomatik-np] aviso de la caída", (err as Error)?.message)
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const r = await exigirSesion()
@@ -133,7 +153,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ...sync, proceso: proc })
     }
     // Primero se responde (la base ya quedó sincronizada); el robot trabaja después, dentro del tiempo que queda
-    if (sync.creadas) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => console.error("[zomatik-np] procesar", err?.message)))
+    if (sync.creadas) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => caidaDespues(err, { pedidoId, usuario: u.name })))
     return NextResponse.json(sync)
   } catch (e) {
     if (boton && !esDeConfiguracion(e)) return fallaInesperada(e, boton)
