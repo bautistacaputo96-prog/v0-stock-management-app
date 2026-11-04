@@ -231,6 +231,12 @@ export async function registrarActividad(opts: {
 }
 
 /** Respuesta para un error inesperado (sin secreto o sin clave de servicio → 500 con su código). */
+/** Falta de configuración del servidor (clave de servicio o SESION_SECRETO): la contesta `respuestaError` tal cual. */
+export function esErrorDeConfiguracion(e: unknown): boolean {
+  const c = (e as { codigo?: unknown } | null)?.codigo
+  return e instanceof SinClaveServicioError || e instanceof SinSecretoError || c === "sin_clave_servicio" || c === "sin_secreto"
+}
+
 export function respuestaError(e: unknown) {
   if (e instanceof SinClaveServicioError || (e as any)?.codigo === "sin_clave_servicio") {
     return NextResponse.json(

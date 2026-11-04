@@ -7,10 +7,10 @@
  *        robot hace la OF y el remito después de responder. Con la llave de remitir apagada no hace nada.
  */
 import { NextResponse, after } from "next/server"
-import { exigirSesion, respuestaError, respuestaModoLocal, sbServicio } from "@/lib/auth/servidor"
+import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon } from "@/lib/permisos"
 import { hoyAR } from "@/lib/zomatik/np"
-import { avisarErrorZomatik } from "@/lib/zomatik/np-servidor"
+import { avisarFallaInesperada } from "@/lib/zomatik/np-servidor"
 import { estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
 
 export const dynamic = "force-dynamic"
@@ -18,8 +18,8 @@ export const maxDuration = 60
 
 const uuid = (s: unknown) => (typeof s === "string" && /^[0-9a-f-]{36}$/i.test(s) ? s : null)
 
-/** Falta de configuración del servidor (la clave de servicio o el secreto): la contesta `respuestaError`, sin mail. */
-const esDeConfiguracion = (e: unknown) => ["sin_clave_servicio", "sin_secreto"].includes(String((e as { codigo?: string })?.codigo || ""))
+/** ¿El error es de Zomatik (un `ZomatikError`) o nuestro (base, código)? */
+const deZomatik = (e: unknown) => typeof (e as { codigo?: unknown } | null)?.codigo === "string"
 
 /**
  * Un error inesperado con "Remitir en Zomatik" (04/11): lo despachado no se toca y queda sin remitir (la pasada de la
@@ -27,18 +27,14 @@ const esDeConfiguracion = (e: unknown) => ["sin_clave_servicio", "sin_secreto"].
  */
 async function fallaInesperada(e: unknown, o: { pedidoId: string; fecha: string; usuario: string }) {
   console.error("[zomatik-z1] falla inesperada", o.pedidoId, e)
-  try {
-    const m = (e as { message?: string })?.message || String(e)
-    await avisarErrorZomatik(sbServicio(), `Falla inesperada al remitir · Pedido ${o.pedidoId.slice(0, 8)}`, [
-      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
-      `Botón: Remitir en Zomatik · ${o.usuario}`,
-      `Error: ${m}`,
-      "Lo despachado queda sin remitir: la pasada de la noche lo vuelve a armar, o tocá \"Remitir en Zomatik\" otra vez.",
-    ])
-  } catch (err) {
-    console.error("[zomatik-z1] aviso de la falla", (err as Error)?.message)
-  }
-  return NextResponse.json({ error: "No se pudo remitir en Zomatik: queda pendiente y ya le avisamos a Bautista." }, { status: 500 })
+  const avisado = await avisarFallaInesperada(e, `Falla inesperada al remitir · Pedido ${o.pedidoId.slice(0, 8)}`, (m) => [
+    `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
+    `Botón: Remitir en Zomatik · ${o.usuario}`,
+    `Error: ${m}`,
+    "Lo despachado queda sin remitir: la pasada de la noche lo vuelve a armar, o tocá \"Remitir en Zomatik\" otra vez.",
+  ])
+  const que = deZomatik(e) ? "No se pudo remitir en Zomatik" : "No se pudo preparar el remito (error del sistema)"
+  return NextResponse.json({ error: `${que}: queda pendiente y ${avisado ? "ya le avisamos a Bautista" : "avisale a Bautista"}.` }, { status: 500 })
 }
 
 /**
@@ -46,19 +42,13 @@ async function fallaInesperada(e: unknown, o: { pedidoId: string; fecha: string;
  * "Haciendo la OF y el remito…", así que se le avisa a Bautista. Los remitos quedan pendientes como estaban.
  */
 async function caidaDespues(e: unknown, o: { pedidoId: string; fecha: string; usuario: string }) {
-  const m = (e as { message?: string })?.message || String(e)
-  console.error("[zomatik-z1] procesar", m)
-  try {
-    const aviso = await avisarErrorZomatik(sbServicio(), `El robot de Zomatik se cayó con la OF y el remito · Pedido ${o.pedidoId.slice(0, 8)}`, [
-      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
-      `Qué se estaba haciendo: la OF y el remito después de "Remitir en Zomatik" · ${o.usuario}`,
-      `Error: ${m}`,
-      "Lo despachado queda pendiente de remitir: la pasada lo vuelve a tomar, o tocá \"Remitir en Zomatik\" otra vez.",
-    ])
-    if (!aviso.enviado) console.error("[zomatik-z1] aviso de la caída:", aviso.motivo)
-  } catch (err) {
-    console.error("[zomatik-z1] aviso de la caída", (err as Error)?.message)
-  }
+  console.error("[zomatik-z1] procesar", (e as Error)?.message || e)
+  await avisarFallaInesperada(e, `El robot de Zomatik se cayó con la OF y el remito · Pedido ${o.pedidoId.slice(0, 8)}`, (m) => [
+    `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId}) · ${o.fecha}`,
+    `Qué se estaba haciendo: la OF y el remito después de "Remitir en Zomatik" · ${o.usuario}`,
+    `Error: ${m}`,
+    "Lo despachado queda pendiente de remitir: la próxima pasada lo vuelve a tomar, o tocá \"Remitir en Zomatik\" otra vez.",
+  ])
 }
 
 export async function GET(req: Request) {
@@ -101,7 +91,7 @@ export async function POST(req: Request) {
     if (prep.activo) after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => caidaDespues(e, { pedidoId, fecha, usuario: u.name })))
     return NextResponse.json(prep)
   } catch (e) {
-    if (boton && !esDeConfiguracion(e)) return fallaInesperada(e, boton)
+    if (boton && !esErrorDeConfiguracion(e)) return fallaInesperada(e, boton)
     return respuestaError(e)
   }
 }

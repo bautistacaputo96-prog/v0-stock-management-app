@@ -11,56 +11,46 @@
  *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
  */
 import { NextResponse, after } from "next/server"
-import { exigirSesion, respuestaError, respuestaModoLocal, sbServicio } from "@/lib/auth/servidor"
+import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, tipoDe } from "@/lib/permisos"
-import { avisarErrorZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { avisarFallaInesperada, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 const uuid = (s: unknown) => (typeof s === "string" && /^[0-9a-f-]{36}$/i.test(s) ? s : null)
 
-/** Falta de configuración del servidor (la clave de servicio o el secreto): la contesta `respuestaError`, sin mail. */
-const esDeConfiguracion = (e: unknown) => ["sin_clave_servicio", "sin_secreto"].includes(String((e as { codigo?: string })?.codigo || ""))
+/** ¿El error es de Zomatik (un `ZomatikError`) o nuestro (base, código)? */
+const deZomatik = (e: unknown) => typeof (e as { codigo?: unknown } | null)?.codigo === "string"
 
 /**
  * Un error inesperado al programar el pedido o con "Generar NP ahora" (04/11): el pedido ya está guardado y la NP queda
- * pendiente (la pasada de cada 10 min vuelve a mirar el pedido). Se le avisa a Bautista y se contesta claro.
+ * pendiente (la pasada vuelve a mirar el pedido). Se le avisa a Bautista y se contesta claro.
  */
 async function fallaInesperada(e: unknown, o: { accion: string; pedidoId: string; usuario: string }) {
   console.error("[zomatik-np] falla inesperada", o.accion, o.pedidoId, e)
-  try {
-    const m = (e as { message?: string })?.message || String(e)
-    await avisarErrorZomatik(sbServicio(), `Falla inesperada con la NP · Pedido ${o.pedidoId.slice(0, 8)}`, [
-      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
-      `Botón: ${o.accion === "generar" ? "Generar NP ahora" : "Guardar, cancelar o finalizar el pedido"} · ${o.usuario}`,
-      `Error: ${m}`,
-      "El pedido está guardado. La NP queda pendiente: la pasada de cada 10 minutos vuelve a mirar el pedido, o tocá \"Generar NP ahora\".",
-    ])
-  } catch (err) {
-    console.error("[zomatik-np] aviso de la falla", (err as Error)?.message)
-  }
-  return NextResponse.json({ error: "No se pudo generar la NP en Zomatik: queda pendiente y ya le avisamos a Bautista." }, { status: 500 })
+  const avisado = await avisarFallaInesperada(e, `Falla inesperada con la NP · Pedido ${o.pedidoId.slice(0, 8)}`, (m) => [
+    `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
+    `Botón: ${o.accion === "generar" ? "Generar NP ahora" : "Guardar, cancelar o finalizar el pedido"} · ${o.usuario}`,
+    `Error: ${m}`,
+    "El pedido está guardado. La NP queda pendiente: la próxima pasada vuelve a mirar el pedido, o tocá \"Generar NP ahora\".",
+  ])
+  const que = deZomatik(e) ? "No se pudo generar la NP en Zomatik" : "No se pudo preparar la NP (error del sistema)"
+  return NextResponse.json({ error: `${que}: queda pendiente y ${avisado ? "ya le avisamos a Bautista" : "avisale a Bautista"}.` }, { status: 500 })
 }
 
 /**
  * El robot que trabaja DESPUÉS de responder (`after`) se cayó con una excepción: el usuario ya vio "Generando la NP…",
- * así que se le avisa a Bautista. La NP queda como estaba (pendiente) y la pasada de cada 10 min la vuelve a tomar.
+ * así que se le avisa a Bautista. La NP queda como estaba (pendiente) y la próxima pasada la vuelve a tomar.
  */
 async function caidaDespues(e: unknown, o: { pedidoId: string; usuario: string }) {
-  const m = (e as { message?: string })?.message || String(e)
-  console.error("[zomatik-np] procesar", m)
-  try {
-    const aviso = await avisarErrorZomatik(sbServicio(), `El robot de Zomatik se cayó generando la NP · Pedido ${o.pedidoId.slice(0, 8)}`, [
-      `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
-      `Qué se estaba haciendo: generar la NP después de guardar el pedido · ${o.usuario}`,
-      `Error: ${m}`,
-      "El pedido está guardado. La NP queda pendiente: la pasada de cada 10 minutos la vuelve a tomar, o tocá \"Generar NP ahora\".",
-    ])
-    if (!aviso.enviado) console.error("[zomatik-np] aviso de la caída:", aviso.motivo)
-  } catch (err) {
-    console.error("[zomatik-np] aviso de la caída", (err as Error)?.message)
-  }
+  console.error("[zomatik-np] procesar", (e as Error)?.message || e)
+  await avisarFallaInesperada(e, `El robot de Zomatik se cayó generando la NP · Pedido ${o.pedidoId.slice(0, 8)}`, (m) => [
+    `Pedido ${o.pedidoId.slice(0, 8)} (${o.pedidoId})`,
+    `Qué se estaba haciendo: generar la NP después de guardar el pedido · ${o.usuario}`,
+    `Error: ${m}`,
+    "El pedido está guardado. La NP queda pendiente: la próxima pasada (cada 10 minutos mientras Programación está abierta) la vuelve a tomar, o tocá \"Generar NP ahora\".",
+  ])
 }
 
 export async function GET(req: Request) {
@@ -156,7 +146,7 @@ export async function POST(req: Request) {
     if (sync.creadas) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => caidaDespues(err, { pedidoId, usuario: u.name })))
     return NextResponse.json(sync)
   } catch (e) {
-    if (boton && !esDeConfiguracion(e)) return fallaInesperada(e, boton)
+    if (boton && !esErrorDeConfiguracion(e)) return fallaInesperada(e, boton)
     return respuestaError(e)
   }
 }

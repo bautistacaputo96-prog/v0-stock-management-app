@@ -18,6 +18,7 @@
 import { sbServicio } from "@/lib/auth/servidor"
 import { discoverForm, fetchExport, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
+import { errorInterno } from "@/lib/zomatik/z1-robot"
 import { autorizarNp, generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
 import { SUCURSAL_REBUCRET, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
@@ -143,10 +144,147 @@ async function mandarAviso(sb: SB, nombres: string[], sinMail: string, titulo: s
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from: `Rebucret - Zomatik <${FROM}>`, to: a, subject: `Rebucret · ${titulo}`, html }),
+      // Que un Resend lento no se coma el tiempo del robot (la función tiene 60 s)
+      signal: AbortSignal.timeout(8000),
     })
     return r.ok ? { enviado: true } : { enviado: false, motivo: `Resend respondió ${r.status}` }
   } catch (e) {
     return { enviado: false, motivo: (e as Error)?.message || "no se pudo mandar" }
+  }
+}
+
+export type AvisarFn = (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
+
+/** Códigos de `ZomatikError` que son "no se puede entrar o hablar con Zomatik": un solo problema para todo el robot. */
+const CODIGOS_ACCESO = ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida", "sin_respuesta"]
+export const esFallaDeAcceso = (e: unknown) => CODIGOS_ACCESO.includes(String((e as { codigo?: unknown } | null)?.codigo ?? ""))
+/** Tipo de una excepción, para comparar episodios: el código de `ZomatikError` o "interno" (no el texto, que cambia). */
+export const tipoDeFalla = (e: unknown) => {
+  const c = (e as { codigo?: unknown } | null)?.codigo
+  return typeof c === "string" ? c : "interno"
+}
+
+/** Clave de `integraciones`: desde cuándo el robot no puede entrar a Zomatik (ya se le avisó a Bautista). */
+export const CLAVE_AVISO_ENTRADA = "zomatik_aviso_entrada"
+const horaAR = (iso: string) => new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" })
+
+/**
+ * El robot no puede entrar a Zomatik (usuario, sesión, red): UN aviso para todo el robot (NP y Z1 juntos), no uno por
+ * fila. La marca queda en `integraciones` y se borra cuando vuelve a entrar (`avisarZomatikVolvio`). Devuelve "enviado"
+ * (mail de ahora), "ya" (ya se había avisado) o "no" (no salió el mail: se vuelve a probar en la próxima falla).
+ */
+export async function avisarFallaAcceso(sb: SB, avisar: AvisarFn, o: { que: string; mensaje: string }): Promise<"enviado" | "ya" | "no"> {
+  try {
+    const { data } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_AVISO_ENTRADA).maybeSingle()
+    if (data) return "ya"
+    const ahora = new Date().toISOString()
+    // La clave es única: si otro proceso la grabó recién, este no manda otro mail
+    const { error } = await sb.from("integraciones").insert({ clave: CLAVE_AVISO_ENTRADA, valor: ahora, actualizado: ahora, conectado_por: "sistema" } as never)
+    if (error) return "ya"
+    const r = await avisar(sb, "Zomatik: el robot no puede entrar", [
+      `Desde: ${horaAR(ahora)}`,
+      `Qué se estaba haciendo: ${o.que}`,
+      `Mensaje: ${o.mensaje}`,
+      "Las NP, OF y remitos quedan pendientes y se retoman en la próxima pasada cuando Zomatik vuelva a andar.",
+      "No llegan más mails de esto mientras siga. Cuando vuelva a entrar, llega uno corto.",
+      "Si habla de usuario o clave: revisar ZOMATIK_USER / ZOMATIK_PASS en Vercel.",
+    ])
+    if (r.enviado) return "enviado"
+    console.error("[zomatik] aviso de entrada:", r.motivo)
+    await sb.from("integraciones").delete().eq("clave", CLAVE_AVISO_ENTRADA)
+    return "no"
+  } catch (e) {
+    console.error("[zomatik] aviso de entrada:", (e as Error)?.message)
+    return "no"
+  }
+}
+
+/** El robot volvió a entrar a Zomatik: si se había avisado la falla, se borra la marca y llega un mail corto. */
+export async function avisarZomatikVolvio(sb: SB, avisar: AvisarFn): Promise<void> {
+  try {
+    const { data } = await sb.from("integraciones").delete().eq("clave", CLAVE_AVISO_ENTRADA).select("valor")
+    const fila = ((data as { valor: string }[] | null) || [])[0]
+    if (!fila) return
+    const r = await avisar(sb, "Zomatik volvió a andar", [`El robot volvió a entrar a Zomatik (no podía desde ${horaAR(fila.valor)}).`, "Lo que quedó pendiente se retoma en la próxima pasada."])
+    if (!r.enviado) console.error("[zomatik] aviso de que volvió:", r.motivo)
+  } catch (e) {
+    console.error("[zomatik] aviso de que volvió:", (e as Error)?.message)
+  }
+}
+
+/**
+ * Una falla inesperada de un botón o del robot que corre después de responder (rutas de NP y remito). Si es de entrada a
+ * Zomatik, va el aviso único del robot (uno solo mientras siga). Devuelve si Bautista ya está avisado (el mail salió
+ * ahora o ya se había avisado la caída). Nunca tira.
+ */
+export async function avisarFallaInesperada(e: unknown, titulo: string, lineas: (mensaje: string) => string[], sb?: SB): Promise<boolean> {
+  try {
+    const m = errorInterno(e) ?? mensajeZomatik(e)
+    const s = sb ?? sbServicio()
+    if (esFallaDeAcceso(e)) return (await avisarFallaAcceso(s, avisarErrorZomatik, { que: titulo, mensaje: m })) !== "no"
+    const r = await avisarErrorZomatik(s, titulo, lineas(m))
+    if (!r.enviado) console.error("[zomatik] aviso de la falla:", r.motivo)
+    return r.enviado
+  } catch (err) {
+    console.error("[zomatik] aviso de la falla", (err as Error)?.message)
+    return false
+  }
+}
+
+/** Actividad de una fila del robot (NP o remito), buscada por su marca, lo más nuevo primero. */
+async function actividadDeFila(sb: SB, ref: string, marca: string): Promise<Record<string, unknown>[]> {
+  const { data } = await sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np").eq("reference", ref).order("created_at", { ascending: false }).limit(100)
+  return ((data as { details: Record<string, unknown> | null }[] | null) || []).map((x) => x.details || {}).filter((d) => d.Marca === marca)
+}
+
+/** "Qué pasó" de la Actividad cuando el robot se cae con una excepción (la fila vuelve a "pendiente"). */
+export const QUE_CAIDA = "El robot se cayó"
+/** "Qué pasó" de la Actividad cuando una fila lleva más de 1 hora pendiente (una vez por fila). */
+export const QUE_PENDIENTE_LARGO = "Pendiente hace más de 1 hora"
+
+type FilaAviso = { usuario: string; pedidoId: string | null; plantId?: string | null; ref: string; marca: string; titulo: string; lineas: string[] }
+
+/**
+ * El robot se cayó con una excepción en una fila (que no es de entrada a Zomatik): aviso a Bautista, uno por episodio.
+ * `firma` = tipo de falla + paso. Si lo último de la fila en Actividad ya es esta misma caída, no se repite.
+ */
+export async function avisarCaidaFila(sb: SB, avisar: AvisarFn, o: FilaAviso & { firma: string; mensaje: string; paso: string | null; quePaso?: string }): Promise<boolean> {
+  try {
+    // Solo las caídas llevan Firma: si lo último de la fila es esta misma caída, es el mismo episodio
+    const ultimo = (await actividadDeFila(sb, o.ref, o.marca))[0]
+    if (ultimo?.Firma === o.firma) return false
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": o.quePaso || QUE_CAIDA, Mensaje: o.mensaje, Paso: o.paso, Marca: o.marca, Firma: o.firma } })
+    const r = await avisar(sb, o.titulo, o.lineas)
+    if (!r.enviado) console.error("[zomatik] aviso de la caída:", r.motivo)
+    return r.enviado
+  } catch (e) {
+    console.error("[zomatik] aviso de la caída:", (e as Error)?.message)
+    return false
+  }
+}
+
+/** Intentos y antigüedad para avisar una fila que sigue pendiente (sin cambios de base: created_at e intentos). */
+export const PENDIENTE_LARGO_MS = 60 * 60_000
+export const PENDIENTE_LARGO_INTENTOS = 2
+
+/**
+ * Una NP o un remito que sigue "pendiente" por red o sesión hace más de 1 hora (desde que se creó la fila, con al menos
+ * un reintento): aviso a Bautista, UNA vez por fila (la marca queda en Actividad). Con la entrada a Zomatik caída ya
+ * llegó el aviso general: no se manda uno por fila.
+ */
+export async function avisarPendienteLargo(sb: SB, avisar: AvisarFn, o: FilaAviso & { creada: string; intentos: number }): Promise<boolean> {
+  try {
+    if (o.intentos < PENDIENTE_LARGO_INTENTOS || !(Date.now() - Date.parse(o.creada) > PENDIENTE_LARGO_MS)) return false
+    const { data: caida } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_AVISO_ENTRADA).maybeSingle()
+    if (caida) return false
+    if ((await actividadDeFila(sb, o.ref, o.marca)).some((d) => d["Qué pasó"] === QUE_PENDIENTE_LARGO)) return false
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": QUE_PENDIENTE_LARGO, Intentos: o.intentos, Marca: o.marca } })
+    const r = await avisar(sb, o.titulo, o.lineas)
+    if (!r.enviado) console.error("[zomatik] aviso de pendiente:", r.motivo)
+    return r.enviado
+  } catch (e) {
+    console.error("[zomatik] aviso de pendiente:", (e as Error)?.message)
+    return false
   }
 }
 
@@ -568,6 +706,10 @@ type Contexto = {
   dep: Dependencias
   /** Renueva el turno del robot (como mucho cada 10 s). */
   renovar: () => Promise<void>
+  /** Abre el navegador del robot; si entró y se había avisado que no podía, avisa que volvió. */
+  abrir: (llave: LlaveNp) => Promise<NavegadorNp>
+  /** El último paso que arrancó la NP en curso (para el aviso si se cae). */
+  paso: string | null
 }
 
 /** Datos del pedido que necesita el robot (cliente, fórmula, depósito, R/X y obra). */
@@ -685,6 +827,23 @@ async function noSePudoGuardar(sb: SB, np: FilaNpDB, ctx: Contexto, que: string)
   await ctx.dep.avisar(sb, "NP para revisar (cambió mientras se generaba)", [detalle, `Marca: ${np.marca}`])
 }
 
+/** Una NP que sigue pendiente por red o sesión hace más de 1 hora: un aviso a Bautista, una vez por NP. */
+async function avisarPendienteNp(sb: SB, np: FilaNpDB, ctx: Contexto, mensaje: string | null, cliente: string | null) {
+  const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
+  const intentos = Number(np.intentos || 0) + 1 // el de ahora ya se contó al tomarla
+  await avisarPendienteLargo(sb, ctx.dep.avisarError ?? avisarErrorZomatik, {
+    usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, ref, marca: np.marca, creada: np.created_at, intentos,
+    titulo: `NP pendiente hace más de 1 hora · ${ref}`,
+    lineas: [
+      `${ref}${cliente ? ` · ${cliente}` : ""} · ${np.m3} m³ · ${np.fecha}${ctx.plantas[np.plant_id || ""]?.name ? ` · ${ctx.plantas[np.plant_id || ""].name}` : ""}`,
+      `Lleva más de 1 hora sin poder generarse (${intentos} intentos), por red o sesión de Zomatik.`,
+      `Último mensaje: ${mensaje || "(sin mensaje)"}`,
+      `Marca en observaciones: ${np.marca}`,
+      "Se sigue reintentando en cada pasada (cada 10 minutos mientras Programación está abierta). Este aviso llega una sola vez por NP.",
+    ],
+  })
+}
+
 async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { estado: string; paso: string | null }) {
   const G: EstadoNp = "generando"
   const planta = ctx.plantas[np.plant_id || ""]
@@ -706,10 +865,11 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     return { estado: "anulada", mensaje: null }
   }
   const datos = await datosParaRobot(sb, np, planta, buscarAntes)
-  if (!ctx.nav) ctx.nav = await ctx.dep.navegador(llave)
+  if (!ctx.nav) ctx.nav = await ctx.abrir(llave)
   const r: ResultadoNp = await generarNp(ctx.nav, datos, {
     hoy: hoyAR(),
     alPaso: async (paso) => {
+      ctx.paso = paso
       await ctx.renovar()
       // Antes de cada paso (y sobre todo antes de "grabar") la NP tiene que seguir siendo nuestra
       if (!(await guardarSi(sb, np.id, G, { paso }))) throw new NpCambio("La NP cambió mientras se generaba")
@@ -739,10 +899,12 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     }
   } else if (r.estado === "pendiente") {
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "pendiente", paso: r.grabado ? "grabar_cortado" : r.paso, proximo_intento: despuesDe(MIN_REINTENTO) })
+    // Pendiente por red o sesión: si ya lleva más de 1 hora, un aviso a Bautista (una vez por NP)
+    if (guardo) await avisarPendienteNp(sb, np, ctx, r.mensaje, datos.clienteNombre)
   } else {
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
     // Con un recorte de lo que respondió Zomatik (~2 KB), para diagnosticar sin capturarlo a mano
-    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje, Paso: r.paso, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
+    if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje, Paso: r.paso, Marca: np.marca, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
     // Aviso a Bautista, un solo mail por episodio: si ya estaba en "error" (reintento con el botón), no se repite
     if (guardo && previo.estado !== "error") {
       const aviso = await (ctx.dep.avisarError ?? avisarErrorZomatik)(sb, `Zomatik no generó la NP · ${ref}`, [
@@ -750,7 +912,8 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
         `Mensaje: ${r.mensaje || "(sin mensaje)"}`,
         `Paso: ${r.paso || "?"}`,
         `Marca en observaciones: ${np.marca}`,
-        r.reintentar ? "Se reintenta cada 10 minutos." : "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
+        // Una NP en "error" no la vuelve a tomar la pasada (solo el botón): el mail dice la verdad
+        "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
         "El pedido está guardado.",
         ...(r.recorte ? [`Respuesta de Zomatik (recorte): ${r.recorte}`] : []),
       ])
@@ -790,10 +953,11 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
     }
     return { estado: "ok", mensaje: msg }
   }
-  if (!ctx.nav) ctx.nav = await ctx.dep.navegador(llave)
+  if (!ctx.nav) ctx.nav = await ctx.abrir(llave)
   const r = await vaciarNp(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, {
     hoy: hoyAR(),
     alPaso: async (paso) => {
+      ctx.paso = paso
       await ctx.renovar()
       if (!(await guardarSi(sb, np.id, V, { paso }))) throw new NpCambio("La NP cambió mientras se vaciaba")
     },
@@ -824,6 +988,7 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
 export async function procesarNp(o: { usuario: string; pedidoId?: string | null; inicio: number; totalMs?: number; minimoMs?: number; sb?: SB; dep?: Dependencias }): Promise<ResultadoProceso> {
   const sb = o.sb ?? sbServicio()
   const dep = o.dep ?? DEPENDENCIAS
+  const avisarError = dep.avisarError ?? avisarErrorZomatik
   const total = o.totalMs ?? 55_000
   const minimo = o.minimoMs ?? 30_000
   if (!quedaTiempo(o.inicio, Date.now(), total, minimo)) return { sinTiempo: true, hechas: [], quedan: 0 }
@@ -839,7 +1004,12 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
   if (turno !== true) return { ocupado: true, hechas: [], quedan: 0 }
   let ultimaRenovacion = Date.now()
   const ctx: Contexto = {
-    plantas, nav: null, usuario: o.usuario, dep,
+    plantas, nav: null, usuario: o.usuario, dep, paso: null,
+    abrir: async (llave) => {
+      const nav = await dep.navegador(llave)
+      await avisarZomatikVolvio(sb, avisarError)
+      return nav
+    },
     renovar: async () => {
       if (Date.now() - ultimaRenovacion < 10_000) return
       ultimaRenovacion = Date.now()
@@ -855,6 +1025,7 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
         break
       }
       const np = lista[i]
+      ctx.paso = null
       const vaciando = np.estado === "vaciar" || np.estado === "vaciando"
       const a: EstadoNp = vaciando ? "vaciando" : "generando"
       const { data: tom, error: e1 } = await sb.rpc("zomatik_np_tomar", { p_id: np.id, p_desde: vaciando ? ["vaciar"] : ["pendiente", ...(o.pedidoId ? ["error"] : [])], p_a: a })
@@ -880,24 +1051,34 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
           hechas.push({ id: np.id, estado: "cambió", mensaje: e.message })
           continue
         }
-        // Falla de nuestro lado o de la sesión (antes de que el robot devuelva): se deja para el reintento
-        const m = mensajeZomatik(e) || (e as Error)?.message || "Error"
+        // Falla de nuestro lado o de la sesión (antes de que el robot devuelva): se deja para el reintento. Lo que no es de
+        // Zomatik no se tapa con "Error leyendo Zomatik": va el error interno real (como en Z1)
+        const m = errorInterno(e) ?? (mensajeZomatik(e) || "Error")
         const volvio = await guardarSi(sb, np.id, a, { estado: vaciando ? "vaciar" : "pendiente", en_curso_desde: null, mensaje: m, proximo_intento: despuesDe(MIN_REINTENTO) })
         hechas.push({ id: np.id, estado: vaciando ? "vaciar" : "pendiente", mensaje: m })
-        // Aviso a Bautista, un solo mail por episodio: si el intento anterior ya había quedado con este mismo mensaje
-        // (la pasada de cada 10 min la volvió a tomar y volvió a caer), no se repite
-        if (volvio && m !== (np.mensaje ?? null)) {
+        if (volvio) {
           const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
-          const aviso = await (dep.avisarError ?? avisarErrorZomatik)(sb, `El robot de Zomatik se cayó ${vaciando ? "vaciando" : "generando"} la NP · ${ref}`, [
-            `${ref} · ${np.m3} m³ · ${np.fecha}${plantas[np.plant_id || ""]?.name ? ` · ${plantas[np.plant_id || ""]!.name}` : ""}`,
-            `Qué se estaba haciendo: ${vaciando ? `vaciar la ${np.numero || "NP"}` : "generar la NP"}`,
-            `Mensaje: ${m}`,
-            `Marca en observaciones: ${np.marca}`,
-            `La NP queda ${vaciando ? "para vaciar" : "pendiente"} y se reintenta cada 10 minutos (si vuelve a caer igual, no llega otro mail).`,
-          ])
-          if (!aviso.enviado) console.error("[zomatik-np] aviso de la caída:", aviso.motivo)
+          const que = vaciando ? `vaciar la ${np.numero || "NP"}` : "generar la NP"
+          if (esFallaDeAcceso(e)) {
+            // No se puede entrar a Zomatik: un solo aviso para todo el robot, no uno por NP
+            await avisarFallaAcceso(sb, avisarError, { que: `${que} (${ref})`, mensaje: m })
+          } else {
+            await avisarCaidaFila(sb, avisarError, {
+              usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, ref, marca: np.marca,
+              firma: `${tipoDeFalla(e)}|${ctx.paso || "inicio"}`, mensaje: m, paso: ctx.paso,
+              titulo: `El robot de Zomatik se cayó ${vaciando ? "vaciando" : "generando"} la NP · ${ref}`,
+              lineas: [
+                `${ref} · ${np.m3} m³ · ${np.fecha}${plantas[np.plant_id || ""]?.name ? ` · ${plantas[np.plant_id || ""]!.name}` : ""}`,
+                `Qué se estaba haciendo: ${que}${ctx.paso ? ` · paso ${ctx.paso}` : ""}`,
+                `Mensaje: ${m}`,
+                `Marca en observaciones: ${np.marca}`,
+                `La NP queda ${vaciando ? "para vaciar" : "pendiente"}: se reintenta en la próxima pasada (cada 10 minutos mientras Programación está abierta). Mientras se caiga igual, no llega otro mail.`,
+              ],
+            })
+          }
+          if (!vaciando) await avisarPendienteNp(sb, np, ctx, m, null)
         }
-        if (/sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break // no se insiste con la sesión caída
+        if (esFallaDeAcceso(e) || /sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break // no se insiste con la sesión caída
       }
     }
     // NP "ok" que quedaron sin autorizar en Zomatik: se reintenta (con el tiempo que quede)
@@ -906,7 +1087,7 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
       const llave = llaveDe(plantas[np.plant_id || ""])
       if (!llave || !np.zomatik_codigo) continue
       try {
-        if (!ctx.nav) ctx.nav = await dep.navegador(llave)
+        if (!ctx.nav) ctx.nav = await ctx.abrir(llave)
         const a = await (dep.autorizar ?? autorizarNp)(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, { latir: ctx.renovar })
         await registrarAutorizacion(sb, np, a, { usuario: ctx.usuario, avisar: dep.avisar })
         hechas.push({ id: np.id, estado: a.estado, mensaje: a.mensaje })
