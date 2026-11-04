@@ -1956,3 +1956,12 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - lo remitido un día cuenta para el lugar que le queda a la NP al día siguiente;
   - la `fecha` que manda la pantalla ya no filtra.
 - **Pasada de la noche:** prepara una sola vez cada pedido con despachos de los últimos 3 días (cada despacho va con su día).
+
+### 26.17 Aviso a Bautista cuando el robot falla (04/11, rama `feat/zomatik-aviso-errores`)
+- **Pedido de Bautista:** si el robot no genera la NP, la OF o el remito, el pedido se programa y se despacha igual (eso ya pasaba); lo que faltaba es que **le llegue un mail con el error** para resolverlo.
+- **`avisarErrorZomatik`** (`np-servidor.ts`): el mismo mail y From que `avisarGerenciales`, pero **solo a Bautista Caputo** (por nombre en `app_users`). Nunca corta la operación. Va en las dependencias (`avisarError` en `DEPENDENCIAS` y `DEPENDENCIAS_Z1`) para probarlo.
+- **NP en "error"** (`trabajarGenerar`): pedido (id corto, cliente, m³, fecha, planta), mensaje, paso, marca, recorte de Zomatik y si se reintenta sola o hay que tocar "Generar NP ahora".
+- **OF o remito en "error"** (`terminar` de Z1): referencia (pedido o despacho), qué falló, mensaje, paso, marca, recorte y si se reintenta.
+- **Un mail por episodio:** solo si la fila no estaba ya en "error" (el estado anterior que devuelve el `tomar`). Reintentar con el botón y que vuelva a fallar no repite el mail. En Z1, si antes falló la OF y ahora el remito, es otro error y sí avisa. Sin cambios de base.
+- **"Sin stock"** no avisa como error: sigue "pendiente" y a la hora pasa a "revisar" con el aviso de siempre a gerenciales.
+- **Botones** (`/api/zomatik/np` sincronizar o generar, `/api/zomatik/remito`): una excepción inesperada avisa a Bautista y contesta "No se pudo generar la NP en Zomatik / No se pudo remitir en Zomatik: queda pendiente y ya le avisamos a Bautista". En Programación el pedido se guarda antes de pedir la NP, así que un error de la NP no impide guardarlo.

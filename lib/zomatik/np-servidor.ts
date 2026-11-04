@@ -114,11 +114,26 @@ const esc = (t: unknown) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&
 
 /** Aviso en el momento a los gerenciales (mail por Resend, como las alertas). Nunca corta la operación. */
 export async function avisarGerenciales(sb: SB, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
+  return mandarAviso(sb, GERENCIALES_NP, "los gerenciales no tienen mail cargado", titulo, lineas)
+}
+
+/** Quien recibe los errores del robot de Zomatik (NP, OF o remito que no salieron) para resolverlos (04/11). */
+export const AVISO_ERRORES_ZOMATIK = ["Bautista Caputo"]
+
+/**
+ * Aviso de un error del robot de Zomatik, solo a Bautista (mismo mail y From que `avisarGerenciales`). El pedido ya
+ * quedó guardado: el mail es para que lo resuelva. Nunca corta la operación.
+ */
+export async function avisarErrorZomatik(sb: SB, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
+  return mandarAviso(sb, AVISO_ERRORES_ZOMATIK, "Bautista no tiene mail cargado", titulo, lineas)
+}
+
+async function mandarAviso(sb: SB, nombres: string[], sinMail: string, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
   try {
     if (!process.env.RESEND_API_KEY) return { enviado: false, motivo: "falta RESEND_API_KEY" }
     const { data } = await sb.from("app_users").select("name, email").eq("active", true).not("email", "is", null)
-    const a = ((data || []) as { name: string; email: string }[]).filter((u) => GERENCIALES_NP.some((n) => n.toLowerCase() === u.name.trim().toLowerCase())).map((u) => u.email)
-    if (!a.length) return { enviado: false, motivo: "los gerenciales no tienen mail cargado" }
+    const a = ((data || []) as { name: string; email: string }[]).filter((u) => nombres.some((n) => n.toLowerCase() === u.name.trim().toLowerCase())).map((u) => u.email)
+    if (!a.length) return { enviado: false, motivo: sinMail }
     const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
       <div style="background:#b45309;color:#fff;padding:12px 16px;border-radius:8px 8px 0 0;font-weight:700">${esc(titulo)}</div>
       <div style="border:1px solid #e2e8f0;border-top:none;padding:12px 16px;border-radius:0 0 8px 8px;font-size:13px">
@@ -542,6 +557,8 @@ export type Dependencias = {
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** Autorizar la NP en Zomatik (en las pruebas, uno simulado) */
   autorizar?: typeof autorizarNp
+  /** Aviso a Bautista cuando una NP queda en "error" (sin esto, `avisarErrorZomatik`) */
+  avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
 }
 
 type Contexto = {
@@ -613,7 +630,7 @@ async function tieneRemitos(numero: string | null, desde: string): Promise<boole
   }
 }
 
-export const DEPENDENCIAS: Dependencias = { navegador: navegadorNp, remitos: tieneRemitos, avisar: avisarGerenciales, autorizar: autorizarNp }
+export const DEPENDENCIAS: Dependencias = { navegador: navegadorNp, remitos: tieneRemitos, avisar: avisarGerenciales, autorizar: autorizarNp, avisarError: avisarErrorZomatik }
 
 /** `zomatik_np.paso` de una NP "ok" sin autorizar en Zomatik: se reintenta en la pasada; la ve el chip. */
 export const PASO_SIN_AUTORIZAR = "sin_autorizar"
@@ -726,6 +743,19 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
     // Con un recorte de lo que respondió Zomatik (~2 KB), para diagnosticar sin capturarlo a mano
     if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje, Paso: r.paso, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
+    // Aviso a Bautista, un solo mail por episodio: si ya estaba en "error" (reintento con el botón), no se repite
+    if (guardo && previo.estado !== "error") {
+      const aviso = await (ctx.dep.avisarError ?? avisarErrorZomatik)(sb, `Zomatik no generó la NP · ${ref}`, [
+        `${ref}${datos.clienteNombre ? ` · ${datos.clienteNombre}` : ""} · ${np.m3} m³ · ${np.fecha}${planta?.name ? ` · ${planta.name}` : ""}`,
+        `Mensaje: ${r.mensaje || "(sin mensaje)"}`,
+        `Paso: ${r.paso || "?"}`,
+        `Marca en observaciones: ${np.marca}`,
+        r.reintentar ? "Se reintenta cada 10 minutos." : "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
+        "El pedido está guardado.",
+        ...(r.recorte ? [`Respuesta de Zomatik (recorte): ${r.recorte}`] : []),
+      ])
+      if (!aviso.enviado) console.error("[zomatik-np] aviso de error:", aviso.motivo)
+    }
   }
   if (!guardo && (r.estado === "ok" || r.estado === "revisar" || r.grabado)) await noSePudoGuardar(sb, np, ctx, r.numero ? `quedó ${r.numero}` : r.mensaje || r.estado)
   if (np.tipo === "proyecto" && np.proyecto_codigo && r.disponible !== undefined && r.disponible !== null)

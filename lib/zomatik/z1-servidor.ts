@@ -17,7 +17,7 @@
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
-import { PASO_AUTORIZADA, actividadNp, avisarGerenciales, registrarAutorizacion } from "@/lib/zomatik/np-servidor"
+import { PASO_AUTORIZADA, actividadNp, avisarErrorZomatik, avisarGerenciales, registrarAutorizacion } from "@/lib/zomatik/np-servidor"
 import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
@@ -193,8 +193,10 @@ export type DependenciasZ1 = {
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
   robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp }
+  /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
+  avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp } }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -354,6 +356,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
       const cortadoOf = /^(grabar_of|verificar_of|buscar_of)$/.test(pasoAnt) || (t.estado_anterior === "generando" && r.of_estado !== "ok" && !!r.of_foto)
       const cortadoRemito = /^(grabar_remito|verificar_remito|buscar_remito)$/.test(pasoAnt) || (t.estado_anterior === "generando" && !!r.remito_numero)
       const ref = r.tipo === "suelto" ? `Despacho ${r.remitos_papel || r.marca.slice(-19)}` : `Pedido ${(r.scheduled_dispatch_id || "").slice(0, 8)}`
+      // Cómo estaba la fila antes de este intento (para avisar un error una sola vez por episodio)
+      const antes = { estado: t.estado_anterior, of: r.of_estado, remito: r.remito_estado }
       const alPaso = async (paso: string, extra?: Record<string, unknown>) => {
         await renovar()
         const cambios: Record<string, unknown> = { paso }
@@ -377,6 +381,22 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         })
         await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `${que} no salió en Zomatik`, Mensaje: res.mensaje, Paso: res.paso, ...(res.recorte ? { "Respuesta de Zomatik (recorte)": res.recorte } : {}) } })
         if (res.estado === "revisar") await dep.avisar(sb, res.aviso || `${que} para revisar`, [res.mensaje || "", `Marca: ${r.marca}`])
+        // "error": aviso a Bautista, un solo mail por episodio. No se repite si la fila ya estaba en "error" por esta
+        // misma parte (reintento con el botón); sí, si antes había fallado la otra (falló la OF y ahora el remito).
+        if (res.estado === "error" && (antes.estado !== "error" || (que === "OF" ? antes.of : antes.remito) !== "error")) {
+          const aviso = await (dep.avisarError ?? avisarErrorZomatik)(sb, `Zomatik: no salió ${que === "OF" ? "la OF" : "el remito"} · ${ref}`, [
+            `${ref} · ${r.m3} m³ · ${r.fecha}${r.patentes ? ` · ${r.patentes}` : ""}`,
+            `Falló: ${que === "OF" ? "la OF (orden de fabricación)" : `el remito${r.of_numero ? ` (la ${r.of_numero} ya está hecha)` : ""}`}`,
+            `Mensaje: ${res.mensaje || "(sin mensaje)"}`,
+            `Paso: ${res.paso || "?"}`,
+            `Marca: ${r.marca}`,
+            res.reintentar
+              ? "Se reintenta cada 10 minutos."
+              : r.tipo === "suelto" ? "No se reintenta sola (despacho sin pedido): cargá la OF a mano en Zomatik." : "No se reintenta sola: corregilo y tocá \"Remitir en Zomatik\" en el pedido.",
+            ...(res.recorte ? [`Respuesta de Zomatik (recorte): ${res.recorte}`] : []),
+          ])
+          if (!aviso.enviado) console.error("[zomatik-z1] aviso de error:", aviso.motivo)
+        }
         hechas.push({ id: r.id, estado: est, mensaje: res.mensaje })
       }
       try {
