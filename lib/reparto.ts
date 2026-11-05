@@ -50,7 +50,11 @@ export type ReglasReparto = typeof REGLAS_REPARTO
 /** prm = los parámetros efectivos de la planta (con lo real del GPS, parametrosConGps) */
 export type PlantaReparto = { id: string; nombre: string; prm: Parametros }
 /** amanece = la planta donde durmió (reparto del día anterior); null = a confirmar */
-export type CamionReparto = { id: string; patente: string; capacidad: number; amanece: string | null }
+export type CamionReparto = {
+  id: string; patente: string; capacidad: number; amanece: string | null
+  /** Escenarios (+1, +2): camión ficticio disponible recién desde esta hora (minutos del día) */
+  disponibleDesde?: number
+}
 export type Traslado = { minutos: number; km: number | null; litros: number | null; fuente: "cargado" | "ruta" | "sin_dato"; aConfirmar: boolean }
 /** desde = minutos del día en que el camión está en esa planta (llegada del traslado); null = desde que arranca el día */
 export type Tramo = { plantId: string; desde: number | null }
@@ -232,6 +236,8 @@ function ventanasCamion(c: CamionReparto, plantId: string, viajes: ViajeDia[], c
     const ini = aMin(ctx.plantas.get(c.amanece)?.prm.inicioJornada || "07:00")
     out.push({ camionId: c.id, desde: -H, hasta: ini + T })
   }
+  // Camión ficticio de un escenario: carga recién desde su hora (el planificador suma la espera al final de la ventana)
+  if (c.disponibleDesde != null) out.push({ camionId: c.id, desde: -H, hasta: c.disponibleDesde - espAca })
   return out
 }
 
@@ -710,13 +716,138 @@ export function textoTraslados(dia: number, noche: number, t: Traslado) {
 }
 
 /** "A la noche: quedan 3 en Canning y 2 en Hudson" */
+/** "A la noche quedan 3 en Canning y 2 en Hudson." / "A la noche quedan los 3 en Canning." */
 export function textoNoche(duerme: Record<string, string | null>, plantas: PlantaReparto[]) {
   const cuenta = plantas.map((p) => ({ n: Object.values(duerme).filter((d) => d === p.id).length, nombre: p.nombre })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.nombre.localeCompare(b.nombre))
   const sin = Object.values(duerme).filter((d) => !d).length
+  if (cuenta.length === 1 && !sin) return cuenta[0].n === 1 ? `A la noche queda en ${cuenta[0].nombre}.` : `A la noche quedan los ${cuenta[0].n} en ${cuenta[0].nombre}.`
   const partes = [...cuenta.map((x) => `${x.n} en ${x.nombre}`), ...(sin ? [`${sin} a confirmar`] : [])]
   if (!partes.length) return "A la noche: —"
   const total = cuenta.reduce((s, x) => s + x.n, 0) + sin
-  return `A la noche: ${plural(total, "queda", "quedan")} ${partes.length > 1 ? `${partes.slice(0, -1).join(", ")} y ${partes[partes.length - 1]}` : partes[0]}`
+  return `A la noche ${plural(total, "queda", "quedan")} ${lista(partes)}.`
+}
+
+/** "A", "A y B", "A, B y C" */
+export const lista = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} y ${xs[xs.length - 1]}` : xs[0] || "")
+
+// ---------------------------------------------------------------------------
+// Pantalla (rediseño 05/11): estado por pedido, resumen en una frase, escenarios +1 / +2, traslados en una línea y
+// diagrama con un bloque por viaje
+// ---------------------------------------------------------------------------
+/** "29 min", "1 h", "4 h 15 min" */
+export function textoDuracion(min: number) {
+  const m = Math.max(0, Math.round(min))
+  const h = Math.floor(m / 60), r = m % 60
+  return h ? `${h} h${r ? ` ${r} min` : ""}` : `${r} min`
+}
+
+/** A tiempo = alcanza (REGLAS_REPARTO) con al menos un camión */
+export const aTiempo = (r: ResultadoPedido) => r.alcanza && r.viajes.length > 0
+
+/** Estado de un pedido para la tabla: chip verde "A tiempo" o amarillo "29 min tarde (bomba)"; además, fin de jornada. */
+export function estadoPedido(r: ResultadoPedido): { aTiempo: boolean; texto: string; jornada: string | null } {
+  const jornada = r.viajes.length && r.medida.fin > r.finJornada ? `termina después de las ${hora(r.finJornada)}` : null
+  if (!r.viajes.length) return { aTiempo: false, texto: `sin camión (${metodo(r)})`, jornada: null }
+  if (aTiempo(r)) return { aTiempo: true, texto: "A tiempo", jornada }
+  const texto = r.medida.demora > 0
+    ? `${textoDuracion(r.medida.demora)} tarde (${metodo(r)})`
+    : `cortes de hasta ${textoDuracion(r.medida.maxCorte)} (${metodo(r)})`
+  return { aTiempo: false, texto, jornada }
+}
+
+export const PREFIJO_ESCENARIO = "escenario-"
+export const esFicticio = (id: string) => id.startsWith(PREFIJO_ESCENARIO)
+export type Escenario = { extra: number; resultado: ResultadoDia; camiones: CamionReparto[]; ficticios: CamionReparto[] }
+
+/** a < b comparando en orden (primero el primer número, si empatan el segundo…) */
+function menorNota(a: number[], b: number[]) {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i]
+  return false
+}
+
+/** Combinaciones de plantas (con repetición) para k camiones ficticios */
+function combinaciones(ids: string[], k: number, desde = 0): string[][] {
+  if (k === 0) return [[]]
+  const out: string[][] = []
+  for (let i = desde; i < ids.length; i++) for (const resto of combinaciones(ids, k - 1, i)) out.push([ids[i], ...resto])
+  return out
+}
+
+/**
+ * Escenario con `extra` camiones más (solo para ver; no se guarda): camiones ficticios "Camión 4", "Camión 5"… de 8 m³,
+ * disponibles desde las 07:00 en la planta donde más convenga (se prueban todas y queda la que deja menos pedidos
+ * tarde, después menos minutos de atraso y después menos traslados).
+ */
+export function escenarioConMas(ent: EntradaDia, extra: number, desde = "07:00"): Escenario | null {
+  if (extra <= 0 || !ent.plantas.length) return null
+  let mejor: { esc: Escenario; nota: number[] } | null = null
+  for (const combo of combinaciones(ent.plantas.map((p) => p.id), extra)) {
+    const ficticios: CamionReparto[] = combo.map((pid, i) => ({ id: `${PREFIJO_ESCENARIO}${i + 1}`, patente: `Camión ${ent.camiones.length + i + 1}`, capacidad: 8, amanece: pid, disponibleDesde: aMin(desde) }))
+    const camiones = [...ent.camiones, ...ficticios]
+    const resultado = armarDia({ ...ent, camiones })
+    const tarde = resultado.pedidos.filter((r) => !aTiempo(r))
+    const nota = [tarde.length, tarde.reduce((s, r) => s + Math.max(0, r.medida.demora, r.medida.maxCorte), 0), resultado.traslados.length]
+    if (!mejor || menorNota(nota, mejor.nota)) mejor = { esc: { extra, resultado, camiones, ficticios }, nota }
+  }
+  return mejor?.esc ?? null
+}
+
+/**
+ * La frase del resumen: "Con 3 camiones se hace todo, pero 3 pedidos terminan tarde. Con 1 camión más, Greenville y
+ * Pampero salen a tiempo." La segunda parte sale de calcular el escenario +1 y, si no alcanza para todo, el +2.
+ */
+export function textoResumenDia(n: number, base: ResultadoDia, mas1: ResultadoDia | null, mas2: ResultadoDia | null): { tono: "verde" | "amarillo"; texto: string } {
+  const tarde = base.pedidos.filter((r) => !aTiempo(r))
+  if (!base.pedidos.length) return { tono: "verde", texto: "No hay pedidos pendientes ese día." }
+  if (!tarde.length) return { tono: "verde", texto: `Con ${camionesTxt(n)} ${base.pedidos.length === 1 ? "el pedido sale" : "salen todos los pedidos"} a tiempo.` }
+  const sinCamion = base.pedidos.filter((r) => !r.viajes.length)
+  const primera = sinCamion.length
+    ? `Con ${camionesTxt(n)} no se hace todo: ${lista(sinCamion.map((r) => r.obra))} ${plural(sinCamion.length, "queda", "quedan")} sin camión${tarde.length > sinCamion.length ? ` y ${tarde.length - sinCamion.length} ${plural(tarde.length - sinCamion.length, "pedido termina", "pedidos terminan")} tarde` : ""}.`
+    : `Con ${camionesTxt(n)} se hace todo, pero ${tarde.length === 1 ? "1 pedido termina" : `${tarde.length} pedidos terminan`} tarde.`
+  const arreglados = (r: ResultadoDia | null) => (r ? tarde.filter((t) => { const x = r.pedidos.find((y) => y.id === t.id); return !!x && aTiempo(x) }) : [])
+  const todos = (r: ResultadoDia | null) => !!r && r.pedidos.every(aTiempo)
+  const a1 = arreglados(mas1), a2 = arreglados(mas2)
+  let segunda: string
+  const nombres = (xs: ResultadoPedido[]) => lista(xs.map((r) => r.obra))
+  const solo2 = a2.filter((x) => !a1.includes(x))
+  const siguen = tarde.filter((t) => !a1.includes(t) && !a2.includes(t))
+  if (todos(mas1)) segunda = `Con 1 camión más, ${nombres(a1)} ${plural(a1.length, "sale", "salen")} a tiempo.`
+  else if (!a1.length && !a2.length) segunda = "Ni con 2 camiones más salen a tiempo: conviene correr la hora de algún pedido."
+  else {
+    const partes: string[] = []
+    if (a1.length) partes.push(`Con 1 camión más, ${nombres(a1)} ${plural(a1.length, "sale", "salen")} a tiempo`)
+    if (solo2.length) partes.push(a1.length ? `con 2, también ${nombres(solo2)}` : `Con 2 camiones más, ${nombres(solo2)} ${plural(solo2.length, "sale", "salen")} a tiempo`)
+    if (siguen.length && !todos(mas2)) partes.push(`${nombres(siguen)} ${plural(siguen.length, "sigue", "siguen")} tarde`)
+    segunda = `${partes.join("; ")}.`
+  }
+  return { tono: "amarillo", texto: `${primera} ${segunda}` }
+}
+
+/** "10:56 · AG083GT pasa a Canning · 12:28 · AF431GU pasa a Canning · Traslados: 2 · 130 km · 52 L" */
+export function lineaTraslados(res: ResultadoDia, conteo: { dia: number; noche: number }, t: Traslado, nombres: Record<string, string>, patentes: Record<string, string>) {
+  const evs = [...res.traslados].sort((a, b) => a.sale - b.sale).map((x) => `${hora(x.sale)} · ${patentes[x.camionId]} pasa a ${nombres[x.a]}`)
+  const arr = res.arranquesMovidos.map((id) => `${patentes[id]} arranca en la otra planta`)
+  const tot = conteo.dia + conteo.noche
+  const fmt = (x: number) => Math.round(x).toLocaleString("es-AR")
+  const cuenta = tot
+    ? `Traslados: ${conteo.dia}${conteo.noche ? ` (+${conteo.noche} a la noche)` : ""}${t.km ? ` · ${fmt(t.km * tot)} km` : ""}${t.litros ? ` · ${fmt(t.litros * tot)} L` : ""}`
+    : "Sin traslados entre plantas"
+  return [...evs, ...arr, cuenta].join(" · ")
+}
+
+export type BloqueDiagrama = { tipo: "viaje" | "traslado"; desde: number; hasta: number; plantId: string; texto: string; pedidoId?: string }
+export type FilaDiagrama = { camionId: string; patente: string; ficticio: boolean; bloques: BloqueDiagrama[] }
+
+/**
+ * El diagrama: una fila por camión y un bloque por viaje (de la carga a la vuelta a planta, con el nombre de la obra),
+ * más un bloque por traslado ("→ Canning"). Sin el detalle de carga, ida y descarga.
+ */
+export function bloquesDiagrama(res: ResultadoDia, camiones: CamionReparto[], nombres: Record<string, string>, obraDe: (pedidoId: string) => string): FilaDiagrama[] {
+  return camiones.map((c) => {
+    const viajes = res.viajes.filter((v) => v.camionId === c.id).map((v): BloqueDiagrama => ({ tipo: "viaje", desde: v.inicioCarga, hasta: v.vuelta, plantId: v.plantId, texto: obraDe(v.pedidoId), pedidoId: v.pedidoId }))
+    const tras = res.traslados.filter((t) => t.camionId === c.id).map((t): BloqueDiagrama => ({ tipo: "traslado", desde: t.sale, hasta: t.llega, plantId: t.a, texto: `→ ${nombres[t.a] || "otra planta"}` }))
+    return { camionId: c.id, patente: c.patente, ficticio: esFicticio(c.id), bloques: [...viajes, ...tras].sort((a, b) => a.desde - b.desde) }
+  })
 }
 
 /**
@@ -905,7 +1036,11 @@ export function viajesDia(viajes: ViajeRow[], base: number, plantDe: (pedidoId: 
  * Antes de guardar: cada cambio de planta con hora, en orden, y que llegue antes de la medianoche (la base lo guarda
  * como HH:MM del día). null = está bien; si no, el mensaje para la pantalla.
  */
+export const TEXTO_ESCENARIO = "Es un escenario: conseguí el camión y cargalo para guardarlo"
+
 export function validarReparto(r: Reparto, patente: (id: string) => string, nombre: (plantId: string) => string, traslado: Traslado): string | null {
+  // Los escenarios (+1, +2) son solo para ver: sus camiones no existen
+  if (Object.keys(r).some(esFicticio)) return TEXTO_ESCENARIO
   for (const [id, x] of Object.entries(r)) {
     if (!x.sale) continue
     let ant: number | null = null
@@ -998,6 +1133,7 @@ export async function cargarReparto(sb: any, fecha: string): Promise<RepartoGuar
 
 /** Guarda el reparto del día entero (guardar_reparto_dia: todo o nada, queda en Actividad). */
 export async function guardarReparto(sb: any, fecha: string, r: Reparto, usuario: string, origen: "sugerido" | "a_mano"): Promise<{ error: string | null }> {
+  if (Object.keys(r).some(esFicticio)) return { error: TEXTO_ESCENARIO }
   const filas = repartoAFilas(r, origen)
   if (!filas.length) return { error: "El reparto está vacío: no hay camiones para guardar" }
   const { error } = await sb.rpc("guardar_reparto_dia", { p_fecha: fecha, p_filas: filas, p_usuario: usuario, p_borrar: false })

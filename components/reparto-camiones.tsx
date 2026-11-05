@@ -22,13 +22,15 @@ import { parametrosDePlanta, aMin, aHora, type Parametros } from "@/lib/planific
 import { cargarViajes, conTiemposGps, parametrosConGps, type PedidoParaViajes, type ViajeRow } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import {
-  armarDia, dondeDuermen, repartoDe, contarTraslados, franjasDe, textoFranja, textoTraslado, textoTraslados, textoNoche,
-  textoComparacion, avisosEdicion, avisosSuperposicion, viajesDia, trasladoDe, mismoReparto, cargarReparto, guardarReparto,
-  cargarTraslado, guardarTraslado, entradaConPantalla, propuestaDePlanta, validarReparto, REGLAS_REPARTO, type EntradaDia,
+  armarDia, dondeDuermen, repartoDe, contarTraslados, franjasDe, textoNoche, textoComparacion, avisosEdicion,
+  avisosSuperposicion, viajesDia, trasladoDe, mismoReparto, cargarReparto, guardarReparto, cargarTraslado, guardarTraslado,
+  entradaConPantalla, propuestaDePlanta, validarReparto, escenarioConMas, textoResumenDia, estadoPedido, lineaTraslados,
+  bloquesDiagrama, TEXTO_ESCENARIO, REGLAS_REPARTO, type EntradaDia,
   type PlantaReparto, type CamionReparto, type Reparto, type PedidoReparto, type ContextoReparto, type RepartoGuardado,
   type FilaTraslado, type Aviso, type ViajeDia,
 } from "@/lib/reparto"
 import { addDays, format, startOfDay } from "date-fns"
+import { es } from "date-fns/locale"
 import { AlertTriangle, ArrowLeftRight, CircleHelp, Loader2, Moon, Plus, RefreshCw, Truck, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -37,7 +39,12 @@ type Plant = { id: string; name: string }
 type MixerRow = { id: string; license_plate: string; capacity_m3: number | null; active: boolean | null; status: string | null }
 
 const SELECT_PEDIDOS = "*, construction_sites(name, travel_time_minutes, requires_pump)"
-const COLORES_PLANTA = ["bg-sky-500", "bg-amber-500", "bg-emerald-500"]
+/** Colores por planta (andan en modo oscuro): Canning verde suave (teal), Hudson violeta suave */
+const ESTILOS_PLANTA = {
+  teal: { bloque: "bg-teal-100 text-teal-900 border-teal-300 dark:bg-teal-900/40 dark:text-teal-100 dark:border-teal-700", punto: "bg-teal-300 dark:bg-teal-700" },
+  violeta: { bloque: "bg-violet-100 text-violet-900 border-violet-300 dark:bg-violet-900/40 dark:text-violet-100 dark:border-violet-700", punto: "bg-violet-300 dark:bg-violet-700" },
+}
+const ESTILO_TRASLADO = { bloque: "bg-muted text-muted-foreground border-border", punto: "bg-muted-foreground/40" }
 const fecha = (d: Date) => format(d, "yyyy-MM-dd")
 const clonar = (r: Reparto): Reparto => JSON.parse(JSON.stringify(r))
 
@@ -166,7 +173,8 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
     if (!resultado) return []
     const guardadosDia = pedidosHoy.flatMap((p) => (viajes[p.id] || []).filter((v) => v.estado !== "cancelado"))
     return [
-      ...resultado.avisos,
+      // Los avisos por pedido (atrasos, fin de jornada) van en la tabla; acá quedan los del día (traslado a confirmar)
+      ...resultado.avisos.filter((a) => !a.pedidoId),
       ...(efectivo ? avisosEdicion(efectivo, referencia, guardadosIds, [...camiones], plantas, traslado, obraDe) : []),
       ...avisosSuperposicion(guardadosDia, obraDe, (id) => patentes[id] || "—"),
     ]
@@ -246,7 +254,7 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   }
 
   return {
-    entrada, activo, cargando, listo, disponible: !!guardado?.disponible, guardado, ayer, plantas, nombres, patentes, camiones, delDia,
+    entrada, obraDe, activo, cargando, listo, disponible: !!guardado?.disponible, guardado, ayer, plantas, nombres, patentes, camiones, delDia,
     traslado, trasladoFila, ruta, trasladoForm, setTrasladoForm, trasladoCambiado, trasladoValido, guardarTrasladoForm,
     sugerencia, sugerido, resultado, noche, efectivo, edicion, vigente, amanece, avisos, contexto, disponiblesEn,
     idsSalen: camiones.map((c) => c.id), noSalen, guardando, guardar, cargar, ...acciones,
@@ -266,44 +274,62 @@ export function propuestaConReparto(rep: RepartoDia, plantId: string, pantalla: 
   return propuestaDePlanta(armarDia({ ...entradaConPantalla(rep.entrada, plantId, pantalla), reparto: rep.efectivo }), plantId)
 }
 
-const negritaPrimera = (t: string) => {
-  const i = t.indexOf(" · ")
-  return i < 0 ? <>{t}</> : <><strong>{t.slice(0, i)}</strong>{t.slice(i)}</>
+/** Estilo de una planta: por nombre (Canning teal, Hudson violeta); si no, alternando */
+function estiloPlanta(rep: RepartoDia, plantId: string) {
+  const n = (rep.nombres[plantId] || "").toLowerCase()
+  if (n.includes("canning")) return ESTILOS_PLANTA.teal
+  if (n.includes("hudson")) return ESTILOS_PLANTA.violeta
+  return rep.plantas.findIndex((p) => p.id === plantId) % 2 === 0 ? ESTILOS_PLANTA.teal : ESTILOS_PLANTA.violeta
 }
 
-export function RepartoCamiones({ rep }: { rep: RepartoDia }) {
+export function RepartoCamiones({ rep, dia }: { rep: RepartoDia; dia: Date }) {
   const { toast } = useToast()
   const { puede } = usePermisos()
   const edita = (puede("programacion", "editar") || puede("despacho", "cargar")) && rep.disponible
   const [ayuda, setAyuda] = useState(false)
   const [verEditor, setVerEditor] = useState(false)
-  const res = rep.resultado
+  // 0 = con los camiones que hay; 1 / 2 = escenario con camiones ficticios (solo para ver)
+  const [escenario, setEscenario] = useState<0 | 1 | 2>(0)
+  const ent = useMemo(() => (rep.entrada ? { ...rep.entrada, reparto: rep.efectivo } : null), [rep.entrada, rep.efectivo])
+  const mas1 = useMemo(() => (ent ? escenarioConMas(ent, 1) : null), [ent])
+  const mas2 = useMemo(() => (ent ? escenarioConMas(ent, 2) : null), [ent])
+
   if (!rep.activo) return null
-  if (!rep.listo || !res) {
+  const base = rep.resultado
+  if (!rep.listo || !base || !rep.sugerencia) {
     return (
-      <Card className="border-violet-200"><CardContent className="p-4 text-sm text-muted-foreground flex items-center gap-2">
+      <Card><CardContent className="p-4 text-sm text-muted-foreground flex items-center gap-2">
         <Loader2 className="h-4 w-4 animate-spin" /> Armando el reparto de camiones…
       </CardContent></Card>
     )
   }
-  const camiones = rep.camiones
-  const franjas = franjasDe(res, camiones, rep.plantas)
-  const vigente = rep.vigente || {}
-  const conteo = contarTraslados(vigente, rep.amanece)
-  const duerme = Object.fromEntries(rep.delDia.map((m) => [m.id, vigente[m.id]?.duerme ?? rep.amanece[m.id] ?? null]))
-  const comparacion = rep.efectivo && rep.sugerencia ? textoComparacion(franjasDe(rep.sugerencia, camiones, rep.plantas), franjas, rep.nombres) : null
-  const sinCambios = !rep.edicion
-  const color = (plantId: string) => COLORES_PLANTA[Math.max(0, rep.plantas.findIndex((p) => p.id === plantId)) % COLORES_PLANTA.length]
-  const t0 = aMin("06:00"), t1 = aMin("20:00")
-  const pos = (m: number) => `${Math.max(0, Math.min(100, ((m - t0) / (t1 - t0)) * 100))}%`
-  const anc = (a: number, b: number) => `${Math.max(0.3, ((Math.min(b, t1) - Math.max(a, t0)) / (t1 - t0)) * 100)}%`
+  const esc = escenario === 1 ? mas1 : escenario === 2 ? mas2 : null
+  const res = esc ? esc.resultado : base
+  const camiones = esc ? esc.camiones : rep.camiones
+  const patentes = { ...rep.patentes, ...Object.fromEntries((esc?.ficticios || []).map((c) => [c.id, c.patente])) }
+  const amanece = { ...rep.amanece, ...Object.fromEntries((esc?.ficticios || []).map((c) => [c.id, c.amanece])) }
+  const vigente = esc ? repartoDe(res, camiones, dondeDuermen(res, camiones, rep.plantas, null).duerme) : rep.vigente || {}
+  const conteo = contarTraslados(vigente, amanece)
+  const duerme = Object.fromEntries([...rep.delDia.map((m) => m.id), ...(esc?.ficticios || []).map((c) => c.id)].map((id) => [id, vigente[id]?.duerme ?? amanece[id] ?? null]))
+  const resumen = textoResumenDia(camiones.length, res, esc ? null : mas1?.resultado ?? null, esc ? null : mas2?.resultado ?? null)
+  const filasDiagrama = bloquesDiagrama(res, camiones, rep.nombres, rep.obraDe)
+  const tituloDia = format(dia, "EEEE dd/MM", { locale: es })
+  const comparacion = !esc && rep.efectivo ? textoComparacion(franjasDe(rep.sugerencia, rep.camiones, rep.plantas), franjasDe(base, rep.camiones, rep.plantas), rep.nombres) : null
   const estadoTxt = rep.edicion
-    ? "Cambios sin guardar: las líneas de cada pedido ya los usan."
+    ? "Cambios sin guardar: la tabla y el diagrama ya los usan."
     : rep.guardado?.reparto
-      ? `Guardado${rep.guardado.origen === "sugerido" ? " (la sugerencia)" : " a mano"}${rep.guardado.actualizadoPor ? ` por ${rep.guardado.actualizadoPor}` : ""}${rep.guardado.actualizado ? ` · ${format(new Date(rep.guardado.actualizado), "dd/MM HH:mm")}` : ""}`
+      ? `Guardado${rep.guardado.origen === "sugerido" ? " (la sugerencia)" : " a mano"}${rep.guardado.actualizadoPor ? ` por ${rep.guardado.actualizadoPor}` : ""}${rep.guardado.actualizado ? ` · ${format(new Date(rep.guardado.actualizado), "dd/MM HH:mm")}` : ""}.`
       : rep.disponible
         ? "Es la sugerencia, sin guardar. Hasta que se guarde, Ordenar el día usa todos los camiones que salen, como siempre, y Armar viajes propone los camiones de la sugerencia."
-        : "Es solo la sugerencia: la programación sigue como siempre."
+        : "Es solo la sugerencia: la programación sigue como siempre. Todavía no se puede guardar: falta un paso de Bautista."
+
+  // Eje del diagrama: cada hora (o cada 2 si el día es largo)
+  const todos = filasDiagrama.flatMap((f) => f.bloques)
+  const t0 = Math.min(aMin("07:00"), ...todos.map((b) => Math.floor(b.desde / 60) * 60))
+  const t1 = Math.max(aMin("18:00"), ...todos.map((b) => Math.ceil(b.hasta / 60) * 60))
+  const paso = t1 - t0 > 10 * 60 ? 120 : 60
+  const pos = (m: number) => `${((m - t0) / (t1 - t0)) * 100}%`
+  const ancho = (a: number, b: number) => `calc(${Math.max(0.4, ((b - a) / (t1 - t0)) * 100)}% - 2px)`
 
   async function guardar() {
     const error = await rep.guardar()
@@ -312,151 +338,201 @@ export function RepartoCamiones({ rep }: { rep: RepartoDia }) {
   }
 
   return (
-    <Card className="border-violet-200">
+    <Card>
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-medium flex items-center gap-1.5"><Truck className="h-4 w-4" /> Camiones por planta <NuevoBadge /></p>
-          <button type="button" className="text-muted-foreground hover:text-foreground" title="Cómo se calcula" onClick={() => setAyuda(!ayuda)}><CircleHelp className="h-4 w-4" /></button>
-          <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline" className="gap-1.5" title="Vuelve a leer pedidos y viajes y arma la sugerencia de nuevo" onClick={() => {
-              if (rep.edicion && !window.confirm("Tenés cambios sin guardar en el reparto. Si recalculás, se pierden. ¿Seguir?")) return
-              rep.cargar(true)
-            }}><RefreshCw className="h-3.5 w-3.5" />Recalcular</Button>
-            {edita && (rep.efectivo && !mismoReparto(rep.efectivo, rep.sugerido)) && <Button size="sm" variant="outline" onClick={rep.usarSugerencia}>Usar la sugerencia</Button>}
-            {edita && <Button size="sm" variant="outline" onClick={() => setVerEditor(!verEditor)}>{verEditor ? "Cerrar edición" : "Editar"}</Button>}
-            {edita && rep.edicion && <Button size="sm" variant="ghost" onClick={rep.descartar}>Descartar</Button>}
+        {/* Encabezado */}
+        <div className="flex items-start gap-3 flex-wrap">
+          <div>
+            <p className="text-sm font-medium flex items-center gap-1.5">
+              <Truck className="h-4 w-4" /> Camiones por planta · {tituloDia} <NuevoBadge />
+              <button type="button" className="text-muted-foreground hover:text-foreground" title="Cómo se calcula" onClick={() => setAyuda(!ayuda)}><CircleHelp className="h-4 w-4" /></button>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {rep.camiones.length === 1 ? "1 camión disponible" : `${rep.camiones.length} camiones disponibles`}
+              {esc ? ` · escenario con ${esc.extra === 1 ? "1 camión más" : "2 camiones más"} (${esc.ficticios.map((c) => `${c.patente} en ${rep.nombres[c.amanece || ""]}`).join(", ")})` : ""}
+              {!esc && rep.edicion ? " · cambios sin guardar" : ""}
+            </p>
+          </div>
+          <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+            <div className="inline-flex rounded-md border overflow-hidden">
+              {([[0, `Con los que hay (${rep.camiones.length})`], [1, "+1 camión"], [2, "+2 camiones"]] as const).map(([k, l]) => (
+                <button key={k} type="button" onClick={() => setEscenario(k)} disabled={(k === 1 && !mas1) || (k === 2 && !mas2)}
+                  className={cn("px-2.5 py-1 text-xs border-l first:border-l-0", escenario === k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted")}>{l}</button>
+              ))}
+            </div>
+            {edita && <Button size="sm" variant="outline" disabled={!!esc} onClick={() => setVerEditor(!verEditor)}>{verEditor ? "Cerrar edición" : "Editar"}</Button>}
+            {edita && !esc && rep.efectivo && !mismoReparto(rep.efectivo, rep.sugerido) && <Button size="sm" variant="outline" onClick={rep.usarSugerencia}>Usar la sugerencia</Button>}
+            {edita && !esc && rep.edicion && <Button size="sm" variant="ghost" onClick={rep.descartar}>Descartar</Button>}
             {edita && (
-              <Button size="sm" onClick={guardar} disabled={rep.guardando || (sinCambios && !!rep.guardado?.reparto)} title="Cambia el reparto de las dos plantas">
+              <Button size="sm" onClick={guardar} disabled={!!esc || rep.guardando || (!rep.edicion && !!rep.guardado?.reparto)} title={esc ? TEXTO_ESCENARIO : "Cambia el reparto de las dos plantas"}>
                 {rep.guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar reparto"}
               </Button>
             )}
           </div>
         </div>
+        {esc && edita && <p className="text-xs text-muted-foreground text-right">{TEXTO_ESCENARIO}.</p>}
+
+        {/* Ayuda (?) */}
         {ayuda && (
-          <p className="text-xs text-muted-foreground rounded-md bg-muted/50 px-3 py-2">
-            Para cada pedido se busca la menor cantidad de camiones que alcanza (bomba: sin cortes de más de {REGLAS_REPARTO.bomba.corteMax} min y no más de {REGLAS_REPARTO.bomba.demoraMax} min tarde; directo: {REGLAS_REPARTO.directo.corteMax} y {REGLAS_REPARTO.directo.demoraMax}). Los pedidos se arman en orden de hora, primero con los camiones que ya están en esa planta: cada traslado gasta. Si a una bomba no le alcanzan, se le saca un camión a un directo que se superpone. Un camión sin viajes no se mueve. A la noche cada camión queda donde termina, salvo que mañana a una planta le falten para arrancar.
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground">{estadoTxt}{edita && rep.efectivo ? " Guardar cambia el reparto de las dos plantas." : ""}</p>
-        {!rep.disponible && <p className="text-xs text-amber-700">Todavía no se puede guardar: falta un paso de Bautista.</p>}
-
-        {/* Resumen */}
-        <div className="text-sm space-y-0.5">
-          {franjas.map((f, i) => (
-            <div key={i}>
-              <p>{negritaPrimera(textoFranja(f, i, franjas.length, rep.nombres, rep.patentes))}</p>
-              {res.traslados.filter((t) => f.hasta != null && Math.round(t.sale) === Math.round(f.hasta)).map((t, k) => (
-                <p key={k} className="flex items-center gap-1"><ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />{negritaPrimera(textoTraslado(t, rep.nombres, rep.patentes))}</p>
-              ))}
-            </div>
-          ))}
-          {res.arranquesMovidos.map((id) => <p key={id} className="text-xs">{rep.patentes[id]} arranca en {rep.nombres[vigente[id]?.tramos[0]?.plantId || ""]} (durmió en {rep.nombres[rep.amanece[id] || ""]}): un traslado a primera hora</p>)}
-          <p><strong>{textoTraslados(conteo.dia, conteo.noche, rep.traslado)}</strong></p>
-          <p className="flex items-center gap-1"><Moon className="h-3.5 w-3.5 text-muted-foreground" />{textoNoche(duerme, rep.plantas)}</p>
-          {comparacion && <p className="text-xs text-violet-700">{comparacion}</p>}
-        </div>
-
-        {/* Por pedido, el porqué */}
-        {res.pedidos.length > 0 && (
-          <div className="space-y-1">
-            {res.pedidos.map((p) => (
-              <p key={p.id} className={cn("text-xs rounded px-2 py-1", p.estado === "verde" ? "bg-emerald-50 text-emerald-800" : p.estado === "ambar" ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-800")}>
-                <span className="text-muted-foreground">{rep.nombres[p.plantId]} · </span>{p.texto}
-              </p>
-            ))}
+          <div className="text-xs text-muted-foreground rounded-md bg-muted/50 px-3 py-2 space-y-1">
+            <p>{estadoTxt}</p>
+            <p>Para cada pedido se busca la menor cantidad de camiones que alcanza: a tiempo es, con bomba, sin cortes de más de {REGLAS_REPARTO.bomba.corteMax} min y no más de {REGLAS_REPARTO.bomba.demoraMax} min tarde; directo, {REGLAS_REPARTO.directo.corteMax} y {REGLAS_REPARTO.directo.demoraMax}. Los pedidos se arman en orden de hora, primero con los camiones que ya están en esa planta: cada traslado gasta. A la bomba se le da prioridad sobre un directo. Un camión sin viajes no se mueve. A la noche cada camión queda donde termina, salvo que mañana a una planta le falten para arrancar.</p>
+            <p>"+1 camión" y "+2 camiones" muestran qué pasaría con camiones de 8 m³ disponibles desde las 07:00 en la planta donde más convenga. Son solo para ver: no se guardan.</p>
+            {comparacion && <p>{comparacion}</p>}
+            {!esc && rep.noche && <p>{rep.noche.textos.join(" · ")}</p>}
+            <p>El traslado entre plantas (minutos, km y litros) se carga en Tiempos y camiones.</p>
           </div>
         )}
-        {res.pedidos.length === 0 && <p className="text-xs text-muted-foreground">No hay pedidos pendientes ese día en ninguna planta.</p>}
 
-        {/* Avisos */}
-        {rep.avisos.length > 0 && (
+        {/* Resumen en una frase */}
+        <p className={cn("text-sm rounded-md border px-3 py-2", resumen.tono === "verde"
+          ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
+          : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100")}>{resumen.texto}</p>
+
+        {/* Tabla por pedido */}
+        {res.pedidos.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b text-left">
+                  <th className="py-1.5 pr-3 font-medium">Pedido</th>
+                  <th className="py-1.5 pr-3 font-medium">Planta</th>
+                  <th className="py-1.5 pr-3 font-medium">Camiones</th>
+                  <th className="py-1.5 pr-3 font-medium">Termina</th>
+                  <th className="py-1.5 font-medium">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {res.pedidos.map((p) => {
+                  const e = estadoPedido(p)
+                  const chipAmarillo = "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+                  return (
+                    <tr key={p.id} className="border-b last:border-0 align-top">
+                      <td className="py-1.5 pr-3 font-medium">{p.obra}</td>
+                      <td className="py-1.5 pr-3">{rep.nombres[p.plantId]}</td>
+                      <td className="py-1.5 pr-3">{p.camiones.length} <span className="text-muted-foreground">{p.camiones.map((id) => patentes[id]).join(", ")}</span></td>
+                      <td className="py-1.5 pr-3">{p.viajes.length ? aHora(Math.round(p.medida.fin)) : "—"}</td>
+                      <td className="py-1.5">
+                        <span className="flex flex-wrap gap-1">
+                          <span className={cn("rounded-full px-2 py-0.5", e.aTiempo ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100" : chipAmarillo)}>{e.texto}</span>
+                          {e.jornada && <span className={cn("rounded-full px-2 py-0.5", chipAmarillo)}>{e.jornada}</span>}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Traslados en una línea y la noche */}
+        <div className="text-xs space-y-0.5">
+          <p className="flex items-center gap-1.5"><ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />{lineaTraslados(res, conteo, rep.traslado, rep.nombres, patentes)}</p>
+          <p className="flex items-center gap-1.5"><Moon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />{textoNoche(duerme, rep.plantas)}</p>
+        </div>
+
+        {/* Avisos del día (traslado a confirmar, cambios a mano, camiones en dos viajes) */}
+        {rep.avisos.length > 0 && !esc && (
           <div className="space-y-0.5">
             {rep.avisos.map((a, i) => (
-              <p key={i} className={cn("text-xs flex items-start gap-1", a.nivel === "rojo" ? "text-red-700" : a.nivel === "ambar" ? "text-amber-700" : "text-muted-foreground")}>
+              <p key={i} className={cn("text-xs flex items-start gap-1", a.nivel === "info" ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400")}>
                 <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />{a.texto}
               </p>
             ))}
           </div>
         )}
 
-        {/* Una fila por camión: la barra del día y, para editar, sus cambios */}
+        {/* Diagrama: una fila por camión, un bloque por viaje (de la carga a la vuelta) */}
         <div className="overflow-x-auto">
-          <div className="min-w-[640px] space-y-1">
+          <div className="min-w-[680px] space-y-1">
             <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-2 text-[11px] text-muted-foreground">
               <span />
-              <div className="relative h-4">{Array.from({ length: (t1 - t0) / 120 + 1 }, (_, i) => t0 + i * 120).map((t) => <span key={t} className="absolute -translate-x-1/2" style={{ left: pos(t) }}>{aHora(t)}</span>)}</div>
+              <div className="relative h-4">
+                {Array.from({ length: Math.floor((t1 - t0) / paso) + 1 }, (_, i) => t0 + i * paso).map((t) => <span key={t} className="absolute -translate-x-1/2" style={{ left: pos(t) }}>{aHora(t)}</span>)}
+              </div>
             </div>
-            {rep.delDia.map((m) => {
-              const r = vigente[m.id]
-              const sale = r?.sale !== false
-              const ts = res.tramos[m.id] || []
-              const tras = res.traslados.filter((t) => t.camionId === m.id)
-              const vs = res.viajes.filter((v) => v.camionId === m.id)
-              return (
-                <div key={m.id} className="space-y-1">
-                  <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-2 items-center">
-                    <span className={cn("text-xs font-medium", !sale && "line-through text-muted-foreground")}>{m.license_plate}</span>
-                    <div className="relative h-5 rounded bg-muted/60">
-                      {sale && ts.map((t, i) => {
-                        const a = t.desde ?? t0
-                        const b = ts[i + 1]?.desde != null ? ts[i + 1].desde! - rep.traslado.minutos : t1
-                        return <div key={i} className={cn("absolute top-0.5 h-4 rounded-sm opacity-40", color(t.plantId))} style={{ left: pos(a), width: anc(a, b) }} title={`${rep.nombres[t.plantId]}${t.desde != null ? ` desde ${aHora(Math.round(t.desde))}` : ""}`} />
-                      })}
-                      {sale && tras.map((t, i) => <div key={`t${i}`} className="absolute top-0.5 h-4 bg-slate-400" style={{ left: pos(t.sale), width: anc(t.sale, t.llega) }} title={textoTraslado(t, rep.nombres, rep.patentes)} />)}
-                      {sale && vs.map((v, i) => <div key={`v${i}`} className={cn("absolute top-1.5 h-2 rounded-sm", color(v.plantId))} style={{ left: pos(v.inicioCarga), width: anc(v.inicioCarga, v.vuelta) }} title={`${rep.nombres[v.plantId]} · carga ${aHora(Math.round(v.inicioCarga))}, vuelve ${aHora(Math.round(v.vuelta))}`} />)}
-                      {!sale && <span className="absolute inset-0 flex items-center px-2 text-[11px] text-muted-foreground">No sale hoy</span>}
-                    </div>
-                  </div>
-                  {verEditor && edita && r && (
-                    <div className="ml-[92px] flex items-center gap-2 flex-wrap text-xs">
-                      <label className="flex items-center gap-1"><input type="checkbox" checked={sale} onChange={(e) => rep.setSale(m.id, e.target.checked)} />Sale hoy</label>
-                      {sale && (
-                        <>
-                          <span className="text-muted-foreground">Arranca en</span>
-                          <Select value={r.tramos[0]?.plantId || "none"} onValueChange={(v) => v !== "none" && rep.setArranca(m.id, v)}>
-                            <SelectTrigger className="h-7 w-[120px] text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {!r.tramos.length && <SelectItem value="none">A confirmar</SelectItem>}
-                              {rep.plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          {r.tramos.slice(1).map((t, k) => (
-                            <span key={k} className="flex items-center gap-1 rounded border px-1.5 py-0.5">
-                              Pasa a {rep.nombres[t.plantId]} a las
-                              <Input type="time" className="h-6 w-[96px] text-xs" value={t.desde != null ? aHora(Math.max(0, Math.round(t.desde - rep.traslado.minutos))) : ""} onChange={(e) => rep.setCambio(m.id, k + 1, e.target.value)} />
-                              <span className="text-muted-foreground">(llega {t.desde != null ? aHora(Math.round(t.desde)) : "—"})</span>
-                              <button type="button" className="text-muted-foreground hover:text-destructive" title="Quitar este cambio" onClick={() => rep.quitarCambio(m.id, k + 1)}><X className="h-3 w-3" /></button>
-                            </span>
-                          ))}
-                          {r.tramos.length > 0 && r.tramos.length <= REGLAS_REPARTO.maxCambios && (
-                            <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs gap-0.5" onClick={() => rep.agregarCambio(m.id)}><Plus className="h-3 w-3" />Pasa a la otra planta</Button>
-                          )}
-                          {ts.map((t, i) => (i < ts.length - 1 && t.ultimaVuelta != null ? <span key={`s${i}`} className="text-muted-foreground">sale de {rep.nombres[t.plantId]} {aHora(Math.round(t.ultimaVuelta))}</span> : null))}
-                        </>
-                      )}
-                      <span className="text-muted-foreground ml-2">Duerme en</span>
-                      <Select value={r.duerme || "none"} onValueChange={(v) => rep.setDuerme(m.id, v === "none" ? null : v)}>
-                        <SelectTrigger className="h-7 w-[120px] text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">A confirmar</SelectItem>
-                          {rep.plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <span className="text-muted-foreground">durmió en: {rep.amanece[m.id] ? rep.nombres[rep.amanece[m.id]!] : "a confirmar"}</span>
-                    </div>
-                  )}
+            {filasDiagrama.map((f) => (
+              <div key={f.camionId} className="grid grid-cols-[84px_minmax(0,1fr)] gap-2 items-center">
+                <span className={cn("text-xs font-medium truncate", f.ficticio && "italic text-muted-foreground")}>{f.patente}</span>
+                <div className="relative h-7 border-b border-dashed border-border">
+                  {f.bloques.map((b, i) => {
+                    const est = b.tipo === "traslado" ? ESTILO_TRASLADO : estiloPlanta(rep, b.plantId)
+                    return (
+                      <div key={i} className={cn("absolute top-0.5 h-6 rounded border px-1 text-[10px] leading-6 truncate", est.bloque)} style={{ left: pos(b.desde), width: ancho(b.desde, b.hasta) }}
+                        title={`${b.texto} · ${aHora(Math.round(b.desde))} a ${aHora(Math.round(b.hasta))}`}>
+                        {b.texto}
+                      </div>
+                    )
+                  })}
+                  {!f.bloques.length && <span className="absolute inset-y-0 left-1 flex items-center text-[11px] text-muted-foreground">sin viajes</span>}
                 </div>
-              )
-            })}
+              </div>
+            ))}
             <div className="flex gap-3 text-[11px] text-muted-foreground flex-wrap pt-1">
-              {rep.plantas.map((p) => <span key={p.id} className="flex items-center gap-1"><span className={cn("h-2.5 w-2.5 rounded-sm", color(p.id))} />{p.nombre}</span>)}
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-slate-400" />Traslado</span>
-              <span>· barra clara: en esa planta · barra fuerte: viaje</span>
+              {rep.plantas.map((p) => <span key={p.id} className="flex items-center gap-1"><span className={cn("h-2.5 w-2.5 rounded-sm", estiloPlanta(rep, p.id).punto)} />{p.nombre}</span>)}
+              <span className="flex items-center gap-1"><span className={cn("h-2.5 w-2.5 rounded-sm", ESTILO_TRASLADO.punto)} />Traslado</span>
             </div>
           </div>
         </div>
 
-        {rep.noche && <p className="text-[11px] text-muted-foreground">{rep.noche.textos.join(" · ")}</p>}
+        {/* Editor del reparto (con los camiones reales; no en un escenario) */}
+        {verEditor && edita && !esc && (
+          <div className="rounded-md border px-3 py-2 space-y-1.5">
+            <p className="text-xs font-medium">Editar el reparto <span className="font-normal text-muted-foreground">(las horas son de salida de la planta; el cambio se ve arriba al momento)</span></p>
+            {rep.delDia.map((m) => {
+              const r = (rep.vigente || {})[m.id]
+              if (!r) return null
+              const sale = r.sale !== false
+              const ts = base.tramos[m.id] || []
+              return (
+                <div key={m.id} className="flex items-center gap-2 flex-wrap text-xs">
+                  <span className={cn("w-[76px] font-medium", !sale && "line-through text-muted-foreground")}>{m.license_plate}</span>
+                  <label className="flex items-center gap-1"><input type="checkbox" checked={sale} onChange={(e) => rep.setSale(m.id, e.target.checked)} />Sale hoy</label>
+                  {sale && (
+                    <>
+                      <span className="text-muted-foreground">Arranca en</span>
+                      <Select value={r.tramos[0]?.plantId || "none"} onValueChange={(v) => v !== "none" && rep.setArranca(m.id, v)}>
+                        <SelectTrigger className="h-7 w-[120px] text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {!r.tramos.length && <SelectItem value="none">A confirmar</SelectItem>}
+                          {rep.plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      {r.tramos.slice(1).map((t, k) => (
+                        <span key={k} className="flex items-center gap-1 rounded border px-1.5 py-0.5">
+                          Pasa a {rep.nombres[t.plantId]} a las
+                          <Input type="time" className="h-6 w-[96px] text-xs" value={t.desde != null ? aHora(Math.max(0, Math.round(t.desde - rep.traslado.minutos))) : ""} onChange={(e) => rep.setCambio(m.id, k + 1, e.target.value)} />
+                          <span className="text-muted-foreground">(llega {t.desde != null ? aHora(Math.round(t.desde)) : "—"})</span>
+                          <button type="button" className="text-muted-foreground hover:text-destructive" title="Quitar este cambio" onClick={() => rep.quitarCambio(m.id, k + 1)}><X className="h-3 w-3" /></button>
+                        </span>
+                      ))}
+                      {r.tramos.length > 0 && r.tramos.length <= REGLAS_REPARTO.maxCambios && (
+                        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs gap-0.5" onClick={() => rep.agregarCambio(m.id)}><Plus className="h-3 w-3" />Pasa a la otra planta</Button>
+                      )}
+                      {ts.map((t, i) => (i < ts.length - 1 && t.ultimaVuelta != null ? <span key={`s${i}`} className="text-muted-foreground">sale de {rep.nombres[t.plantId]} {aHora(Math.round(t.ultimaVuelta))}</span> : null))}
+                    </>
+                  )}
+                  <span className="text-muted-foreground ml-2">Duerme en</span>
+                  <Select value={r.duerme || "none"} onValueChange={(v) => rep.setDuerme(m.id, v === "none" ? null : v)}>
+                    <SelectTrigger className="h-7 w-[120px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">A confirmar</SelectItem>
+                      {rep.plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-muted-foreground">durmió en: {rep.amanece[m.id] ? rep.nombres[rep.amanece[m.id]!] : "a confirmar"}</span>
+                </div>
+              )
+            })}
+            <div className="flex justify-end">
+              <Button size="sm" variant="ghost" className="gap-1.5 h-7 text-xs" onClick={() => {
+                if (rep.edicion && !window.confirm("Tenés cambios sin guardar en el reparto. Si recalculás, se pierden. ¿Seguir?")) return
+                rep.cargar(true)
+              }}><RefreshCw className="h-3.5 w-3.5" />Recalcular</Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

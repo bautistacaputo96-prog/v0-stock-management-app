@@ -646,7 +646,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       )}
 
       {/* Camiones por planta (con el interruptor): las dos plantas, aunque la vista esté en una */}
-      {ve && <RepartoCamiones rep={rep} />}
+      {ve && <RepartoCamiones rep={rep} dia={dia} />}
 
       {cargando ? (
         <div className="py-16 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Cargando pedidos...</div>
