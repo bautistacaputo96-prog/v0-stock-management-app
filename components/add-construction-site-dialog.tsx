@@ -12,7 +12,8 @@ import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
-import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
+import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
+import { completarVacios, usarDelMapa, type DireccionMapa } from "@/lib/geo-direccion"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AddConstructionSiteDialogProps {
@@ -35,6 +36,23 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
   const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
   const [ubic, setUbic] = useState<UbicacionObra>(UBIC_VACIA)
   const [plantaCliente, setPlantaCliente] = useState<string | null>(null)
+  // Dirección y localidad del lugar elegido en el mapa
+  const [dirMapa, setDirMapa] = useState<DireccionMapa | null>(null)
+
+  // Con la ubicación elegida se completan solo los campos vacíos
+  const recibirDireccion = (d: DireccionMapa) => {
+    setDirMapa(d)
+    setFormData((f) => {
+      const c = completarVacios({ direccion: f.address, localidad: f.localidad }, d)
+      return { ...f, address: c.direccion, localidad: c.localidad }
+    })
+  }
+  const usarDireccionMapa = (d: DireccionMapa) => {
+    setFormData((f) => {
+      const c = usarDelMapa({ direccion: f.address, localidad: f.localidad }, d)
+      return { ...f, address: c.direccion, localidad: c.localidad }
+    })
+  }
 
   const supabase = createClient()
 
@@ -82,6 +100,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
       logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: formData.localidad || "-", "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
       setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20", remito_tipo: "" })
       setUbic(UBIC_VACIA)
+      setDirMapa(null)
       setOpen(false)
 
       if (onSiteAdded && data) {
@@ -147,6 +166,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
               onChange={(e) => setFormData({ ...formData, localidad: e.target.value })}
               placeholder="Ej: San Vicente"
             />
+            <DireccionDelMapa direccion={formData.address} localidad={formData.localidad} mapa={dirMapa} onUsar={usarDireccionMapa} />
           </div>
           <div className="space-y-2">
             <Label>Ubicación en el mapa</Label>
@@ -157,6 +177,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
               valor={ubic}
               onChange={setUbic}
               onTiempoViaje={(min) => setFormData((f) => ({ ...f, travel_time_minutes: String(min) }))}
+              onDireccion={recibirDireccion}
             />
           </div>
           <div className="grid grid-cols-2 gap-4">

@@ -8,6 +8,10 @@
  *
  * Buscador libre "como Google Maps": sugerencias mientras se escribe (Google Places desde el servidor, o
  * OpenStreetMap si no hay clave o Google falla), con flechas y Enter. Mapa / Satélite en el mapa.
+ *
+ * Al elegir la ubicación avisa la dirección y la localidad del lugar (onDireccion): las que trae la sugerencia o,
+ * si solo hay coordenadas (clic, punto arrastrado, link o coordenadas pegadas), las de /api/geo/inversa.
+ * <DireccionDelMapa> ofrece reemplazar lo escrito cuando el mapa dice otra cosa.
  */
 import { useState, useEffect, useRef } from "react"
 import type { Sugerencia, FuenteLugar } from "@/lib/geo-lugares"
@@ -16,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MapaBase, iconos } from "@/components/mapa-base"
 import { parsearCoordenadas } from "@/lib/geo"
+import { difiereDelMapa, textoDireccion, tieneDireccion, type DireccionMapa } from "@/lib/geo-direccion"
 import { MapPin, Search, Loader2, Link2, Route } from "lucide-react"
 
 export type UbicacionObra = {
@@ -34,14 +39,16 @@ type Props = {
   onChange: (u: UbicacionObra) => void
   /** Si se calcula un tiempo de viaje, se ofrece para completar el campo de la obra */
   onTiempoViaje?: (minutos: number) => void
+  /** Dirección y localidad del lugar elegido (para completar los campos vacíos de la obra) */
+  onDireccion?: (d: DireccionMapa) => void
 }
 
 type Planta = { id: string; name: string; gps_lat: number | null; gps_lng: number | null }
 
-export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange, onTiempoViaje }: Props) {
+export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange, onTiempoViaje, onDireccion }: Props) {
   const [plantas, setPlantas] = useState<Planta[]>([])
   const [buscando, setBuscando] = useState(false)
-  const [resultados, setResultados] = useState<{ nombre: string; lat: number; lng: number; exacto?: boolean }[]>([])
+  const [resultados, setResultados] = useState<{ nombre: string; lat: number; lng: number; exacto?: boolean; direccionMapa?: DireccionMapa | null }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [pegar, setPegar] = useState("")
   const [calculando, setCalculando] = useState(false)
@@ -58,6 +65,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   const [aviso, setAviso] = useState<string | null>(null)
   const sesion = useRef<string | null>(null)
   const escrito = useRef(false) // solo se busca si la persona escribió (no al elegir una sugerencia)
+  const ultimaEleccion = useRef(0) // si se elige otro punto antes de que llegue la dirección, se descarta la vieja
 
   useEffect(() => {
     createClient().from("plants").select("id, name, gps_lat, gps_lng").then(({ data }) => setPlantas((data as any) || []))
@@ -119,11 +127,11 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
     escrito.current = false
     setTexto([sg.principal, sg.secundario].filter(Boolean).join(", "))
     setAbierto(false); setSugerencias([]); setError(null)
-    if (sg.lat != null && sg.lng != null) { sesion.current = null; elegir(sg.lat, sg.lng, "direccion"); return }
+    if (sg.lat != null && sg.lng != null) { sesion.current = null; elegir(sg.lat, sg.lng, "direccion", sg.direccionMapa); return }
     try {
       const r = await fetch(`/api/geo/lugar?id=${encodeURIComponent(sg.id)}&sesion=${encodeURIComponent(sesion.current || "")}`)
       const d = await r.json()
-      if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion")
+      if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion", d.lugar.direccionMapa)
       else setError(`${d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa"}${d.aviso ? ` (Google no respondió: ${d.aviso})` : ""}`)
     } catch { setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
     sesion.current = null
@@ -154,15 +162,30 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
       const r = await fetch(`/api/geo/buscar?q=${encodeURIComponent(q)}`)
       const d = await r.json()
       if (!d.resultados?.length) setError("No se encontró en la zona. Marcá el punto tocando el mapa, o pegá abajo el link de Google Maps que manda el cliente.")
-      else if (d.resultados.length === 1 && d.resultados[0].exacto) elegir(d.resultados[0].lat, d.resultados[0].lng, "direccion")
+      else if (d.resultados.length === 1 && d.resultados[0].exacto) elegir(d.resultados[0].lat, d.resultados[0].lng, "direccion", d.resultados[0].direccionMapa)
       else setResultados(d.resultados)
     } catch { setError("No se pudo buscar la dirección") }
     setBuscando(false)
   }
 
-  async function elegir(lat: number, lng: number, fuente: UbicacionObra["fuente"]) {
+  /** Dirección y localidad del punto: las del lugar elegido si las trae, si no las de la geocodificación inversa */
+  async function avisarDireccion(lat: number, lng: number, dir?: DireccionMapa | null) {
+    if (!onDireccion) return
+    const n = ++ultimaEleccion.current
+    if (tieneDireccion(dir)) { onDireccion(dir); return }
+    try {
+      const r = await fetch(`/api/geo/inversa?lat=${lat}&lng=${lng}`)
+      if (!r.ok) return
+      const d = await r.json()
+      const mapa: DireccionMapa = { direccion: d.direccion ?? null, localidad: d.localidad ?? null }
+      if (n === ultimaEleccion.current && tieneDireccion(mapa)) onDireccion(mapa)
+    } catch {}
+  }
+
+  async function elegir(lat: number, lng: number, fuente: UbicacionObra["fuente"], dir?: DireccionMapa | null) {
     setResultados([])
     onChange({ ...valor, lat, lng, fuente, km: null, minutos: null })
+    avisarDireccion(lat, lng, dir)
     if (!planta?.gps_lat) return
     setCalculando(true)
     try {
@@ -281,7 +304,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
         <div className="rounded-md border divide-y text-xs max-h-40 overflow-y-auto">
           <p className="px-2 py-1 text-muted-foreground">Elegí la más cercana y después ajustá el punto en el mapa si hace falta:</p>
           {resultados.map((r, i) => (
-            <button key={i} type="button" className="w-full text-left px-2 py-1.5 hover:bg-muted/50" onClick={() => elegir(r.lat, r.lng, "direccion")}>
+            <button key={i} type="button" className="w-full text-left px-2 py-1.5 hover:bg-muted/50" onClick={() => elegir(r.lat, r.lng, "direccion", r.direccionMapa)}>
               {r.nombre}{!r.exacto && <span className="text-muted-foreground"> · aproximado, ajustá el punto</span>}
             </button>
           ))}
@@ -312,5 +335,19 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
         </p>
       )}
     </div>
+  )
+}
+
+/**
+ * Debajo de Dirección y Localidad: si el mapa dice otra cosa que lo escrito, lo muestra en chico con "Usar esto"
+ * (que reemplaza lo escrito). Si coincide o no hay nada del mapa, no muestra nada.
+ */
+export function DireccionDelMapa({ direccion, localidad, mapa, onUsar }: { direccion: string; localidad: string; mapa: DireccionMapa | null; onUsar: (d: DireccionMapa) => void }) {
+  if (!mapa || !difiereDelMapa({ direccion, localidad }, mapa)) return null
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      El mapa dice: {textoDireccion(mapa)} ·{" "}
+      <button type="button" className="underline text-violet-700 hover:text-violet-900" onClick={() => onUsar(mapa)}>Usar esto</button>
+    </p>
   )
 }
