@@ -45,6 +45,12 @@ export function horaPuente(at: unknown): string {
   return new Date(t).toISOString()
 }
 
+/** Una hora del puente real tal cual (aunque sea vieja); si no se entiende, ahora. */
+export function horaExacta(at: unknown): string {
+  const t = typeof at === "string" || typeof at === "number" ? new Date(at).getTime() : NaN
+  return new Date(Number.isFinite(t) ? t : Date.now()).toISOString()
+}
+
 /** Graba un evento. Con `pedido` repetido (se subió dos veces) devuelve false y no graba. */
 export async function registrarEvento(e: { carga_id: string | null; puesto_id: string; tipo: string; at?: string; detalle?: Record<string, unknown> | null; usuario?: string | null; pedido?: string | null }): Promise<boolean> {
   const { error: err } = await sbServicio().from("cargas_eventos").insert({
@@ -227,6 +233,11 @@ export type EntradaReporte = {
   dia_planta: string | null
   hora_estimada: boolean
   pedido: string | null
+  /**
+   * Puente real: las horas vienen de horaReal (el reloj de Indumix con su deriva) o de lo que vio el puente, y valen tal
+   * cual aunque sean viejas (no se recortan a "ahora"). Con la hora estimada no se une por camión y hora, solo por remito.
+   */
+  horas_del_puente?: boolean
   /** solo puesto real: nota de la carga (carga corta) y datos que se suman al evento "reporte" */
   nota?: string | null
   detalle?: Record<string, unknown> | null
@@ -246,8 +257,10 @@ export async function registrarReporte(puesto: Puesto, d: EntradaReporte, usuari
   const pedido = d.pedido
   if (await yaProcesado(pedido)) return { ok: true, duplicado: true }
   const rep = d.reporte
-  const fin = horaPuente(d.fin_at)
-  const ini = horaPuente(d.inicio_at || d.fin_at)
+  const hora = d.horas_del_puente ? horaExacta : horaPuente
+  const fin = hora(d.fin_at)
+  const ini = hora(d.inicio_at || d.fin_at)
+  const soloRemito = !!d.horas_del_puente && d.hora_estimada
   const finMs = new Date(fin).getTime()
   const desde = new Date(finMs - 12 * 3600_000).toISOString()
   const lectura = puesto.sistema === "indumix" && puesto.etapa === "lectura"
@@ -255,7 +268,7 @@ export async function registrarReporte(puesto: Puesto, d: EntradaReporte, usuari
   // 1. Órdenes de la cola
   const { data: cola } = await sb.from("cargas").select("id, remito, remito_tipo, patente_planta, created_at, dispatch_id, m3").eq("puesto_id", puesto.id).in("estado", ["pendiente", "bloqueada", "lista"]).gte("created_at", desde)
   const candCola: Candidato[] = ((cola || []) as any[]).map((c) => ({ id: c.id, remito: c.remito, tipo: c.remito_tipo, patente: c.patente_planta, at: new Date(c.created_at).getTime() }))
-  const enCola = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, candCola)
+  const enCola = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, candCola, { soloRemito })
   // 2. Despachos de la planta sin carga
   let enDesp: ReturnType<typeof emparejar> = null
   let desp: any = null
@@ -265,7 +278,7 @@ export async function registrarReporte(puesto: Puesto, d: EntradaReporte, usuari
     const { data: conCarga } = ids.length ? await sb.from("cargas").select("dispatch_id").in("dispatch_id", ids) : { data: [] }
     const usados = new Set(((conCarga || []) as any[]).map((x) => x.dispatch_id))
     const libres = ((ds || []) as any[]).filter((x) => !usados.has(x.id))
-    enDesp = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, libres.map((x) => ({ id: x.id, remito: x.remito, tipo: x.remito_tipo, patente: x.mixers?.license_plate || null, at: new Date(x.created_at).getTime() })))
+    enDesp = emparejar({ observacion: rep.observacion, patente: rep.camion, fin: finMs }, libres.map((x) => ({ id: x.id, remito: x.remito, tipo: x.remito_tipo, patente: x.mixers?.license_plate || null, at: new Date(x.created_at).getTime() })), { soloRemito })
     desp = enDesp ? libres.find((x) => x.id === enDesp!.id) : null
   }
 

@@ -9,7 +9,7 @@
  * datos reales del 03/11 y 04/11 (lib/__fixtures__/indumix/).
  */
 import {
-  ARIDOS, INFO_SALIDA, SALIDAS, grupoDeSalida, nf,
+  ARIDOS, INFO_SALIDA, SALIDAS, TOLERANCIAS_BASE, grupoDeSalida, nf,
   type EstadoPlanta, type EstadoVivo, type FormulaSistema, type MaterialSistema, type RecetaPlanta, type ReportePlanta,
   type Salida, type SalidaMapa,
 } from "@/lib/carga/tipos"
@@ -315,7 +315,8 @@ export function reporteDesdeVariables(v: Variables, visto?: Visto | null): Repor
   if (conHumedad) { const a = lineas.find((l) => l.salida === "agua")!; a.teorico_corregido = Math.round(a.teorico - aguaAridos) }
   const m3 = num(v["Receta.Reporte_WEB.M3"]) ?? 0
   const cT = T("cemento_1") + T("cemento_2"), cR = C("cemento_1") + C("cemento_2")
-  const m3Cargados = cT > 0 ? r1(m3 * Math.min(1, cR / cT)) : m3
+  // Dentro de la tolerancia de pesaje del cemento (1 %) se cargó todo: no es "corta"
+  const m3Cargados = cT > 0 && cR < cT * (1 - TOLERANCIAS_BASE.pesaje.cemento) ? r1(m3 * cR / cT) : m3
   const parada = cT > 0 && cR < 0.95 * cT
   const ini = txt(v["Receta.Reporte_WEB.HoraIni"])
   const f = fechaPlc(ini)
@@ -375,9 +376,11 @@ export function controlHumedad(e: {
   minutos: number
   cargoHoy?: boolean
   sinCambioDesdeAyer?: boolean
+  /** H1 solo los días con despachos programados en la planta */
+  diaConDespachos?: boolean
 }): { regla: "H1" | "H2" | null; texto: string | null } {
   if (!e.medida) {
-    if (e.minutos >= 7 * 60 || e.cargoHoy) return { regla: "H1", texto: "Falta la humedad de la arena de hoy" }
+    if (e.diaConDespachos !== false && (e.minutos >= 7 * 60 || e.cargoHoy)) return { regla: "H1", texto: "Falta la humedad de la arena de hoy" }
     return { regla: null, texto: null }
   }
   if (e.indumix != null && Math.abs(e.indumix - e.medida.pct) > 1.5 + 1e-9) {

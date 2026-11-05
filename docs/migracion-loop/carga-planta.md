@@ -1100,5 +1100,15 @@ y **leer un reporte o una receta exige escribir su número** (`Receta.neReporte`
 `puestos_carga`, `puestos_carga_credenciales`, CHECK de solo lectura, puesto "Canning · Indumix" con su mapa y el
 simulador apagado). La app anda igual sin aplicarla.
 
-**Pruebas:** `npm run test:carga` suma `carga-indumix.test.mjs` (16, con los datos reales del 03/11 y 04/11 en
-`lib/__fixtures__/indumix/`).
+**Pruebas:** `npm run test:carga` suma `carga-indumix.test.mjs` (con los datos reales del 03/11 y 04/11 en
+`lib/__fixtures__/indumix/`) y `puente-carga.test.mjs` (el programa puente con fetch simulado).
+
+**Arreglos de la revisión (05/11):** el puente espera 2 min sin cambios de número también al arrancar; mínimos fijos de
+cadencia (la nube solo puede hacerlo más lento: recetas y reportes ≥ 30 min, el último reporte ≥ 1 min, posponer ≥ 5
+min, "nadie navegando" 120 s fijo); una lectura vale con dos seguidas iguales; el barrido de recetas corta si arranca
+una carga o cambia algo de la edición; si el número que había es raro no barre; ante un 401 relee config.json y si sigue
+se cierra (iniciar.cmd lo relanza) y un `instalar.cmd` con clave nueva reinicia al que estaba andando; candado con hora
+(se renueva cada minuto, vence a los 2); la clave se pide adentro del puente (no va como argumento) y el arranque de la
+carpeta Inicio usa %USERPROFILE% (anda con tildes o ñ). En el servidor: `leer_recetas` solo con reportes nuevos, horas
+de los reportes sin recortar a "ahora" y, con la hora estimada, solo se une por remito; "corta" respeta el 1 % del
+cemento; H1 solo los días con despachos programados; la clave la genera solo un gerencial; rotativas 19 y 20.

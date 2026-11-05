@@ -163,6 +163,8 @@ export function mismaPatente(a: string | null | undefined, b: string | null | un
 export function emparejar(
   carga: { observacion: string | null; patente: string | null; fin: number | null },
   candidatos: Candidato[],
+  /** soloRemito: la hora es estimada (reloj de Indumix), así que no se une por camión y hora */
+  opciones: { soloRemito?: boolean } = {},
 ): { id: string; union: "por remito (Observación)" | "por camión y hora" } | null {
   const obs = digitos(carga.observacion)
   const pat = normalizarPatente(carga.patente)
@@ -174,7 +176,7 @@ export function emparejar(
     const c = [...cand].sort((a, b) => puntos(b) - puntos(a) || dist(a) - dist(b))[0]
     if (c) return { id: c.id, union: "por remito (Observación)" }
   }
-  if (pat && carga.fin != null) {
+  if (pat && carga.fin != null && !opciones.soloRemito) {
     const enVentana = candidatos
       .filter((x) => mismaPatente(x.patente, pat) && carga.fin! >= x.at - 30 * MIN && carga.fin! <= x.at + 120 * MIN)
       .sort((a, b) => Math.abs(carga.fin! - a.at) - Math.abs(carga.fin! - b.at))

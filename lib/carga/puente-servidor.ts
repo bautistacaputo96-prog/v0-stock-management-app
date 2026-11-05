@@ -127,11 +127,14 @@ async function controlarHumedad(p: Puesto, ev: EstadoVivo) {
   const { data: af } = await sb.from("materials").select("id").eq("plant_id", p.plant_id).eq("name", "Arena Fina").limit(1)
   const arena = (af as { id: string }[] | null)?.[0]?.id
   if (!arena) return
-  const [med, cargas, ultimoCambio, abiertas] = await Promise.all([
+  const [med, cargas, ultimoCambio, abiertas, programados] = await Promise.all([
     sb.from("daily_stockpile_humidity").select("humidity_percent, created_at").eq("material_id", arena).eq("reading_date", hoy).order("created_at", { ascending: false }).limit(1),
     sb.from("cargas").select("id").eq("puesto_id", p.id).gte("created_at", inicioDiaAR(hoy)).limit(1),
     sb.from("cargas_eventos").select("at").eq("puesto_id", p.id).eq("tipo", "humedad").order("at", { ascending: false }).limit(1),
     sb.from("alertas_carga").select("id, titulo, detalle, created_at").eq("puesto_id", p.id).eq("tipo", "humedad").eq("estado", "abierta"),
+    // H1 solo los días con despachos programados en la planta
+    sb.from("scheduled_dispatches").select("id").eq("plant_id", p.plant_id).gte("scheduled_arrival_time", inicioDiaAR(hoy))
+      .lt("scheduled_arrival_time", new Date(Date.parse(inicioDiaAR(hoy)) + 86400_000).toISOString()).neq("status", "cancelled").limit(1),
   ])
   const m = (med.data as { humidity_percent: number; created_at: string }[] | null)?.[0]
   const ult = (ultimoCambio.data as { at: string }[] | null)?.[0]?.at
@@ -141,6 +144,7 @@ async function controlarHumedad(p: Puesto, ev: EstadoVivo) {
     minutos: minutosAR(ahora),
     cargoHoy: !!ev.en_ciclo || !!(cargas.data as unknown[] | null)?.length,
     sinCambioDesdeAyer: !!ult && ult < inicioDiaAR(hoy),
+    diaConDespachos: !!(programados.data as unknown[] | null)?.length,
   })
   const lista = (abiertas.data || []) as { id: string; titulo: string; detalle: { regla?: string; dia?: string } | null; created_at: string }[]
   for (const a of lista.filter((x) => (x.detalle?.dia || diaAR(Date.parse(x.created_at))) !== hoy)) await cerrarAlerta(a.id, "Era de otro día")
@@ -225,15 +229,16 @@ export async function procesarReportes(p: Puesto, b: { reportes: unknown; at: st
       resultados.push({ slot: x.slot, numero: rep.numero, sin_material: true, duplicado: !nuevo })
       continue
     }
-    if (rep.receta >= 1 && rep.receta <= p.max_recetas && recetaDeReporteDistinta(rep, ctx.recetas.find((r) => r.numero === rep.receta) || null)) leerRecetas.add(rep.receta)
     const { data: ya } = await sb.from("cargas").select("id").eq("puesto_id", p.id).eq("contador_planta", rep.numero).eq("inicio_plc", rep.inicio_plc.slice(0, 40)).limit(1)
     if ((ya as unknown[] | null)?.length) { resultados.push({ slot: x.slot, numero: rep.numero, duplicado: true }); continue }
+    // Solo con un reporte nuevo: si su receta por m³ no es la última versión guardada, el puente vuelve a leer esa receta
+    if (rep.receta >= 1 && rep.receta <= p.max_recetas && recetaDeReporteDistinta(rep, ctx.recetas.find((r) => r.numero === rep.receta) || null)) leerRecetas.add(rep.receta)
     const nota = rep.parada
       ? `Carga corta: cemento ${nf(L.cemento.real)} de ${nf(L.cemento.teorico)} kg (${L.cemento.pct != null ? nf(L.cemento.pct * 100, 0) : "—"} %) · ${nf(rep.m3_cargados, 1)} m³ estimados`
       : null
     const res = await registrarReporte(p, {
       reporte: rep, materiales: materialesDeReporte(rep, ctx.salidas, null),
-      inicio_at: ini || b.at, fin_at: fin || b.at, dia_planta: dia, hora_estimada: !visto?.fin_at, pedido: b.pedido ? `${b.pedido}:${x.slot ?? rep.numero}`.slice(0, 80) : null,
+      inicio_at: ini || b.at, fin_at: fin || b.at, dia_planta: dia, hora_estimada: !visto?.fin_at, horas_del_puente: true, pedido: b.pedido ? `${b.pedido}:${x.slot ?? rep.numero}`.slice(0, 80) : null,
       nota, detalle: { slot: x.slot ?? null, m3_estimado: L.m3_estimado, corta: rep.parada, sin_humedad: L.sin_humedad, cemento_pct: L.cemento.pct, receta_nombre: rep.receta_nombre },
     }, usuario)
     resultados.push({ slot: x.slot, numero: rep.numero, ...res })

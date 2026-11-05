@@ -10,16 +10,15 @@ if not exist "%~dp0node\node.exe" (
 echo.
 echo PUENTE REBUCRET - instalacion
 echo.
-set /p CLAVE=Pega la clave del puente (empieza con rbp_) y apreta Enter: 
-"%~dp0node\node.exe" "%~dp0puente.mjs" --guardar-clave "%CLAVE%"
+rem La clave se pide adentro del puente: no queda a la vista en ningun comando
+"%~dp0node\node.exe" "%~dp0puente.mjs" --instalar
 if errorlevel 1 (
   pause
   exit /b 1
 )
-set "INICIO=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
-> "%INICIO%\Puente Rebucret.cmd" echo @start "PUENTE REBUCRET - NO CERRAR" /min cmd /c ""%~dp0iniciar.cmd""
-echo Queda para que arranque solo al prender la PC.
-start "PUENTE REBUCRET - NO CERRAR" /min cmd /c ""%~dp0iniciar.cmd""
+rem Si ya habia un puente andando, toma la clave nueva solo (se reinicia); si no, se arranca
+"%~dp0node\node.exe" "%~dp0puente.mjs" --hay-otro
+if errorlevel 1 start "PUENTE REBUCRET - NO CERRAR" /min cmd /c ""%~dp0iniciar.cmd""
 echo.
 echo Listo: el puente quedo andando (ventana minimizada "PUENTE REBUCRET - NO CERRAR").
 pause

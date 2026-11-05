@@ -27,9 +27,11 @@ function mismaPorNombre(receta: string, formula: string): boolean {
   return !!a && !!b && a.resistencia === b.resistencia && a.piedra === b.piedra && a.asentamiento === b.asentamiento && a.metodo === b.metodo
 }
 
-export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLectura, onLeer, onCambiarTolva, onArmar, onEtapa, onAsignar }: {
+export function RecetasPlanta({ ctx, formulas, puedeEditar, esGerencial = false, enPlanta, ultimaLectura, onLeer, onCambiarTolva, onArmar, onEtapa, onAsignar }: {
   ctx: Contexto; formulas: (FormulaSistema & { usos?: number })[]; puedeEditar: boolean; enPlanta: boolean; ultimaLectura: number | null
   onLeer: () => void; onCambiarTolva: (() => void) | null; onArmar: () => Promise<void>; onEtapa: (e: Puesto["etapa"]) => void
+  /** la clave del puente la genera solo un gerencial */
+  esGerencial?: boolean
   /** puesto real: asignar la fórmula de una receta */
   onAsignar?: (numero: number, formulaId: string | null) => Promise<boolean>
 }) {
@@ -123,7 +125,7 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
                           )
                         })() : f?.code || "—"}
                       </td>
-                      <td className="border-b px-1.5 py-0.5 text-slate-500">{a?.tipo || (n <= 16 ? "fija" : "rotativa")}</td>
+                      <td className="border-b px-1.5 py-0.5 text-slate-500">{a?.tipo || (n <= (real ? 18 : 16) ? "fija" : "rotativa")}</td>
                       <td className="border-b px-1.5 py-0.5"><Tag tono={tono}>{est}</Tag></td>
                       <td className="border-b px-1.5 py-0.5 text-slate-500">{hhmm(r?.ultima_lectura_at)}</td>
                       <td className="border-b px-1.5 py-0.5">{open ? "▴" : "▾"}</td>
@@ -145,7 +147,7 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
           </div>
         )}
       </div>
-      {real && <BloquePuente puesto={ctx.puesto} puedeEditar={puedeEditar} />}
+      {real && <BloquePuente puesto={ctx.puesto} puedeEditar={puedeEditar && esGerencial} />}
       <div className="grid gap-2 md:grid-cols-2">
         <div className="d3c-card rounded-md border bg-card">
           <div className="border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Qué hay en cada salida</h2></div>

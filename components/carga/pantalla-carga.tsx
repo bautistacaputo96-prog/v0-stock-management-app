@@ -54,13 +54,13 @@ const guardarLS = (k: string, v: string) => { try { window.localStorage.setItem(
 type Item = { clave: string; ok: boolean; aviso?: boolean; neutro?: boolean; corto: string; texto: string }
 
 export function PantallaCarga({ plants }: { plants: Planta[] }) {
-  const { listo, usuario, puede } = usePermisos()
+  const { listo, usuario, puede, esGerencial } = usePermisos()
   if (!listo) return null
   if (!usuario?.veFuncionesNuevas) return <SinAcceso texto="La carga de planta está en prueba: por ahora la ven solo los usuarios con las funciones nuevas." />
-  return <Pantalla plants={plants} puedeCargar={puede("carga", "cargar")} puedeEditar={puede("carga", "editar")} puedeResolver={puede("formulas", "editar")} puedeMuestra={puede("historial", "cargar")} />
+  return <Pantalla plants={plants} puedeCargar={puede("carga", "cargar")} puedeEditar={puede("carga", "editar")} puedeResolver={puede("formulas", "editar")} puedeMuestra={puede("historial", "cargar")} esGerencial={esGerencial} />
 }
 
-function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestra }: { plants: Planta[]; puedeCargar: boolean; puedeEditar: boolean; puedeResolver: boolean; puedeMuestra: boolean }) {
+function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestra, esGerencial }: { plants: Planta[]; puedeCargar: boolean; puedeEditar: boolean; puedeResolver: boolean; puedeMuestra: boolean; esGerencial: boolean }) {
   const { toast } = useToast()
   const aviso = useCallback((title: string, description?: string) => toast({ title, description }), [toast])
   const [planta, setPlanta] = useState(() => plants.find((p) => p.name === "Canning")?.id || plants[0]?.id || "")
@@ -374,9 +374,9 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       </div>
 
       {puesto && ctx && tab === "recetas" && (
-        <RecetasPlanta ctx={ctx} formulas={D.formulas} puedeEditar={puedeEditar} enPlanta={enPlanta} ultimaLectura={P.ultimaLectura}
+        <RecetasPlanta ctx={ctx} formulas={D.formulas} puedeEditar={puedeEditar} esGerencial={esGerencial} enPlanta={enPlanta} ultimaLectura={P.ultimaLectura}
           onLeer={() => void P.simular({ tipo: "leer" })} onCambiarTolva={puedeTolva && tolva1 ? () => setTolva(true) : null} onArmar={armarRecetas}
-          onAsignar={async (numero, formula_id) => { const j = await api("/api/carga/recetas/asignar", { puesto_id: ctx.puesto.id, numero, formula_id, tipo: numero >= 17 ? "rotativa" : "fija" }); if (j) aviso(`Receta ${numero}: ${D.formulas.find((f) => f.id === formula_id)?.code || "sin fórmula"}`, "Queda en Actividad. Se recomparó la receta.") ; return !!j }}
+          onAsignar={async (numero, formula_id) => { const j = await api("/api/carga/recetas/asignar", { puesto_id: ctx.puesto.id, numero, formula_id, tipo: numero >= 19 ? "rotativa" : "fija" }); if (j) aviso(`Receta ${numero}: ${D.formulas.find((f) => f.id === formula_id)?.code || "sin fórmula"}`, "Queda en Actividad. Se recomparó la receta.") ; return !!j }}
           onEtapa={async (et) => { const j = await api("/api/carga/puesto", { puesto_id: ctx.puesto.id, etapa: et }); if (j) aviso("Etapa del puesto cambiada", et === "orden" || et === "arranque" ? "Despachar manda la orden a la cola de carga." : "Despachar ya no manda órdenes a la cola.") }} />
       )}
       {puesto && ctx && tab === "alertas" && (
@@ -909,7 +909,9 @@ function GrillaReal({ ctx, cargas, extras, formulaDe, ahora, medio, anchoMedio, 
   const conectado = fresco(puesto, ahora)
   const [sel, setSel] = useState<string | null>(null)
   const [buscar, setBuscar] = useState("")
-  const hoy0 = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString() }, [])
+  // Se recalcula al pasar la medianoche (ahora cambia cada segundo; el día, una vez)
+  const dia = new Date(ahora).toDateString()
+  const hoy0 = useMemo(() => { const d = new Date(dia); d.setHours(0, 0, 0, 0); return d.toISOString() }, [dia])
   const deHoy = useMemo(() => cargas.filter((c) => c.origen === "indumix" && (c.fin_at || c.created_at) >= hoy0)
     .sort((a, b) => (b.fin_at || b.created_at).localeCompare(a.fin_at || a.created_at)), [cargas, hoy0])
   const elegida = deHoy.find((c) => c.id === sel) || deHoy[0] || null
