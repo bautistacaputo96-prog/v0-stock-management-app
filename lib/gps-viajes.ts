@@ -228,7 +228,8 @@ export function valoresTipicos(xs: (number | null | undefined)[], R: ReglasAtipi
     const escala = Math.max(1.4826 * mad, R.pisoMin, R.pisoParte * Math.abs(med))
     idx.forEach((i, q) => { if (Math.abs(v[q] - med) > R.k * escala) usar[i] = false })
   } else if (v.length >= 3) {
-    const lejos = (x: number, ref: number) => (x > 0 && ref > 0 ? x > R.factorPocas * ref || x * R.factorPocas < ref : x !== ref)
+    // Valores ≤ 0 no se comparan (no son tiempos): no se descartan
+    const lejos = (x: number, ref: number) => x > 0 && ref > 0 && (x > R.factorPocas * ref || x * R.factorPocas < ref)
     const candidatos = idx.filter((_, q) => {
       const otros = v.filter((_, r) => r !== q)
       const parecidos = Math.max(...otros) <= R.factorPocas * Math.min(...otros)
@@ -836,6 +837,9 @@ export const TIEMPOS_GPS = {
    * se devuelve marcada `unDia` y lib/viajes.ts la usa solo si la obra tiene el viaje por defecto (30).
    */
   minDiasObra: 2,
+  /** Ida de un solo día: los viajes que quedan tienen que ser coherentes (el mayor ≤ 1,5 × el menor, o ≤ 5 min de diferencia) */
+  unDiaFactor: 1.5,
+  unDiaDifMin: 5,
   /** Planta: tiempo en planta y descarga directa / con bomba (decisión de Bautista 08/10: la de bomba de Canning se usa con 18) */
   minViajesPlanta: 10,
   enPlanta: [1, 240] as [number, number],
@@ -892,9 +896,16 @@ export type MuestraObraGps = { min: number; m3: number }
  * y cuántos fueron con bomba / directo. `muestras` = los viajes válidos (antes de descartar), para calcular la descarga
  * de un camión de otros m³ con los viajes parecidos (descargaParaM3).
  */
-export type MedidaObraGps = MedidaGps & { m3: number; bomba?: number; directo?: number; muestras?: MuestraObraGps[] }
-/** Descarga de un camión de `m3` m³: minutos (con el lavado) y de qué viajes sale; parecidos = de los de m³ parecidos. */
-export type DescargaGps = { min: number; m3: number; viajes: number; descartados?: number; parecidos: boolean }
+export type MedidaObraGps = MedidaGps & {
+  m3: number; bomba?: number; directo?: number; muestras?: MuestraObraGps[]
+  /** Descarga de un camión de 8 m³, precalculada en calcularTiemposGps (la usan los parámetros de la planta) */
+  descarga8?: DescargaGps
+}
+/**
+ * Descarga de un camión de `m3` m³: minutos (con el lavado) y de qué viajes sale. parecidos = de los viajes con m³
+ * parecidos; si no, del tiempo típico de todos, y `otrosM3` dice si entre ellos hay viajes de otros m³.
+ */
+export type DescargaGps = { min: number; m3: number; viajes: number; descartados?: number; parecidos: boolean; otrosM3?: true }
 export type M3SugeridoGps = { m3: number; viajes: number; desde: number; hasta: number }
 export type TiemposObraGps = {
   /** Ida real por planta de salida (la ida depende de la planta) */
@@ -928,16 +939,34 @@ function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | nul
   const s = sinAtipicos(v, valor)
   const m = conDescartados({ min: Math.round(s.valor), viajes: v.length }, s.descartados)
   if (dias(v) >= minDias) return m
-  return unDia && s.quedan.length >= minViajes ? { ...m, unDia: true } : null
+  return unDia && s.quedan.length >= minViajes && coherentes(s.quedan.map((f) => valor(f)!)) ? { ...m, unDia: true } : null
+}
+/** Viajes coherentes entre sí (ida de un solo día): el mayor ≤ 1,5 × el menor, o una diferencia de 5 min o menos. */
+function coherentes(xs: number[], P: ReglasTiemposGps = TIEMPOS_GPS): boolean {
+  const mn = Math.min(...xs), mx = Math.max(...xs)
+  return mx <= P.unDiaFactor * mn || mx - mn <= P.unDiaDifMin
+}
+/**
+ * Atípicos del tiempo en obra buscados dentro de cada grupo de m³ parecidos (no mezclando camiones chicos y grandes):
+ * cada viaje se compara con los viajes a ±m3Parecidos m³ de los suyos (él incluido) y se descarta si es atípico ahí.
+ */
+function sinAtipicosPorM3(v: FilaTiemposGps[], P: ReglasTiemposGps) {
+  const quedan = v.filter((f) => {
+    const grupo = v.filter((g) => Math.abs(g.m3! - f.m3!) <= P.m3Parecidos + 1e-9)
+    return valoresTipicos(grupo.map((g) => g.min_obra)).usar[grupo.indexOf(f)]
+  })
+  const q = quedan.length ? quedan : v
+  return { quedan: q, valor: mediana(q.map((f) => f.min_obra!))!, descartados: v.length - q.length }
 }
 /**
  * Tiempo en obra de los viajes que tienen tiempo en obra y m³ válidos (mínimo de viajes y de días contados en los
- * válidos). Los atípicos se buscan en los minutos; de los que quedan salen el tiempo típico, los m³ típicos y los métodos.
+ * válidos). Los atípicos se buscan en los minutos, dentro de cada grupo de m³ parecidos; de los que quedan salen el
+ * tiempo típico, los m³ típicos y los métodos.
  */
 function medidaObra(fs: FilaTiemposGps[], P: ReglasTiemposGps, minViajes: number, minDias = 1): MedidaObraGps | null {
   const v = fs.filter((f) => dentro(f.min_obra, P.obra) && dentro(f.m3, P.m3))
   if (v.length < minViajes || dias(v) < minDias) return null
-  const s = sinAtipicos(v, (f) => f.min_obra)
+  const s = sinAtipicosPorM3(v, P)
   const bomba = s.quedan.filter((f) => f.metodo === "bomba").length
   return {
     ...conDescartados(
@@ -954,12 +983,29 @@ function medidaObra(fs: FilaTiemposGps[], P: ReglasTiemposGps, minViajes: number
  * todos los viajes, sin escalar. Sin `muestras` (medida armada a mano) usa el tiempo típico.
  */
 export function descargaParaM3(o: MedidaObraGps, m3: number, P: ReglasTiemposGps = TIEMPOS_GPS): DescargaGps {
-  const cerca = (o.muestras || []).filter((x) => Math.abs(x.m3 - m3) <= P.m3Parecidos + 1e-9)
+  if (m3 === 8 && o.descarga8 && P === TIEMPOS_GPS) return o.descarga8
+  // Caché por medida (obra o planta + método) y m³: la misma medida se consulta muchas veces al armar un día
+  const cache = P === TIEMPOS_GPS ? cacheDescarga.get(o) || cacheDescarga.set(o, new Map()).get(o)! : null
+  const hit = cache?.get(m3)
+  if (hit) return hit
+  const parecido = (x: MuestraObraGps) => Math.abs(x.m3 - m3) <= P.m3Parecidos + 1e-9
+  const muestras = o.muestras || []
+  const cerca = muestras.filter(parecido)
+  let d: DescargaGps
   if (cerca.length >= P.minViajesM3Parecidos) {
     const t = valoresTipicos(cerca.map((x) => x.min))
-    return { min: Math.round(t.valor!), m3, viajes: cerca.length, ...(t.descartadas ? { descartados: t.descartadas } : {}), parecidos: true }
+    d = { min: Math.round(t.valor!), m3, viajes: cerca.length, ...(t.descartadas ? { descartados: t.descartadas } : {}), parecidos: true }
+  } else {
+    const otros = muestras.some((x) => !parecido(x))
+    d = { min: o.min, m3, viajes: o.viajes, ...(o.descartados ? { descartados: o.descartados } : {}), parecidos: false, ...(otros ? { otrosM3: true as const } : {}) }
   }
-  return { min: o.min, m3, viajes: o.viajes, ...(o.descartados ? { descartados: o.descartados } : {}), parecidos: false }
+  cache?.set(m3, d)
+  return d
+}
+const cacheDescarga = new WeakMap<MedidaObraGps, Map<number, DescargaGps>>()
+/** La medida con la descarga de un camión de 8 m³ precalculada. */
+function conDescarga8(o: MedidaObraGps | null): MedidaObraGps | null {
+  return o ? { ...o, descarga8: descargaParaM3(o, 8) } : null
 }
 /** m³ por camión con un patrón claro: mediana redondeada a 0,5 y la mayoría a ±1 m³ de ella. */
 export function m3Sugerido(m3s: (number | null | undefined)[], P: ReglasTiemposGps = TIEMPOS_GPS): M3SugeridoGps | null {
@@ -1022,8 +1068,8 @@ export function calcularTiemposGps(filas: FilaTiemposGps[], desde = "", P: Regla
   for (const [id, fs] of porPlanta) {
     plantas[id] = {
       enPlanta: medida(fs.filter((f) => !fuera.has(f)), (f) => f.min_en_planta, P.enPlanta, P.minViajesPlanta),
-      directo: medidaObra(fs.filter((f) => f.metodo === "directo"), P, P.minViajesPlanta),
-      bomba: medidaObra(fs.filter((f) => f.metodo === "bomba"), P, P.minViajesPlanta),
+      directo: conDescarga8(medidaObra(fs.filter((f) => f.metodo === "directo"), P, P.minViajesPlanta)),
+      bomba: conDescarga8(medidaObra(fs.filter((f) => f.metodo === "bomba"), P, P.minViajesPlanta)),
     }
   }
   return { desde, ...(desdeIda ? { desdeIda } : {}), obras, plantas }
@@ -1060,14 +1106,26 @@ export function cargarTiemposGps(sb: any, opts: { refrescar?: boolean; hoy?: str
   const desde = sumarDias(hoy, -TIEMPOS_GPS.ventanaDias)
   // Se lee la ventana de la ida (365 días); calcularTiemposGps usa solo los últimos 90 para todo lo que no es la ida
   const desdeIda = sumarDias(hoy, -TIEMPOS_GPS.ventanaIdaDias)
-  // El pedido se pide por la FK del remito (scheduled_dispatches también tiene dispatch_id: sin el nombre es ambiguo)
-  const lectura = todasLasFilas((a, b) =>
+  // Últimos 90 días, completos. El pedido se pide por la FK del remito (scheduled_dispatches también tiene
+  // dispatch_id: sin el nombre es ambiguo)
+  const recientes = todasLasFilasEnParalelo((a, b, contar) =>
     sb.from("viajes_gps")
-      .select("mixer_id, fecha, salida_planta, llegada_planta_previa, plant_id_salida, construction_site_id, min_en_planta, min_ida, min_obra, dispatches(quantity_m3, is_test_dispatch, scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(metodo_descarga)), construction_sites(requires_pump)")
-      .eq("estado", "completo").in("confianza", ["alta", "media"]).gte("fecha", desdeIda)
+      .select("mixer_id, fecha, salida_planta, llegada_planta_previa, plant_id_salida, construction_site_id, min_en_planta, min_ida, min_obra, dispatches(quantity_m3, is_test_dispatch, scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(metodo_descarga)), construction_sites(requires_pump)", contar ? { count: "exact" } : undefined)
+      .eq("estado", "completo").in("confianza", ["alta", "media"]).gte("fecha", desde)
       .order("salida_planta").order("mixer_id").range(a, b),
   )
-    .then((rows) => (rows.length ? calcularTiemposGps(rows.map(filaTiemposDeConsulta).filter((f): f is FilaTiemposGps => !!f), desde, TIEMPOS_GPS, desdeIda) : null))
+  // Días 91 a 365: solo lo de la ida (consulta liviana; el árido se descarta igual)
+  const viejos = todasLasFilasEnParalelo((a, b, contar) =>
+    sb.from("viajes_gps")
+      .select("fecha, plant_id_salida, construction_site_id, min_ida, min_obra, dispatches(is_test_dispatch)", contar ? { count: "exact" } : undefined)
+      .eq("estado", "completo").in("confianza", ["alta", "media"]).gte("fecha", desdeIda).lt("fecha", desde)
+      .order("salida_planta").order("mixer_id").range(a, b),
+  )
+  const lectura = Promise.all([recientes, viejos])
+    .then(([r, v]) => {
+      const rows = [...v, ...r]
+      return rows.length ? calcularTiemposGps(rows.map(filaTiemposDeConsulta).filter((f): f is FilaTiemposGps => !!f), desde, TIEMPOS_GPS, desdeIda) : null
+    })
     .catch(() => null)
   let reloj: ReturnType<typeof setTimeout> | undefined
   const tarde = new Promise<null>((r) => { reloj = setTimeout(() => r(null), opts.esperaMs ?? TIEMPOS_GPS.esperaLecturaMs) })
@@ -1197,6 +1255,29 @@ export async function todasLasFilas<T = any>(armar: (desde: number, hasta: numbe
     if (error) throw error
     out.push(...(data || []))
     if (!data || data.length < pagina) break
+  }
+  return out
+}
+
+/**
+ * Como todasLasFilas pero pidiendo las páginas en paralelo: la primera trae la cuenta (count: "exact") y las demás
+ * salen juntas. Si la respuesta no trae la cuenta, sigue de a una.
+ */
+export async function todasLasFilasEnParalelo<T = any>(
+  armar: (desde: number, hasta: number, contar: boolean) => PromiseLike<{ data: T[] | null; error: any; count?: number | null }>,
+  pagina = 1000,
+): Promise<T[]> {
+  const primera = await armar(0, pagina - 1, true)
+  if (primera.error) throw primera.error
+  const out: T[] = [...(primera.data || [])]
+  if (!primera.data || primera.data.length < pagina) return out
+  if (primera.count == null) return [...out, ...(await todasLasFilas((a, b) => armar(a + pagina, b + pagina, false), pagina))]
+  const resto = await Promise.all(
+    Array.from({ length: Math.ceil(primera.count / pagina) - 1 }, (_, k) => armar((k + 1) * pagina, (k + 2) * pagina - 1, false)),
+  )
+  for (const r of resto) {
+    if (r.error) throw r.error
+    out.push(...(r.data || []))
   }
   return out
 }

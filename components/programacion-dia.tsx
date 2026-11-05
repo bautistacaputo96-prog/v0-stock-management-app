@@ -33,7 +33,7 @@ import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerencia
 import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import { type Ocupado } from "@/lib/planificador"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
-import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
+import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoOtrosM3, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
 import { cargarTiemposGps, descargaParaM3, type TiemposGps } from "@/lib/gps-viajes"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
@@ -509,8 +509,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   {gpsPlanta?.enPlanta && (
                     <p>En planta, de que llega a que sale (sin el primer viaje del día): <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca, es el campo de arriba) + espera antes de volver a cargar (no ocupa la boca).</p>
                   )}
-                  {descDirecta && <p>Directo: ≈ {prmGpsSolo.descargaDirectaMin} min por camión de 8 m³ · {textoViajesGps(descDirecta)}{descDirecta.parecidos ? "" : " (de todos los viajes: pocos con 8 m³)"}{prm.lavadoMin > 0 ? ` (sin los ${prm.lavadoMin} de lavado)` : ""}.</p>}
-                  {descBomba && <p>Con bomba: ≈ {prmGpsSolo.descargaBombaMin} min por camión de 8 m³ · {textoViajesGps(descBomba)}{descBomba.parecidos ? "" : " (de todos los viajes: pocos con 8 m³)"}{prm.lavadoMin > 0 ? ` (sin los ${prm.lavadoMin} de lavado)` : ""}.</p>}
+                  {descDirecta && <p>Directo: ≈ {prmGpsSolo.descargaDirectaMin} min por camión de 8 m³{prm.lavadoMin > 0 ? ` (sin lavado: se restan los ${prm.lavadoMin} min)` : ""} · {textoViajesGps(descDirecta)}{textoOtrosM3(descDirecta)}.</p>}
+                  {descBomba && <p>Con bomba: ≈ {prmGpsSolo.descargaBombaMin} min por camión de 8 m³{prm.lavadoMin > 0 ? ` (sin lavado: se restan los ${prm.lavadoMin} min)` : ""} · {textoViajesGps(descBomba)}{textoOtrosM3(descBomba)}.</p>}
                   <div className="divide-y rounded border bg-background">
                     {filasReales.map((f) => (
                       <div key={f.k} className="flex items-center gap-2 flex-wrap px-2 py-1.5">
