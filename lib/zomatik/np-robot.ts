@@ -18,7 +18,7 @@ import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
-  autorizacionEnListado, tieneFormAutorizar, type CampoForm, type Renglon,
+  autorizacionEnListado, tieneFormAutorizar, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 
@@ -305,9 +305,9 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
       if (x.estado === "dudosa") return dudosa(x, paso)
     }
     // Controles antes de tocar Zomatik
-    if (!d.clienteCodigo) throw dato("El cliente no está vinculado con Zomatik (Vínculos con Zomatik).")
+    if (!d.clienteCodigo) throw dato(`${MSJ_SIN_CLIENTE} (Vínculos con Zomatik).`)
     if (!d.deposito) throw dato("La planta no tiene depósito de Zomatik.")
-    if (!d.articuloCodigoSistema) throw dato(`La fórmula no está vinculada con un artículo de Zomatik${d.articuloNombre ? ` (${d.articuloNombre})` : ""}.`)
+    if (!d.articuloCodigoSistema) throw dato(`${MSJ_SIN_ARTICULO}${d.articuloNombre ? ` (${d.articuloNombre})` : ""}.`)
     if (!(d.m3 > 0)) throw dato("El pedido no tiene m³.")
     if (d.tipo === "nueva" && !d.comprobante) throw dato("Falta el tipo de remito (R o X): define si es NP o NP2.")
     if (d.tipo === "proyecto" && !d.proyectoCodigo) throw dato("Falta elegir el proyecto.")
