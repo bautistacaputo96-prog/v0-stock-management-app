@@ -98,12 +98,19 @@ export function espaciadoDe(p: PedidoParaViajes, m3: number, prm: Parametros) {
   return Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : descargaDe(p, m3, prm)
 }
 
-/** 00:00 (hora local) del día del pedido */
+/**
+ * Hora de Argentina fija (UTC−3, sin horario de verano desde 2009): así el navegador y el servidor (Vercel corre en UTC)
+ * arman el día igual. En un navegador de Argentina da lo mismo que la hora local.
+ */
+const OFFSET_AR = 3 * 3600_000
+const DIA_MS = 24 * 3600_000
+/** 00:00 (hora de Argentina) del día del pedido */
 function inicioDelDia(iso: string) {
-  const d = new Date(iso)
-  d.setHours(0, 0, 0, 0)
-  return d.getTime()
+  const t = new Date(iso).getTime()
+  return Math.floor((t - OFFSET_AR) / DIA_MS) * DIA_MS + OFFSET_AR
 }
+/** "HH:MM" en hora de Argentina */
+const hhAR = (t: number) => { const d = new Date(t - OFFSET_AR); return aHora(d.getUTCHours() * 60 + d.getUTCMinutes()) }
 const aIso = (base: number, minutos: number) => new Date(base + Math.round(minutos) * MIN).toISOString()
 const minDelDia = (base: number, iso: string) => (new Date(iso).getTime() - base) / MIN
 
@@ -288,7 +295,7 @@ export function choquesDeCamion(viajes: ViajeRow[]): Map<string, ChoqueCamion> {
 
 /** "AF431GU todavía vuelve de Obra X a las 09:40" / "AF431GU tiene que cargar para Obra X a las 09:10" */
 export function textoChoque(ch: ChoqueCamion, patente: string, obra: string) {
-  const hh = (iso: string) => { const d = new Date(iso); return aHora(d.getHours() * 60 + d.getMinutes()) }
+  const hh = (iso: string) => hhAR(new Date(iso).getTime())
   return ch.otroAntes
     ? `${patente} todavía vuelve de ${obra} a las ${hh(ch.otro.hora_vuelta)}`
     : `${patente} tiene que cargar para ${obra} a las ${hh(ch.otro.hora_carga)}, antes de volver de este viaje`
@@ -344,7 +351,7 @@ export function textoConMenosCamiones(viajesPlan: ViajeRow[], ideal: ViajeRow[],
     const h = Math.round((new Date(orden[i].hora_llegada).getTime() - new Date(orden[i - 1].hora_fin_descarga).getTime()) / MIN)
     if (h > 0) huecos.push(h)
   }
-  const hh = (t: number) => { const d = new Date(t); return aHora(d.getHours() * 60 + d.getMinutes()) }
+  const hh = (t: number) => hhAR(t)
   const prom = huecos.length ? Math.round(huecos.reduce((s, x) => s + x, 0) / huecos.length) : 0
   return `Con ${camionesUsados} ${camionesUsados === 1 ? "camión" : "camiones"} el vaciado termina ${hh(finReal)} en vez de ${hh(finIdeal)}${huecos.length ? `, con ${huecos.length} hueco${huecos.length === 1 ? "" : "s"} de ${prom} min` : ""}`
 }

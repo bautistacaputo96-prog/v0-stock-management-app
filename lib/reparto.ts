@@ -1029,7 +1029,7 @@ function avisosDelDia(res: ResultadoDia, ent: EntradaDia): Aviso[] {
 export function avisosSuperposicion(viajes: ViajeRow[], obraDe: (pedidoId: string) => string, patente: (id: string) => string): Aviso[] {
   const out: Aviso[] = []
   const vistos = new Set<string>()
-  const hh = (iso: string) => { const d = new Date(iso); return aHora(d.getHours() * 60 + d.getMinutes()) }
+  const hh = horaArgentina
   for (const ch of choquesDeCamion(viajes).values()) {
     const antes = ch.otroAntes ? ch.otro : ch.viaje, despues = ch.otroAntes ? ch.viaje : ch.otro
     const k = [antes.pedido_id, antes.n, despues.pedido_id, despues.n].join(":")

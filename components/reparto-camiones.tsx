@@ -30,9 +30,11 @@ import { choquesDeCamion, claveViaje, conTiemposGps, m3ParaSugerir, parametrosCo
 import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
 import { textoMotivo } from "@/lib/despacho"
 import { guardarHoraPedido, guardarMetodoPedido, guardarPlanDia, confirmarPedidos, planGuardarYConfirmar, type PlanGuardar } from "@/lib/programacion-acciones"
+import { textoEstadoMail, MAIL_ARMADO_A, MAIL_ARMADO_CC, type EstadoMail } from "@/lib/armado-dia"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { format } from "date-fns"
 import { es } from "date-fns/locale"
-import { AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, CircleHelp, ListOrdered, Loader2, MapPin, Moon, Plus, RefreshCw, Truck, X } from "lucide-react"
+import { AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, CircleHelp, ListOrdered, Loader2, Mail, MapPin, Moon, Plus, RefreshCw, Send, Truck, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type Plant = { id: string; name: string }
@@ -232,6 +234,9 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
   const [plan, setPlan] = useState<PlanGuardar | null>(null)
   const [trabajando, setTrabajando] = useState(false)
   const [empresas, setEmpresas] = useState<EmpresaBombeo[]>([])
+  // Mail del armado (fase B): "Ver el mail" y "Enviar ahora"
+  const [mailVisto, setMailVisto] = useState<{ asunto: string; html: string } | null>(null)
+  const [mailTrabajando, setMailTrabajando] = useState<"ver" | "enviar" | null>(null)
   useEffect(() => { if (rep.activo) cargarEmpresasBombeo(createClient()).then(setEmpresas) }, [rep.activo])
   // 0 = con los camiones que hay; 1 / 2 = escenario con camiones ficticios (solo para ver)
   const [escenario, setEscenario] = useState<0 | 1 | 2>(0)
@@ -347,6 +352,19 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
     else toast({ title: "Día guardado y confirmado", description: `${hechos.join(", ") || "Nada que cambiar"}. Quedó en Actividad.` })
     await rep.cargar(true)
     onGuardado?.()
+  }
+
+  async function llamarMail(accion: "ver" | "enviar") {
+    setMailTrabajando(accion)
+    try {
+      const r = await fetch("/api/programacion/armado-dia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fecha: rep.fechaDia, accion }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.ok === false) { toast({ title: accion === "ver" ? "No se pudo armar el mail" : "No se mandó el mail", description: d.error || `Error ${r.status}`, variant: "destructive" }); return }
+      if (accion === "ver") setMailVisto({ asunto: d.asunto, html: d.html })
+      else { toast({ title: d.prueba ? "Mail de prueba enviado" : "Mail enviado", description: d.a?.length ? `A ${d.a.join(", ")}` : undefined }); await rep.cargar(false) }
+    } finally {
+      setMailTrabajando(null)
+    }
   }
 
   async function alternarConfirmado(p: PedidoDia) {
@@ -566,6 +584,27 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
           </div>
         )}
 
+        {/* Mail del armado (fase B): estado, Ver el mail y Enviar ahora */}
+        {!esc && !sinPedidos && (
+          <div className="flex items-start gap-2 flex-wrap text-xs text-muted-foreground">
+            <Mail className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <div className="space-y-0.5">
+              {textoEstadoMail((rep.datos?.armadoMail as EstadoMail | null) || null, rep.fechaDia, Date.now(), rep.hayCambios).map((t, i) => <p key={i}>{t}</p>)}
+            </div>
+            <div className="ml-auto flex gap-1.5">
+              <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-1" disabled={!!mailTrabajando} onClick={() => llamarMail("ver")}>
+                {mailTrabajando === "ver" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />}Ver el mail
+              </Button>
+              {editaTodo && (
+                <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-1" disabled={!!mailTrabajando || rep.hayCambios} title={rep.hayCambios ? "Guardá los cambios antes de mandar" : undefined}
+                  onClick={() => { if (window.confirm(`Se manda ahora el armado del ${tituloDia} a ${MAIL_ARMADO_A.join(", ").split(" ")[0]} con copia a ${MAIL_ARMADO_CC.join(", ").split(" ")[0]}.`)) llamarMail("enviar") }}>
+                  {mailTrabajando === "enviar" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}Enviar ahora
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Diagrama: una fila por camión, un bloque por viaje (de la carga a la vuelta) */}
         <div className="overflow-x-auto">
           <div className="min-w-[680px] space-y-1">
@@ -644,7 +683,7 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                       {rep.plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <span className="text-muted-foreground">durmió en: {rep.amanece[m.id] ? rep.nombres[rep.amanece[m.id]!] : "a confirmar"}</span>
+                  <span className="text-muted-foreground">durmió en: {rep.amanece[m.id] ? `${rep.nombres[rep.amanece[m.id]!]} (${v.fuenteAmanece[m.id] === "gps" ? `GPS ${(() => { const t = rep.datos?.amanecer?.find((a) => a.mixer_id === m.id)?.tomado_at; return t ? horaArgentina(t) : "" })()}`.trim() : "reparto"})` : "a confirmar"}</span>
                 </div>
               )
             })}
@@ -656,6 +695,14 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
             </div>
           </div>
         )}
+
+        {/* "Ver el mail": el HTML que saldría ahora (no manda nada) */}
+        <Dialog open={!!mailVisto} onOpenChange={(o) => !o && setMailVisto(null)}>
+          <DialogContent className="sm:max-w-3xl max-h-[92vh] overflow-y-auto">
+            <DialogHeader><DialogTitle className="text-sm">{mailVisto?.asunto}</DialogTitle></DialogHeader>
+            {mailVisto && <iframe title="Mail del armado" srcDoc={mailVisto.html} className="w-full h-[70vh] rounded border bg-white" sandbox="" />}
+          </DialogContent>
+        </Dialog>
 
         {/* Cartel de "Guardar y confirmar" */}
         <AlertDialog open={!!plan} onOpenChange={(o) => !o && !trabajando && setPlan(null)}>

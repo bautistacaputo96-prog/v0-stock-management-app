@@ -27,6 +27,10 @@
     {
       "path": "/api/control-ingresos/controlar",
       "schedule": "25 19 * * *"
+    },
+    {
+      "path": "/api/programacion/armado-dia",
+      "schedule": "5 20 * * *"
     }
   ]
 }

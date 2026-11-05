@@ -51,6 +51,18 @@ export type DatosDia = {
   guardado: RepartoGuardado
   ayer: RepartoGuardado
   traslado: { disponible: boolean; fila: FilaTraslado | null }
+  /** Fase B: dónde amanece cada camión según la toma del GPS (amanecer_camiones); null sin la tabla */
+  amanecer?: AmanecerFila[] | null
+  /** Fase B: estado del mail del armado de esta fecha (armado_mail); null sin la tabla o sin fila */
+  armadoMail?: Record<string, any> | null
+}
+
+/** Una fila de amanecer_camiones */
+export type AmanecerFila = { mixer_id: string; plant_id: string | null; fuente: string; texto: string; tomado_at: string }
+
+/** Tablas de la fase B (si la migración no está aplicada: null, y todo sigue como antes) */
+async function leerOpcional(q: PromiseLike<{ data: any; error: any }>) {
+  try { const { data, error } = await q; return error ? null : data } catch { return null }
 }
 
 /** yyyy-mm-dd ± días (sin depender de la hora del equipo) */
@@ -81,8 +93,12 @@ export async function leerDatosDia(sb: any, fecha: string, plants: { id: string;
     plantIds.length === 2 ? cargarTraslado(sb, plantIds[0], plantIds[1]) : Promise.resolve({ disponible: false, fila: null }),
   ])
   const pedidosHoy = ((ph as any[]) || []) as PedidoDia[], pedidosManana = ((pm as any[]) || []) as PedidoDia[]
-  const viajes = await cargarViajes(sb, [...pedidosHoy, ...pedidosManana].map((p) => p.id))
-  return { fecha, base, plants, plantRows: (pls as any[]) || [], mixers: ((ms as any[]) || []) as MixerDia[], pedidosHoy, pedidosManana, viajes, tiempos, guardado, ayer, traslado }
+  const [viajes, amanecer, armadoMail] = await Promise.all([
+    cargarViajes(sb, [...pedidosHoy, ...pedidosManana].map((p) => p.id)),
+    leerOpcional(sb.from("amanecer_camiones").select("mixer_id, plant_id, fuente, texto, tomado_at").eq("fecha", fecha)),
+    leerOpcional(sb.from("armado_mail").select("*").eq("fecha", fecha).maybeSingle()),
+  ])
+  return { fecha, base, plants, plantRows: (pls as any[]) || [], mixers: ((ms as any[]) || []) as MixerDia[], pedidosHoy, pedidosManana, viajes, tiempos, guardado, ayer, traslado, amanecer: (amanecer as AmanecerFila[] | null) || null, armadoMail: armadoMail || null }
 }
 
 /** El pedido con la hora y el método cambiados en la pantalla (sin guardar) */
@@ -103,6 +119,8 @@ export type VistaDia = {
   patentes: Record<string, string>
   traslado: ReturnType<typeof trasladoDe>
   amanece: Record<string, string | null>
+  /** De dónde sale el "durmió en" de cada camión */
+  fuenteAmanece: Record<string, "gps" | "reparto" | null>
   delDia: MixerDia[]
   camiones: CamionReparto[]
   noSalen: Set<string>
@@ -138,7 +156,11 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   const nombres = Object.fromEntries(plantas.map((p) => [p.id, p.nombre]))
   const patentes = Object.fromEntries(d.mixers.map((m) => [m.id, m.license_plate]))
   const traslado = trasladoDe(d.traslado.fila, opts.ruta || null)
-  const amanece: Record<string, string | null> = Object.fromEntries(d.mixers.map((m) => [m.id, opts.amanece?.[m.id] ?? d.ayer?.reparto?.[m.id]?.duerme ?? null]))
+  // Dónde arranca cada camión (4.3): lo que se pase (GPS en el momento) > la toma del GPS guardada > dónde duerme según
+  // el reparto del día anterior > a confirmar
+  const tomado = (id: string) => d.amanecer?.find((a) => a.mixer_id === id)
+  const amanece: Record<string, string | null> = Object.fromEntries(d.mixers.map((m) => [m.id, (opts.amanece && m.id in opts.amanece ? opts.amanece[m.id] : undefined) ?? tomado(m.id)?.plant_id ?? d.ayer?.reparto?.[m.id]?.duerme ?? null]))
+  const fuenteAmanece: Record<string, "gps" | "reparto" | null> = Object.fromEntries(d.mixers.map((m) => [m.id, opts.amanece && opts.amanece[m.id] ? "gps" : tomado(m.id)?.plant_id ? "gps" : d.ayer?.reparto?.[m.id]?.duerme ? "reparto" : null]))
   const delDia = d.mixers.filter((m) => m.status !== "maintenance" && m.status !== "unavailable")
   const efectivo: Reparto | null = opts.edicion ?? d.guardado?.reparto ?? null
   const noSalen = new Set(delDia.filter((m) => efectivo?.[m.id]?.sale === false).map((m) => m.id))
@@ -186,7 +208,7 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   }
   const filas = filasPedidos(resultado, pedidosR.map((x) => ({ ...pedidos.find((p) => p.id === x.p.id), ...x.p })), plantas, patentes)
   return {
-    fecha, base, plantas, nombres, patentes, traslado, amanece, delDia, camiones, noSalen, pedidos, entrada, sugerencia,
+    fecha, base, plantas, nombres, patentes, traslado, amanece, fuenteAmanece, delDia, camiones, noSalen, pedidos, entrada, sugerencia,
     noche, sugerido, efectivo, vigente, resultado, referencia, avisos, contexto, filas, numeros: resumenNumeros(resultado, filas), obraDe,
   }
 }

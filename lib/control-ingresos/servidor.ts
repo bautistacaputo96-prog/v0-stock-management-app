@@ -10,6 +10,7 @@
  * en la página que la sesión está en la 18. Si no, ese tramo no se guarda ni cuenta como leído.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { mailsDe } from "@/lib/mail-servidor"
 import { obtenerSesion, discoverForm, fetchExportEnSucursal, ZomatikError, type FormInfo, type ZomatikSesion } from "@/lib/zomatik/cliente"
 import { textoError } from "@/lib/zomatik/lectura"
 import type { Fila } from "@/lib/zomatik/parseo"
@@ -363,10 +364,7 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
 // Mail
 // ---------------------------------------------------------------------------
 
-async function mailsDe(sb: SupabaseClient, nombres: string[]): Promise<string[]> {
-  const { data } = await sb.from("app_users").select("name, email").eq("active", true).not("email", "is", null)
-  return ((data || []) as { name: string; email: string }[]).filter((u) => nombres.some((n) => n.toLowerCase() === u.name.trim().toLowerCase())).map((u) => u.email)
-}
+// mailsDe: lib/mail-servidor.ts (la usa también el mail del armado del día)
 
 /**
  * Mail del control (Bautista, 28/10/2026). Una vez por día como mucho, siempre a Juan con copia a Bautista.

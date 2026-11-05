@@ -71,7 +71,7 @@ export const SECCIONES: Seccion[] = [
     rutas: ["/programacion"],
     descripcion: {
       cargar: "Crear pedidos y ajustar los propios: hora y método, viajes, confirmar, el formulario del pedido",
-      editar: "Ajustar y corregir todos los pedidos, ordenar el día, editar total, tiempos de la planta, reparto de camiones del día, guardar y confirmar el día",
+      editar: "Ajustar y corregir todos los pedidos, ordenar el día, editar total, tiempos de la planta, reparto de camiones del día, guardar y confirmar el día, mandar el mail del armado",
       borrar: "Cancelar o eliminar pedidos",
     },
   },
