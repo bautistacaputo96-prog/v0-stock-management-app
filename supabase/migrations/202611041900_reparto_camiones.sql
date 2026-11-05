@@ -64,11 +64,15 @@ GRANT ALL ON TABLE public.reparto_camiones TO service_role;
 -- ---------------------------------------------------------------------------
 -- Guardar el reparto de una fecha (todo o nada)
 -- p_filas: [{ mixer_id, sale, tramos: [{ plant_id, desde: "HH:MM" | null }], duerme_plant_id, origen }]
--- Reemplaza todas las filas de esa fecha. Valida: camión activo y sin repetir, plantas que existen, horas HH:MM
+-- Reemplaza todas las filas de esa fecha. Una lista vacía se rechaza (borraría el reparto del día sin querer), salvo
+-- que venga p_borrar = true: entonces se borra el reparto de esa fecha y queda en Actividad. Valida: camión activo y sin repetir, plantas que existen, horas HH:MM
 -- crecientes (solo el primer tramo puede ir sin hora), dos tramos seguidos de distinta planta. Los avisos (un camión
 -- que no llega, un traslado corto) son de la pantalla y no frenan.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.guardar_reparto_dia(p_fecha date, p_filas jsonb, p_usuario text DEFAULT NULL)
+-- Versión anterior de esta misma migración (sin p_borrar), por si se llegó a correr: se reemplaza
+DROP FUNCTION IF EXISTS public.guardar_reparto_dia(date, jsonb, text);
+
+CREATE OR REPLACE FUNCTION public.guardar_reparto_dia(p_fecha date, p_filas jsonb, p_usuario text DEFAULT NULL, p_borrar boolean DEFAULT false)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -106,10 +110,23 @@ BEGIN
   IF p_filas IS NULL OR jsonb_typeof(p_filas) <> 'array' THEN
     RAISE EXCEPTION 'El reparto tiene que venir como una lista de camiones';
   END IF;
+  IF jsonb_array_length(p_filas) = 0 AND NOT coalesce(p_borrar, false) THEN
+    RAISE EXCEPTION 'El reparto viene vacío: no se guardó nada. Para borrar el reparto del día hay que pedirlo explícitamente.';
+  END IF;
+  IF jsonb_array_length(p_filas) > 0 AND coalesce(p_borrar, false) THEN
+    RAISE EXCEPTION 'Para borrar el reparto del día la lista tiene que venir vacía.';
+  END IF;
   -- Dos personas guardando el mismo día: gana la última (una por vez)
   PERFORM pg_advisory_xact_lock(hashtext('reparto_camiones'), (p_fecha - DATE '2000-01-01'));
 
   DELETE FROM reparto_camiones WHERE fecha = p_fecha;
+
+  IF coalesce(p_borrar, false) THEN
+    INSERT INTO activity_log (user_name, action, entity, entity_id, reference, plant_id, details)
+    VALUES (v_usuario, 'borrar', 'reparto', p_fecha::text, to_char(p_fecha, 'DD/MM/YYYY'), NULL,
+            jsonb_build_object('Reparto', 'borrado: el día vuelve a planificarse con todos los camiones'));
+    RETURN jsonb_build_object('fecha', p_fecha, 'camiones', 0, 'borrado', true);
+  END IF;
 
   FOR e IN SELECT * FROM jsonb_array_elements(p_filas) LOOP
     v_mixer := nullif(e->>'mixer_id', '')::uuid;
@@ -204,7 +221,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.guardar_reparto_dia(date, jsonb, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.guardar_reparto_dia(date, jsonb, text) TO anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.guardar_reparto_dia(date, jsonb, text, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.guardar_reparto_dia(date, jsonb, text, boolean) TO anon, authenticated, service_role;
 
 COMMIT;

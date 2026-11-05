@@ -16,7 +16,7 @@
  */
 import { planificar, aMin, aHora, type Parametros, type Camion, type Ocupado, type Pedido, type Plan } from "@/lib/planificador"
 import {
-  entradaPedido, pedidoParaPlan, filasDelPlan, explicarFlota, conBombaDe, choquesDeCamion, textoConMenosCamiones,
+  entradaPedido, pedidoParaPlan, filasDelPlan, explicarFlota, choquesDeCamion, textoConMenosCamiones,
   type PedidoParaViajes, type ViajeRow,
 } from "@/lib/viajes"
 
@@ -104,8 +104,6 @@ export type ResultadoPedido = {
   cedeA: string | null
   /** Bomba que no alcanza y no hay de dónde sacar camiones */
   sinArreglo: boolean
-  /** Camiones que llegan a cargar antes de completar la primera vuelta (para "a esa hora hay 3") */
-  hayALaHora: number
   primeraCargaIdeal: number
   ultimaVueltaIdeal: number
   finJornada: number
@@ -359,12 +357,8 @@ function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>,
       return { n, plan, filas, medida, ok: alcanza(medida, x.ped.conBomba, reglas), traslados, usados }
     }
     const base = { id: x.ped.id, plantId: x.plantId, obra: x.pr.obra, conBomba: x.ped.conBomba, necesarios: x.min.necesarios, flotaIdeal: x.min.flotaIdeal, ritmo: x.min.ritmo, primeraCargaIdeal: x.primeraCarga, ultimaVueltaIdeal: x.ultimaVuelta, finJornada: aMin(x.prm.finJornada) }
-    // Para "a esa hora hay N": los que pueden cargar antes de que termine la primera vuelta del ideal
-    const ideal = x.min.ideal.viajes
-    const limite = ideal[Math.min(x.min.necesarios, ideal.length) - 1].inicioCarga + (x.ped.conBomba ? reglas.bomba.corteMax : reglas.directo.corteMax)
-    const hayALaHora = orden.filter((o) => o.t <= limite).length
     if (!orden.length) {
-      res.push({ ...base, viajes: [], filas: [], camiones: [], medida: medir([], x.finIdeal), alcanza: false, traslados: 0, alternativa: null, hayALaHora: 0 })
+      res.push({ ...base, viajes: [], filas: [], camiones: [], medida: medir([], x.finIdeal), alcanza: false, traslados: 0, alternativa: null })
       continue
     }
     const desde = Math.max(1, Math.min(x.min.necesarios, tope ?? Infinity))
@@ -385,7 +379,7 @@ function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>,
     viajes.push(...vs)
     res.push({
       ...base, viajes: vs, filas: elegido.filas, camiones: [...elegido.usados], medida: elegido.medida, alcanza: elegido.ok,
-      traslados: elegido.traslados, alternativa, hayALaHora,
+      traslados: elegido.traslados, alternativa,
     })
   }
   return { res, viajes }
@@ -434,6 +428,30 @@ export function armarDia(ent: EntradaDia): ResultadoDia {
     : tramosDe(ent.camiones, r.viajes, plantas, ent.traslado)
   const out: ResultadoDia = { pedidos, viajes: r.viajes, tramos, traslados, arranquesMovidos, avisos: [] }
   out.avisos = avisosDelDia(out, ent)
+  return out
+}
+
+/**
+ * La entrada del día con lo que se ve en la pantalla para una planta ("Ordenar el día"): sus pedidos con la hora y los
+ * tiempos de la pantalla, sus viajes guardados y los parámetros de la planta aunque no estén guardados. Lo de la otra
+ * planta queda como se cargó.
+ */
+export function entradaConPantalla(ent: EntradaDia, plantId: string, pantalla: { pedidos: PedidoReparto[]; prm: Parametros }): EntradaDia {
+  const ids = new Set(pantalla.pedidos.map((x) => x.p.id))
+  const deEstaPlanta = new Set(ent.pedidos.filter((x) => x.p.plant_id === plantId).map((x) => x.p.id))
+  const pedidos = [...ent.pedidos.filter((x) => x.p.plant_id !== plantId && !ids.has(x.p.id)), ...pantalla.pedidos]
+  const plantas = ent.plantas.map((p) => (p.id === plantId ? { ...p, prm: pantalla.prm } : p))
+  const fijos = [
+    ...(ent.fijos || []).filter((v) => !ids.has(v.pedido_id) && !deEstaPlanta.has(v.pedido_id) && v.plant_id !== plantId),
+    ...pantalla.pedidos.flatMap((x) => x.existentes.filter((v) => v.estado === "despachado")),
+  ]
+  return { ...ent, pedidos, plantas, fijos }
+}
+
+/** "Ordenar el día" con el reparto: los viajes propuestos para los pedidos de una planta. */
+export function propuestaDePlanta(res: ResultadoDia, plantId: string): Record<string, ViajeRow[]> {
+  const out: Record<string, ViajeRow[]> = {}
+  for (const p of res.pedidos) if (p.plantId === plantId && p.filas.length) out[p.id] = p.filas
   return out
 }
 
@@ -695,6 +713,17 @@ export function textoNoche(duerme: Record<string, string | null>, plantas: Plant
   return `A la noche: ${plural(total, "queda", "quedan")} ${partes.length > 1 ? `${partes.slice(0, -1).join(", ")} y ${partes[partes.length - 1]}` : partes[0]}`
 }
 
+/**
+ * "tiene 2 camiones y hacen falta 3": los camiones que de verdad le tocan al pedido contra los que necesita. Si tiene
+ * los que hacen falta (o más) pero igual espera, es porque llegan tarde.
+ */
+function textoTiene(r: { camiones: string[]; necesarios: number }) {
+  const n = r.camiones.length
+  return n < r.necesarios
+    ? `tiene ${camionesTxt(n)} y hacen falta ${r.necesarios}`
+    : `tiene ${camionesTxt(n)} pero no llegan a tiempo (los otros están en otros pedidos o en la otra planta)`
+}
+
 /** Avisos del bloque (bomba, fin de jornada, superposiciones de viajes guardados, traslado a confirmar). */
 function avisosDelDia(res: ResultadoDia, ent: EntradaDia): Aviso[] {
   const out: Aviso[] = []
@@ -702,8 +731,8 @@ function avisosDelDia(res: ResultadoDia, ent: EntradaDia): Aviso[] {
   for (const r of res.pedidos) {
     if (r.conBomba && !r.alcanza && r.camiones.length) {
       out.push(r.sinArreglo && !restringido
-        ? { nivel: "rojo", pedidoId: r.id, texto: `No alcanzan los camiones para la bomba de ${r.obra}: hacen falta ${r.necesarios} y a esa hora hay ${r.hayALaHora}.` }
-        : { nivel: "ambar", pedidoId: r.id, texto: `La bomba de ${r.obra} va a esperar: hacen falta ${camionesTxt(r.necesarios)} y a esa hora hay ${r.hayALaHora}.` })
+        ? { nivel: "rojo", pedidoId: r.id, texto: `No alcanzan los camiones para la bomba de ${r.obra}: ${textoTiene(r)}.` }
+        : { nivel: "ambar", pedidoId: r.id, texto: `La bomba de ${r.obra} va a esperar: ${textoTiene(r)}.` })
     } else if (!r.alcanza && r.camiones.length && r.medida.demora > 0) {
       out.push({ nivel: "ambar", pedidoId: r.id, texto: `${r.obra} termina ${hora(r.medida.fin)} en vez de ${hora(r.medida.finIdeal)}.` })
     } else if (!r.camiones.length) {
@@ -837,7 +866,7 @@ export function cronogramaConCamiones(ctx: ContextoReparto, p: PedidoParaViajes,
   const ok = !!plan && alcanza(medida, ped.conBomba, reglas)
   // Ideal (sin límite) para "en vez de"
   const idealFilas = filasDelPlan(p, ctx.base, min.ideal.viajes, existentes)
-  return { filas, medida, alcanza: ok, necesarios: min.necesarios, conBomba: ped.conBomba, idealFilas, finJornada: aMin(prm.finJornada), probar: prob, elegidos }
+  return { filas, medida, alcanza: ok, necesarios: min.necesarios, conBomba: ped.conBomba, idealFilas, finIdeal, finJornada: aMin(prm.finJornada), probar: prob, elegidos }
 }
 
 /** "Con 2 camiones termina 12:05 (con 3, 10:40) · 2 cortes de 55 min" */
@@ -864,6 +893,47 @@ export function avisosCronograma(r: { conBomba: boolean; alcanza: boolean; neces
 /** Viajes guardados → minutos del día (para el contexto del gerenciador) */
 export function viajesDia(viajes: ViajeRow[], base: number, plantDe: (pedidoId: string) => string | null): ViajeDia[] {
   return viajes.map((v) => viajeDeFila(v, base, plantDe)).filter((v): v is ViajeDia => !!v)
+}
+
+/**
+ * Antes de guardar: cada cambio de planta con hora, en orden, y que llegue antes de la medianoche (la base lo guarda
+ * como HH:MM del día). null = está bien; si no, el mensaje para la pantalla.
+ */
+export function validarReparto(r: Reparto, patente: (id: string) => string, nombre: (plantId: string) => string, traslado: Traslado): string | null {
+  for (const [id, x] of Object.entries(r)) {
+    if (!x.sale) continue
+    let ant: number | null = null
+    for (let i = 0; i < x.tramos.length; i++) {
+      const t = x.tramos[i]
+      if (i > 0 && x.tramos[i - 1].plantId === t.plantId) return `${patente(id)}: tiene dos tramos seguidos en ${nombre(t.plantId)}.`
+      if (t.desde == null) {
+        if (i > 0) return `${patente(id)}: falta la hora del cambio a ${nombre(t.plantId)}.`
+        continue
+      }
+      const sale = Math.round(t.desde - traslado.minutos)
+      if (t.desde > 23 * 60 + 59) return `${patente(id)}: el cambio a ${nombre(t.plantId)} de las ${hora(sale)} llega después de la medianoche (el traslado tarda ${traslado.minutos} min). Ponelo más temprano o sacalo.`
+      if (t.desde < 0) return `${patente(id)}: la hora del cambio a ${nombre(t.plantId)} no es válida.`
+      if (ant != null && Math.round(t.desde) <= Math.round(ant)) return `${patente(id)}: los cambios de planta tienen que ir en orden (el de las ${hora(sale)} queda antes que el anterior).`
+      ant = t.desde
+    }
+  }
+  return null
+}
+
+/**
+ * La medida de los viajes tal como se ven (guardados o ajustados a mano), contra el fin ideal: el corte de cada camión
+ * es lo que llega después de lo previsto (el fin de la descarga anterior, o la llegada anterior + el espaciado).
+ */
+export function medirFilas(filas: ViajeRow[], finIdeal: number, base: number, espaciadoMin?: number | null): Medida {
+  const m = (iso: string) => (new Date(iso).getTime() - base) / MIN
+  const vs = filas.filter((v) => v.estado !== "cancelado").sort((a, b) => m(a.hora_llegada) - m(b.hora_llegada))
+  const out = vs.map((v, i) => {
+    if (i === 0) return { finDescarga: m(v.hora_fin_descarga), esperaObra: 0 }
+    const prev = vs[i - 1]
+    const previsto = espaciadoMin && espaciadoMin > 0 ? m(prev.hora_llegada) + espaciadoMin : m(prev.hora_fin_descarga)
+    return { finDescarga: m(v.hora_fin_descarga), esperaObra: Math.max(0, m(v.hora_llegada) - previsto) }
+  })
+  return medir(out, finIdeal)
 }
 
 // ---------------------------------------------------------------------------
@@ -919,7 +989,9 @@ export async function cargarReparto(sb: any, fecha: string): Promise<RepartoGuar
 
 /** Guarda el reparto del día entero (guardar_reparto_dia: todo o nada, queda en Actividad). */
 export async function guardarReparto(sb: any, fecha: string, r: Reparto, usuario: string, origen: "sugerido" | "a_mano"): Promise<{ error: string | null }> {
-  const { error } = await sb.rpc("guardar_reparto_dia", { p_fecha: fecha, p_filas: repartoAFilas(r, origen), p_usuario: usuario })
+  const filas = repartoAFilas(r, origen)
+  if (!filas.length) return { error: "El reparto está vacío: no hay camiones para guardar" }
+  const { error } = await sb.rpc("guardar_reparto_dia", { p_fecha: fecha, p_filas: filas, p_usuario: usuario, p_borrar: false })
   return { error: error ? error.message || "No se pudo guardar el reparto" : null }
 }
 

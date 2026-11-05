@@ -186,28 +186,34 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       return
     }
     setGuardandoTiempos(true)
-    const { error } = tiemposCambiados.length ? await createClient().from("plants").update(columnasDePlanta(prm)).eq("id", planta) : { error: null }
-    if (error) {
-      setGuardandoTiempos(false)
-      toast({ title: "No se pudieron guardar los tiempos", description: error.message, variant: "destructive" })
-      return
-    }
-    // Traslado entre plantas (reparto de camiones): se guarda con el mismo botón y motivo
-    const tr = rep.trasladoCambiado ? await rep.guardarTrasladoForm() : { error: null, detalle: undefined }
-    setGuardandoTiempos(false)
-    if (tr.error) {
-      toast({ title: "No se pudo guardar el traslado", description: tr.error, variant: "destructive" })
-      return
-    }
     const nombre = plants.find((p) => p.id === planta)?.name || null
+    // Tiempos de la planta y traslado entre plantas (reparto) van con el mismo botón y motivo; se avisan juntos
+    const errores: string[] = []
+    let tiemposOk = false
+    if (tiemposCambiados.length) {
+      const { error } = await createClient().from("plants").update(columnasDePlanta(prm)).eq("id", planta)
+      if (error) errores.push(`tiempos de ${nombre}: ${error.message}`)
+      else tiemposOk = true
+    }
+    const tr = rep.trasladoCambiado ? await rep.guardarTrasladoForm() : { error: null, detalle: undefined }
+    if (tr.error) errores.push(`traslado ${rep.nombreTraslado}: ${tr.error}`)
+    setGuardandoTiempos(false)
+    if (!tiemposOk && !tr.detalle) {
+      toast({ title: tiemposCambiados.length && !rep.trasladoCambiado ? "No se pudieron guardar los tiempos" : "No se guardó nada", description: errores.join(" · "), variant: "destructive" })
+      return
+    }
     const detalle: Record<string, string> = {}
-    for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = k === "aMano" ? `${textoAMano(prmGuardado.aMano)} → ${textoAMano(prm.aMano)}` : `${prmGuardado[k]} → ${prm[k]}`
+    if (tiemposOk) for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = k === "aMano" ? `${textoAMano(prmGuardado.aMano)} → ${textoAMano(prm.aMano)}` : `${prmGuardado[k]} → ${prm[k]}`
     if (tr.detalle) detalle[`Traslado ${rep.nombreTraslado}`] = tr.detalle
     detalle.Motivo = motivoTiempos.trim()
-    setMotivoTiempos("")
+    if (!errores.length) setMotivoTiempos("")
     await logActivity({ action: "editar", entity: "planta", entityId: planta, reference: nombre, plantId: planta, details: detalle })
-    toast({ title: "Tiempos guardados", description: `${nombre}: los ve cualquiera que abra la programación` })
-    cargarTiempos()
+    if (errores.length) {
+      toast({ title: "Se guardó solo una parte", description: `Guardado: ${[tiemposOk ? "tiempos de la planta" : null, tr.detalle ? "traslado" : null].filter(Boolean).join(" y ")}. No se guardó: ${errores.join(" · ")}`, variant: "destructive" })
+    } else {
+      toast({ title: tr.detalle && tiemposOk ? "Tiempos y traslado guardados" : tr.detalle ? "Traslado guardado" : "Tiempos guardados", description: `${nombre}: los ve cualquiera que abra la programación` })
+    }
+    if (tiemposOk) cargarTiempos()
   }
 
   const cargar = useCallback(async () => {
@@ -339,6 +345,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     else if (ve && rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
     toast({ title: "Hora actualizada", description: `${p.construction_sites?.name}: llegada ${h}` })
     cargar()
+    if (ve) rep.cargar() // el reparto vuelve a leer pedidos y viajes (sin perder lo que se está editando)
   }
 
   async function guardarMetodo(p: PedidoDB, metodo: "bomba" | "directo") {
@@ -356,6 +363,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
       setViajesPorPedido(await cargarViajes(createClient(), pedidos.map((x) => x.id)))
     }
+    if (ve) rep.cargar()
   }
 
   // ---------------- Fase 2 ----------------
@@ -364,7 +372,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   /** "Ordenar el día": planificar() con todos los pedidos; se muestra y recién se guarda con "Guardar plan del día". */
   function ordenarDia() {
     // Con un reparto guardado o en edición, el mismo motor del reparto (las dos plantas y los traslados); si no, como siempre
-    const conReparto = ve ? propuestaConReparto(rep, planta) : null
+    // (con los pedidos, viajes y tiempos que se ven en esta pantalla, aunque los tiempos no estén guardados)
+    const conReparto = ve ? propuestaConReparto(rep, planta, {
+      pedidos: (pedidosEf as unknown as PedidoParaViajes[]).map((p) => ({ p, existentes: viajesPorPedido[p.id] || [], obra: p.construction_sites?.name || "Pedido" })),
+      prm: prmEf,
+    }) : null
     const filas = conReparto ?? planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes).filas
     setPropuesta(filas)
     if (!Object.keys(filas).length) toast({ title: "No hay nada para ordenar", description: "Los pedidos del día ya están despachados o no hay camiones disponibles." })
@@ -391,6 +403,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     else toast({ title: "Plan del día guardado", description: `${ok} pedido${ok === 1 ? "" : "s"} con sus viajes y camiones sugeridos` })
     setPropuesta(null)
     setViajesPorPedido(await cargarViajes(sb, pedidos.map((x) => x.id)))
+    if (ve) rep.cargar()
   }
 
   async function confirmarPedido(p: PedidoDB, confirmar: boolean) {

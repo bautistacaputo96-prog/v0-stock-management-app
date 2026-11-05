@@ -18,13 +18,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { useToast } from "@/hooks/use-toast"
 import { currentUserName, usePermisos } from "@/lib/current-user"
-import { parametrosDePlanta, aMin, aHora } from "@/lib/planificador"
+import { parametrosDePlanta, aMin, aHora, type Parametros } from "@/lib/planificador"
 import { cargarViajes, conTiemposGps, parametrosConGps, type PedidoParaViajes, type ViajeRow } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import {
   armarDia, dondeDuermen, repartoDe, contarTraslados, franjasDe, textoFranja, textoTraslado, textoTraslados, textoNoche,
   textoComparacion, avisosEdicion, avisosSuperposicion, viajesDia, trasladoDe, mismoReparto, cargarReparto, guardarReparto,
-  cargarTraslado, guardarTraslado, REGLAS_REPARTO,
+  cargarTraslado, guardarTraslado, entradaConPantalla, propuestaDePlanta, validarReparto, REGLAS_REPARTO, type EntradaDia,
   type PlantaReparto, type CamionReparto, type Reparto, type PedidoReparto, type ContextoReparto, type RepartoGuardado,
   type FilaTraslado, type Aviso, type ViajeDia,
 } from "@/lib/reparto"
@@ -63,7 +63,11 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   const clavePlantas = ids.join(",")
   const base = startOfDay(dia).getTime()
 
-  const cargar = useCallback(async () => {
+  /**
+   * Lee todo de nuevo. limpiar = descarta la edición sin guardar (cambio de día, "Recalcular", después de guardar);
+   * sin limpiar (después de guardar el traslado, una hora o el plan del día) lo editado se conserva.
+   */
+  const cargar = useCallback(async (limpiar = false) => {
     if (!activo || !clavePlantas) return
     setCargando(true)
     const sb = createClient()
@@ -91,10 +95,10 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
     setAyer(a)
     setTrasladoFila(tr)
     setTrasladoForm({ minutos: tr.fila ? String(tr.fila.minutos) : "", km: tr.fila?.km != null ? String(tr.fila.km) : "", litros: tr.fila?.litros != null ? String(tr.fila.litros) : "" })
-    setEdicion(null)
+    if (limpiar) setEdicion(null)
     setCargando(false)
   }, [activo, clavePlantas, dia]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { cargar() }, [cargar])
+  useEffect(() => { cargar(true) }, [cargar])
 
   // Ruta del mapa entre las dos plantas (solo para mostrar y como respaldo del traslado)
   useEffect(() => {
@@ -134,7 +138,8 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   const fijos = useMemo(() => pedidosHoy.flatMap((p) => (viajes[p.id] || []).filter((v) => v.estado === "despachado")), [pedidosHoy, viajes])
   const listo = activo && !cargando && plantas.length > 0 && plantRows.length > 0
 
-  const sugerencia = useMemo(() => (listo ? armarDia({ base, plantas, camiones, pedidos: pedidosR, traslado, fijos }) : null), [listo, base, plantas, camiones, pedidosR, traslado, fijos])
+  const entrada: EntradaDia | null = useMemo(() => (listo ? { base, plantas, camiones, pedidos: pedidosR, traslado, fijos } : null), [listo, base, plantas, camiones, pedidosR, traslado, fijos])
+  const sugerencia = useMemo(() => (entrada ? armarDia(entrada) : null), [entrada])
   const noche = useMemo(() => {
     if (!sugerencia) return null
     const man = aPedidos(pedidosManana)
@@ -208,11 +213,13 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
 
   async function guardar(): Promise<string | null> {
     if (!vigente) return "No hay reparto para guardar"
+    const invalido = validarReparto(vigente, (id) => patentes[id] || "Un camión", (id) => nombres[id] || "la otra planta", traslado)
+    if (invalido) return invalido
     setGuardando(true)
     const origen = mismoReparto(vigente, sugerido) ? "sugerido" : "a_mano"
     const { error } = await guardarReparto(createClient(), fecha(dia), vigente, currentUserName(), origen)
     setGuardando(false)
-    if (!error) await cargar()
+    if (!error) await cargar(true)
     return error
   }
 
@@ -235,7 +242,7 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   }
 
   return {
-    activo, cargando, listo, disponible: !!guardado?.disponible, guardado, ayer, plantas, nombres, patentes, camiones, delDia,
+    entrada, activo, cargando, listo, disponible: !!guardado?.disponible, guardado, ayer, plantas, nombres, patentes, camiones, delDia,
     traslado, trasladoFila, ruta, trasladoForm, setTrasladoForm, trasladoCambiado, trasladoValido, guardarTrasladoForm,
     sugerencia, sugerido, resultado, noche, efectivo, edicion, vigente, amanece, avisos, contexto, disponiblesEn,
     idsSalen: camiones.map((c) => c.id), noSalen, guardando, guardar, cargar, ...acciones,
@@ -245,12 +252,14 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
 
 export type RepartoDia = ReturnType<typeof useRepartoDia>
 
-/** Filas para "Ordenar el día" con el reparto (3.4): los viajes de los pedidos de esta planta. */
-export function propuestaConReparto(rep: RepartoDia, plantId: string): Record<string, ViajeRow[]> | null {
-  if (!rep.efectivo || !rep.resultado) return null
-  const out: Record<string, ViajeRow[]> = {}
-  for (const p of rep.resultado.pedidos) if (p.plantId === plantId && p.filas.length) out[p.id] = p.filas
-  return out
+/**
+ * Filas para "Ordenar el día" con el reparto guardado o en edición (3.4): los viajes de los pedidos de esta planta,
+ * armados con lo que se ve en la pantalla (pedidos, viajes guardados y tiempos, aunque no estén guardados). Sin
+ * reparto: null (se ordena como siempre).
+ */
+export function propuestaConReparto(rep: RepartoDia, plantId: string, pantalla: { pedidos: PedidoReparto[]; prm: Parametros }): Record<string, ViajeRow[]> | null {
+  if (!rep.efectivo || !rep.entrada) return null
+  return propuestaDePlanta(armarDia({ ...entradaConPantalla(rep.entrada, plantId, pantalla), reparto: rep.efectivo }), plantId)
 }
 
 const negritaPrimera = (t: string) => {
@@ -288,7 +297,9 @@ export function RepartoCamiones({ rep }: { rep: RepartoDia }) {
     ? "Cambios sin guardar: las líneas de cada pedido ya los usan."
     : rep.guardado?.reparto
       ? `Guardado${rep.guardado.origen === "sugerido" ? " (la sugerencia)" : " a mano"}${rep.guardado.actualizadoPor ? ` por ${rep.guardado.actualizadoPor}` : ""}${rep.guardado.actualizado ? ` · ${format(new Date(rep.guardado.actualizado), "dd/MM HH:mm")}` : ""}`
-      : "Es la sugerencia: todavía no se guardó (hasta guardarlo, el día se ordena como siempre)."
+      : rep.disponible
+        ? "Es la sugerencia, sin guardar. Hasta que se guarde, Ordenar el día usa todos los camiones que salen, como siempre, y Armar viajes propone los camiones de la sugerencia."
+        : "Es solo la sugerencia: la programación sigue como siempre."
 
   async function guardar() {
     const error = await rep.guardar()
@@ -303,7 +314,10 @@ export function RepartoCamiones({ rep }: { rep: RepartoDia }) {
           <p className="text-sm font-medium flex items-center gap-1.5"><Truck className="h-4 w-4" /> Camiones por planta <NuevoBadge /></p>
           <button type="button" className="text-muted-foreground hover:text-foreground" title="Cómo se calcula" onClick={() => setAyuda(!ayuda)}><CircleHelp className="h-4 w-4" /></button>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => rep.cargar()}><RefreshCw className="h-3.5 w-3.5" />Sugerir</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" title="Vuelve a leer pedidos y viajes y arma la sugerencia de nuevo" onClick={() => {
+              if (rep.edicion && !window.confirm("Tenés cambios sin guardar en el reparto. Si recalculás, se pierden. ¿Seguir?")) return
+              rep.cargar(true)
+            }}><RefreshCw className="h-3.5 w-3.5" />Recalcular</Button>
             {edita && (rep.efectivo && !mismoReparto(rep.efectivo, rep.sugerido)) && <Button size="sm" variant="outline" onClick={rep.usarSugerencia}>Usar la sugerencia</Button>}
             {edita && <Button size="sm" variant="outline" onClick={() => setVerEditor(!verEditor)}>{verEditor ? "Cerrar edición" : "Editar"}</Button>}
             {edita && rep.edicion && <Button size="sm" variant="ghost" onClick={rep.descartar}>Descartar</Button>}
@@ -320,7 +334,7 @@ export function RepartoCamiones({ rep }: { rep: RepartoDia }) {
           </p>
         )}
         <p className="text-xs text-muted-foreground">{estadoTxt}{edita && rep.efectivo ? " Guardar cambia el reparto de las dos plantas." : ""}</p>
-        {!rep.disponible && <p className="text-xs text-amber-700">Para guardar el reparto falta aplicar la migración de la base. Mientras, es solo la sugerencia y la programación sigue como siempre.</p>}
+        {!rep.disponible && <p className="text-xs text-amber-700">Todavía no se puede guardar: falta un paso de Bautista.</p>}
 
         {/* Resumen */}
         <div className="text-sm space-y-0.5">

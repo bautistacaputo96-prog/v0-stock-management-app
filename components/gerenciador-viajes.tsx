@@ -37,7 +37,7 @@ import {
   parametrosConGps, conTiemposGps, tiemposDelPedido, textoTiempos, textoDescargaObra, m3ParaSugerir,
 } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
-import { cronogramaConCamiones, camionesParaPedido, textoCronograma, avisosCronograma, type ContextoReparto } from "@/lib/reparto"
+import { cronogramaConCamiones, camionesParaPedido, textoCronograma, avisosCronograma, medirFilas, alcanza, type ContextoReparto } from "@/lib/reparto"
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -176,6 +176,18 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
     const { plan } = crono.probar([...crono.elegidos, extra])
     return plan.viajes.length ? { n: new Set(plan.viajes.map((v) => v.camionId)).size, fin: Math.max(...plan.viajes.map((v) => v.finDescarga)) } : null
   }, [crono, otroCamion, reparto])
+  // El resumen habla de lo que se ve: los viajes guardados o ajustados a mano (o el cronograma recién recalculado)
+  const vista = useMemo(() => {
+    if (!reparto || !crono || !pedido) return null
+    const filas = viajes.filter((v) => v.estado !== "cancelado")
+    const medida = medirFilas(filas, crono.finIdeal, reparto.base, Number(pedido.espaciado_min) > 0 ? Number(pedido.espaciado_min) : null)
+    const n = new Set(filas.filter((v) => v.estado === "planificado" && v.mixer_id).map((v) => v.mixer_id)).size
+    return { filas, medida, n, alcanza: filas.length > 0 && alcanza(medida, crono.conBomba) }
+  }, [reparto, crono, pedido, viajes])
+  // Camiones de viajes guardados que hoy no salen (no sale, taller): se muestran marcados con su aviso
+  const fueraDelReparto = elegidos && reparto ? elegidos.filter((id) => !reparto.camiones.some((c) => c.id === id)) : []
+  // Sin camiones y con m³ por entregar no se guarda (se borrarían los viajes pendientes)
+  const sinCamiones = !!reparto && !!elegidos && elegidos.length === 0 && !!pedido && Number(pedido.quantity_m3) - enviadoPedido > 0.01
   function alternarCamion(id: string) {
     if (!reparto || !ped || !elegidos) return
     const nuevos = elegidos.includes(id) ? elegidos.filter((x) => x !== id) : [...elegidos, id]
@@ -292,6 +304,12 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
               <div className="rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-1.5">
                 <p className="flex items-center gap-1.5 flex-wrap">
                   <strong className="text-sm">Tenés {elegidos.length} {elegidos.length === 1 ? "camión asignado" : "camiones asignados"} para este pedido:</strong>
+                  {fueraDelReparto.map((id) => (
+                    <Button key={id} size="sm" variant="outline" disabled={soloLectura} title="Tocá para sacarlo" onClick={() => alternarCamion(id)}
+                      className="h-6 px-2 text-[11px] border-amber-500 bg-amber-50 font-semibold text-amber-800">
+                      {patente(id)} · no sale hoy o está en taller
+                    </Button>
+                  ))}
                   {ofrecidos.map((c) => (
                     <Button key={c.id} size="sm" variant="outline" disabled={soloLectura || !c.ofrecido} title={c.motivo || undefined}
                       onClick={() => alternarCamion(c.id)}
@@ -302,11 +320,14 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
                   <NuevoBadge />
                 </p>
                 <p className="text-muted-foreground">Tocá un camión para sacarlo o ponerlo: el cronograma se recalcula sin grabar. Para usar otro camión, cambialo en Camiones por planta.</p>
-                {elegidos.length > 0 && <p className="font-medium">{textoCronograma(elegidos.length, crono.medida, conUnoMas)}</p>}
-                {avisosCronograma(crono, pedido.construction_sites?.name || "El pedido", elegidos.length).map((a, i) => (
-                  <p key={i} className={cn("flex items-center gap-1", crono.alcanza ? "text-amber-700" : "text-red-700")}><AlertTriangle className="h-3 w-3" />{a}</p>
+                {fueraDelReparto.length > 0 && (
+                  <p className="text-amber-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{fueraDelReparto.map(patente).join(", ")} {fueraDelReparto.length === 1 ? "tiene viajes guardados pero hoy no sale o está en taller" : "tienen viajes guardados pero hoy no salen o están en taller"}: sacalo y elegí otro.</p>
+                )}
+                {vista && vista.n > 0 && <p className="font-medium">{textoCronograma(vista.n, vista.medida, conUnoMas && conUnoMas.n > vista.n ? conUnoMas : null)}</p>}
+                {vista && avisosCronograma({ ...crono, medida: vista.medida, alcanza: vista.alcanza, filas: vista.filas }, pedido.construction_sites?.name || "El pedido", vista.n).map((a, i) => (
+                  <p key={i} className={cn("flex items-center gap-1", vista.alcanza ? "text-amber-700" : "text-red-700")}><AlertTriangle className="h-3 w-3" />{a}</p>
                 ))}
-                {crono.alcanza && elegidos.length > 0 && <p className="text-emerald-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />Alcanzan: {crono.conBomba ? "la bomba" : "la obra"} no espera más de lo aceptado.</p>}
+                {vista?.alcanza && vista.n > 0 && <p className="text-emerald-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />Alcanzan: {crono.conBomba ? "la bomba" : "la obra"} no espera más de lo aceptado.</p>}
                 {elegidos.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {ordenados.filter((v) => v.estado === "planificado").map((v) => (
@@ -428,7 +449,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
           {choquesPendientes.length > 0 && <span className="text-xs text-red-600 self-center">Hay camiones en dos viajes a la vez: cambialos para guardar.</span>}
           {m3Invalidos.length > 0 && <span className="text-xs text-red-600 self-center">Completá los m³ de cada viaje para guardar.</span>}
-          {!soloLectura && <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0 || choquesPendientes.length > 0}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>}
+          {sinCamiones && !soloLectura && <span className="text-xs text-red-600 self-center">Elegí al menos un camión</span>}
+          {!soloLectura && <Button onClick={guardar} disabled={guardando || cargando || !cambiado || m3Invalidos.length > 0 || choquesPendientes.length > 0 || sinCamiones}>{guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
