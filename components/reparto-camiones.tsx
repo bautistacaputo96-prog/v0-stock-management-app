@@ -561,12 +561,12 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                       <td className="py-1.5 pr-2">
                         <button type="button" className="flex items-start gap-1 text-left" onClick={() => setAbierto(abierto === id ? null : id)}>
                           {abierto === id ? <ChevronDown className="h-3.5 w-3.5 mt-0.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
-                          <span><span className="font-medium">{f.nombre}</span>{orig.suspendido_at ? " ⏸" : ""}<span className="block text-muted-foreground">{f.planta}</span></span>
+                          <span><span className="font-medium">{f.nombre}</span> <span className="text-muted-foreground">{f.m3.toLocaleString("es-AR")} m³</span>{orig.suspendido_at ? " ⏸" : ""}<span className="block text-muted-foreground">{f.planta}</span></span>
                         </button>
                       </td>
-                      <td className="py-1.5 pr-2">{r.viajes.length}</td>
+                      <td className="py-1.5 pr-2 whitespace-nowrap">{esc ? r.viajes.filter((x) => !x.hecho).length + f.hechos : f.viajes}{f.hechos ? <span className="text-muted-foreground"> · {f.hechos} {f.hechos === 1 ? "hecho" : "hechos"}</span> : null}</td>
                       <td className="py-1.5 pr-2">{r.camiones.length} <span className="text-muted-foreground">{r.camiones.map((c) => patentes[c]).join(", ")}</span></td>
-                      <td className="py-1.5 pr-2">{cargas.length ? aHora(Math.round(Math.min(...cargas))) : "—"}</td>
+                      <td className="py-1.5 pr-2">{esc ? (f.hechos ? f.comienza : cargas.length ? aHora(Math.round(Math.min(...cargas))) : "—") : f.comienza || "—"}</td>
                       <td className="py-1.5 pr-2">{r.viajes.length ? aHora(Math.round(r.medida.fin)) : "—"}</td>
                       <td className="py-1.5 pr-2">
                         <Hora24 value={hora} disabled={!ajusta} title={tituloAjusta} onChange={(h) => rep.setAjuste(id, { hora: h })}
@@ -669,7 +669,7 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                   {f.bloques.map((b, i) => {
                     const est = b.tipo === "traslado" ? ESTILO_TRASLADO : estiloPlanta(rep, b.plantId)
                     return (
-                      <div key={i} className={cn("absolute top-0.5 h-6 rounded border px-1 text-[10px] leading-6 truncate", est.bloque)} style={{ left: pos(b.desde), width: ancho(b.desde, b.hasta) }}
+                      <div key={i} className={cn("absolute top-0.5 h-6 rounded border px-1 text-[10px] leading-6 truncate", est.bloque, b.tipo === "hecho" && "opacity-60 border-dashed")} style={{ left: pos(b.desde), width: ancho(b.desde, b.hasta) }}
                         title={`${b.texto} · ${b.detalle}`}>
                         {b.texto}
                       </div>
@@ -682,6 +682,7 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
             <div className="flex gap-3 text-[11px] text-muted-foreground flex-wrap pt-1">
               {rep.plantas.map((p) => <span key={p.id} className="flex items-center gap-1"><span className={cn("h-2.5 w-2.5 rounded-sm", estiloPlanta(rep, p.id).punto)} />{p.nombre}</span>)}
               <span className="flex items-center gap-1"><span className={cn("h-2.5 w-2.5 rounded-sm", ESTILO_TRASLADO.punto)} />Traslado</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-3 rounded-sm border border-dashed border-muted-foreground opacity-60" />✓ hecho</span>
             </div>
           </div>
         </div>

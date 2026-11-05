@@ -69,6 +69,8 @@ export type ViajeDia = {
   pedidoId: string; plantId: string; camionId: string; n: number; m3: number
   inicioCarga: number; salida: number; llegada: number; finDescarga: number; vuelta: number; esperaObra: number
   fijo: boolean
+  /** Ya despachado (con su hora real) */
+  hecho?: boolean
 }
 
 export type EntradaDia = {
@@ -91,6 +93,8 @@ export type EntradaDia = {
    * también en `fijos` para que ocupen a sus camiones y la boca.
    */
   fijados?: Set<string>
+  /** Hoy: los viajes pendientes no cargan antes de esta hora (minutos del día; la de ahora redondeada a 5 min) */
+  desde?: number | null
 }
 
 export type Medida = { fin: number; finIdeal: number; cortes: number[]; maxCorte: number; demora: number }
@@ -208,7 +212,7 @@ export function camionesMinimos(p: PedidoParaViajes, ped: Pedido, prm: Parametro
 // ---------------------------------------------------------------------------
 // Ventanas ocupadas de un camión en una planta (traslados y reparto)
 // ---------------------------------------------------------------------------
-type Ctx = { plantas: Map<string, PlantaReparto>; traslado: Traslado; reparto: Reparto | null }
+type Ctx = { plantas: Map<string, PlantaReparto>; traslado: Traslado; reparto: Reparto | null; desde?: number | null }
 
 /** Ventanas en que el camión NO puede usarse en `plantId` (para planificar), en minutos del día. */
 function ventanasCamion(c: CamionReparto, plantId: string, viajes: ViajeDia[], ctx: Ctx): Ocupado[] {
@@ -245,6 +249,8 @@ function ventanasCamion(c: CamionReparto, plantId: string, viajes: ViajeDia[], c
   }
   // Camión ficticio de un escenario: carga recién desde su hora (el planificador suma la espera al final de la ventana)
   if (c.disponibleDesde != null) out.push({ camionId: c.id, desde: -H, hasta: c.disponibleDesde - espAca })
+  // Hoy: nada nuevo carga antes de ahora
+  if (ctx.desde != null) out.push({ camionId: c.id, desde: -H, hasta: ctx.desde - espAca })
   return out
 }
 
@@ -282,7 +288,7 @@ function viajeDeFila(v: ViajeRow, base: number, plantDe: (pedidoId: string) => s
   return {
     pedidoId: v.pedido_id, plantId, camionId: v.mixer_id, n: v.n, m3: Number(v.m3),
     inicioCarga: m(v.hora_carga), salida: m(v.hora_salida), llegada: m(v.hora_llegada), finDescarga: m(v.hora_fin_descarga), vuelta: m(v.hora_vuelta),
-    esperaObra: 0, fijo: true,
+    esperaObra: 0, fijo: true, hecho: v.estado === "despachado",
   }
 }
 
@@ -356,7 +362,7 @@ function pedidoFijado(x: Info, ent: EntradaDia, reglas: ReglasReparto): Parcial 
 
 /** Pasos 2 (un solo armado): cada pedido con los camiones más baratos; `topes` = camiones como máximo (paso 3). */
 function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>, reglas: ReglasReparto) {
-  const ctx: Ctx = { plantas: new Map(ent.plantas.map((p) => [p.id, p])), traslado: ent.traslado, reparto: ent.reparto || null }
+  const ctx: Ctx = { plantas: new Map(ent.plantas.map((p) => [p.id, p])), traslado: ent.traslado, reparto: ent.reparto || null, desde: ent.desde ?? null }
   const plantDe = (id: string) => ent.pedidos.find((x) => x.p.id === id)?.p.plant_id || null
   const viajes: ViajeDia[] = (ent.fijos || []).map((v) => viajeDeFila(v, ent.base, plantDe)).filter((v): v is ViajeDia => !!v)
   const res: Parcial[] = []
@@ -836,7 +842,10 @@ export type FilaPedido = {
   sale: string
   metodo: "bomba" | "directo"
   m3: number
+  /** Viajes del pedido: los hechos (despachados) más los del armado */
   viajes: number
+  /** Viajes ya despachados */
+  hechos: number
   camiones: { n: number; patentes: string[] }
   /** Primera carga del armado y fin de la descarga del último viaje (HH:MM) */
   comienza: string | null
@@ -853,20 +862,28 @@ export type FilaPedido = {
  * Las filas de los pedidos pendientes, en el orden del armado (primera carga). `pedidos` = los del día como los usa el
  * motor (con los ajustes de hora y método y los tiempos del GPS).
  */
-export function filasPedidos(resultado: ResultadoDia, pedidos: (PedidoParaViajes & { clients?: { name?: string | null } | null; confirmado_at?: string | null })[], plantas: PlantaReparto[], patentes: Record<string, string>): FilaPedido[] {
+export function filasPedidos(
+  resultado: ResultadoDia, pedidos: (PedidoParaViajes & { clients?: { name?: string | null } | null; confirmado_at?: string | null })[], plantas: PlantaReparto[], patentes: Record<string, string>,
+  /** Lo ya despachado de cada pedido: cuántos viajes y la primera carga real (minutos del día) */
+  hechos: Record<string, { n: number; primeraCarga: number | null }> = {},
+): FilaPedido[] {
   return resultado.pedidos.flatMap((r) => {
     const p = pedidos.find((x) => x.id === r.id)
     if (!p) return []
     const llegadaMs = new Date(p.scheduled_arrival_time).getTime()
     const e = estadoPedido(r)
+    const h = hechos[r.id]
     const cargas = r.viajes.map((v) => v.inicioCarga)
+    // Comienza: la primera carga real si ya hubo despachos; si no, la del armado. Termina sigue siendo el plan.
+    const comienza = h?.primeraCarga != null ? h.primeraCarga : cargas.length ? Math.min(...cargas) : null
     return [{
       id: r.id, nombre: nombreVisible(r.obra), cliente: p.clients?.name ? nombreVisible(p.clients.name) : null,
       planta: plantas.find((x) => x.id === r.plantId)?.nombre || "", plantId: r.plantId,
       llegada: horaArgentina(p.scheduled_arrival_time), sale: horaArgentina(new Date(llegadaMs - viajeMinDe(p) * MIN).toISOString()),
       metodo: conBombaDe(p) ? "bomba" : "directo", m3: Number(p.quantity_m3),
-      viajes: r.viajes.length, camiones: { n: r.camiones.length, patentes: r.camiones.map((id) => patentes[id] || id) },
-      comienza: cargas.length ? hora(Math.min(...cargas)) : null,
+      viajes: r.viajes.filter((v) => !v.hecho).length + (h?.n || 0), hechos: h?.n || 0,
+      camiones: { n: r.camiones.length, patentes: r.camiones.map((id) => patentes[id] || id) },
+      comienza: comienza != null ? hora(comienza) : null,
       termina: r.viajes.length ? hora(r.medida.fin) : null,
       aTiempo: e.aTiempo,
       atrasoMin: !r.viajes.length ? null : e.aTiempo ? 0 : Math.max(0, Math.round(r.medida.demora)),
@@ -992,7 +1009,8 @@ export function lineaTraslados(res: ResultadoDia, conteo: { dia: number; noche: 
 }
 
 export type BloqueDiagrama = {
-  tipo: "viaje" | "traslado"; desde: number; hasta: number; plantId: string; texto: string; pedidoId?: string
+  /** hecho = ya despachado (con su hora real) */
+  tipo: "viaje" | "traslado" | "hecho"; desde: number; hasta: number; plantId: string; texto: string; pedidoId?: string
   /** Para el tooltip: "carga 07:00 · sale 07:15 · llega 07:45 · termina 08:15 · vuelve 08:45" */
   detalle: string
 }
@@ -1005,8 +1023,8 @@ export type FilaDiagrama = { camionId: string; patente: string; ficticio: boolea
 export function bloquesDiagrama(res: ResultadoDia, camiones: CamionReparto[], nombres: Record<string, string>, obraDe: (pedidoId: string) => string): FilaDiagrama[] {
   return camiones.map((c) => {
     const viajes = res.viajes.filter((v) => v.camionId === c.id).map((v): BloqueDiagrama => ({
-      tipo: "viaje", desde: v.inicioCarga, hasta: v.vuelta, plantId: v.plantId, texto: obraDe(v.pedidoId), pedidoId: v.pedidoId,
-      detalle: `carga ${hora(v.inicioCarga)} · sale ${hora(v.salida)} · llega ${hora(v.llegada)} · termina ${hora(v.finDescarga)} · vuelve ${hora(v.vuelta)}`,
+      tipo: v.hecho ? "hecho" : "viaje", desde: v.inicioCarga, hasta: v.vuelta, plantId: v.plantId, texto: `${v.hecho ? "✓ " : ""}${obraDe(v.pedidoId)}`, pedidoId: v.pedidoId,
+      detalle: `${v.hecho ? "hecho · " : ""}carga ${hora(v.inicioCarga)} · sale ${hora(v.salida)} · llega ${hora(v.llegada)} · termina ${hora(v.finDescarga)} · vuelve ${hora(v.vuelta)}`,
     }))
     const tras = res.traslados.filter((t) => t.camionId === c.id).map((t): BloqueDiagrama => ({ tipo: "traslado", desde: t.sale, hasta: t.llega, plantId: t.a, texto: `→ ${nombres[t.a] || "otra planta"}`, detalle: `sale ${hora(t.sale)} · llega ${hora(t.llega)}` }))
     return { camionId: c.id, patente: c.patente, ficticio: esFicticio(c.id), bloques: [...viajes, ...tras].sort((a, b) => a.desde - b.desde) }
@@ -1122,6 +1140,8 @@ export type ContextoReparto = {
   sugeridos: Record<string, string[]>
   /** Viajes de los otros pedidos del día (los guardados o, si no tienen, los de la sugerencia), en minutos */
   otros: ViajeDia[]
+  /** Hoy: ningún viaje nuevo carga antes de esta hora (minutos del día) */
+  desde?: number | null
 }
 
 /** Ventana del pedido (de la primera a la última carga del ideal) para ver qué camiones están en la planta. */
@@ -1153,7 +1173,7 @@ export function cronogramaConCamiones(ctx: ContextoReparto, p: PedidoParaViajes,
   const plantas = new Map(ctx.plantas.map((x) => [x.id, x]))
   if (!plantas.has(p.plant_id)) plantas.set(p.plant_id, { id: p.plant_id, nombre: "", prm })
   else plantas.set(p.plant_id, { ...plantas.get(p.plant_id)!, prm })
-  const c: Ctx = { plantas, traslado: ctx.traslado, reparto: ctx.reparto }
+  const c: Ctx = { plantas, traslado: ctx.traslado, reparto: ctx.reparto, desde: ctx.desde ?? null }
   const otros = ctx.otros.filter((v) => v.pedidoId !== p.id)
   // Los viajes ya despachados de este pedido también ocupan a su camión
   const fijos = viajesDia(existentes.filter((v) => v.estado === "despachado"), ctx.base, () => p.plant_id)

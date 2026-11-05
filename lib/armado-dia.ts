@@ -194,7 +194,7 @@ export const TEXTO_GPS_CAIDO = "No se pudo leer el GPS: se toma dónde duermen s
 // ---------------------------------------------------------------------------
 export type ContenidoArmado = {
   fecha: string
-  pedidos: Pick<FilaPedido, "id" | "nombre" | "planta" | "llegada" | "sale" | "metodo" | "m3" | "viajes" | "camiones" | "comienza" | "termina" | "aTiempo" | "atrasoMin" | "estado" | "jornada" | "confirmado">[]
+  pedidos: Pick<FilaPedido, "id" | "nombre" | "planta" | "llegada" | "sale" | "metodo" | "m3" | "viajes" | "hechos" | "camiones" | "comienza" | "termina" | "aTiempo" | "atrasoMin" | "estado" | "jornada" | "confirmado">[]
   traslados: string[]
   /** Dónde arranca cada camión (solo la planta entra en la huella) */
   arranque: { id: string; patente: string; plantId: string | null; planta: string | null }[]
@@ -214,7 +214,7 @@ export const duermeDe = (v: VistaDia) => Object.fromEntries(v.delDia.map((m) => 
 export function contenidoArmado(v: VistaDia, guardado: { por: string | null; at: string | null } | null): ContenidoArmado {
   return {
     fecha: v.fecha,
-    pedidos: v.filas.map((f) => ({ id: f.id, nombre: f.nombre, planta: f.planta, llegada: f.llegada, sale: f.sale, metodo: f.metodo, m3: f.m3, viajes: f.viajes, camiones: f.camiones, comienza: f.comienza, termina: f.termina, aTiempo: f.aTiempo, atrasoMin: f.atrasoMin, estado: f.estado, jornada: f.jornada, confirmado: f.confirmado })),
+    pedidos: v.filas.map((f) => ({ id: f.id, nombre: f.nombre, planta: f.planta, llegada: f.llegada, sale: f.sale, metodo: f.metodo, m3: f.m3, viajes: f.viajes, hechos: f.hechos, camiones: f.camiones, comienza: f.comienza, termina: f.termina, aTiempo: f.aTiempo, atrasoMin: f.atrasoMin, estado: f.estado, jornada: f.jornada, confirmado: f.confirmado })),
     traslados: trasladosCortos(v),
     arranque: v.delDia.map((m) => ({ id: m.id, patente: m.license_plate, plantId: v.amanece[m.id] ?? null, planta: v.amanece[m.id] ? v.nombres[v.amanece[m.id]!] || null : null })),
     noche: textoNoche(duermeDe(v), v.plantas),
@@ -302,6 +302,8 @@ export const esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replac
 export const linkDia = (fecha: string) => `${SITIO}/programacion?vista=dia&fecha=${fecha}`
 
 const COLOR_PLANTA = { teal: "#ccfbf1", violeta: "#ede9fe", traslado: "#e5e7eb" }
+/** Lo ya despachado, más claro */
+const claro = (c: string) => (c === COLOR_PLANTA.teal ? "#f0fdfa" : c === COLOR_PLANTA.violeta ? "#f5f3ff" : "#f9fafb")
 function colorPlanta(nombre: string, i: number) {
   const n = nombre.toLowerCase()
   if (n.includes("canning")) return COLOR_PLANTA.teal
@@ -330,15 +332,16 @@ export function diagramaHtml(filas: FilaDiagrama[], plantas: { id: string; nombr
       const e = Math.min(n, Math.ceil((b.hasta - t0) / 15))
       if (e <= s) continue
       if (s > c) tds.push(`<td colspan="${s - c}" ${celda}></td>`)
-      const bg = b.tipo === "traslado" ? COLOR_PLANTA.traslado : color(b.plantId)
+      const bg = b.tipo === "traslado" ? COLOR_PLANTA.traslado : b.tipo === "hecho" ? claro(color(b.plantId)) : color(b.plantId)
       const texto = e - s >= 4 ? esc(b.texto) : ""
-      tds.push(`<td colspan="${e - s}" bgcolor="${bg}" title="${esc(`${b.texto} · ${b.detalle}`)}" style="padding:0 3px;height:22px;font-size:10px;background:${bg};border-right:2px solid #fff;white-space:nowrap;overflow:hidden">${texto}</td>`)
+      const borde = b.tipo === "hecho" ? "border:1px dashed #9ca3af;" : ""
+      tds.push(`<td colspan="${e - s}" bgcolor="${bg}" title="${esc(`${b.texto} · ${b.detalle}`)}" style="padding:0 3px;height:22px;font-size:10px;background:${bg};${borde}border-right:2px solid #fff;white-space:nowrap;overflow:hidden">${texto}</td>`)
       c = e
     }
     if (c < n) tds.push(`<td colspan="${n - c}" ${celda}></td>`)
     return `<tr><td style="font-size:11px;font-weight:bold;padding:0 6px 0 0;white-space:nowrap">${esc(f.patente)}</td>${tds.join("")}</tr>`
   }).join("")
-  const leyenda = [...plantas.map((p) => `<span style="background:${color(p.id)};padding:1px 6px;border-radius:3px">${esc(p.nombre)}</span>`), `<span style="background:${COLOR_PLANTA.traslado};padding:1px 6px;border-radius:3px">Traslado</span>`].join(" ")
+  const leyenda = [...plantas.map((p) => `<span style="background:${color(p.id)};padding:1px 6px;border-radius:3px">${esc(p.nombre)}</span>`), `<span style="background:${COLOR_PLANTA.traslado};padding:1px 6px;border-radius:3px">Traslado</span>`, `<span style="border:1px dashed #9ca3af;padding:0 6px;border-radius:3px">✓ hecho</span>`].join(" ")
   const texto = filas.map((f) => {
     const partes: string[] = []
     let planta: string | null = null
@@ -398,7 +401,7 @@ export function armarMailArmado(d: DatosMail): { asunto: string; html: string } 
   const chip = (texto: string, ok: boolean) => `<span style="display:inline-block;padding:1px 6px;border-radius:9px;font-size:11px;background:${ok ? "#d1fae5" : "#fef3c7"};color:${ok ? "#065f46" : "#92400e"}">${esc(texto)}</span>`
   const filas = d.filas.map((f) => `<tr>`
     + `<td ${td}><b>${esc(f.nombre)}</b><div style="${gris};font-size:11px">${esc([f.planta, f.metodo, `${f.m3} m³`, f.cliente].filter(Boolean).join(" · "))}</div></td>`
-    + `<td ${td}>${f.viajes}</td>`
+    + `<td ${td}>${f.viajes}${f.hechos ? `<div style="${gris};font-size:11px">${f.hechos} ${f.hechos === 1 ? "hecho" : "hechos"}</div>` : ""}</td>`
     + `<td ${td}>${f.camiones.n}<div style="${gris};font-size:11px">${esc(f.camiones.patentes.join(", "))}</div></td>`
     + `<td ${td}>${esc(f.comienza || "—")}</td>`
     + `<td ${td}>${esc(f.termina || "—")}</td>`
@@ -470,7 +473,7 @@ export function datosMailDeVista(v: VistaDia, o: {
 export type ResumenReparto = {
   fecha: string
   camiones: number
-  pedidos: { nombre: string; planta: string; viajes: number; camiones: number; comienza: string | null; termina: string | null; atraso_min: number | null; a_tiempo: boolean }[]
+  pedidos: { nombre: string; planta: string; viajes: number; hechos: number; camiones: number; comienza: string | null; termina: string | null; atraso_min: number | null; a_tiempo: boolean }[]
   traslados: string[]
   noche: string | null
 }
@@ -488,7 +491,7 @@ export function resumenReparto(v: VistaDia): ResumenReparto {
   return {
     fecha: v.fecha,
     camiones: v.entrada.camiones.length,
-    pedidos: v.filas.map((f) => ({ nombre: f.nombre, planta: f.planta, viajes: f.viajes, camiones: f.camiones.n, comienza: f.comienza, termina: f.termina, atraso_min: f.atrasoMin, a_tiempo: f.aTiempo })),
+    pedidos: v.filas.map((f) => ({ nombre: f.nombre, planta: f.planta, viajes: f.viajes, hechos: f.hechos, camiones: f.camiones.n, comienza: f.comienza, termina: f.termina, atraso_min: f.atrasoMin, a_tiempo: f.aTiempo })),
     traslados: trasladosCortos(v),
     noche: nocheCorta(duermeDe(v), v.plantas),
   }

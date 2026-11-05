@@ -6,7 +6,7 @@
  * la usan la pantalla, el mail y el resumen para el WhatsApp de Concretus, así los tres dicen lo mismo.
  */
 import { parametrosDePlanta } from "@/lib/planificador"
-import { cargarViajes, conTiemposGps, parametrosConGps, type PedidoParaViajes, type ViajeRow } from "@/lib/viajes"
+import { cargarViajes, conTiemposGps, parametrosConGps, viajeMinDe, descargaDe, type PedidoParaViajes, type ViajeRow } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import {
   armarDia, dondeDuermen, repartoDe, avisosEdicion, avisosSuperposicion, viajesDia, trasladoDe, cargarReparto,
@@ -55,7 +55,15 @@ export type DatosDia = {
   amanecer?: AmanecerFila[] | null
   /** Fase B: estado del mail del armado de esta fecha (armado_mail); null sin la tabla o sin fila */
   armadoMail?: Record<string, any> | null
+  /** Despachos de los pedidos del día (los hechos, con su hora real); null sin leer */
+  despachos?: DespachoDia[] | null
+  /** Horas del GPS de esos despachos (viajes_gps) */
+  gpsDespachos?: { dispatch_id: string; salida_planta: string | null; llegada_obra: string | null; salida_obra: string | null; llegada_planta: string | null }[] | null
+  /** Cuándo se leyó (para que el día de hoy arranque desde ahora) */
+  leidoAt?: number
 }
+
+export type DespachoDia = { id: string; scheduled_dispatch_id: string | null; mixer_id: string | null; quantity_m3: number; dispatch_date: string; plant_id: string | null; is_test_dispatch?: boolean | null }
 
 /** Una fila de amanecer_camiones */
 export type AmanecerFila = { mixer_id: string; plant_id: string | null; fuente: string; texto: string; tomado_at: string }
@@ -93,12 +101,19 @@ export async function leerDatosDia(sb: any, fecha: string, plants: { id: string;
     plantIds.length === 2 ? cargarTraslado(sb, plantIds[0], plantIds[1]) : Promise.resolve({ disponible: false, fila: null }),
   ])
   const pedidosHoy = ((ph as any[]) || []) as PedidoDia[], pedidosManana = ((pm as any[]) || []) as PedidoDia[]
-  const [viajes, amanecer, armadoMail] = await Promise.all([
+  const idsHoy = pedidosHoy.map((p) => p.id)
+  const [viajes, amanecer, armadoMail, despachos] = await Promise.all([
     cargarViajes(sb, [...pedidosHoy, ...pedidosManana].map((p) => p.id)),
     leerOpcional(sb.from("amanecer_camiones").select("mixer_id, plant_id, fuente, texto, tomado_at").eq("fecha", fecha)),
     leerOpcional(sb.from("armado_mail").select("*").eq("fecha", fecha).maybeSingle()),
+    idsHoy.length ? leerOpcional(sb.from("dispatches").select("*").in("scheduled_dispatch_id", idsHoy)) : Promise.resolve([]),
   ])
-  return { fecha, base, plants, plantRows: (pls as any[]) || [], mixers: ((ms as any[]) || []) as MixerDia[], pedidosHoy, pedidosManana, viajes, tiempos, guardado, ayer, traslado, amanecer: (amanecer as AmanecerFila[] | null) || null, armadoMail: armadoMail || null }
+  const ds = ((despachos as any[]) || []).map((d) => ({ id: d.id, scheduled_dispatch_id: d.scheduled_dispatch_id, mixer_id: d.mixer_id, quantity_m3: Number(d.quantity_m3), dispatch_date: d.dispatch_date, plant_id: d.plant_id, is_test_dispatch: d.is_test_dispatch ?? null })) as DespachoDia[]
+  const gpsDespachos = ds.length ? await leerOpcional(sb.from("viajes_gps").select("dispatch_id, salida_planta, llegada_obra, salida_obra, llegada_planta").in("dispatch_id", ds.map((d) => d.id))) : []
+  return {
+    fecha, base, plants, plantRows: (pls as any[]) || [], mixers: ((ms as any[]) || []) as MixerDia[], pedidosHoy, pedidosManana, viajes, tiempos, guardado, ayer, traslado,
+    amanecer: (amanecer as AmanecerFila[] | null) || null, armadoMail: armadoMail || null, despachos: ds, gpsDespachos: (gpsDespachos as any[]) || [], leidoAt: Date.now(),
+  }
 }
 
 /** Pedidos pendientes con viajes pendientes ajustados a mano en el gerenciador (origen "gerenciador") */
@@ -106,6 +121,39 @@ export function pedidosManuales(d: Pick<DatosDia, "pedidosHoy" | "viajes">): str
   return d.pedidosHoy
     .filter((p) => p.status !== "completed" && p.status !== "cancelled" && (d.viajes[p.id] || []).some((v) => v.estado === "planificado" && v.origen === "gerenciador"))
     .map((p) => p.id)
+}
+
+/**
+ * Los viajes del pedido con los ya despachados (los hechos) en su hora real: la salida del GPS (viajes_gps) o, si no
+ * está, la hora de salida del despacho ("Salió a las"); la llegada, el fin y la vuelta del GPS o, si no, con los tiempos
+ * del pedido. Un despacho que ya tiene su viaje (dispatch_id) lo actualiza; si no, se suma como viaje despachado.
+ * Los despachos por árido (is_test_dispatch) no son viajes de hormigón y no cuentan.
+ */
+export function conHechos(p: PedidoDia, existentes: ViajeRow[], d: Pick<DatosDia, "despachos" | "gpsDespachos">, prm: import("@/lib/planificador").Parametros): ViajeRow[] {
+  const ds = (d.despachos || []).filter((x) => x.scheduled_dispatch_id === p.id && !x.is_test_dispatch).sort((a, b) => Date.parse(a.dispatch_date) - Date.parse(b.dispatch_date))
+  if (!ds.length) return existentes
+  const MIN = 60_000
+  const iso = (t: number) => new Date(t).toISOString()
+  const out = existentes.map((v) => ({ ...v }))
+  const usados = new Set(out.filter((v) => v.estado !== "planificado").map((v) => v.n))
+  let libre = 1
+  for (const x of ds) {
+    const g = (d.gpsDespachos || []).find((y) => y.dispatch_id === x.id)
+    const ida = viajeMinDe(p) * MIN
+    const salida = Date.parse(g?.salida_planta || x.dispatch_date)
+    const llegada = g?.llegada_obra ? Date.parse(g.llegada_obra) : salida + ida
+    const fin = g?.salida_obra ? Date.parse(g.salida_obra) : llegada + descargaDe(p, Number(x.quantity_m3) || 8, prm) * MIN
+    const vuelta = g?.llegada_planta ? Date.parse(g.llegada_planta) : fin + (prm.lavadoMin * MIN) + ida
+    const horas = { hora_carga: iso(salida - prm.cargaMin * MIN), hora_salida: iso(salida), hora_llegada: iso(llegada), hora_fin_descarga: iso(fin), hora_vuelta: iso(Math.max(vuelta, fin)) }
+    const ligado = out.find((v) => v.dispatch_id === x.id)
+    if (ligado) Object.assign(ligado, horas, { estado: "despachado", mixer_id: ligado.mixer_id ?? x.mixer_id })
+    else {
+      while (usados.has(libre)) libre++
+      usados.add(libre)
+      out.push({ pedido_id: p.id, plant_id: p.plant_id, n: libre, m3: Number(x.quantity_m3), ...horas, mixer_id: x.mixer_id, estado: "despachado", dispatch_id: x.id })
+    }
+  }
+  return out
 }
 
 /** El pedido con la hora y el método cambiados en la pantalla (sin guardar) */
@@ -158,7 +206,7 @@ export type VistaDia = {
  * `ruta` = la ruta del mapa entre las plantas (respaldo del traslado); `amanece` = dónde arranca cada camión (si no
  * viene, donde durmió según el reparto del día anterior).
  */
-export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edicion?: Reparto | null; ruta?: { minutos: number; km: number } | null; amanece?: Record<string, string | null>; rearmarManuales?: boolean } = {}): VistaDia {
+export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edicion?: Reparto | null; ruta?: { minutos: number; km: number } | null; amanece?: Record<string, string | null>; rearmarManuales?: boolean; ahora?: number } = {}): VistaDia {
   const { fecha, base } = d
   const plantas: PlantaReparto[] = d.plants.map((p) => {
     const row = d.plantRows.find((x) => x.id === p.id)
@@ -183,13 +231,25 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   const pedidos = d.pedidosHoy.map((p) => aplicarAjustes(p, ajustes[p.id], fecha))
   const aPedidos = (ps: PedidoDia[]): PedidoReparto[] => ps
     .filter((p) => prmDe(p.plant_id))
-    .map((p) => ({ p: conTiemposGps(p, prmDe(p.plant_id)!, d.tiempos), existentes: d.viajes[p.id] || [], obra: nombreVisible(p.construction_sites?.name) || "Pedido" }))
+    .map((p) => {
+      const pg = conTiemposGps(p, prmDe(p.plant_id)!, d.tiempos)
+      return { p: pg, existentes: conHechos(pg, d.viajes[p.id] || [], d, prmDe(p.plant_id)!), obra: nombreVisible(p.construction_sites?.name) || "Pedido" }
+    })
   const pedidosR = aPedidos(pedidos)
+  const existentesDe = (id: string) => pedidosR.find((x) => x.p.id === id)?.existentes || d.viajes[id] || []
+  // Lo ya despachado de cada pedido (para la columna Viajes y Comienza)
+  const hechos = Object.fromEntries(pedidosR.map((x) => {
+    const hs = x.existentes.filter((v) => v.estado === "despachado")
+    return [x.p.id, { n: hs.length, primeraCarga: hs.length ? Math.min(...hs.map((v) => (Date.parse(v.hora_carga) - base) / 60_000)) : null }]
+  }))
+  // Hoy: los viajes pendientes no cargan antes de ahora (redondeado a 5 min, hora de Argentina); otros días, como siempre
+  const ahora = opts.ahora ?? d.leidoAt
+  const desde = ahora != null && new Date(ahora - 3 * 3600_000).toISOString().slice(0, 10) === fecha ? Math.ceil((ahora - base) / 60_000 / 5) * 5 : null
   // Viajes ajustados a mano en el gerenciador: no se rearman (salvo que se pida); sus viajes pendientes ocupan a sus camiones
   const manuales = pedidosManuales(d)
   const fijados = opts.rearmarManuales ? new Set<string>() : new Set(manuales)
-  const fijos = d.pedidosHoy.flatMap((p) => (d.viajes[p.id] || []).filter((v) => v.estado === "despachado" || (fijados.has(p.id) && v.estado === "planificado")))
-  const entrada: EntradaDia = { base, plantas, camiones, pedidos: pedidosR, traslado, fijos, fijados }
+  const fijos = d.pedidosHoy.flatMap((p) => existentesDe(p.id).filter((v) => v.estado === "despachado" || (fijados.has(p.id) && v.estado === "planificado")))
+  const entrada: EntradaDia = { base, plantas, camiones, pedidos: pedidosR, traslado, fijos, fijados, desde }
   const sugerencia = armarDia(entrada)
   const man = aPedidos(d.pedidosManana)
   const noche = dondeDuermen(sugerencia, camiones, plantas, man.length ? { base: base + DIA_MS, plantas, pedidos: man, traslado } : null)
@@ -204,7 +264,7 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   const plantDe = (pid: string) => d.pedidosHoy.find((p) => p.id === pid)?.plant_id || null
   const guardadosIds = new Set(d.pedidosHoy.filter((p) => (d.viajes[p.id] || []).some((v) => v.estado === "planificado")).map((p) => p.id))
   const referencia: ViajeDia[] = [
-    ...viajesDia(d.pedidosHoy.flatMap((p) => (d.viajes[p.id] || []).filter((v) => v.estado !== "cancelado" && (v.estado === "despachado" || guardadosIds.has(p.id)))), base, plantDe),
+    ...viajesDia(d.pedidosHoy.flatMap((p) => existentesDe(p.id).filter((v) => v.estado !== "cancelado" && (v.estado === "despachado" || guardadosIds.has(p.id)))), base, plantDe),
     ...sugerencia.viajes.filter((v) => !v.fijo && !guardadosIds.has(v.pedidoId)),
   ]
   const obraDe = (pid: string) => nombreVisible(d.pedidosHoy.find((p) => p.id === pid)?.construction_sites?.name) || "otra obra"
@@ -218,9 +278,9 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   const contexto: ContextoReparto = {
     base, plantas, traslado, camiones, reparto: vigente,
     sugeridos: Object.fromEntries(resultado.pedidos.map((x) => [x.id, x.camiones])),
-    otros: referencia,
+    otros: referencia, desde,
   }
-  const filas = filasPedidos(resultado, pedidosR.map((x) => ({ ...pedidos.find((p) => p.id === x.p.id), ...x.p })), plantas, patentes)
+  const filas = filasPedidos(resultado, pedidosR.map((x) => ({ ...pedidos.find((p) => p.id === x.p.id), ...x.p })), plantas, patentes, hechos)
   return {
     fecha, base, plantas, nombres, patentes, traslado, amanece, fuenteAmanece, delDia, camiones, noSalen, pedidos, entrada, sugerencia,
     noche, sugerido, efectivo, vigente, resultado, referencia, avisos, contexto, filas, numeros: resumenNumeros(resultado, filas), obraDe,
