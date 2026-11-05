@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
 import { completarVacios, usarDelMapa, type DireccionMapa } from "@/lib/geo-direccion"
+import { crearTurnos } from "@/lib/turnos"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AddConstructionSiteDialogProps {
@@ -25,14 +26,15 @@ interface AddConstructionSiteDialogProps {
 export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: AddConstructionSiteDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [formData, setFormData] = useState({
+  const FORM_VACIO = {
     name: "",
     address: "",
     localidad: "",
     travel_time_minutes: "30",
     unload_time_minutes: "20",
     remito_tipo: "", // fase 3
-  })
+  }
+  const [formData, setFormData] = useState(FORM_VACIO)
   const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
   const [ubic, setUbic] = useState<UbicacionObra>(UBIC_VACIA)
   const [plantaCliente, setPlantaCliente] = useState<string | null>(null)
@@ -56,11 +58,26 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
 
   const supabase = createClient()
 
+  // Cada apertura del diálogo toma un turno: si la planta llega después de cerrarlo o de volver a abrirlo, se descarta
+  const aperturas = useRef(crearTurnos()).current
+
   // La planta del cliente define desde dónde se calcula el viaje
-  const cargarPlanta = async () => {
+  const cargarPlanta = async (n: number) => {
     if (!clientId) return
     const { data } = await supabase.from("clients").select("plant_id").eq("id", clientId).maybeSingle()
-    setPlantaCliente(data?.plant_id || null)
+    if (aperturas.vigente(n)) setPlantaCliente(data?.plant_id || null)
+  }
+
+  // El diálogo arranca vacío cada vez que se abre
+  const cambiarAbierto = (o: boolean) => {
+    setOpen(o)
+    if (!o) { aperturas.cerrar(); return }
+    aperturas.abrir()
+    setFormData(FORM_VACIO)
+    setUbic(UBIC_VACIA)
+    setDirMapa(null)
+    setPlantaCliente(null)
+    cargarPlanta(aperturas.nuevo())
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,10 +115,10 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
 
       toast.success("Obra agregada exitosamente")
       logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: formData.localidad || "-", "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
-      setFormData({ name: "", address: "", localidad: "", travel_time_minutes: "30", unload_time_minutes: "20", remito_tipo: "" })
+      setFormData(FORM_VACIO)
       setUbic(UBIC_VACIA)
       setDirMapa(null)
-      setOpen(false)
+      cambiarAbierto(false)
 
       if (onSiteAdded && data) {
         onSiteAdded({
@@ -124,7 +141,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) cargarPlanta() }}>
+    <Dialog open={open} onOpenChange={cambiarAbierto}>
       <DialogTrigger asChild>
         {trigger || (
           <Button variant="outline" size="sm">
@@ -215,7 +232,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
             </Select>
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => cambiarAbierto(false)}>
               Cancelar
             </Button>
             <Button type="submit" disabled={loading}>

@@ -16,23 +16,35 @@ const limpio = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g
 /** "Partido de Esteban Echeverría" → "Esteban Echeverría" */
 const sinPartido = (v: string) => v.replace(/^partido\s+(de|del)\s+/i, "").trim()
 
-/** Para comparar: sin mayúsculas, tildes, puntos ni espacios de más */
+/**
+ * Para comparar: sin mayúsculas, tildes, puntos ni espacios de más; "Avenida" = "Av.", "N°" = "Nº" = nada,
+ * "Ruta Provincial" = "RP" = "R.P." = "Ruta".
+ */
 export function normalizarDireccion(v: string | null | undefined): string {
   return limpio(v)
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[.,;:°º#]/g, " ")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\br\.\s*p\b\.?/g, " rp ")
+    .replace(/\bn\s*[\u00b0\u00ba]/g, " ")
+    .replace(/[.,;:#\u00b0\u00ba]/g, " ")
+    .replace(/\bavenida\b/g, "av")
+    .replace(/\bruta\s+provincial\b/g, "ruta")
+    .replace(/\brp(?=\s|\d|$)/g, "ruta ")
     .replace(/\s+/g, " ")
     .trim()
 }
 
-function armar(o: { calle?: string; numero?: string; nombre?: string; localidad?: string }): DireccionMapa {
+/** Coordenada redondeada a 5 decimales (~1 m), para que la caché de la consulta inversa sirva */
+export const redondearCoord = (n: number) => Math.round(n * 1e5) / 1e5
+
+function armar(o: { calle?: string; numero?: string; nombre?: string; localidad?: string; preferirCalle?: boolean }): DireccionMapa {
   const calle = limpio(o.calle), numero = limpio(o.numero), localidad = limpio(o.localidad)
   let nombre = limpio(o.nombre)
   // El nombre no sirve como dirección si es la localidad misma o repite la calle
   if (nombre && (normalizarDireccion(nombre) === normalizarDireccion(localidad) || normalizarDireccion(nombre) === normalizarDireccion(calle))) nombre = ""
-  const direccion = calle && numero ? `${calle} ${numero}` : nombre || calle
+  // En la consulta inversa el nombre suele ser el comercio o edificio más cercano: si hay calle, va la calle
+  const direccion = calle && (numero || o.preferirCalle) ? [calle, numero].filter(Boolean).join(" ") : nombre || calle
   return { direccion: direccion || null, localidad: localidad || null }
 }
 
@@ -47,15 +59,19 @@ export function direccionDeGoogle(d: any): DireccionMapa {
   const comps = (Array.isArray(d?.addressComponents) ? d.addressComponents : []) as any[]
   const nombre = limpio(d?.displayName?.text ?? d?.displayName)
   if (comps.length) {
+    const comp = (tipo: string) => comps.find((x) => Array.isArray(x?.types) && x.types.includes(tipo))
     const de = (tipo: string) => {
-      const c = comps.find((x) => Array.isArray(x?.types) && x.types.includes(tipo))
+      const c = comp(tipo)
       return limpio(c?.longText ?? c?.long_name ?? c?.shortText ?? c?.short_name)
     }
+    // La calle como la escribe Google en la dirección ("Av. Mariano Castex", no "Avenida Mariano Castex")
+    const ruta = comp("route")
+    const calle = limpio(ruta?.shortText ?? ruta?.short_name) || de("route")
     const localidad = primero(de("locality"), de("sublocality_level_1"), de("sublocality"), de("neighborhood"), sinPartido(de("administrative_area_level_2")))
     // Si el lugar es la localidad (o el partido, la provincia), no hay dirección
     const tipos = (Array.isArray(d?.types) ? d.types : []) as string[]
     const esZona = tipos.some((t) => ["locality", "administrative_area_level_1", "administrative_area_level_2", "country"].includes(t))
-    return armar({ calle: de("route"), numero: de("street_number"), nombre: esZona ? "" : nombre, localidad })
+    return armar({ calle, numero: de("street_number"), nombre: esZona ? "" : nombre, localidad })
   }
   const partes = limpio(d?.formattedAddress).split(",").map((x) => x.trim()).filter(Boolean)
   if (partes.length >= 2) {
@@ -70,11 +86,14 @@ export function direccionDeGoogle(d: any): DireccionMapa {
 }
 
 // ---------------------------------------------------------------------------- Nominatim
-/** Un resultado de Nominatim (search con addressdetails=1, o reverse con format=jsonv2) */
-export function direccionDeNominatim(x: any): DireccionMapa {
+/**
+ * Un resultado de Nominatim (search con addressdetails=1, o reverse con format=jsonv2). En la consulta inversa
+ * (inversa: true) lo más cercano puede ser un comercio o edificio con nombre: si hay calle, se usa la calle.
+ */
+export function direccionDeNominatim(x: any, opts: { inversa?: boolean } = {}): DireccionMapa {
   const a = x?.address || {}
   const localidad = primero(a.city, a.town, a.village, a.hamlet, a.suburb, a.municipality, sinPartido(limpio(a.county)), sinPartido(limpio(a.state_district)))
-  return armar({ calle: a.road, numero: a.house_number, nombre: limpio(x?.name), localidad })
+  return armar({ calle: a.road, numero: a.house_number, nombre: limpio(x?.name), localidad, preferirCalle: !!opts.inversa })
 }
 
 // ---------------------------------------------------------------------------- Photon

@@ -5,7 +5,7 @@ import { obtenerLugar } from "@/lib/geo-lugares"
  * Coordenadas del lugar elegido en el buscador.
  * ?id=<placeId de Google o "osm:lat,lng">&sesion=<el mismo token de la búsqueda>
  * Google Places (New) Place Details con field mask location,formattedAddress,displayName,addressComponents,types
- * (addressComponents y types son del mismo nivel de facturación que formattedAddress).
+ * Se cobra como Place Details Pro por displayName (addressComponents y types no suben el nivel).
  * Respuesta: { lugar: { id, nombre, direccion, lat, lng, fuente, direccionMapa } } o 404 si no se pudo.
  * direccionMapa = { direccion, localidad } para completar el formulario de la obra.
  */

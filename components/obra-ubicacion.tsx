@@ -20,7 +20,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MapaBase, iconos } from "@/components/mapa-base"
 import { parsearCoordenadas } from "@/lib/geo"
-import { difiereDelMapa, textoDireccion, tieneDireccion, type DireccionMapa } from "@/lib/geo-direccion"
+import { difiereDelMapa, redondearCoord, textoDireccion, tieneDireccion, type DireccionMapa } from "@/lib/geo-direccion"
+import { crearTurnos } from "@/lib/turnos"
 import { MapPin, Search, Loader2, Link2, Route } from "lucide-react"
 
 export type UbicacionObra = {
@@ -45,6 +46,9 @@ type Props = {
 
 type Planta = { id: string; name: string; gps_lat: number | null; gps_lng: number | null }
 
+/** Espera antes de buscar la dirección de un punto marcado a mano (clic o arrastre) */
+const ESPERA_A_MANO_MS = 800
+
 export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange, onTiempoViaje, onDireccion }: Props) {
   const [plantas, setPlantas] = useState<Planta[]>([])
   const [buscando, setBuscando] = useState(false)
@@ -65,7 +69,13 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   const [aviso, setAviso] = useState<string | null>(null)
   const sesion = useRef<string | null>(null)
   const escrito = useRef(false) // solo se busca si la persona escribió (no al elegir una sugerencia)
-  const ultimaEleccion = useRef(0) // si se elige otro punto antes de que llegue la dirección, se descarta la vieja
+  // Cada elección (sugerencia, búsqueda, link, clic o arrastre) toma un turno: las respuestas de una elección vieja
+  // (lugar, ruta, dirección) se descartan, y ninguna vale después de desmontarse (diálogo cerrado).
+  const ultimaEleccion = useRef(crearTurnos()).current
+  useEffect(() => {
+    ultimaEleccion.abrir()
+    return () => ultimaEleccion.cerrar()
+  }, [ultimaEleccion])
 
   useEffect(() => {
     createClient().from("plants").select("id, name, gps_lat, gps_lng").then(({ data }) => setPlantas((data as any) || []))
@@ -128,12 +138,14 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
     setTexto([sg.principal, sg.secundario].filter(Boolean).join(", "))
     setAbierto(false); setSugerencias([]); setError(null)
     if (sg.lat != null && sg.lng != null) { sesion.current = null; elegir(sg.lat, sg.lng, "direccion", sg.direccionMapa); return }
+    const n = ultimaEleccion.nuevo()
     try {
       const r = await fetch(`/api/geo/lugar?id=${encodeURIComponent(sg.id)}&sesion=${encodeURIComponent(sesion.current || "")}`)
       const d = await r.json()
+      if (!ultimaEleccion.vigente(n)) { sesion.current = null; return }
       if (d.lugar) elegir(d.lugar.lat, d.lugar.lng, "direccion", d.lugar.direccionMapa)
       else setError(`${d.error || "No se pudo ubicar ese lugar: marcá el punto en el mapa"}${d.aviso ? ` (Google no respondió: ${d.aviso})` : ""}`)
-    } catch { setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
+    } catch { if (ultimaEleccion.vigente(n)) setError("No se pudo ubicar ese lugar: marcá el punto en el mapa") }
     sesion.current = null
   }
 
@@ -158,54 +170,69 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
     const q = [direccion, localidad].filter(Boolean).join(", ")
     if (q.trim().length < 3) { setError("Escribí la dirección y la localidad primero"); return }
     setBuscando(true); setError(null); setResultados([])
+    const n = ultimaEleccion.nuevo()
     try {
       const r = await fetch(`/api/geo/buscar?q=${encodeURIComponent(q)}`)
       const d = await r.json()
+      if (!ultimaEleccion.vigente(n)) return
       if (!d.resultados?.length) setError("No se encontró en la zona. Marcá el punto tocando el mapa, o pegá abajo el link de Google Maps que manda el cliente.")
       else if (d.resultados.length === 1 && d.resultados[0].exacto) elegir(d.resultados[0].lat, d.resultados[0].lng, "direccion", d.resultados[0].direccionMapa)
       else setResultados(d.resultados)
-    } catch { setError("No se pudo buscar la dirección") }
-    setBuscando(false)
+    } catch { if (ultimaEleccion.vigente(n)) setError("No se pudo buscar la dirección") }
+    finally { setBuscando(false) }
   }
 
-  /** Dirección y localidad del punto: las del lugar elegido si las trae, si no las de la geocodificación inversa */
-  async function avisarDireccion(lat: number, lng: number, dir?: DireccionMapa | null) {
+  /**
+   * Dirección y localidad del punto: las del lugar elegido si las trae, si no las de la geocodificación inversa.
+   * En un clic o arrastre se espera ESPERA_A_MANO_MS (si se sigue moviendo el punto, vale solo el último).
+   * Si la consulta inversa falla o no trae nada, se avisa vacío (así se borra el "El mapa dice" anterior).
+   */
+  async function avisarDireccion(n: number, lat: number, lng: number, dir: DireccionMapa | null | undefined, esperar: boolean) {
     if (!onDireccion) return
-    const n = ++ultimaEleccion.current
     if (tieneDireccion(dir)) { onDireccion(dir); return }
+    if (esperar) {
+      await new Promise((ok) => setTimeout(ok, ESPERA_A_MANO_MS))
+      if (!ultimaEleccion.vigente(n)) return
+    }
+    let mapa: DireccionMapa = { direccion: null, localidad: null }
     try {
-      const r = await fetch(`/api/geo/inversa?lat=${lat}&lng=${lng}`)
-      if (!r.ok) return
-      const d = await r.json()
-      const mapa: DireccionMapa = { direccion: d.direccion ?? null, localidad: d.localidad ?? null }
-      if (n === ultimaEleccion.current && tieneDireccion(mapa)) onDireccion(mapa)
+      const r = await fetch(`/api/geo/inversa?lat=${redondearCoord(lat)}&lng=${redondearCoord(lng)}`)
+      if (r.ok) {
+        const d = await r.json()
+        mapa = { direccion: d.direccion ?? null, localidad: d.localidad ?? null }
+      }
     } catch {}
+    if (ultimaEleccion.vigente(n)) onDireccion(mapa)
   }
 
-  async function elegir(lat: number, lng: number, fuente: UbicacionObra["fuente"], dir?: DireccionMapa | null) {
+  async function elegir(lat: number, lng: number, fuente: UbicacionObra["fuente"], dir?: DireccionMapa | null, aMano = false) {
+    const n = ultimaEleccion.nuevo()
     setResultados([])
     onChange({ ...valor, lat, lng, fuente, km: null, minutos: null })
-    avisarDireccion(lat, lng, dir)
-    if (!planta?.gps_lat) return
+    avisarDireccion(n, lat, lng, dir, aMano)
+    if (!planta?.gps_lat) { setCalculando(false); return }
     setCalculando(true)
     try {
       const r = await fetch(`/api/geo/ruta?desde=${planta.gps_lat},${planta.gps_lng}&hasta=${lat},${lng}`)
       const d = await r.json()
+      if (!ultimaEleccion.vigente(n)) return
       onChange({ lat, lng, fuente, km: d.km ?? null, minutos: d.minutos ?? null })
       if (d.minutos) onTiempoViaje?.(d.minutos)
     } catch {}
-    setCalculando(false)
+    if (ultimaEleccion.vigente(n)) setCalculando(false)
   }
 
   async function usarLink() {
     let c = parsearCoordenadas(pegar)
     if (!c) {
       // Links cortos de Google Maps (los que llegan por WhatsApp): se resuelven en el servidor
+      const n = ultimaEleccion.nuevo()
       try {
         const r = await fetch(`/api/geo/link?u=${encodeURIComponent(pegar.trim())}`)
         const d = await r.json()
         if (d.lat != null) c = { lat: d.lat, lng: d.lng }
       } catch {}
+      if (!ultimaEleccion.vigente(n)) return
     }
     if (!c) { setError("No reconozco ese link o esas coordenadas. Pegá el link de Google Maps del lugar (el que manda el cliente por WhatsApp sirve), o algo como -34.97, -58.46"); return }
     setPegar(""); setError(null)
@@ -318,8 +345,8 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
         centro={valor.lat != null ? { lat: valor.lat, lng: valor.lng! } : planta?.gps_lat != null ? { lat: Number(planta.gps_lat), lng: Number(planta.gps_lng) } : undefined}
         zoom={valor.lat != null ? 15 : 11}
         alto={240}
-        onClick={(p) => elegir(p.lat, p.lng, "manual")}
-        onArrastrar={(_id, p) => elegir(p.lat, p.lng, "manual")}
+        onClick={(p) => elegir(p.lat, p.lng, "manual", null, true)}
+        onArrastrar={(_id, p) => elegir(p.lat, p.lng, "manual", null, true)}
       />
       <p className="text-[11px] text-muted-foreground">Tocá el mapa o arrastrá el punto para corregir la ubicación exacta (por ejemplo, el lote dentro de un barrio).</p>
 
