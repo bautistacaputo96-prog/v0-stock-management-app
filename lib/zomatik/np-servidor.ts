@@ -965,7 +965,7 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
         // Una NP en "error" no la vuelve a tomar la pasada (solo el botón): el mail dice la verdad
         // Falta vincular el cliente o la fórmula: quien programa lo vincula desde el pedido y la NP se reintenta (04/11)
         esFaltaDeVinculo(r.mensaje)
-          ? "Se puede vincular desde el pedido (Editar o ⋯ › Vincular con Zomatik): la NP se reintenta sola."
+          ? "Vinculalo desde el pedido (⋯ › Vincular con Zomatik) y la NP se reintenta sola; si lo vincula un gerencial en Vínculos, tocá Generar NP ahora."
           : "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
         "El pedido está guardado.",
         ...(r.recorte ? [`Respuesta de Zomatik (recorte): ${r.recorte}`] : []),

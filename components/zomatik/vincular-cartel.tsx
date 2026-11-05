@@ -102,7 +102,8 @@ export function VincularCartel({
   plantId: string | null
   /** El pedido guardado (para la Actividad del pedido y para reintentar la NP); sin él, "pedido nuevo". */
   pedidoId?: string | null
-  onVinculado: (tipo: "cliente" | "formula", codigo: number, nombre: string) => void
+  /** `hecho` = se vinculó en este cartel; false = ya estaba vinculado (solo se actualiza la pantalla de atrás). */
+  onVinculado: (tipo: "cliente" | "formula", codigo: number, nombre: string, hecho: boolean) => void
   /** Solo dentro del formulario: usar en el pedido el cliente nuestro que ya tiene ese código de Zomatik. */
   onUsarCliente?: (c: { id: string; name: string; zomatik_codigo: number }) => void
   alTerminar: "generar" | "nada"
@@ -132,8 +133,8 @@ export function VincularCartel({
       if ("error" in r) return setError(r.error)
       setEstado(r)
       // Lo que ya está vinculado (por ejemplo, lo vinculó otro en el medio) se actualiza en la pantalla de atrás
-      if (r.cliente && !r.cliente.falta && r.cliente.vinculado) onVinculado("cliente", r.cliente.vinculado.codigo, r.cliente.vinculado.nombre || "")
-      if (r.formula && r.formula.vinculado && r.formula.problema === null) onVinculado("formula", r.formula.vinculado.codigo, r.formula.vinculado.nombre || "")
+      if (r.cliente && !r.cliente.falta && r.cliente.vinculado) onVinculado("cliente", r.cliente.vinculado.codigo, r.cliente.vinculado.nombre || "", false)
+      if (r.formula && r.formula.vinculado && r.formula.problema === null) onVinculado("formula", r.formula.vinculado.codigo, r.formula.vinculado.nombre || "", false)
     })
     return () => {
       vivo = false
@@ -166,7 +167,7 @@ export function VincularCartel({
     const nombre = r.resultados[0]?.nombre || nombreZ
     toast({ title: `Vinculado: ${nombreNuestro} → ${nombre} (${codigo})` })
     setHecho((h) => ({ ...h, [tipo]: `${nombre} (${codigo})` }))
-    onVinculado(tipo, codigo, nombre)
+    onVinculado(tipo, codigo, nombre, true)
   }
 
   const c = estado?.cliente
@@ -216,7 +217,7 @@ export function VincularCartel({
                       {bloqueo ? (
                         <>
                           <span className="text-[11px] text-amber-700">{bloqueo}</span>
-                          {s.vinculado_a && onUsarCliente && (
+                          {s.vinculado_a?.se_puede_usar && onUsarCliente && (
                             <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => onUsarCliente({ id: s.vinculado_a!.id, name: s.vinculado_a!.name, zomatik_codigo: s.codigo })}>
                               Usar «{s.vinculado_a.name}» en el pedido
                             </Button>

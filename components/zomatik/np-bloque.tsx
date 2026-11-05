@@ -121,9 +121,10 @@ export function NpBloque({
   const excede = valor.tipo === "proyecto" && disp.m3 !== null && m3 > 0 && contra > disp.m3 + 0.001
   const yaTiene = (estado?.nps || []).filter((x) => ["pendiente", "generando", "ok", "revisar", "error"].includes(x.estado))
   const saldoElegido = saldos?.find((x) => x.id === valor.np_id) || null
-  // Falta vincular el cliente o la fórmula: sin eso la NP no sale (04/11). Un pedido de antes de prender la NP, no
+  // Falta vincular el cliente o la fórmula: sin eso la NP no sale (04/11). Un pedido de antes de prender la NP o con
+  // "Usar NP con saldo", no
   const faltaTexto = [faltan?.cliente && `el cliente «${faltan.cliente}»`, faltan?.formula && `la fórmula «${faltan.formula}»`].filter(Boolean).join(" y ")
-  const avisoVinculo = !!faltaTexto && !(estado && !estado.entra)
+  const avisoVinculo = !!faltaTexto && !(estado && !estado.entra) && valor.tipo !== "saldo"
   const errorPorVinculo = yaTiene.some((x) => x.estado === "error" && esFaltaDeVinculo(x.mensaje))
   const botonVincular = puedeVincular && !soloLectura ? (
     <button type="button" className="rounded border border-amber-400 bg-white px-2 py-0.5 text-xs font-medium" onClick={onVincular}>Vincular</button>

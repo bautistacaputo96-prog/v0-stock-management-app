@@ -313,7 +313,17 @@ export type SugerenciaCliente = {
   /** El CUIT de los dos lados (válidos): igual, distinto; null si alguno falta o no es válido. Distinto = no se elige. */
   cuit_coincide: "igual" | "distinto" | null
   /** Ya es de otro cliente nuestro: se muestra, pero no se elige. */
-  vinculado_a: { id: string; name: string } | null
+  vinculado_a: VinculadoA | null
+}
+/** El cliente nuestro que ya tiene ese código. `se_puede_usar`: activo y no unificado (se ofrece "Usar «X» en el pedido"). */
+export type VinculadoA = { id: string; name: string; se_puede_usar: boolean }
+
+/** Código de Zomatik → cliente nuestro que lo tiene (sin `excepto`). */
+export function vinculadosPorCodigo(nuestros: NuestroB[], excepto?: string | null): Map<number, VinculadoA> {
+  const out = new Map<number, VinculadoA>()
+  for (const c of nuestros)
+    if (c.zomatik_codigo != null && c.id !== excepto) out.set(c.zomatik_codigo, { id: c.id, name: c.name, se_puede_usar: c.active !== false && !c.unificado_en })
+  return out
 }
 export type DuplicadoDe = { id: string; name: string; zomatik_codigo: number; motivos: string[] }
 
@@ -335,8 +345,7 @@ export function sugerenciasCliente(cliente: NuestroB, zcli: ZomatikSug[], nuestr
   const claves = new Set(nombres.map(nombreNormalizado).filter(Boolean))
   const dCli = soloDigitos(cliente.cuit)
   const cuitOk = cuitValido(dCli)
-  const vinculadoA = new Map<number, { id: string; name: string }>()
-  for (const c of nuestros) if (c.zomatik_codigo != null && c.id !== cliente.id) vinculadoA.set(c.zomatik_codigo, { id: c.id, name: c.name })
+  const vinculadoA = vinculadosPorCodigo(nuestros, cliente.id)
   const cands: { s: SugerenciaCliente; rango: number; pct: number }[] = []
   for (const z of zcli) {
     if (!zomatikActivo(z) || esGenerico(z.razon_social)) continue

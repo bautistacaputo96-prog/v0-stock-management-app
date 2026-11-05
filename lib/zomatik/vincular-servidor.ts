@@ -19,8 +19,8 @@ import { esGenerico } from "@/lib/zomatik/cruce"
 import { soloDigitos } from "@/lib/zomatik/parseo"
 import { actividadNp } from "@/lib/zomatik/np-servidor"
 import {
-  buscarEnZomatik, compararCuit, controlVinculoPedido, deHormigon, otraPlantaDelArticulo, sugerenciasArticulo, sugerenciasCliente, zomatikActivo,
-  type ArticuloSug, type DuplicadoDe, type SugerenciaArticulo, type SugerenciaCliente, type ZomatikSug,
+  buscarEnZomatik, compararCuit, vinculadosPorCodigo, controlVinculoPedido, deHormigon, otraPlantaDelArticulo, sugerenciasArticulo, sugerenciasCliente, zomatikActivo,
+  type ArticuloSug, type DuplicadoDe, type SugerenciaArticulo, type SugerenciaCliente, type VinculadoA, type ZomatikSug,
 } from "@/lib/zomatik/vinculos"
 
 type SB = ReturnType<typeof sbServicio>
@@ -334,7 +334,7 @@ export async function estadoVinculos(o: { clientId?: string | null; formulaId?: 
   return { cliente, formula }
 }
 
-export type HitClienteVincular = ZomatikSug & { cuit_coincide: "igual" | "distinto" | null; vinculado_a: { id: string; name: string } | null }
+export type HitClienteVincular = ZomatikSug & { cuit_coincide: "igual" | "distinto" | null; vinculado_a: VinculadoA | null }
 export type HitArticuloVincular = { codigo: number; nombre: string; otra_planta: boolean; sin_codigo_sistema: boolean }
 
 export async function buscarParaVincular(
@@ -347,7 +347,7 @@ export async function buscarParaVincular(
   if (tipo === "cliente") {
     const { nuestros, zomatik } = await cargarClientesParaBuscar(sb)
     const yo = o.clientId ? nuestros.find((c) => c.id === o.clientId) : undefined
-    const vinculadoA = new Map(nuestros.filter((c) => c.zomatik_codigo != null && c.id !== o.clientId).map((c) => [c.zomatik_codigo as number, { id: c.id, name: c.name }]))
+    const vinculadoA = vinculadosPorCodigo(nuestros, o.clientId)
     // Los genéricos y los inactivos no aparecen (no se vinculan desde el pedido)
     const validos = (zomatik as ZomatikSug[]).filter((z) => zomatikActivo(z) && !esGenerico(z.razon_social))
     const hits = buscarEnZomatik(texto, validos.map((z) => ({ ...z, remitos_12m: z.remitos_12m || 0 })), 10)

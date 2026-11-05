@@ -842,7 +842,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         else if (rnp.usadas) toast({ title: "El pedido usa la NP con saldo", description: "No se generó otra NP." })
         else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
         // Se vinculó algo en este diálogo y el pedido tenía la NP en error: sin cambios, avisarNp no corre el robot
-        if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && npDialogo?.nps.some((x) => x.estado === "error")) {
+        if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && !npFaltan.cliente && !npFaltan.formula && npDialogo?.nps.some((x) => x.estado === "error")) {
           const r = await generarNpAhora(pedidoId)
           toast({ title: r.ok ? "NP lista" : "No se generó la NP", description: r.texto, variant: r.ok ? undefined : "destructive" })
         }
@@ -959,8 +959,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Viajes <NuevoBadge className="ml-2" />
             </DropdownMenuItem>
           )}
-          {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error) */}
-          {puedeCrear && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
+          {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error). Con cargar o editar, como la ruta */}
+          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
             <DropdownMenuItem onClick={() => generarAhora(d)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Generar NP ahora
@@ -1077,11 +1077,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     return !npSinVincular
   }
   /** Después de vincular: el cliente o la fórmula en memoria, para que el control no vuelva a saltar. */
-  function alVincular(tipo: "cliente" | "formula", codigo: number, enFormulario: boolean) {
+  function alVincular(tipo: "cliente" | "formula", codigo: number, vinculoHecho: boolean) {
     const ids = vincular?.modo === "menu" ? { cliente: vincular.pedido.client_id, formula: vincular.pedido.formula_id } : { cliente: form.client_id, formula: form.formula_id }
     if (tipo === "cliente") setClients((cs) => cs.map((c) => (c.id === ids.cliente ? { ...c, zomatik_codigo: codigo } : c)))
     else setFormulas((fs) => fs.map((f) => (f.id === ids.formula ? { ...f, zomatik_articulo_codigo: codigo, zomatik_vinculo: f.zomatik_vinculo && f.zomatik_vinculo !== "sin_par" ? f.zomatik_vinculo : "manual" } : f)))
-    if (enFormulario) setNpVinculoHecho(true)
+    // Solo si de verdad se vinculó algo en este diálogo (no si el cartel encontró que ya estaba vinculado)
+    if (vinculoHecho) setNpVinculoHecho(true)
   }
 
   // Resumen fijo al pie y "Falta: …" (spec 19.3.4 y 19.3.5)
@@ -1802,7 +1803,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           // El pedido guardado, solo si el formulario sigue con su cliente y su fórmula (si no, "pedido nuevo")
           pedidoId={editingDispatch && editingDispatch.client_id === form.client_id && editingDispatch.formula_id === form.formula_id ? editingDispatch.id : null}
           alTerminar="nada"
-          onVinculado={(tipo, codigo) => alVincular(tipo, codigo, true)}
+          onVinculado={(tipo, codigo, _nombre, hecho) => alVincular(tipo, codigo, hecho)}
           onUsarCliente={(c) => {
             if (!clients.some((x) => x.id === c.id)) setClients((cs) => [...cs, { id: c.id, name: c.name, zomatik_codigo: c.zomatik_codigo, construction_sites: [] }])
             const obraDelCliente = !!selectedSite && selectedSite.client_id === c.id
@@ -1832,7 +1833,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           plantId={vincular.pedido.plant_id}
           pedidoId={vincular.pedido.id}
           alTerminar="generar"
-          onVinculado={(tipo, codigo) => alVincular(tipo, codigo, false)}
+          onVinculado={(tipo, codigo) => alVincular(tipo, codigo, false)} // fuera del formulario: no hay diálogo que reintentar
           onCerrar={() => {
             setVincular(null)
             np.recargar()
