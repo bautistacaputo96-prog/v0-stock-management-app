@@ -84,6 +84,8 @@ export type EntradaDia = {
   /** Reparto guardado o en edición (3.4); sin esto, la sugerencia libre */
   reparto?: Reparto | null
   reglas?: ReglasReparto
+  /** Para revisar a mano (pruebas): camiones como máximo por pedido, sin buscar otra combinación */
+  topesFijos?: Record<string, number>
 }
 
 export type Medida = { fin: number; finIdeal: number; cortes: number[]; maxCorte: number; demora: number }
@@ -391,37 +393,74 @@ function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>,
   return { res, viajes }
 }
 
-const seSuperponen = (a: [number, number], b: [number, number]) => a[0] < b[1] && b[0] < a[1]
-const ventanaDe = (r: Parcial): [number, number] => (r.viajes.length ? [Math.min(...r.viajes.map((v) => v.inicioCarga)), Math.max(...r.viajes.map((v) => v.vuelta))] : [r.primeraCargaIdeal, r.ultimaVueltaIdeal])
+/** Minutos de atraso de un pedido (0 si está a tiempo; sin camión, un día entero), con la bomba pesando el doble. */
+function atrasoPonderado(x: { alcanza: boolean; conBomba: boolean; viajes: unknown[]; medida: Medida }) {
+  const min = !x.viajes.length ? 24 * 60 : x.alcanza ? 0 : x.medida.demora > 0 ? x.medida.demora : x.medida.maxCorte
+  return min * (x.conBomba ? 2 : 1)
+}
+
+/** Traslados que implican los viajes (cambios de planta de cada camión, contando dónde durmió). */
+function cambiosDePlanta(viajes: ViajeDia[], camiones: CamionReparto[]) {
+  let n = 0
+  for (const c of camiones) {
+    let pl = c.amanece
+    for (const v of viajes.filter((x) => x.camionId === c.id).sort((a, b) => a.inicioCarga - b.inicioCarga)) {
+      if (pl && v.plantId !== pl) n++
+      pl = v.plantId
+    }
+  }
+  return n
+}
+
+/** El costo de un día armado: [minutos de atraso con la bomba ×2, traslados] (menor es mejor). */
+export function costoDelDia(res: ResultadoDia, camiones: CamionReparto[]) {
+  return costoDia(res.pedidos, res.viajes, camiones)
+}
+
+/** Costo del día para elegir (sugerencia y escenarios): [minutos de atraso, bomba ×2] y después [traslados]. */
+function costoDia(res: { alcanza: boolean; conBomba: boolean; viajes: unknown[]; medida: Medida }[], viajes: ViajeDia[], camiones: CamionReparto[]) {
+  return [Math.round(res.reduce((s, x) => s + atrasoPonderado(x), 0)), cambiosDePlanta(viajes, camiones)]
+}
+
 
 /**
  * Pasos 2 a 4: el día de las dos plantas. Sin `reparto`, la sugerencia libre; con `reparto`, respetándolo (3.4).
- * Paso 3: si una bomba no alcanza, se le saca un camión al directo que más tiene y se superpone (nunca por debajo de
- * 1) y se vuelve a armar; si sacarle no la mejora, se deja como estaba (no se le sacan camiones a un directo por nada).
+ * Paso 3: se le saca un camión (nunca por debajo de 1) al pedido que más baje el costo del día (atraso con la bomba ×2,
+ * después traslados) y se vuelve a armar, hasta que ningún cambio lo baje.
  */
 export function armarDia(ent: EntradaDia): ResultadoDia {
   const reglas = ent.reglas || REGLAS_REPARTO
   const infos = prepararPedidos(ent, reglas)
-  let topes = new Map<string, number>()
+  let topes = new Map<string, number>(Object.entries(ent.topesFijos || {}))
   const cede = new Map<string, string>()
   const sinArreglo = new Set<string>()
   let r = armarUnaVez(ent, infos, topes, reglas)
-  for (let it = 0; it < 200; it++) {
-    const b = r.res.find((x) => x.conBomba && !x.alcanza && !sinArreglo.has(x.id))
-    if (!b) break
-    const d = r.res
-      .filter((x) => !x.conBomba && x.camiones.length > 1 && seSuperponen(ventanaDe(x), [b.primeraCargaIdeal, b.ultimaVueltaIdeal]))
-      .sort((x, y) => y.camiones.length - x.camiones.length || x.primeraCargaIdeal - y.primeraCargaIdeal)[0]
-    if (!d) { sinArreglo.add(b.id); continue }
-    const nuevos = new Map(topes).set(d.id, d.camiones.length - 1)
-    const r2 = armarUnaVez(ent, infos, nuevos, reglas)
-    const b2 = r2.res.find((x) => x.id === b.id)!
-    if (b2.alcanza || b2.medida.fin < b.medida.fin - 0.5) {
-      topes = nuevos
-      cede.set(d.id, b.obra)
-      r = r2
-    } else sinArreglo.add(b.id)
+  // Paso 3 (criterio del 05/11): se le saca un camión al pedido que convenga mientras baje el costo del día, que es
+  // 1) los minutos de atraso en total, con la bomba pesando el doble, y 2) los traslados. Así la bomba tiene prioridad,
+  // pero no se deja un directo horas tarde por unos minutos de bomba, y no se le sacan camiones a nadie por nada.
+  let actual = costoDia(r.res, r.viajes, ent.camiones)
+  for (let it = 0; it < (ent.topesFijos ? 0 : 30); it++) {
+    let mejor: { topes: Map<string, number>; r: typeof r; costo: number[]; quitado: Parcial } | null = null
+    for (const x of r.res) {
+      if (x.camiones.length < 2) continue
+      const nuevos = new Map(topes).set(x.id, x.camiones.length - 1)
+      const r2 = armarUnaVez(ent, infos, nuevos, reglas)
+      const c2 = costoDia(r2.res, r2.viajes, ent.camiones)
+      if (menorNota(c2, mejor ? mejor.costo : actual)) mejor = { topes: nuevos, r: r2, costo: c2, quitado: x }
+    }
+    if (!mejor) break
+    // "Los otros están con la bomba de X": el directo que cedió y la bomba que más mejoró
+    if (!mejor.quitado.conBomba) {
+      const gana = mejor.r.res
+        .map((y) => ({ y, baja: atrasoPonderado(r.res.find((z) => z.id === y.id)!) - atrasoPonderado(y) }))
+        .filter((g) => g.y.conBomba && g.baja > 0).sort((a, b) => b.baja - a.baja)[0]
+      if (gana) cede.set(mejor.quitado.id, gana.y.obra)
+    }
+    topes = mejor.topes
+    r = mejor.r
+    actual = mejor.costo
   }
+  for (const x of r.res) if (x.conBomba && !x.alcanza) sinArreglo.add(x.id)
   const restringido = !!ent.reparto
   const pedidos: ResultadoPedido[] = r.res.map((x) => {
     const completo = { ...x, cedeA: x.alcanza ? null : cede.get(x.id) || null, sinArreglo: sinArreglo.has(x.id) && !restringido }
@@ -775,8 +814,9 @@ function combinaciones(ids: string[], k: number, desde = 0): string[][] {
 
 /**
  * Escenario con `extra` camiones más (solo para ver; no se guarda): camiones ficticios "Camión 4", "Camión 5"… de 8 m³,
- * disponibles desde las 07:00 en la planta donde más convenga (se prueban todas y queda la que deja menos pedidos
- * tarde, después menos minutos de atraso y después menos traslados).
+ * disponibles desde las 07:00 en la planta donde más convenga (se prueban todas y queda la de menos minutos de atraso,
+ * con la bomba pesando el doble, y después menos traslados). Los camiones reales no quedan fijos donde estaban: el
+ * escenario se arma sin el reparto guardado (solo cuenta dónde durmió cada uno).
  */
 export function escenarioConMas(ent: EntradaDia, extra: number, desde = "07:00"): Escenario | null {
   if (extra <= 0 || !ent.plantas.length) return null
@@ -784,40 +824,66 @@ export function escenarioConMas(ent: EntradaDia, extra: number, desde = "07:00")
   for (const combo of combinaciones(ent.plantas.map((p) => p.id), extra)) {
     const ficticios: CamionReparto[] = combo.map((pid, i) => ({ id: `${PREFIJO_ESCENARIO}${i + 1}`, patente: `Camión ${ent.camiones.length + i + 1}`, capacidad: 8, amanece: pid, disponibleDesde: aMin(desde) }))
     const camiones = [...ent.camiones, ...ficticios]
-    const resultado = armarDia({ ...ent, camiones })
-    const tarde = resultado.pedidos.filter((r) => !aTiempo(r))
-    const nota = [tarde.length, tarde.reduce((s, r) => s + Math.max(0, r.medida.demora, r.medida.maxCorte), 0), resultado.traslados.length]
+    const resultado = armarDia({ ...ent, camiones, reparto: null })
+    // Mismo criterio que la sugerencia: menos atraso (bomba ×2) y después menos traslados
+    const nota = costoDia(resultado.pedidos, resultado.viajes, camiones)
     if (!mejor || menorNota(nota, mejor.nota)) mejor = { esc: { extra, resultado, camiones, ficticios }, nota }
   }
   return mejor?.esc ?? null
 }
 
 /**
- * La frase del resumen: "Con 3 camiones se hace todo, pero 3 pedidos terminan tarde. Con 1 camión más, Greenville y
- * Pampero salen a tiempo." La segunda parte sale de calcular el escenario +1 y, si no alcanza para todo, el +2.
+ * El nombre de la obra como se ve en la pantalla: sin espacios de más y, si viene todo en mayúsculas ("SANTA RITA"),
+ * en tipo título ("Santa Rita"). Lo usan la tabla, el resumen y el diagrama, así dicen lo mismo.
  */
-export function textoResumenDia(n: number, base: ResultadoDia, mas1: ResultadoDia | null, mas2: ResultadoDia | null): { tono: "verde" | "amarillo"; texto: string } {
+export function nombreVisible(s: string | null | undefined): string {
+  const t = String(s ?? "").replace(/\s+/g, " ").trim()
+  if (!t || /[a-záéíóúñü]/.test(t) || !/[A-ZÁÉÍÓÚÑÜ]/.test(t)) return t
+  const chicas = new Set(["de", "del", "la", "las", "los", "el", "y", "e"])
+  return t.toLowerCase().split(" ").map((w, i) => (i > 0 && chicas.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(" ")
+}
+
+/**
+ * La frase del resumen, con el mismo cálculo para la vista base y los escenarios:
+ *   base: "Con 3 camiones se hace todo, pero 3 pedidos terminan tarde. Con 1 camión más, Greenville y Pampero salen a
+ *         tiempo." (sale de calcular de verdad el +1 y, si no alcanza para todo, el +2; si ni con +2 sale todo, el
+ *         consejo de correr la hora);
+ *   escenario: habla solo de ese escenario, sin consejos ("Con 5 camiones se hace todo; Santa Rita termina 53 min tarde.").
+ */
+export function textoResumenDia(n: number, base: ResultadoDia, mas1: ResultadoDia | null, mas2: ResultadoDia | null, modo: "base" | "escenario" = "base"): { tono: "verde" | "amarillo"; texto: string } {
   const tarde = base.pedidos.filter((r) => !aTiempo(r))
   if (!base.pedidos.length) return { tono: "verde", texto: "No hay pedidos pendientes ese día." }
   if (!tarde.length) return { tono: "verde", texto: `Con ${camionesTxt(n)} ${base.pedidos.length === 1 ? "el pedido sale" : "salen todos los pedidos"} a tiempo.` }
-  const sinCamion = base.pedidos.filter((r) => !r.viajes.length)
+  const sinCamion = tarde.filter((r) => !r.viajes.length)
+  const conAtraso = tarde.filter((r) => r.viajes.length)
+  const nombres = (xs: ResultadoPedido[]) => lista(xs.map((r) => nombreVisible(r.obra)))
+  if (modo === "escenario") {
+    const cuanto = conAtraso.map((r, i) => `${nombreVisible(r.obra)}${i === 0 ? " termina" : ""} ${estadoPedido(r).texto.replace(/ \((bomba|directo)\)$/, "")}`)
+    const partes = [
+      ...(sinCamion.length ? [`${nombres(sinCamion)} ${plural(sinCamion.length, "queda", "quedan")} sin camión`] : []),
+      ...(cuanto.length ? [lista(cuanto)] : []),
+    ]
+    return { tono: "amarillo", texto: `Con ${camionesTxt(n)} ${sinCamion.length ? "no se hace todo" : "se hace todo"}; ${partes.join("; ")}.` }
+  }
   const primera = sinCamion.length
-    ? `Con ${camionesTxt(n)} no se hace todo: ${lista(sinCamion.map((r) => r.obra))} ${plural(sinCamion.length, "queda", "quedan")} sin camión${tarde.length > sinCamion.length ? ` y ${tarde.length - sinCamion.length} ${plural(tarde.length - sinCamion.length, "pedido termina", "pedidos terminan")} tarde` : ""}.`
+    ? `Con ${camionesTxt(n)} no se hace todo: ${nombres(sinCamion)} ${plural(sinCamion.length, "queda", "quedan")} sin camión${conAtraso.length ? ` y ${conAtraso.length} ${plural(conAtraso.length, "pedido termina", "pedidos terminan")} tarde` : ""}.`
     : `Con ${camionesTxt(n)} se hace todo, pero ${tarde.length === 1 ? "1 pedido termina" : `${tarde.length} pedidos terminan`} tarde.`
   const arreglados = (r: ResultadoDia | null) => (r ? tarde.filter((t) => { const x = r.pedidos.find((y) => y.id === t.id); return !!x && aTiempo(x) }) : [])
   const todos = (r: ResultadoDia | null) => !!r && r.pedidos.every(aTiempo)
   const a1 = arreglados(mas1), a2 = arreglados(mas2)
-  let segunda: string
-  const nombres = (xs: ResultadoPedido[]) => lista(xs.map((r) => r.obra))
   const solo2 = a2.filter((x) => !a1.includes(x))
   const siguen = tarde.filter((t) => !a1.includes(t) && !a2.includes(t))
+  let segunda: string
   if (todos(mas1)) segunda = `Con 1 camión más, ${nombres(a1)} ${plural(a1.length, "sale", "salen")} a tiempo.`
-  else if (!a1.length && !a2.length) segunda = "Ni con 2 camiones más salen a tiempo: conviene correr la hora de algún pedido."
+  else if (todos(mas2)) segunda = a1.length
+    ? `Con 1 camión más, ${nombres(a1)} ${plural(a1.length, "sale", "salen")} a tiempo; con 2, también ${nombres(solo2)}.`
+    : `Con 2 camiones más, ${nombres(a2)} ${plural(a2.length, "sale", "salen")} a tiempo.`
+  else if (!a1.length && !a2.length) segunda = "Ni con 2 camiones más sale todo a tiempo: conviene correr la hora de algún pedido."
   else {
     const partes: string[] = []
     if (a1.length) partes.push(`Con 1 camión más, ${nombres(a1)} ${plural(a1.length, "sale", "salen")} a tiempo`)
     if (solo2.length) partes.push(a1.length ? `con 2, también ${nombres(solo2)}` : `Con 2 camiones más, ${nombres(solo2)} ${plural(solo2.length, "sale", "salen")} a tiempo`)
-    if (siguen.length && !todos(mas2)) partes.push(`${nombres(siguen)} ${plural(siguen.length, "sigue", "siguen")} tarde`)
+    partes.push(`${nombres(siguen)} ${plural(siguen.length, "sigue", "siguen")} tarde aun con 2 camiones más: conviene correr la hora de algún pedido`)
     segunda = `${partes.join("; ")}.`
   }
   return { tono: "amarillo", texto: `${primera} ${segunda}` }

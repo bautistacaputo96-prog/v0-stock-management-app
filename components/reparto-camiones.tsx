@@ -25,7 +25,7 @@ import {
   armarDia, dondeDuermen, repartoDe, contarTraslados, franjasDe, textoNoche, textoComparacion, avisosEdicion,
   avisosSuperposicion, viajesDia, trasladoDe, mismoReparto, cargarReparto, guardarReparto, cargarTraslado, guardarTraslado,
   entradaConPantalla, propuestaDePlanta, validarReparto, escenarioConMas, textoResumenDia, estadoPedido, lineaTraslados,
-  bloquesDiagrama, TEXTO_ESCENARIO, REGLAS_REPARTO, type EntradaDia,
+  bloquesDiagrama, nombreVisible, TEXTO_ESCENARIO, REGLAS_REPARTO, type EntradaDia,
   type PlantaReparto, type CamionReparto, type Reparto, type PedidoReparto, type ContextoReparto, type RepartoGuardado,
   type FilaTraslado, type Aviso, type ViajeDia,
 } from "@/lib/reparto"
@@ -143,7 +143,7 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   const prmDe = useCallback((id: string) => plantas.find((p) => p.id === id)?.prm, [plantas])
   const aPedidos = useCallback((ps: PedidoParaViajes[]): PedidoReparto[] => ps
     .filter((p) => prmDe(p.plant_id))
-    .map((p) => ({ p: conTiemposGps(p, prmDe(p.plant_id)!, tiempos), existentes: viajes[p.id] || [], obra: p.construction_sites?.name || "Pedido" })), [prmDe, tiempos, viajes])
+    .map((p) => ({ p: conTiemposGps(p, prmDe(p.plant_id)!, tiempos), existentes: viajes[p.id] || [], obra: nombreVisible(p.construction_sites?.name) || "Pedido" })), [prmDe, tiempos, viajes])
   const pedidosR = useMemo(() => aPedidos(pedidosHoy), [aPedidos, pedidosHoy])
   const fijos = useMemo(() => pedidosHoy.flatMap((p) => (viajes[p.id] || []).filter((v) => v.estado === "despachado")), [pedidosHoy, viajes])
   // Listo = ya se cargó este día (aunque esté recargando: se sigue con lo último hasta que llegue lo nuevo)
@@ -167,7 +167,7 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
     const guardadosDia = viajesDia(pedidosHoy.flatMap((p) => (viajes[p.id] || []).filter((v) => v.estado !== "cancelado" && (v.estado === "despachado" || guardadosIds.has(p.id)))), base, plantDe)
     return [...guardadosDia, ...(sugerencia?.viajes || []).filter((v) => !v.fijo && !guardadosIds.has(v.pedidoId))]
   }, [pedidosHoy, viajes, guardadosIds, base, plantDe, sugerencia])
-  const obraDe = useCallback((pid: string) => pedidosHoy.find((p) => p.id === pid)?.construction_sites?.name || "otra obra", [pedidosHoy])
+  const obraDe = useCallback((pid: string) => nombreVisible(pedidosHoy.find((p) => p.id === pid)?.construction_sites?.name) || "otra obra", [pedidosHoy])
 
   const avisos: Aviso[] = useMemo(() => {
     if (!resultado) return []
@@ -290,9 +290,9 @@ export function RepartoCamiones({ rep, dia }: { rep: RepartoDia; dia: Date }) {
   const [verEditor, setVerEditor] = useState(false)
   // 0 = con los camiones que hay; 1 / 2 = escenario con camiones ficticios (solo para ver)
   const [escenario, setEscenario] = useState<0 | 1 | 2>(0)
-  const ent = useMemo(() => (rep.entrada ? { ...rep.entrada, reparto: rep.efectivo } : null), [rep.entrada, rep.efectivo])
-  const mas1 = useMemo(() => (ent ? escenarioConMas(ent, 1) : null), [ent])
-  const mas2 = useMemo(() => (ent ? escenarioConMas(ent, 2) : null), [ent])
+  // Los escenarios se arman sin el reparto guardado: con un camión más, los reales también pueden cambiar de planta
+  const mas1 = useMemo(() => (rep.entrada ? escenarioConMas(rep.entrada, 1) : null), [rep.entrada])
+  const mas2 = useMemo(() => (rep.entrada ? escenarioConMas(rep.entrada, 2) : null), [rep.entrada])
 
   if (!rep.activo) return null
   const base = rep.resultado
@@ -311,7 +311,8 @@ export function RepartoCamiones({ rep, dia }: { rep: RepartoDia; dia: Date }) {
   const vigente = esc ? repartoDe(res, camiones, dondeDuermen(res, camiones, rep.plantas, null).duerme) : rep.vigente || {}
   const conteo = contarTraslados(vigente, amanece)
   const duerme = Object.fromEntries([...rep.delDia.map((m) => m.id), ...(esc?.ficticios || []).map((c) => c.id)].map((id) => [id, vigente[id]?.duerme ?? amanece[id] ?? null]))
-  const resumen = textoResumenDia(camiones.length, res, esc ? null : mas1?.resultado ?? null, esc ? null : mas2?.resultado ?? null)
+  // Mismo cálculo en la vista base y en los escenarios; el consejo de "+N" y de correr la hora, solo en la base
+  const resumen = esc ? textoResumenDia(camiones.length, res, null, null, "escenario") : textoResumenDia(camiones.length, res, mas1?.resultado ?? null, mas2?.resultado ?? null, "base")
   const filasDiagrama = bloquesDiagrama(res, camiones, rep.nombres, rep.obraDe)
   const tituloDia = format(dia, "EEEE dd/MM", { locale: es })
   const comparacion = !esc && rep.efectivo ? textoComparacion(franjasDe(rep.sugerencia, rep.camiones, rep.plantas), franjasDe(base, rep.camiones, rep.plantas), rep.nombres) : null
