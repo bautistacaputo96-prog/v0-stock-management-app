@@ -45,6 +45,8 @@ export type TrasladoForm = { minutos: string; km: string; litros: string }
 
 export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plant[]; activo: boolean }) {
   const [cargando, setCargando] = useState(false)
+  // Para qué día y plantas ya se cargó una vez: mientras recarga se sigue usando lo último (no vuelve a "como antes")
+  const [cargadoPara, setCargadoPara] = useState<string | null>(null)
   const [plantRows, setPlantRows] = useState<any[]>([])
   const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
   const [mixers, setMixers] = useState<MixerRow[]>([])
@@ -96,6 +98,7 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
     setTrasladoFila(tr)
     setTrasladoForm({ minutos: tr.fila ? String(tr.fila.minutos) : "", km: tr.fila?.km != null ? String(tr.fila.km) : "", litros: tr.fila?.litros != null ? String(tr.fila.litros) : "" })
     if (limpiar) setEdicion(null)
+    setCargadoPara(`${fecha(ini)}|${clavePlantas}`)
     setCargando(false)
   }, [activo, clavePlantas, dia]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { cargar(true) }, [cargar])
@@ -136,7 +139,8 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
     .map((p) => ({ p: conTiemposGps(p, prmDe(p.plant_id)!, tiempos), existentes: viajes[p.id] || [], obra: p.construction_sites?.name || "Pedido" })), [prmDe, tiempos, viajes])
   const pedidosR = useMemo(() => aPedidos(pedidosHoy), [aPedidos, pedidosHoy])
   const fijos = useMemo(() => pedidosHoy.flatMap((p) => (viajes[p.id] || []).filter((v) => v.estado === "despachado")), [pedidosHoy, viajes])
-  const listo = activo && !cargando && plantas.length > 0 && plantRows.length > 0
+  // Listo = ya se cargó este día (aunque esté recargando: se sigue con lo último hasta que llegue lo nuevo)
+  const listo = activo && cargadoPara === `${fecha(startOfDay(dia))}|${clavePlantas}` && plantas.length > 0 && plantRows.length > 0
 
   const entrada: EntradaDia | null = useMemo(() => (listo ? { base, plantas, camiones, pedidos: pedidosR, traslado, fijos } : null), [listo, base, plantas, camiones, pedidosR, traslado, fijos])
   const sugerencia = useMemo(() => (entrada ? armarDia(entrada) : null), [entrada])

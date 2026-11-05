@@ -433,16 +433,22 @@ export function armarDia(ent: EntradaDia): ResultadoDia {
 
 /**
  * La entrada del día con lo que se ve en la pantalla para una planta ("Ordenar el día"): sus pedidos con la hora y los
- * tiempos de la pantalla, sus viajes guardados y los parámetros de la planta aunque no estén guardados. Lo de la otra
- * planta queda como se cargó.
+ * tiempos de la pantalla, sus viajes guardados y los parámetros de la planta aunque no estén guardados.
+ * Lo de la otra planta no se reordena desde acá (como `otrosViajes` en planDelDia): sus pedidos con viajes pendientes
+ * guardados quedan fijos con esos viajes (ocupan a sus camiones, con el traslado); los que no tienen viajes guardados se
+ * arman con la sugerencia, para no darle a esta planta camiones que la otra va a necesitar.
  */
 export function entradaConPantalla(ent: EntradaDia, plantId: string, pantalla: { pedidos: PedidoReparto[]; prm: Parametros }): EntradaDia {
   const ids = new Set(pantalla.pedidos.map((x) => x.p.id))
   const deEstaPlanta = new Set(ent.pedidos.filter((x) => x.p.plant_id === plantId).map((x) => x.p.id))
-  const pedidos = [...ent.pedidos.filter((x) => x.p.plant_id !== plantId && !ids.has(x.p.id)), ...pantalla.pedidos]
+  const otras = ent.pedidos.filter((x) => x.p.plant_id !== plantId && !ids.has(x.p.id))
+  const conGuardados = otras.filter((x) => x.existentes.some((v) => v.estado === "planificado"))
+  const fijas = new Set(conGuardados.map((x) => x.p.id))
+  const pedidos = [...otras.filter((x) => !fijas.has(x.p.id)), ...pantalla.pedidos]
   const plantas = ent.plantas.map((p) => (p.id === plantId ? { ...p, prm: pantalla.prm } : p))
   const fijos = [
-    ...(ent.fijos || []).filter((v) => !ids.has(v.pedido_id) && !deEstaPlanta.has(v.pedido_id) && v.plant_id !== plantId),
+    ...(ent.fijos || []).filter((v) => !ids.has(v.pedido_id) && !deEstaPlanta.has(v.pedido_id) && !fijas.has(v.pedido_id) && v.plant_id !== plantId),
+    ...conGuardados.flatMap((x) => x.existentes.filter((v) => v.estado !== "cancelado").map((v) => ({ ...v, plant_id: v.plant_id || x.p.plant_id }))),
     ...pantalla.pedidos.flatMap((x) => x.existentes.filter((v) => v.estado === "despachado")),
   ]
   return { ...ent, pedidos, plantas, fijos }
@@ -923,17 +929,20 @@ export function validarReparto(r: Reparto, patente: (id: string) => string, nomb
 /**
  * La medida de los viajes tal como se ven (guardados o ajustados a mano), contra el fin ideal: el corte de cada camión
  * es lo que llega después de lo previsto (el fin de la descarga anterior, o la llegada anterior + el espaciado).
+ * Los cortes se miden solo entre los viajes pendientes (lo despachado ya pasó y sus horas son las reales); el fin es el
+ * del último viaje, despachado o no.
  */
 export function medirFilas(filas: ViajeRow[], finIdeal: number, base: number, espaciadoMin?: number | null): Medida {
   const m = (iso: string) => (new Date(iso).getTime() - base) / MIN
-  const vs = filas.filter((v) => v.estado !== "cancelado").sort((a, b) => m(a.hora_llegada) - m(b.hora_llegada))
+  const vs = filas.filter((v) => v.estado === "planificado").sort((a, b) => m(a.hora_llegada) - m(b.hora_llegada))
   const out = vs.map((v, i) => {
     if (i === 0) return { finDescarga: m(v.hora_fin_descarga), esperaObra: 0 }
     const prev = vs[i - 1]
     const previsto = espaciadoMin && espaciadoMin > 0 ? m(prev.hora_llegada) + espaciadoMin : m(prev.hora_fin_descarga)
     return { finDescarga: m(v.hora_fin_descarga), esperaObra: Math.max(0, m(v.hora_llegada) - previsto) }
   })
-  return medir(out, finIdeal)
+  const despachados = filas.filter((v) => v.estado === "despachado").map((v) => ({ finDescarga: m(v.hora_fin_descarga), esperaObra: 0 }))
+  return medir([...despachados, ...out], finIdeal)
 }
 
 // ---------------------------------------------------------------------------
