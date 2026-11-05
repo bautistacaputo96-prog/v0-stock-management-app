@@ -40,6 +40,9 @@ export type CargaFila = {
   fin_at: string | null
   parada_at: string | null
   contador_planta: number | null
+  /** hora de inicio y fin estimadas con el reloj de Indumix (no las vio el puente) */
+  hora_estimada?: boolean
+  nota?: string | null
   sin_internet: boolean
   resolucion: { modo: string; motivo: string; por: string; at: string; efecto?: { texto: string } } | null
   union_remito: string | null

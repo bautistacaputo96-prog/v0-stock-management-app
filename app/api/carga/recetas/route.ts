@@ -3,8 +3,8 @@ import { registrarActividad, respuestaError, sbServicio } from "@/lib/auth/servi
 import { puedeCon } from "@/lib/permisos"
 import { diferenciasReceta, huellaReceta } from "@/lib/carga/receta"
 import { aRecetaLeida, cargarPuestoPorId } from "@/lib/carga/datos"
-import { contextoServidor, error, exigirCarga, hhmmAR, horaPuente, recalcularBloqueos, sincronizarAlertasReceta } from "@/lib/carga/servidor"
-import { INFO_SALIDA, SALIDAS, type RecetaPlanta, type Salida } from "@/lib/carga/tipos"
+import { contextoServidor, error, exigirCarga, guardarRecetasLeidas, hhmmAR, horaPuente, limpiarRecetas, recalcularBloqueos, sincronizarAlertasReceta } from "@/lib/carga/servidor"
+import type { RecetaPlanta } from "@/lib/carga/tipos"
 
 export const dynamic = "force-dynamic"
 
@@ -32,23 +32,13 @@ export async function POST(req: Request) {
     if (recetas.length > puesto.max_recetas) return error(`La planta guarda ${puesto.max_recetas} recetas como máximo.`)
 
     // Lo que llega se limpia (solo salidas conocidas, valores ≥ 0, textos cortos)
-    const limpias: RecetaPlanta[] = []
-    for (const raw of recetas) {
-      const numero = Number(raw?.numero)
-      if (!(numero >= 1 && numero <= puesto.max_recetas)) continue
-      const rec: RecetaPlanta = {
-        numero, nombre: String(raw.nombre || "").slice(0, 40), habilitada: raw.habilitada !== false,
-        salidas: (Array.isArray(raw.salidas) ? raw.salidas : []).filter((s) => SALIDAS.includes(s.salida as Salida)).map((s) => ({
-          salida: s.salida, nombre_planta: String(s.nombre_planta || INFO_SALIDA[s.salida].nombre).slice(0, 30), valor: Math.max(0, Number(s.valor) || 0),
-          unidad: INFO_SALIDA[s.salida].unidad, ...(s.orden != null && Number.isFinite(Number(s.orden)) ? { orden: Number(s.orden) } : {}),
-        })),
-      }
-      limpias.push(rec)
-    }
+    const limpias = limpiarRecetas(puesto, recetas)
 
     // "Armar las 20 recetas" (con mapeo): todo junto en una función de la base, o todo o nada
     if (Array.isArray(body?.mapeo)) {
       if (!puedeCon(r.sesion.usuario, "carga", "editar")) return error("Asignar fórmulas a las recetas pide Carga · editar.", 403)
+      // Con el puesto real las recetas las lee el puente: nunca se arman recetas de prueba encima
+      if (puesto.sistema === "indumix") return error("Con la planta real las recetas las lee el puente. Las fórmulas se asignan una por una en Recetas de la planta.", 409)
       // Se sacan los repetidos antes de llamar a la base: un número una sola vez y una fórmula en un solo número (queda
       // el primero)
       const numeros = new Set<number>(), formulasVistas = new Set<string>()
@@ -85,48 +75,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, nuevas: (res as any)?.recetas ?? 0, cambios: cambiadas.length, cambiadas: cambiadas.map((x) => x.numero), mapeo: true, alertas: al, recalculadas })
     }
 
-    // Recetas leídas: versiones nuevas y avisos de cambio
-    const { data: act } = await sb.from("recetas_planta_actual").select("*").eq("puesto_id", puesto.id)
-    const actuales = new Map(((act || []) as Record<string, unknown>[]).map((x) => { const rl = aRecetaLeida(x); return [rl.numero, rl] as const }))
-    let nuevas = 0, cambios = 0
-    for (const rec of limpias) {
-      const numero = rec.numero
-      const huella = huellaReceta(rec)
-      const ant = actuales.get(numero) || null
-      const { data: ya } = await sb.from("recetas_planta").select("id").eq("puesto_id", puesto.id).eq("numero", numero).eq("huella", huella).limit(1)
-      if (ya?.length) {
-        await sb.from("recetas_planta").update({ ultima_lectura_at: leida }).eq("id", ya[0].id)
-        if (ant && ant.huella === huella) continue
-      } else {
-        const { data: ins, error: e } = await sb.from("recetas_planta").insert({ puesto_id: puesto.id, numero, nombre: rec.nombre, habilitada: rec.habilitada, valores: rec.salidas, huella, primera_lectura_at: leida, ultima_lectura_at: leida }).select("id").single()
-        if (e) throw e
-        nuevas++
-        if (!ant && !rec.salidas.some((s) => s.valor > 0)) continue // una vacía que aparece por primera vez no avisa
-        const dif = diferenciasReceta(ant, rec)
-        await sb.from("alertas_carga").insert({
-          puesto_id: puesto.id, tipo: ant ? "receta_cambiada" : "receta_nueva", receta_numero: numero, receta_planta_id: ins.id,
-          titulo: ant ? `La receta ${numero} cambió en Indumix entre ${hhmmAR(ant.ultima_lectura_at)} y ${hhmmAR(leida)}` : `Receta ${numero} leída por primera vez («${rec.nombre || "sin nombre"}»)`,
-          detalle: { diferencias: dif, anterior_id: ant?.id ?? null, simulada: puesto.sistema === "simulador", nota: "Indumix no dice quién la cambió. Se guardó la versión anterior." },
-          estado: ant ? "abierta" : "cerrada_sola",
-        })
-        if (ant) cambios++
-        continue
-      }
-      // Volvió a una versión que ya se había leído antes (A → B → A): también es un cambio
-      if (ant && ant.huella !== huella) {
-        await sb.from("alertas_carga").insert({
-          puesto_id: puesto.id, tipo: "receta_cambiada", receta_numero: numero, receta_planta_id: ya![0].id,
-          titulo: `La receta ${numero} cambió en Indumix entre ${hhmmAR(ant.ultima_lectura_at)} y ${hhmmAR(leida)}`,
-          detalle: { diferencias: diferenciasReceta(ant, rec), anterior_id: ant.id, simulada: puesto.sistema === "simulador" },
-        })
-        cambios++
-      }
-    }
-
-    const ctx = await contextoServidor(puesto)
-    const al = await sincronizarAlertasReceta(ctx, leida)
-    const recalculadas = await recalcularBloqueos(ctx)
-    return NextResponse.json({ ok: true, nuevas, cambios, mapeo: false, alertas: al, recalculadas })
+    // Recetas leídas: versiones nuevas y avisos de cambio (lib/carga/servidor.ts, la usa también el puente real)
+    const res = await guardarRecetasLeidas(puesto, limpias, leida, r.usuario)
+    return NextResponse.json({ ok: true, nuevas: res.nuevas, cambios: res.cambios, mapeo: false, alertas: res.alertas, recalculadas: res.recalculadas })
   } catch (e) {
     return respuestaError(e)
   }

@@ -75,6 +75,8 @@ const PIE = `<p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas i
  *   - diario: solo las inconsistencias de remitos detectadas ese día (nuevas desde el mail anterior). Si no hay, sale
  *     igual con una línea. Sin stock y sin "siguen abiertas".
  *   - semanal (lunes, reemplaza al diario): las nuevas del día, todas las abiertas y la tabla de stock (`stockHtml`).
+ *   - `carga`: la sección de la carga de planta (solo con el puente real); si tiene diferencias suma "· N de carga de
+ *     planta" al asunto.
  * `falloLectura`: la lectura de Zomatik falló hoy (se dice en una línea).
  */
 export function armarMail(d: {
@@ -85,6 +87,8 @@ export function armarMail(d: {
   hoy: string
   falloLectura?: boolean
   stockHtml?: string | null
+  /** Sección "Carga de planta" (lib/carga/control-mail.ts). Sin esto, el asunto y el HTML son los de siempre. */
+  carga?: { html: string; n: number } | null
 }): { asunto: string; html: string } {
   const semanal = d.tipo === "semanal"
   const n = d.nuevas.length
@@ -95,6 +99,7 @@ export function armarMail(d: {
       : d.falloLectura
         ? "Rebucret · Control de ingresos MP: no se pudo leer Zomatik hoy"
         : "Rebucret · Control de ingresos MP: sin inconsistencias hoy"
+  const asuntoFinal = d.carga && d.carga.n > 0 ? `${asunto} · ${d.carga.n} de carga de planta` : asunto
   const link = `<p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y marcar como revisado en el sistema</a></p>`
   const fallo = d.falloLectura ? `<div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px;margin-bottom:10px">${esc(LINEA_SIN_LECTURA)}</div>` : ""
   const titulo = semanal ? `Control semanal de materia prima · ${esc(ddmm(d.hoy))}` : `Control de ingresos de materia prima · ${esc(ddmm(d.hoy))}`
@@ -114,8 +119,8 @@ export function armarMail(d: {
     <div style="font-size:15px;margin-bottom:2px">${titulo}</div>
     <div style="color:#64748b;margin-bottom:10px">Remitos de nuestro sistema contra Zomatik (REBUCRET, Canning y Hudson)${semanal ? " y stock de materia prima" : ""}.</div>
     ${fallo}
-    ${cuerpo}
+    ${cuerpo}${d.carga ? d.carga.html : ""}
     ${PIE}
   </div>`
-  return { asunto, html }
+  return { asunto: asuntoFinal, html }
 }

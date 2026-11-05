@@ -1,0 +1,7 @@
+# Lo que crea el puente al andar (nunca va al repo: la clave vive solo en la PC de la planta)
+config.json
+config-nube.json
+puente.lock
+cola/
+registro/
+node/

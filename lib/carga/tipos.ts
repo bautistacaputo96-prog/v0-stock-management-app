@@ -79,7 +79,8 @@ export type EstadoPlanta = {
   reloj_plc: string
 }
 
-export type LineaReporte = { salida: Salida; receta: number; teorico: number; teorico_corregido: number; real: number; humedad_pct?: number; extra?: number }
+/** `teorico_corregido` null: no se sabe la humedad con que se pesó (reporte de Indumix leído sin verlo en vivo). */
+export type LineaReporte = { salida: Salida; receta: number; teorico: number; teorico_corregido: number | null; real: number; humedad_pct?: number; extra?: number }
 
 export type ReportePlanta = {
   numero: number
@@ -104,6 +105,48 @@ export type ReportePlanta = {
   lineas: LineaReporte[]
   /** agua extra agregada con el botón de Indumix */
   extras: { litros: number; despues_de_terminar: boolean; at_s: number }[]
+}
+
+/**
+ * Lo que vio el puente real en Indumix en el último latido (puestos_carga.estado_vivo), ya interpretado por el servidor
+ * (lib/carga/indumix.ts › estadoDesdeVariables). Todo lo que no se entiende queda en null: la pantalla muestra "—".
+ */
+export type EstadoVivo = {
+  /** hora del puente (la PC) en que se leyó */
+  at: string | null
+  /** Receta.Proceso tal cual ("Fin" = quieta) */
+  proceso: string | null
+  en_ciclo: boolean | null
+  suspendida: boolean | null
+  receta: number | null
+  receta_nombre: string | null
+  m3: number | null
+  cliente: string
+  camion: string
+  observacion: string
+  /** NaCiclo y NCiclo: cuál es cuál se confirma con el muestreo crudo */
+  ciclo: number | null
+  ciclos: number | null
+  m3_ciclo: number | null
+  /** @GV.Cont_Ciclo: N° de la última carga */
+  contador: number | null
+  /** H% de las tolvas 1 a 4 */
+  humedades: (number | null)[]
+  /** objetivo del ciclo (Parcial*) y lo pesado (PD_O*), por salida, en la unidad de Indumix */
+  objetivo: Partial<Record<Salida, number | null>>
+  pesado: Partial<Record<Salida, number | null>>
+  /** nombres de las salidas en Indumix (Txt*) */
+  nombres: Partial<Record<Salida, string>>
+  agua_extra: number | null
+  balanzas_vacias: { aridos: boolean | null; cemento: boolean | null; aditivo: boolean | null }
+  /** "6:33" */
+  tiempo_ciclo: string | null
+  /** reloj de Indumix tal cual ("5 : 37 - 4/11/2026") */
+  reloj_plc: string | null
+  bocina: boolean | null
+  alarmas: { codigo: string; texto: string }[]
+  /** salud del puente: mediana de respuesta de Indumix y si duplicó los intervalos */
+  puente?: { mediana_ms: number | null; lento: boolean; cola?: number | null } | null
 }
 
 export type InfoPlanta = { marca: string; version: string; max_recetas: number; m3_max_ciclo: number; reloj_plc: string }

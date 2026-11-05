@@ -6,7 +6,7 @@
 import { controlReceta, type ControlReceta } from "@/lib/carga/receta"
 import {
   TOLERANCIAS_BASE,
-  type FormulaSistema, type MaterialSistema, type RecetaPlanta, type Salida, type SalidaMapa, type Tolerancias, type UnidadPlanta,
+  type EstadoVivo, type FormulaSistema, type MaterialSistema, type RecetaPlanta, type Salida, type SalidaMapa, type Tolerancias, type UnidadPlanta,
 } from "@/lib/carga/tipos"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,6 +23,13 @@ export type Puesto = {
   tolerancias: Tolerancias
   usa_kilos_reales: boolean
   activo: boolean
+  /** Puente real (migración 202611051200): lo último que vio en Indumix y su salud. Sin la migración, null. */
+  estado_vivo: EstadoVivo | null
+  ultimo_latido_at: string | null
+  version_puente: string | null
+  deriva_reloj_s: number | null
+  /** versión del PLC, nombres de las tolvas (Txt*), primer latido */
+  info_planta: Record<string, unknown> | null
 }
 
 export type RecetaLeida = RecetaPlanta & { id: string; huella: string; ultima_lectura_at: string; primera_lectura_at: string }
@@ -51,16 +58,21 @@ export function tolerancias(raw: unknown): Tolerancias {
   return out
 }
 
-function aPuesto(p: Record<string, unknown>): Puesto {
+export function aPuesto(p: Record<string, unknown>): Puesto {
   return {
     id: String(p.id), plant_id: String(p.plant_id), nombre: String(p.nombre || ""), sistema: p.sistema === "indumix" ? "indumix" : "simulador",
     etapa: (["lectura", "orden", "arranque", "apagado"].includes(String(p.etapa)) ? p.etapa : "apagado") as Puesto["etapa"],
     max_recetas: Number(p.max_recetas) || 20, m3_max_ciclo: Number(p.m3_max_ciclo) || 1.5, tolerancias: tolerancias(p.tolerancias),
     usa_kilos_reales: p.usa_kilos_reales === true, activo: p.activo !== false,
+    estado_vivo: p.estado_vivo && typeof p.estado_vivo === "object" ? (p.estado_vivo as EstadoVivo) : null,
+    ultimo_latido_at: p.ultimo_latido_at ? String(p.ultimo_latido_at) : null,
+    version_puente: p.version_puente ? String(p.version_puente) : null,
+    deriva_reloj_s: p.deriva_reloj_s == null || !Number.isFinite(Number(p.deriva_reloj_s)) ? null : Number(p.deriva_reloj_s),
+    info_planta: p.info_planta && typeof p.info_planta === "object" ? (p.info_planta as Record<string, unknown>) : null,
   }
 }
 
-/** El puesto activo de la planta (el simulador, hoy). null: no hay, o falta la migración. */
+/** El puesto activo de la planta (con la migración del puente, "Canning · Indumix"). null: no hay, o falta la migración. */
 export async function cargarPuesto(sb: SB, plantId: string): Promise<Puesto | null> {
   try {
     const { data, error } = await sb.from("puestos_carga").select("*").eq("plant_id", plantId).eq("activo", true).order("created_at")
@@ -162,7 +174,7 @@ export type Bloqueo = ReturnType<typeof bloqueoDe>
  * Indumix (aditivo en g); `formula_por_m3` también, para comparar a la vista.
  */
 export function materialesDeReporte(
-  rep: { m3: number; lineas: { salida: Salida; receta: number; teorico: number; teorico_corregido: number; real: number; humedad_pct?: number; extra?: number }[] },
+  rep: { m3: number; lineas: { salida: Salida; receta: number; teorico: number; teorico_corregido: number | null; real: number; humedad_pct?: number; extra?: number }[] },
   salidas: SalidaMapa[],
   formula: FormulaSistema | null,
 ) {

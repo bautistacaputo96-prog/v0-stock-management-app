@@ -1064,3 +1064,41 @@ La pantalla de carga está en el sistema con la **planta SIMULADA** hasta ver el
 **Pruebas:** `npm run test:carga` (38: simulador, control de receta, puente con PARAR mientras arranca, reloj, emparejador con tipo y camión, auditoría, cierre, indicador, tiempos con la espera en cola, la muestra al final y el agua extra mantenida), más `test:despacho`, `test:gps` y `test:sesion` sin cambios. `tsc` sin errores nuevos (los 17 de siempre) y `next build --webpack` bien.
 
 **Para después del jueves 23/10:** el adaptador real de Indumix (según el HAR), el servicio del puente en `127.0.0.1:8787` con el permiso de arranque firmado (3.2.3), el alta del puesto con credencial, el latido y "puente caído", la lectura de reportes con hora estimada (10), las 20 recetas reales y su asociación a fórmulas, corregir el despacho de verdad al parar o cancelar, la NP con la rama `loop/zomatik`, y prender el stock con kilos reales cuando lo diga Bautista.
+
+### Puente real con Indumix · fase 1, solo lectura (05/11/2026, rama `feat/puente-indumix`, sin publicar)
+
+Spec: `docs/specs/2026-11-05-puente-indumix.md` (manda sobre este documento donde se contradiga). La fase 2 (mandar la
+carga) quedó diseñada ahí, **sin programar**.
+
+**Correcciones a lo de arriba (grabaciones del 04/11):** el ciclo es de **2 m³** (`@GV.Registro.m3Ciclo`), no 1,5; el
+reloj de Indumix tiene la **fecha real atrasada 3 a 4 h** ("10 : 54 - 3/11/2026", sin segundos), no 1/1/1970; el
+contador es `@GV.Cont_Ciclo`; se lee con POST XML (`ILRReadValues.exe`) y se escribe con GET (`writeVal.exe`), sin clave;
+y **leer un reporte o una receta exige escribir su número** (`Receta.neReporte`, `Receta.neReceta`).
+
+**Qué hay:**
+- **Puente** (`puente-carga/`): Node 22 portable + `puente.mjs` e `indumix-xml.mjs`, sin dependencias, en la carpeta del
+  usuario y con arranque desde la carpeta Inicio (`instalar.cmd`, `iniciar.cmd`, `LEEME.md`). No abre puertos. Habla solo
+  con la IP privada de `config.json` (192.168.0.10) y con `https://www.produccionrebucret.com` (fijo). Lista cerrada de
+  escritura: `Receta.neReporte` 1–10 y `Receta.neReceta` 1–20; antes lee el número que había y al terminar lo deja como
+  estaba. Recetas solo con la planta quieta y si nadie cambió el número en 2 min (si no, "pospuesta" en el registro).
+  Cola en disco (`cola\`), latido 5 s en carga y quieta cuando cambia algo (como mucho cada 60 s), muestreo crudo 7 días.
+- **Servidor:** `/api/carga/puente` (GET config, POST latido/reportes/recetas/totales/eventos; clave `rbp_…` por puesto,
+  en la base solo el sha256), `/api/carga/puente/clave` (generar, gerencial) y `/api/carga/recetas/asignar`.
+  `lib/carga/indumix.ts` interpreta las variables (estado, reportes, recetas, alarmas, humedad H1/H2 y Tolva 1);
+  `lib/carga/puente-servidor.ts` despacha por tipo. `guardarRecetasLeidas` y `registrarReporte` salieron de las rutas a
+  `lib/carga/servidor.ts` (las rutas de antes las llaman igual). Con el puesto real: solo frena (abre alerta) un cambio
+  de receta en cemento, áridos o aditivo; agua y cambio de salida quedan como evento. Emparejar acepta patentes por el
+  comienzo ("AG - 083" = AG083GT).
+- **Pantalla:** con el puesto real, `/carga` es igual en todos los equipos: "Indumix · solo lectura", edad del último
+  dato, reloj con su atraso, Cargas de hoy, planta en vivo, la carga elegida contra la fórmula del remito, franjas de
+  humedad y Tolva 1 ("Sí, ya tiene 6/12"). Sin CARGAR, PARAR ni ningún botón de mando. Recetas de la planta: las 20
+  reales, "Fórmula: elegir" con sugerencia, Etapa solo Apagado y A, bloque Puente con la clave.
+- **Mail diario de control MP:** sección "Carga de planta · Canning" (receta distinta de la fórmula, cargas cortas o con
+  desvío, sin remito / sin carga / perdidas, cambios de receta, humedad y Tolva 1). Sin puesto real, el mail es idéntico.
+
+**Base:** `supabase/migrations/202611051200_carga_puente_indumix.sql`, **NO aplicada** (columnas del puente en
+`puestos_carga`, `puestos_carga_credenciales`, CHECK de solo lectura, puesto "Canning · Indumix" con su mapa y el
+simulador apagado). La app anda igual sin aplicarla.
+
+**Pruebas:** `npm run test:carga` suma `carga-indumix.test.mjs` (16, con los datos reales del 03/11 y 04/11 en
+`lib/__fixtures__/indumix/`).

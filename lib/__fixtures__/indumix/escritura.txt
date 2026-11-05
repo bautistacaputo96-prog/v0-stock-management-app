@@ -1,0 +1,11 @@
+# Escrituras de Indumix (GET writeVal.exe, sin cuerpo). Formato: método, URL, estado y respuesta (texto plano).
+# El valor va después de un "+"; "@" va codificado como %40. La respuesta es el valor que quedó.
+
+GET http://192.168.0.10/cgi-bin/writeVal.exe?Receta.neReporte+3
+200 3
+
+GET http://192.168.0.10/cgi-bin/writeVal.exe?Receta.neReceta+16
+200 16
+
+GET http://192.168.0.10/cgi-bin/writeVal.exe?%40GV.nReceta+16
+200 16

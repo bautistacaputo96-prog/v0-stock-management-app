@@ -4,8 +4,11 @@
  * Pantalla de Carga de planta (carga-planta.md, puntos 19 a 21; maqueta-carga-planta.html, pestaña "Carga").
  *
  * Secuencia A, como Loop: Despacho graba el despacho e imprime el remito; la orden llega a esta cola; acá se carga.
- * ETAPA SIMULADA: la planta es un simulador que corre en este navegador (cuando este equipo es "la PC de la planta").
- * No hay conexión con Indumix. Las cargas quedan marcadas `simulada`: no ajustan el stock ni corrigen despachos.
+ * Con el simulador: la planta es un simulador que corre en este navegador (cuando este equipo es "la PC de la planta").
+ * Las cargas quedan marcadas `simulada`: no ajustan el stock ni corrigen despachos.
+ * Con el puesto real de Indumix (fase 1, solo lectura; docs/specs/2026-11-05-puente-indumix.md, 7): todos los equipos
+ * ven lo mismo, leído de la base cada 5 s (lo sube el puente de la PC de la planta). No hay CARGAR, PARAR ni ningún
+ * botón de mando: la planta se maneja desde Indumix.
  *
  * - PC de la planta: cola, planta en vivo, CARGAR, Suspender, Bocina, Extra agua y PARAR fijo (sin permiso).
  * - Otro equipo (vista remota): lo mismo, leído de la base cada 5 s, sin CARGAR ni PARAR.
@@ -27,7 +30,10 @@ import { efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
 import { banderas, type FilaAuditoria } from "@/lib/carga/auditoria"
 import { recetasIniciales } from "@/lib/carga/recetas-sim"
 import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
-import { cantidadPorM3 } from "@/lib/carga/receta"
+import { cantidadPorM3, compararReceta } from "@/lib/carga/receta"
+import { desvio } from "@/lib/carga/auditoria"
+import { estadoPantalla, estadoPlantaDeVivo, objetivoQuieta, piedraCorta } from "@/lib/carga/indumix"
+import { fechaPlc, textoDeriva } from "@/lib/carga/reloj"
 import { Btn, CartelSimulada, Chip, Tag, hhmm, hms, m3t, mmss } from "./comun"
 import { PlantaVivo, TablaPesajes, nombreCorto } from "./planta-vivo"
 import { ConfirmarCamion, MotivoDialog, PruebaDialog, ReporteDialog, TolvaDialog, type FilaReporte } from "./dialogos-carga"
@@ -61,10 +67,13 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
   const [tab, setTab] = useState<Tab>("carga")
   const [equipo, setEquipo] = useState<"planta" | "otro">("otro")
   useEffect(() => { if (leerLS(CLAVE_EQUIPO) === "planta" && puedeCargar) setEquipo("planta") }, [puedeCargar])
-  const enPlanta = equipo === "planta" && puedeCargar
-  const D = usarDatosCarga(planta, enPlanta ? 3000 : 5000)
+  const enPlantaPedida = equipo === "planta" && puedeCargar
+  const D = usarDatosCarga(planta, enPlantaPedida ? 3000 : 5000)
   const { ctx, puesto } = D
   const simulada = puesto?.sistema === "simulador"
+  // Puesto real de Indumix (fase 1): solo lectura, todos los equipos ven lo mismo
+  const real = puesto?.sistema === "indumix"
+  const enPlanta = enPlantaPedida && !real
   const P = usarPuenteSimulado({ activo: enPlanta && !!ctx && simulada, ctx, formulas: D.formulas, onCambio: D.leer, onAviso: aviso })
   const [sel, setSel] = useState<string | null>(null)
   const [ahora, setAhora] = useState(Date.now())
@@ -282,7 +291,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
           {plants.map((p) => <button key={p.id} onClick={() => setPlanta(p.id)} className={cn("h-[26px] rounded px-2.5 text-xs", planta === p.id ? "bg-muted font-medium" : "text-slate-500")}>{p.name}</button>)}
         </div>
         <span className="text-xs font-medium tabular-nums">{hms(ahora)}</span>
-        {enPlanta ? (
+        {real && puesto ? <BarraReal puesto={puesto} ahora={ahora} /> : enPlanta ? (
           <>
             <Chip ok={P.internet}>{P.internet ? "Internet" : "Sin internet"}</Chip>
             <Chip ok>{"Puente (simulador)"}</Chip>
@@ -305,8 +314,10 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
 
       {simulada && <CartelSimulada />}
 
+      {real && <div className="text-xs font-medium text-slate-700">Solo lectura: la planta se maneja desde Indumix.</div>}
+
       {/* Este equipo + controles del simulador */}
-      {puesto && (
+      {puesto && !real && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           {puedeCargar ? (
             <div className="inline-flex rounded-md border p-0.5">
@@ -348,21 +359,37 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
         {puesto && puesto.etapa === "apagado" && <Ban>El puesto de carga está apagado: Despachar no manda órdenes a esta cola (las órdenes de prueba sí andan).{puedeEditar ? <> Se prende en <button className="ml-1 text-xs text-blue-800 underline" onClick={() => setTab("recetas")}>Recetas de la planta › Etapa</button>.</> : " Lo prende Bautista."}</Ban>}
         {enPlanta && !P.conectado && <Ban tono="dark">Se cortó la red local entre esta PC y la planta. El PLC sigue solo con la carga en curso. Para parar: parada de emergencia (y el PARAR de Indumix, si su pantalla no corre en esta PC). Al volver se lee el estado real; no arranca nada solo.</Ban>}
         {sinInternet && <Ban>Sin internet. Andan igual: la carga en curso, el PARAR, la planta en vivo y las órdenes que ya bajaron (se cargan igual, sin pedir nada extra). No bajan órdenes nuevas{sinBajar ? ` (${sinBajar} esperando)` : ""}: se carga a mano en Indumix con el remito en Observación y el emparejador las une después.</Ban>}
-        {e?.alarmas?.[0] && <Ban tono="red">ALARMA DE INDUMIX: {e.alarmas[0].texto}{e.en_ciclo ? " · la planta se detuvo (lo decide el PLC)" : ""}</Ban>}
+        {real && puesto?.estado_vivo?.alarmas?.length ? <Ban tono="red">Indumix: {puesto.estado_vivo.alarmas.map((x) => x.texto).join(" · ")}</Ban> : null}
+        {!real && e?.alarmas?.[0] && <Ban tono="red">ALARMA DE INDUMIX: {e.alarmas[0].texto}{e.en_ciclo ? " · la planta se detuvo (lo decide el PLC)" : ""}</Ban>}
+        {real && D.alertas.filter((a) => a.estado === "abierta" && (a.tipo === "humedad" || a.tipo === "tolva_material")).map((a) => (
+          <Ban key={a.id}>{a.titulo}
+            {a.tipo === "tolva_material" && puedeCargar && a.detalle?.lleva && a.detalle?.salida && (
+              <Btn tono="pri" className="h-[22px] text-[11px]" onClick={async () => { const j = await api("/api/carga/salidas", { puesto_id: puesto!.id, salida: a.detalle!.salida, material_id: a.detalle!.lleva }); if (j) aviso(`${INFO_SALIDA[a.detalle!.salida as Salida]?.nombre || "Tolva"}: ${a.detalle!.lleva_nombre || ""}`, "Queda en Actividad.") }}>
+                Sí, ya tiene {piedraCorta(a.detalle.lleva_nombre)}
+              </Btn>
+            )}
+          </Ban>
+        ))}
         {cambiosReceta.slice(0, 2).map((a) => <Ban key={a.id}>{a.titulo}: {a.detalle?.diferencias}. <button className="ml-1 text-xs text-blue-800 underline" onClick={() => setTab("alertas")}>Ver alertas</button></Ban>)}
       </div>
 
       {puesto && ctx && tab === "recetas" && (
         <RecetasPlanta ctx={ctx} formulas={D.formulas} puedeEditar={puedeEditar} enPlanta={enPlanta} ultimaLectura={P.ultimaLectura}
           onLeer={() => void P.simular({ tipo: "leer" })} onCambiarTolva={puedeTolva && tolva1 ? () => setTolva(true) : null} onArmar={armarRecetas}
+          onAsignar={async (numero, formula_id) => { const j = await api("/api/carga/recetas/asignar", { puesto_id: ctx.puesto.id, numero, formula_id, tipo: numero >= 17 ? "rotativa" : "fija" }); if (j) aviso(`Receta ${numero}: ${D.formulas.find((f) => f.id === formula_id)?.code || "sin fórmula"}`, "Queda en Actividad. Se recomparó la receta.") ; return !!j }}
           onEtapa={async (et) => { const j = await api("/api/carga/puesto", { puesto_id: ctx.puesto.id, etapa: et }); if (j) aviso("Etapa del puesto cambiada", et === "orden" || et === "arranque" ? "Despachar manda la orden a la cola de carga." : "Despachar ya no manda órdenes a la cola.") }} />
       )}
       {puesto && ctx && tab === "alertas" && (
         <AlertasCarga alertas={D.alertas} ctx={ctx} formulas={D.formulas} cargas={D.cargas} puedeResolver={puedeResolver} puedeDescartar={puedeEditar || puedeResolver}
-          simulada={simulada} onResuelto={D.leer} onAviso={aviso} />
+          simulada={simulada} onResuelto={D.leer} onAviso={aviso} puedeCargar={puedeCargar} />
       )}
 
-      {puesto && ctx && tab === "carga" && (
+      {puesto && ctx && tab === "carga" && real && (
+        <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "220px minmax(0,1fr) 300px", height: alto }}>
+          <GrillaReal ctx={ctx} cargas={D.cargas} extras={D.extras} formulaDe={formulaDe} ahora={ahora} medio={medio} anchoMedio={anchoMedio} humAcopio={humAcopio} onReporte={verReporte} />
+        </div>
+      )}
+      {puesto && ctx && tab === "carga" && !real && (
         <div ref={grilla} className="grid gap-2" style={{ gridTemplateColumns: "200px minmax(0,1fr) 300px", height: alto }}>
           {/* Cola */}
           <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
@@ -848,5 +875,167 @@ function BotonAgua({ abierta, pulso, total, abrir, soltar, disabled }: { abierta
       </button>
       <span className="text-xs">Total de este camión <b className="font-medium tabular-nums">{nf(total, 1)} L</b></span>
     </div>
+  )
+}
+
+// ───────────────────────────── Puesto real de Indumix (fase 1, solo lectura) ─────────────────────────────
+
+const MAX_SIN_DATOS_MS = 2 * 60_000
+const fresco = (p: { ultimo_latido_at: string | null }, ahora: number) => !!p.ultimo_latido_at && ahora - Date.parse(p.ultimo_latido_at) <= MAX_SIN_DATOS_MS
+
+/** Barra de arriba con el puesto real: chip, edad del último dato del puente y reloj de Indumix con su atraso. */
+function BarraReal({ puesto, ahora }: { puesto: NonNullable<ReturnType<typeof usarDatosCarga>["puesto"]>; ahora: number }) {
+  const ult = puesto.ultimo_latido_at
+  const edad = ult ? Math.max(0, Math.round((ahora - Date.parse(ult)) / 1000)) : null
+  const f = fechaPlc(puesto.estado_vivo?.reloj_plc)
+  return (
+    <>
+      <Chip ok>Indumix · solo lectura</Chip>
+      {edad == null ? <span className="text-[11px] font-medium text-red-700">Sin datos del puente todavía</span>
+        : ult && !fresco(puesto, ahora) ? <span className="text-[11px] font-medium text-red-700">Sin datos del puente desde {hhmm(ult)}</span>
+          : <span className="text-[11px] text-slate-500">Datos de hace {edad} s</span>}
+      {f && <span className="text-[11px] text-slate-500" title="El reloj de Indumix va atrasado: las horas del sistema son las del puente">Reloj de Indumix {f.h}:{String(f.mi).padStart(2, "0")}{puesto.deriva_reloj_s != null ? ` (${textoDeriva(puesto.deriva_reloj_s)})` : ""}</span>}
+    </>
+  )
+}
+
+function GrillaReal({ ctx, cargas, extras, formulaDe, ahora, medio, anchoMedio, humAcopio, onReporte }: {
+  ctx: Contexto; cargas: CargaFila[]; extras: { carga_id: string; litros: number }[]; formulaDe: (id: string | null) => any; ahora: number
+  medio: React.RefObject<HTMLElement | null>; anchoMedio: number; humAcopio: number | null; onReporte: (k: CargaFila) => void
+}) {
+  const puesto = ctx.puesto
+  const ev = puesto.estado_vivo
+  const e = useMemo(() => estadoPlantaDeVivo(ev), [ev])
+  const conectado = fresco(puesto, ahora)
+  const [sel, setSel] = useState<string | null>(null)
+  const [buscar, setBuscar] = useState("")
+  const hoy0 = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString() }, [])
+  const deHoy = useMemo(() => cargas.filter((c) => c.origen === "indumix" && (c.fin_at || c.created_at) >= hoy0)
+    .sort((a, b) => (b.fin_at || b.created_at).localeCompare(a.fin_at || a.created_at)), [cargas, hoy0])
+  const elegida = deHoy.find((c) => c.id === sel) || deHoy[0] || null
+  const st = estadoPantalla(conectado ? ev : null)
+  const stc = st === "EN CICLO" ? "bg-green-50 text-green-800" : st === "ALARMA" ? "bg-red-50 text-red-700" : st === "SUSPENDIDA" ? "bg-amber-50 text-amber-800" : st === "QUIETA" ? "bg-muted text-slate-700" : "bg-slate-200 text-slate-900"
+  const pat = (k: CargaFila) => k.mixers?.license_plate || k.patente_planta || "—"
+  return (
+    <>
+      {/* Cargas de hoy */}
+      <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
+        <div className="flex min-h-[31px] items-center gap-1.5 border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Cargas de hoy</h2><span className="text-xs text-slate-500">{deHoy.length}</span><span className="flex-1" /><span className="text-[11px] text-slate-500">leídas de Indumix</span></div>
+        <Buscador valor={buscar} onCambio={setBuscar} />
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto p-1.5">
+          {deHoy.filter((k) => coincide(buscar, k.mixers?.license_plate, k.patente_planta, k.remito, k.formulas?.code, k.contador_planta, k.observacion_planta)).map((k) => {
+            const corta = k.m3_cargados != null && k.m3 != null && k.m3_cargados < Number(k.m3) - 0.05
+            const agua = extras.some((x) => x.carga_id === k.id)
+            return (
+              <button key={k.id} onClick={() => { setSel(k.id); onReporte(k) }} className={cn("d3c-card w-full rounded-md border border-r-[3px] border-slate-200 bg-slate-50 px-2 py-1 text-left leading-tight", k.dispatch_id ? "border-r-violet-700" : "border-r-amber-500", elegida?.id === k.id && "ring-2 ring-blue-500")}>
+                <div className="flex items-center gap-1 border-b border-slate-200 pb-0.5 text-[11px] text-slate-500">
+                  <span>N° {k.contador_planta ?? "—"} · {hhmm(k.fin_at)}{k.hora_estimada ? "*" : ""}</span><span className="flex-1" />
+                  <span className="truncate">{k.remito ? `Remito ${k.remito_tipo || ""} ${k.remito}` : "sin remito"}</span>
+                </div>
+                <div className="mt-0.5 flex items-baseline gap-2 text-xs font-medium">
+                  <span className="min-w-0 flex-1 truncate">{pat(k)}</span>
+                  <span className="shrink-0 tabular-nums">{m3t(k.m3_cargados ?? k.m3)} m³</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                  <span className="min-w-0 flex-1 truncate">receta {k.receta_numero ?? "—"}{k.formulas?.code ? ` · ${k.formulas.code}` : ""}</span>
+                  {corta && <Tag tono="warn">corta</Tag>}
+                  {k.estado_auditoria === "con_desvios" && <Tag tono="bad">desvío</Tag>}
+                  {agua && <Tag tono="blue">agua extra</Tag>}
+                </div>
+              </button>
+            )
+          })}
+          {!deHoy.length && <div className="py-6 text-center text-xs text-slate-500">Todavía no hay cargas leídas hoy. El puente lee cada carga cuando termina.</div>}
+          {deHoy.some((k) => k.hora_estimada) && <div className="px-1 text-[10.5px] text-slate-500">* hora estimada con el reloj de Indumix</div>}
+        </div>
+      </section>
+
+      {/* Planta en vivo */}
+      <section ref={medio} className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-2 py-1 text-xs">
+          <span className={cn("rounded px-1.5 text-[11px] font-medium", stc)}>{st}</span>
+          {ev && <>
+            <span>Receta <b className="font-medium">{ev.receta ?? "—"}</b> «{ev.receta_nombre || "—"}» · {m3t(ev.m3)} m³</span>
+            {ev.en_ciclo && <span>Ciclo <b className="font-medium">{ev.ciclo ?? "—"}/{ev.ciclos ?? "—"}</b> · {m3t(ev.m3_ciclo)} m³ · {ev.tiempo_ciclo || "—"}</span>}
+            <span className="text-slate-500">{ev.cliente || "sin cliente"} · {ev.camion || "sin camión"} · Observación {ev.observacion || "—"}</span>
+          </>}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-1.5">
+          <PlantaVivo estado={e} salidas={ctx.salidas} materiales={ctx.materiales} conectado={conectado && !!e} patente={ev?.camion || null} m3Total={ev?.m3 ?? null}
+            previa={objetivoQuieta(ev)} ancho={anchoMedio} onCambiarTolva={null} humedadAcopio={humAcopio} />
+          <TablaPesajes estado={e} salidas={ctx.salidas} materiales={ctx.materiales} />
+          <div className="mt-1 text-[11px] text-slate-500">R = lo pesado (último ciclo) · O = objetivo del ciclo, como en INICIO de Indumix. Lo que Indumix no da se ve «—».</div>
+        </div>
+      </section>
+
+      {/* Carga elegida */}
+      <section className="d3c-col flex min-h-0 flex-col overflow-hidden rounded-md border bg-card">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[5px] overflow-y-auto overflow-x-hidden px-2 py-1.5">
+          {elegida ? <PanelCargaLeida k={elegida} ctx={ctx} formula={formulaDe(elegida.formula_id)} onReporte={() => onReporte(elegida)} />
+            : <div className="py-6 text-center text-xs text-slate-500">No hay una carga elegida.</div>}
+        </div>
+      </section>
+    </>
+  )
+}
+
+/** La carga elegida del puesto real: receta del reporte contra la fórmula del remito, real contra teórico y cómo se unió. */
+function PanelCargaLeida({ k, ctx, formula, onReporte }: { k: CargaFila; ctx: Contexto; formula: any; onReporte: () => void }) {
+  const [mats, setMats] = useState<{ salida: Salida; receta_por_m3: number | null; teorico: number | null; teorico_corregido: number | null; real: number | null }[] | null>(null)
+  useEffect(() => {
+    let vivo = true
+    setMats(null)
+    createClient().from("cargas_materiales").select("salida, receta_por_m3, teorico, teorico_corregido, real").eq("carga_id", k.id).eq("ciclo", 0)
+      .then((r: any) => { if (vivo) setMats(((r.data || []) as any[]).map((m) => ({ salida: m.salida, receta_por_m3: m.receta_por_m3 == null ? null : Number(m.receta_por_m3), teorico: m.teorico == null ? null : Number(m.teorico), teorico_corregido: m.teorico_corregido == null ? null : Number(m.teorico_corregido), real: m.real == null ? null : Number(m.real) })).sort((a, b) => SALIDAS.indexOf(a.salida) - SALIDAS.indexOf(b.salida))) })
+    return () => { vivo = false }
+  }, [k.id])
+  const receta = mats ? { salidas: mats.map((m) => ({ salida: m.salida, nombre_planta: INFO_SALIDA[m.salida].nombre, valor: Number(m.receta_por_m3) || 0, unidad: INFO_SALIDA[m.salida].unidad })) } : null
+  const cmp = receta && formula ? compararReceta(receta, formula, ctx.salidas, ctx.materiales, ctx.puesto.tolerancias) : null
+  const sinHumedad = (mats || []).some((m) => grupoDeSalida(m.salida) === "arido" && Number(m.teorico) > 0 && m.teorico_corregido == null)
+  return (
+    <>
+      <div className="min-w-0 leading-tight">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-medium tracking-[.04em]">{k.mixers?.license_plate || k.patente_planta || "—"}</span>
+          <span className="flex-1" />
+          <Tag tono={k.remito ? (k.remito_tipo === "X" ? "X" : "R") : "warn"}>{k.remito ? `${k.remito_tipo || ""} ${k.remito}` : "sin remito"}</Tag>
+        </div>
+        <div className="flex min-w-0 items-center gap-1 text-xs text-slate-500">
+          <span className="min-w-0 flex-1 truncate">N° {k.contador_planta ?? "—"} · receta {k.receta_numero ?? "—"} · {k.formulas?.code || "sin fórmula"}</span>
+          <span className="shrink-0 tabular-nums text-foreground">{m3t(k.m3_cargados ?? k.m3)} m³</span>
+        </div>
+      </div>
+      <div className="text-[11px] text-slate-500">{hhmm(k.inicio_at)} → {hhmm(k.fin_at)}{k.hora_estimada ? " (estimada)" : ""} · {k.union_remito ? `unida ${k.union_remito}` : "sin unir a un remito"}</div>
+      {k.observacion_planta ? <div className="text-[11px] text-slate-500">Observación en Indumix: {k.observacion_planta}</div> : null}
+      {k.nota && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">{k.nota}</div>}
+      {cmp ? (
+        <div className={cn("rounded-md border border-l-[3px] border-slate-200 px-1.5 py-1 text-xs", cmp.malNoAgua.length || cmp.sueltas.length ? "border-l-red-600" : cmp.malAgua ? "border-l-amber-500" : "border-l-emerald-500")}>
+          <div className="font-medium">Receta {k.receta_numero ?? "—"} del reporte contra {formula.code}</div>
+          <ComparacionCompacta cmp={cmp} numero={k.receta_numero} />
+        </div>
+      ) : mats ? <div className="text-[11px] text-slate-500">{k.remito ? "La fórmula del remito no tiene materiales para comparar." : "Sin remito: no se compara con una fórmula."}</div> : null}
+      {mats && mats.length > 0 && (
+        <table className="w-full table-fixed border-collapse text-[11px]">
+          <thead><tr className="text-left text-[10.5px] text-slate-500"><th className="px-1 font-normal">Salida</th><th className="px-1 text-right font-normal">Teórico</th><th className="px-1 text-right font-normal">Real</th><th className="px-1 text-right font-normal">Dif.</th></tr></thead>
+          <tbody>
+            {mats.filter((m) => Number(m.teorico) > 0 || Number(m.real) > 0).map((m) => {
+              const g = grupoDeSalida(m.salida)
+              const tc = m.teorico_corregido
+              const bad = desvio({ grupo: g, teorico_corregido: tc, real: m.real }, ctx.puesto.tolerancias.pesaje)
+              return (
+                <tr key={m.salida} className={cn(bad && "bg-red-50")}>
+                  <td className="truncate border-b border-slate-200 px-1 py-px">{INFO_SALIDA[m.salida].nombre}</td>
+                  <td className="border-b border-slate-200 px-1 py-px text-right tabular-nums">{nf(tc ?? m.teorico)}</td>
+                  <td className="border-b border-slate-200 px-1 py-px text-right tabular-nums">{nf(m.real)}</td>
+                  <td className={cn("border-b border-slate-200 px-1 py-px text-right tabular-nums", bad ? "text-red-700" : "text-slate-500")}>{tc ? `${(Number(m.real || 0) - tc) >= 0 ? "+" : ""}${nf(((Number(m.real || 0) - tc) / tc) * 100, 1)} %` : "sin humedad"}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+      {sinHumedad && <div className="text-[10.5px] text-slate-500">Sin la humedad con que se pesó: áridos y agua no se evalúan.</div>}
+      <div><Btn className="h-[26px] text-xs" onClick={onReporte}>Ver reporte</Btn></div>
+    </>
   )
 }

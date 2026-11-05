@@ -41,3 +41,61 @@ export function horaEstimada(textoPlc: string | null | undefined, ref: { plcSeg:
   if (Math.abs(dif) > 86400) return null
   return ref.puenteMs + dif * 1000
 }
+
+// ───────────────────────────── Indumix real (04/11/2026): fecha real, atrasada unas horas ─────────────────────────────
+// El reloj de la planta de Canning NO vuelve a 1970: tiene la fecha real, atrasada 3 a 4 h, con espacios y sin segundos
+// ("10 : 54 - 3/11/2026"). La hora real sale de la deriva que mide el puente (su hora contra la del PLC). Si alguna vez
+// vuelve a 1970, vale lo de arriba (día de Indumix).
+
+export type FechaPlc = { anio: number; mes: number; dia: number; h: number; mi: number }
+
+/** "10 : 54 - 3/11/2026" o "4:57 - 1/1/1970" → partes (null si no se entiende). */
+export function fechaPlc(texto: string | null | undefined): FechaPlc | null {
+  const m = String(texto ?? "").match(/(\d{1,2})\s*:\s*(\d{1,2})(?:\s*:\s*\d{1,2})?\s*-\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})/)
+  if (!m) return null
+  const [h, mi, dia, mes, anio] = m.slice(1).map(Number)
+  if (h > 23 || mi > 59 || dia < 1 || dia > 31 || mes < 1 || mes > 12) return null
+  return { anio, mes, dia, h, mi }
+}
+
+/** El PLC no tiene fecha (1/1/1970): se usa la lógica del día de Indumix. */
+export const esReloj1970 = (f: FechaPlc | null) => !!f && f.anio === 1970
+
+/** Milisegundos de una hora del PLC leída como hora de Argentina (UTC−3, sin horario de verano). */
+export function msPlc(f: FechaPlc): number {
+  return Date.UTC(f.anio, f.mes - 1, f.dia, f.h + 3, f.mi)
+}
+
+/** "2026-11-03" (la fecha que dice el PLC). */
+export const diaPlc = (f: FechaPlc) => `${f.anio}-${pad(f.mes)}-${pad(f.dia)}`
+
+/**
+ * Segundos que el reloj de Indumix va atrasado respecto del puente (positivo = atrasado). La resolución es de un minuto
+ * (el PLC no tiene segundos). null si no se entiende o si el reloj está en 1970.
+ */
+export function derivaSegundos(plcTexto: string | null | undefined, puenteMs: number): number | null {
+  const f = fechaPlc(plcTexto)
+  if (!f || esReloj1970(f) || !Number.isFinite(puenteMs)) return null
+  return Math.round((puenteMs - msPlc(f)) / 1000)
+}
+
+/**
+ * Hora real (ms) de una hora del PLC, con la deriva medida. Con el reloj en 1970 hace falta una referencia del mismo día
+ * de Indumix (`ref`, la de `horaEstimada`); sin ella, null.
+ */
+export function horaReal(plcTexto: string | null | undefined, derivaS: number | null | undefined, ref?: { plcSeg: number; puenteMs: number } | null): number | null {
+  const f = fechaPlc(plcTexto)
+  if (!f) return null
+  if (esReloj1970(f)) return ref ? horaEstimada(plcTexto, ref) : null
+  if (derivaS == null || !Number.isFinite(derivaS)) return null
+  return msPlc(f) + derivaS * 1000
+}
+
+/** "−3 h 24 min" (la deriva, para mostrar). */
+export function textoDeriva(derivaS: number | null | undefined): string {
+  if (derivaS == null || !Number.isFinite(derivaS)) return ""
+  const min = Math.round(Math.abs(derivaS) / 60)
+  const signo = derivaS > 0 ? "−" : derivaS < 0 ? "+" : ""
+  if (min === 0) return "en hora"
+  return `${signo}${min >= 60 ? `${Math.floor(min / 60)} h ` : ""}${min % 60 ? `${min % 60} min` : ""}`.trim()
+}

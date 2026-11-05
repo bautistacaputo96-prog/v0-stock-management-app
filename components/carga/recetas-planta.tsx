@@ -1,20 +1,63 @@
 "use client"
 
-/** Pestaña "Recetas de la planta": las 20 de Indumix contra nuestras fórmulas, el mapa de salidas y lo que no entra (6 y 7). */
-import { useState } from "react"
+/**
+ * Pestaña "Recetas de la planta": las 20 de Indumix contra nuestras fórmulas, el mapa de salidas y lo que no entra (6 y 7).
+ * Con el puesto real (fase 1): las 20 recetas que lee el puente, "Fórmula: [elegir]" en cada una (con una sugerencia),
+ * Etapa solo Apagado o A, y el bloque Puente (versión, último dato, reloj y la clave).
+ */
+import { useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
 import { controlReceta } from "@/lib/carga/receta"
 import type { Contexto, Puesto } from "@/lib/carga/datos"
-import { INFO_SALIDA, SALIDAS, type FormulaSistema } from "@/lib/carga/tipos"
+import { nombreRecetaComoFormula } from "@/lib/carga/indumix"
+import { textoDeriva } from "@/lib/carga/reloj"
+import { interpretarNombre } from "@/lib/formulas-nombre"
+import { INFO_SALIDA, SALIDAS, nf, type FormulaSistema } from "@/lib/carga/tipos"
 import { Btn, Tag, hhmm } from "./comun"
 import { TablaComparacion } from "./dialogos-carga"
 
 const ETAPAS: [Puesto["etapa"], string][] = [["arranque", "C · Cargar desde el sistema"], ["orden", "B · Orden preparada"], ["lectura", "A · Solo lectura"], ["apagado", "Apagado"]]
+/** Puesto real en la fase 1: no sale de solo lectura (la base también lo impide). */
+const ETAPAS_REAL: [Puesto["etapa"], string][] = [["lectura", "A · Solo lectura"], ["apagado", "Apagado"]]
 
-export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLectura, onLeer, onCambiarTolva, onArmar, onEtapa }: {
+/** Misma fórmula por el nombre (resistencia, piedra, asentamiento y método): "H40-6/20-15 B" ≈ "H40-620-15 B (CAN)". */
+function mismaPorNombre(receta: string, formula: string): boolean {
+  const a = interpretarNombre(nombreRecetaComoFormula(receta)), b = interpretarNombre(formula)
+  return !!a && !!b && a.resistencia === b.resistencia && a.piedra === b.piedra && a.asentamiento === b.asentamiento && a.metodo === b.metodo
+}
+
+export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLectura, onLeer, onCambiarTolva, onArmar, onEtapa, onAsignar }: {
   ctx: Contexto; formulas: (FormulaSistema & { usos?: number })[]; puedeEditar: boolean; enPlanta: boolean; ultimaLectura: number | null
   onLeer: () => void; onCambiarTolva: (() => void) | null; onArmar: () => Promise<void>; onEtapa: (e: Puesto["etapa"]) => void
+  /** puesto real: asignar la fórmula de una receta */
+  onAsignar?: (numero: number, formulaId: string | null) => Promise<boolean>
 }) {
+  const real = ctx.puesto.sistema === "indumix"
+  // Sugerencia: la fórmula más repetida en los remitos unidos a cargas de esa receta (30 días); si no, por el nombre
+  const [porRemitos, setPorRemitos] = useState<Map<number, string>>(new Map())
+  useEffect(() => {
+    if (!real) return
+    const desde = new Date(Date.now() - 30 * 86400_000).toISOString()
+    createClient().from("cargas").select("receta_numero, formula_id").eq("puesto_id", ctx.puesto.id).not("formula_id", "is", null).not("receta_numero", "is", null).gte("created_at", desde).limit(5000)
+      .then((r: any) => {
+        const cuenta = new Map<number, Map<string, number>>()
+        for (const c of (r.data || []) as { receta_numero: number; formula_id: string }[]) {
+          const m = cuenta.get(c.receta_numero) || new Map<string, number>()
+          m.set(c.formula_id, (m.get(c.formula_id) || 0) + 1)
+          cuenta.set(c.receta_numero, m)
+        }
+        setPorRemitos(new Map([...cuenta.entries()].map(([n, m]) => [n, [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]])))
+      })
+  }, [real, ctx.puesto.id])
+  const sugerida = (n: number, nombre: string | null | undefined): FormulaSistema | null => {
+    const id = porRemitos.get(n)
+    const f = id ? formulas.find((x) => x.id === id) : null
+    if (f) return f
+    return nombre ? formulas.find((x) => mismaPorNombre(nombre, x.code)) || null : null
+  }
+  const [asignando, setAsignando] = useState<number | null>(null)
+  const asignar = async (n: number, id: string | null) => { if (!onAsignar) return; setAsignando(n); await onAsignar(n, id); setAsignando(null) }
   const [abierta, setAbierta] = useState<number | null>(13)
   const [armando, setArmando] = useState(false)
   const porId = new Map(formulas.map((f) => [f.id, f]))
@@ -30,17 +73,19 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
         <div className="flex flex-wrap items-center gap-2 border-b px-2.5 py-1">
           <h2 className="text-[13px] font-medium">Las {ctx.puesto.max_recetas} recetas de la planta · {ctx.puesto.nombre}</h2>
           <span className="flex-1" />
-          <span className="text-[11px] text-slate-500">el puente las lee cada 5 min y antes de cada carga · última {hhmm(ultimaLectura || ultima)}</span>
+          <span className="text-[11px] text-slate-500">{real ? "el puente las lee al arrancar y cada hora, con la planta quieta" : "el puente las lee cada 5 min y antes de cada carga"} · última {hhmm(ultimaLectura || ultima)}</span>
           {enPlanta && <Btn className="h-[26px] text-xs" onClick={onLeer}>Leer ahora</Btn>}
           {puedeEditar && (
             <label className="inline-flex items-center gap-1 text-xs">Etapa
               <select className="h-[26px] rounded-md border bg-card px-1 text-xs" value={ctx.puesto.etapa} onChange={(e) => onEtapa(e.target.value as Puesto["etapa"])}>
-                {ETAPAS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {(real ? ETAPAS_REAL : ETAPAS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </label>
           )}
         </div>
-        {!ctx.recetas.length ? (
+        {!ctx.recetas.length && real ? (
+          <div className="px-3 py-4 text-xs text-slate-600">Todavía no llegó ninguna receta del puente. Las lee al arrancar y cada hora, con la planta quieta y nadie en RECETAS de Indumix.</div>
+        ) : !ctx.recetas.length ? (
           <div className="space-y-1.5 px-3 py-4 text-xs">
             <p>La planta simulada todavía no tiene recetas. Se arman con las fórmulas de {ctx.puesto.nombre.split(" ·")[0]}: 1 a 16 las más usadas en 6 meses, 17 y 18 rotativas, 19 una receta sin fórmula y 20 vacía. La <b className="font-medium">13</b> es la H30-612-15 B con los valores reales de la foto de Indumix (CP 40 = 350 y Agua = 110), para ver el problema de verdad.</p>
             {puedeEditar ? <Btn tono="pri" disabled={armando} onClick={async () => { setArmando(true); await onArmar(); setArmando(false) }}>Armar las 20 recetas del simulador</Btn> : <p className="text-slate-500">Lo hace quien tiene Carga · editar.</p>}
@@ -64,7 +109,20 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
                     <tr key={n} className="cursor-pointer hover:bg-muted/40" onClick={() => setAbierta(open ? null : n)}>
                       <td className="border-b px-1.5 py-0.5 font-medium">{n}</td>
                       <td className="border-b px-1.5 py-0.5">{vacia ? <span className="text-slate-500">(vacía)</span> : r?.nombre || "(sin nombre)"}</td>
-                      <td className="border-b px-1.5 py-0.5">{f?.code || "—"}</td>
+                      <td className="border-b px-1.5 py-0.5" onClick={(e) => real && puedeEditar && e.stopPropagation()}>
+                        {real && puedeEditar && onAsignar ? (() => {
+                          const sug = !f && !vacia ? sugerida(n, r?.nombre) : null
+                          return (
+                            <span className="inline-flex flex-wrap items-center gap-1">
+                              <select className="h-[24px] max-w-[190px] rounded-md border bg-card px-1 text-xs" disabled={asignando === n} value={a?.formula_id || ""} onChange={(e) => void asignar(n, e.target.value || null)}>
+                                <option value="">Fórmula: elegir…</option>
+                                {formulas.map((x) => <option key={x.id} value={x.id}>{x.code}</option>)}
+                              </select>
+                              {sug && <button className="text-[11px] text-blue-800 underline" onClick={() => void asignar(n, sug.id)} title={porRemitos.get(n) ? "La más repetida en los remitos de esta receta (30 días)" : "Por el nombre de la receta"}>¿{sug.code}?</button>}
+                            </span>
+                          )
+                        })() : f?.code || "—"}
+                      </td>
                       <td className="border-b px-1.5 py-0.5 text-slate-500">{a?.tipo || (n <= 16 ? "fija" : "rotativa")}</td>
                       <td className="border-b px-1.5 py-0.5"><Tag tono={tono}>{est}</Tag></td>
                       <td className="border-b px-1.5 py-0.5 text-slate-500">{hhmm(r?.ultima_lectura_at)}</td>
@@ -72,7 +130,7 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
                     </tr>,
                     open && !vacia ? (
                       <tr key={`${n}-d`}><td colSpan={7} className="border-b px-2 py-1.5">
-                        {ctl?.cmp ? <TablaComparacion cmp={ctl.cmp} /> : <span className="text-slate-500">Receta de Indumix sin fórmula en el sistema.</span>}
+                        {ctl?.cmp ? <TablaComparacion cmp={ctl.cmp} /> : <span className="text-slate-500">Receta de Indumix sin fórmula en el sistema{real && r ? `: ${r.salidas.filter((x) => x.valor > 0).map((x) => `${INFO_SALIDA[x.salida].corto} ${nf(x.valor)}`).join(" · ")}` : "."}</span>}
                         {ctl?.items.filter((i) => i.clave === "tolva").map((i) => <div key={i.texto} className={cn("mt-1 text-[11px]", i.ok ? "text-slate-500" : "font-medium text-red-700")}>{i.texto}</div>)}
                       </td></tr>
                     ) : null,
@@ -80,10 +138,14 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
                 })}
               </tbody>
             </table>
+            {real && (
+              <div className="px-2 pt-1 text-[11px] text-slate-500">Valores por m³ de Indumix (aditivo en g, agua en L). Tocá una receta para ver sus valores.</div>
+            )}
             <div className="px-2 py-1 text-[11px] text-slate-500">Se comparan solo los materiales que pasan por la planta (el aditivo de obra y la fibra, no). El agua se compara sobre la receta base. A confirmar el jueves: ¿las fórmulas de 6/20 usan la Tolva 1 o la 4?</div>
           </div>
         )}
       </div>
+      {real && <BloquePuente puesto={ctx.puesto} puedeEditar={puedeEditar} />}
       <div className="grid gap-2 md:grid-cols-2">
         <div className="d3c-card rounded-md border bg-card">
           <div className="border-b px-2.5 py-1"><h2 className="text-[13px] font-medium">Qué hay en cada salida</h2></div>
@@ -113,6 +175,52 @@ export function RecetasPlanta({ ctx, formulas, puedeEditar, enPlanta, ultimaLect
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Bloque Puente (puesto real): versión, último dato, deriva del reloj, mediana de respuesta y la clave. */
+function BloquePuente({ puesto, puedeEditar }: { puesto: Puesto; puedeEditar: boolean }) {
+  const [clave, setClave] = useState<string | null>(null)
+  const [generando, setGenerando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copiada, setCopiada] = useState(false)
+  const salud = puesto.estado_vivo?.puente || null
+  const ultimo = useMemo(() => (puesto.ultimo_latido_at ? new Date(puesto.ultimo_latido_at) : null), [puesto.ultimo_latido_at])
+  async function generar() {
+    if (!window.confirm("Se genera una clave nueva y la anterior deja de andar: hay que pegarla en la PC de la planta. ¿Seguir?")) return
+    setGenerando(true); setError(null); setCopiada(false)
+    const r = await fetch("/api/carga/puente/clave", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ puesto_id: puesto.id }) })
+    const j = await r.json().catch(() => ({}))
+    setGenerando(false)
+    if (!r.ok) { setError(j?.error || `Error ${r.status}`); return }
+    setClave(j.clave)
+  }
+  return (
+    <div className="d3c-card rounded-md border bg-card">
+      <div className="flex flex-wrap items-center gap-2 border-b px-2.5 py-1">
+        <h2 className="text-[13px] font-medium">Puente</h2>
+        <span className="text-[11px] text-slate-500">programa en la PC de la planta · solo lee Indumix</span>
+        <span className="flex-1" />
+        {puedeEditar && <Btn tono="pri" className="h-[26px] text-xs" disabled={generando} onClick={() => void generar()}>Generar clave del puente</Btn>}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-2.5 py-1.5 text-xs">
+        <span><span className="text-slate-500">Versión:</span> {puesto.version_puente || "—"}</span>
+        <span><span className="text-slate-500">Último dato:</span> {ultimo ? `${ultimo.toLocaleDateString("es-AR")} ${hhmm(ultimo)}` : "nunca"}</span>
+        <span><span className="text-slate-500">Reloj de Indumix:</span> {puesto.deriva_reloj_s != null ? textoDeriva(puesto.deriva_reloj_s) : "—"}</span>
+        <span><span className="text-slate-500">Respuesta de Indumix (mediana):</span> {salud?.mediana_ms != null ? `${nf(salud.mediana_ms)} ms` : "—"}{salud?.lento ? " · lento: el puente lee la mitad de seguido" : ""}</span>
+      </div>
+      {error && <div className="px-2.5 pb-1.5 text-xs text-red-700">{error}</div>}
+      {clave && (
+        <div className="mx-2.5 mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs">
+          <div className="font-medium text-amber-900">Clave del puente · No se vuelve a mostrar</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <code className="break-all rounded bg-white px-1.5 py-0.5 font-mono text-[11px]">{clave}</code>
+            <Btn className="h-[24px] text-xs" onClick={() => { void navigator.clipboard?.writeText(clave).then(() => setCopiada(true)) }}>{copiada ? "Copiada" : "Copiar"}</Btn>
+          </div>
+          <div className="mt-1 text-[11px] text-amber-900">Pegala en la PC de la planta cuando la pida «instalar.cmd». La anterior ya no anda.</div>
+        </div>
+      )}
     </div>
   )
 }

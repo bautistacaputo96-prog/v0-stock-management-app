@@ -3,6 +3,8 @@
 /**
  * La planta en vivo (como la pantalla INICIO de Indumix y la maqueta): tolvas, roscas, aditivos y agua con nivel, H%,
  * Real y Objetivo; las balanzas; la cinta al camión y el trompo llenándose. Más la tabla de pesajes del ciclo.
+ * Con el puesto real de Indumix hay datos que no llegan (niveles, balanzas, m³ en el trompo): vienen en NaN y se ven
+ * "—" o no se dibujan.
  */
 import { cn } from "@/lib/utils"
 import { ARIDOS, INFO_SALIDA, SALIDAS, anchoSalida, nf, type EstadoPlanta, type Salida, type SalidaMapa } from "@/lib/carga/tipos"
@@ -66,6 +68,7 @@ export function PlantaVivo({
     const real = enCurso ? e?.real || 0 : 0
     const obj = enCurso ? e?.objetivo || 0 : previa?.[s] || 0
     const lvl = e?.nivel_pct ?? 0
+    const conNivel = Number.isFinite(lvl)
     const m = mat(s)
     const h = info.grupo === "arido" ? e?.humedad_pct ?? 0 : null
     const humW = s === "arido_3" && h != null && humedadAcopio != null && Math.abs(h - humedadAcopio) > 1.5
@@ -79,8 +82,8 @@ export function PlantaVivo({
         <div className="min-h-[13px] truncate text-[10.5px] leading-tight" title={m || ""}>{grande ? nombreCorto(m) : nombreMinimo(m)}</div>
         {s === "arido_1" && onCambiarTolva && <button className="mt-px h-[17px] rounded border bg-card px-1 text-[10px]" onClick={onCambiarTolva}>Cambiar</button>}
         <div className={cn("relative mt-0.5 overflow-hidden border-[1.5px] border-b-0 border-slate-400 bg-white", forma)} style={{ height: info.grupo === "cemento" ? th + 12 : th }}>
-          <div className="absolute inset-x-0 bottom-0" style={{ height: `${lvl}%`, background: colorDe(m) }} />
-          <span className="absolute right-0.5 top-px text-[9px] text-slate-700">{nf(lvl)}%</span>
+          {conNivel && <div className="absolute inset-x-0 bottom-0" style={{ height: `${lvl}%`, background: colorDe(m) }} />}
+          <span className="absolute right-0.5 top-px text-[9px] text-slate-700">{conNivel ? `${nf(lvl)}%` : "—"}</span>
         </div>
         {info.grupo === "arido" && <div className={cn("h-[9px]", e?.pesando ? "bg-blue-500" : "bg-slate-300")} style={{ clipPath: "polygon(0 0,100% 0,64% 100%,36% 100%)" }} />}
         <div className="mt-px flex justify-between text-[10px] leading-tight text-slate-500"><span>R</span><b className="font-medium text-xs font-medium tabular-nums text-foreground">{usada ? nf(real) : 0}</b></div>
@@ -91,7 +94,7 @@ export function PlantaVivo({
   const bal = (id: "aridos" | "cemento" | "aditivo", tit: string) => {
     const b = estado?.balanzas.find((x) => x.id === id)
     const est = b?.estado || "vacia"
-    const pct = b && b.max ? Math.min(100, (b.valor / b.max) * 100) : 0
+    const pct = b && b.max && Number.isFinite(b.valor) ? Math.min(100, (b.valor / b.max) * 100) : 0
     return (
       <div key={id} className={cn("min-w-[92px] flex-1 rounded-[5px] border px-1.5 py-0.5 text-[10.5px]", est === "pesando" && "border-blue-500", est === "descargando" && "border-green-600")}>
         <div className="flex justify-between gap-1 text-slate-500"><span>{tit}</span>
@@ -105,7 +108,7 @@ export function PlantaVivo({
   const agua = estado?.agua
   const aguaObj = enCurso ? agua?.objetivo || 0 : previa?.agua || 0
   const trompo = estado ? (estado.en_ciclo || estado.parada ? estado.m3_en_trompo : 0) : 0
-  const frac = m3Total ? Math.min(1, trompo / m3Total) : 0
+  const frac = m3Total && Number.isFinite(trompo) ? Math.min(1, trompo / m3Total) : 0
   const cinta = !!estado?.cinta_en_marcha
   return (
     <div className="relative rounded-md border p-1.5">
@@ -122,7 +125,7 @@ export function PlantaVivo({
         <div className={cn("min-w-[92px] flex-1 rounded-[5px] border px-1.5 py-0.5 text-[10.5px]", enCurso && estado?.salidas.find((x) => x.salida === "agua")?.pesando && "border-blue-500")}>
           <div className="flex justify-between gap-1 text-slate-500"><span>Agua</span><span>obj {nf(aguaObj)} L</span></div>
           <div className="text-sm font-medium tabular-nums">{nf(enCurso ? agua?.real ?? 0 : 0)} <span className="text-[11px] font-normal text-slate-500">L</span>{agua?.extra ? <span className="ml-1 text-[10.5px] font-medium text-blue-800">+{nf(agua.extra)} extra</span> : null}</div>
-          <div className="h-[3px] overflow-hidden rounded-full bg-slate-200"><i className="block h-full bg-blue-500" style={{ width: `${aguaObj ? Math.min(100, ((agua?.real || 0) / aguaObj) * 100) : 0}%` }} /></div>
+          <div className="h-[3px] overflow-hidden rounded-full bg-slate-200"><i className="block h-full bg-blue-500" style={{ width: `${aguaObj && Number.isFinite(aguaObj) && Number.isFinite(agua?.real ?? 0) ? Math.min(100, ((agua?.real || 0) / aguaObj) * 100) : 0}%` }} /></div>
         </div>
       </div>
       <div className="mt-1 flex items-end gap-1.5">

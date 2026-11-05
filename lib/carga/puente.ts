@@ -1,10 +1,10 @@
 /**
  * Puente de carga (carga-planta.md 3 y 9): lo que la pantalla de Carga le pide a la planta.
  *
- * Hoy el puente es SOLO el simulador, que corre en el navegador de la PC de la planta: no hay ningún programa que
- * hable con Indumix (192.168.0.10). El puente real (servicio de Windows en `127.0.0.1:8787` con el adaptador de
- * Indumix) se programa después del jueves 23/10, con lo que se vea ese día. La pantalla usa esta interfaz, así que
- * cambiar el simulador por el puente real no cambia la pantalla.
+ * Esta interfaz (cargar y arrancar desde la pantalla) la implementa SOLO el simulador, que corre en el navegador de la
+ * PC de la planta. El puente real es un programa aparte en la PC de la planta (`puente-carga/`, fase 1, solo lectura:
+ * lee Indumix y lo sube a /api/carga/puente; docs/specs/2026-11-05-puente-indumix.md). No escucha en ningún puerto ni
+ * acciona la planta: mandar la carga es la fase 2 (diseñada, sin programar).
  *
  * Reglas que respeta cualquier implementación:
  * - nunca escribe recetas en la planta (no hay método para eso);
@@ -109,10 +109,10 @@ export class PuenteConAdaptador implements Puente {
   extraAguaCerrar() { return this.adaptador.extraAguaCerrar() }
 }
 
-/** El puente de un puesto. Solo existe el simulador: el de Indumix real todavía no está programado. */
+/** El puente de un puesto en la pantalla. Solo el simulador: el real es un programa aparte en la PC de la planta. */
 export function crearPuente(sistema: SistemaPuesto, opciones: OpcionesSimulador): { puente: PuenteConAdaptador; simulador: SimuladorIndumix } {
   if (sistema !== "simulador")
-    throw new Error("El puente con Indumix real todavía no existe: se programa después de ver la planta el jueves 23/10.")
+    throw new Error("El puente real es un programa aparte en la PC de la planta (fase 1, solo lectura).")
   const simulador = new SimuladorIndumix(opciones)
   return { puente: new PuenteConAdaptador("simulador", simulador), simulador }
 }

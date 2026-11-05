@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { controlDeFormula, type Contexto } from "@/lib/carga/datos"
 import { fichaParaIndumix } from "@/lib/carga/receta"
 import { INFO_SALIDA, nf, type FormulaSistema } from "@/lib/carga/tipos"
+import { piedraCorta } from "@/lib/carga/indumix"
 import { Btn, Tag, hhmm } from "./comun"
 import { MotivoDialog, TablaComparacion } from "./dialogos-carga"
 import { Buscador, coincide } from "@/components/despacho/buscador"
@@ -19,9 +20,11 @@ import type { AlertaFila, CargaFila } from "./usar-datos-carga"
 const ORDEN: Record<string, number> = { abierta: 0, esperando_planta: 1, resuelta: 2, cerrada_sola: 3 }
 const ETQ: Record<string, string> = { abierta: "Abierta", esperando_planta: "Esperando a la planta", resuelta: "Resuelta", cerrada_sola: "Se cerró sola" }
 
-export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, puedeDescartar, simulada, onResuelto, onAviso }: {
+export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, puedeDescartar, simulada, onResuelto, onAviso, puedeCargar = false }: {
   alertas: AlertaFila[]; ctx: Contexto; formulas: FormulaSistema[]; cargas: CargaFila[]
   puedeResolver: boolean; puedeDescartar: boolean; simulada: boolean; onResuelto: () => void; onAviso: (t: string, d?: string) => void
+  /** Carga · cargar: "Sí, ya tiene 6/12" en el aviso de Tolva 1 del puesto real */
+  puedeCargar?: boolean
 }) {
   const [resolver, setResolver] = useState<AlertaFila | null>(null)
   const [descartar, setDescartar] = useState<AlertaFila | null>(null)
@@ -30,6 +33,15 @@ export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, pu
   const lista = useMemo(() => [...alertas].filter((a) => (verCerradas || ["abierta", "esperando_planta"].includes(a.estado)) && coincide(buscar, a.titulo, a.detalle?.motivo, a.detalle?.diferencias, a.receta_numero))
     .sort((a, b) => (ORDEN[a.estado] - ORDEN[b.estado]) || b.created_at.localeCompare(a.created_at)), [alertas, verCerradas, buscar])
   const cerradas = alertas.filter((a) => !["abierta", "esperando_planta"].includes(a.estado)).length
+
+  /** Aviso de Tolva 1: confirma la piedra que tiene la tolva (cambia el mapa de salidas y cierra la alerta). */
+  async function confirmarTolva(a: AlertaFila) {
+    const r = await fetch("/api/carga/salidas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ puesto_id: ctx.puesto.id, salida: a.detalle?.salida, material_id: a.detalle?.lleva }) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) { onAviso("No se pudo", j?.error); return }
+    onAviso(`${INFO_SALIDA[a.detalle?.salida as keyof typeof INFO_SALIDA]?.nombre || "Tolva"}: ${a.detalle?.lleva_nombre || ""}`, "Queda en Actividad.")
+    onResuelto()
+  }
 
   async function enviar(a: AlertaFila, body: Record<string, unknown>) {
     const r = await fetch(`/api/carga/alertas/${a.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
@@ -50,7 +62,7 @@ export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, pu
       {!lista.length && <div className="py-8 text-center text-xs text-slate-500">No hay alertas abiertas.</div>}
       {lista.map((a) => {
         const frena = a.detalle?.frena !== false && a.tipo === "receta_no_coincide"
-        const tono = a.estado === "resuelta" || a.estado === "cerrada_sola" ? "border-l-emerald-500 opacity-80" : a.tipo === "receta_cambiada" || (a.tipo === "receta_no_coincide" && !frena) ? "border-l-amber-500" : a.tipo === "carga_desde_indumix" || a.tipo === "receta_nueva" ? "border-l-slate-500" : "border-l-red-600"
+        const tono = a.estado === "resuelta" || a.estado === "cerrada_sola" ? "border-l-emerald-500 opacity-80" : a.tipo === "receta_cambiada" || a.tipo === "humedad" || a.tipo === "tolva_material" || (a.tipo === "receta_no_coincide" && !frena) ? "border-l-amber-500" : a.tipo === "carga_desde_indumix" || a.tipo === "receta_nueva" ? "border-l-slate-500" : "border-l-red-600"
         return (
           <div key={a.id} className={cn("d3c-card flex flex-wrap items-start gap-2 rounded-md border border-l-[3px] border-slate-200 bg-slate-50 px-2 py-1 text-xs", tono)}>
             <div className="min-w-[240px] flex-1">
@@ -71,6 +83,7 @@ export function AlertasCarga({ alertas, ctx, formulas, cargas, puedeResolver, pu
             </div>
             <Tag tono={a.estado === "resuelta" || a.estado === "cerrada_sola" ? "ok" : a.estado === "esperando_planta" ? "blue" : frena || a.tipo !== "receta_no_coincide" ? "bad" : "warn"}>{ETQ[a.estado]}</Tag>
             {a.tipo === "receta_no_coincide" && ["abierta", "esperando_planta"].includes(a.estado) && puedeResolver && <Btn tono="pri" className="h-[26px] text-xs" onClick={() => setResolver(a)}>Resolver</Btn>}
+            {a.tipo === "tolva_material" && a.estado === "abierta" && puedeCargar && a.detalle?.lleva && <Btn tono="pri" className="h-[26px] text-xs" onClick={() => void confirmarTolva(a)}>Sí, ya tiene {piedraCorta(a.detalle.lleva_nombre)}</Btn>}
             {["abierta", "esperando_planta"].includes(a.estado) && puedeDescartar && <Btn tono="ghost" className="h-[26px] text-xs" onClick={() => setDescartar(a)}>Descartar…</Btn>}
           </div>
         )

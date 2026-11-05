@@ -41,6 +41,8 @@ import {
 import { armarMail, esDiaSemanal, type DiferenciaMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
+import { datosControlCarga } from "@/lib/carga/control-servidor"
+import { SECCION_CARGA_FALLO, seccionCarga } from "@/lib/carga/control-mail"
 
 /**
  * El control de stock (docs/control-stock-mp.md) va en el mismo cron: remitos → mail (con la última lectura de stock
@@ -392,7 +394,16 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   if (!to.length) return { enviado: false, a: [], motivo: `${MAIL_A.join(", ")} sin mail cargado` }
   const semanal = esDiaSemanal(hoy)
   const stock = semanal ? await seccionStockParaMail(sb, hoy, null) : null
-  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html })
+  // Carga de planta (puente de Indumix): solo si hay un puesto real activo; si falla, el mail de remitos sale igual
+  let carga: { html: string; n: number } | null = null
+  try {
+    const dc = await datosControlCarga(sb, new Date(corte).toISOString(), new Date().toISOString(), { semanal })
+    if (dc) carga = seccionCarga(dc)
+  } catch (e) {
+    console.error("[control-mp] carga de planta:", e)
+    carga = SECCION_CARGA_FALLO
+  }
+  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html, ...(carga ? { carga } : {}) })
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },

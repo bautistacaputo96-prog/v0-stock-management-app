@@ -26,7 +26,12 @@ export async function POST(req: Request) {
     const v = vig as any
     const material = String(body?.material_id || "")
     if (!(v.alternativas || []).includes(material)) return error(`La ${INFO_SALIDA[salida].nombre} no puede tener ese material.`)
-    if (v.material_id === material) return NextResponse.json({ ok: true, sin_cambios: true })
+    if (v.material_id === material) {
+      // Ya tenía esa piedra: igual se cierra el aviso de Tolva 1 (se confirmó)
+      const ya = new Date().toISOString()
+      await sb.from("alertas_carga").update({ estado: "resuelta", resuelta_por: r.usuario, resuelta_at: ya, motivo: "Confirmado: la tolva ya tenía esa piedra", updated_at: ya }).eq("puesto_id", puesto.id).eq("tipo", "tolva_material").eq("estado", "abierta")
+      return NextResponse.json({ ok: true, sin_cambios: true })
+    }
     const { data: ocup } = await sb.from("cargas").select("id").eq("puesto_id", puesto.id).in("estado", ["en_curso", "suspendida"]).limit(1)
     if (ocup?.length) return error("No se cambia la tolva con una carga en curso.", 409)
     const ahora = new Date().toISOString()
@@ -41,6 +46,9 @@ export async function POST(req: Request) {
     const nom = (id: string | null) => ((mats || []) as { id: string; name: string }[]).find((m) => m.id === id)?.name || "vacía"
     await registrarEvento({ carga_id: null, puesto_id: puesto.id, tipo: "salida_cambiada", detalle: { salida, antes: nom(v.material_id), ahora: nom(material) }, usuario: r.usuario })
     await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: puesto.id, reference: puesto.nombre, details: { [INFO_SALIDA[salida].nombre]: `${nom(v.material_id)} → ${nom(material)}` } })
+    // "Sí, ya tiene 6/12" (aviso de Tolva 1 del puesto real): el cambio cierra la alerta abierta de esa tolva
+    await sb.from("alertas_carga").update({ estado: "resuelta", resuelta_por: r.usuario, resuelta_at: ahora, motivo: `${INFO_SALIDA[salida].nombre} con ${nom(material)}`, updated_at: ahora })
+      .eq("puesto_id", puesto.id).eq("tipo", "tolva_material").eq("estado", "abierta")
     const recalculadas = await recalcularBloqueos(await contextoServidor(puesto))
     return NextResponse.json({ ok: true, recalculadas })
   } catch (e) {

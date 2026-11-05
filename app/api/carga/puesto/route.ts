@@ -28,6 +28,8 @@ export async function POST(req: Request) {
     const etapa = String(body?.etapa || "")
     if (!ETAPAS[etapa]) return error("Etapa desconocida.")
     if (etapa === puesto.etapa) return NextResponse.json({ ok: true })
+    // Fase 1: el puesto real no sale de solo lectura (la base también lo impide con un CHECK)
+    if (puesto.sistema === "indumix" && (etapa === "orden" || etapa === "arranque")) return error("El puesto real está en solo lectura hasta la fase 2.", 409)
     const { error: e } = await sb.from("puestos_carga").update({ etapa }).eq("id", puesto.id)
     if (e) throw e
     await registrarActividad({ usuario: r.usuario, action: "editar", entity: "carga", entityId: puesto.id, reference: puesto.nombre, details: { Etapa: `${ETAPAS[puesto.etapa]} → ${ETAPAS[etapa]}` } })
