@@ -118,7 +118,7 @@ const EMPTY_SITE_FORM = {
 
 // Fase 0c-1: nombres en pantalla de los campos que quedan en Actividad al editar
 const ETIQUETAS_CLIENTE: Record<string, string> = {
-  name: "Nombre", razon_social: "Razón social", cuit: "CUIT", cond_iva: "Condición IVA", direccion_fiscal: "Dirección fiscal",
+  name: "Nombre", razon_social: "Razón social", cuit: "CUIT o DNI", cond_iva: "Condición IVA", direccion_fiscal: "Dirección fiscal",
   cp: "CP", localidad_cliente: "Localidad", provincia: "Provincia", cond_pago: "Condición de pago", phone: "Teléfono", email: "Mail", contact: "Contacto",
   remito_tipo: "Remito (R con factura / X sin factura)",
 }
@@ -286,9 +286,9 @@ export function ClientsManagement() {
       toast({ title: "Error", description: "El nombre es obligatorio", variant: "destructive" })
       return
     }
-    const cuitOk = documentoValido(clientForm.cuit)?.tipo === "CUIT"
+    const cuitOk = !!documentoValido(clientForm.cuit)
     if (!cuitOk && !(esGerencial && sinCuit && motivoAlta.trim().length >= 5)) {
-      toast({ title: "CUIT inválido", description: "Hace falta un CUIT válido (11 dígitos con el dígito verificador; no se acepta DNI). Sin CUIT, solo un gerencial, con motivo.", variant: "destructive" })
+      toast({ title: "CUIT o DNI inválido", description: "Hace falta un CUIT (11 dígitos con el dígito verificador) o un DNI (7 u 8 dígitos). Sin documento, solo un gerencial, con motivo.", variant: "destructive" })
       return
     }
     const r = await pedirAlta(
@@ -652,7 +652,7 @@ export function ClientsManagement() {
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <Label>CUIT <span className="text-destructive">*</span></Label>
+                    <Label>CUIT o DNI <span className="text-destructive">*</span></Label>
                     <Input
                       value={clientForm.cuit}
                       onChange={(e) => setClientForm({ ...clientForm, cuit: e.target.value })}
@@ -758,11 +758,11 @@ export function ClientsManagement() {
             </div>
           </div>
           {editingClient && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-cliente" ejemplo="Ej: el CUIT estaba mal cargado" />}
-          {!editingClient && esGerencial && documentoValido(clientForm.cuit)?.tipo !== "CUIT" && (
+          {!editingClient && esGerencial && !documentoValido(clientForm.cuit) && (
             <div className="space-y-1 rounded-md border p-2 text-xs">
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={sinCuit} onChange={(e) => setSinCuit(e.target.checked)} />
-                Dar de alta sin CUIT válido (excepción de gerencial)
+                Dar de alta sin CUIT ni DNI válido (excepción de gerencial)
               </label>
               {sinCuit && <Input className="h-8 text-xs" value={motivoAlta} onChange={(e) => setMotivoAlta(e.target.value)} placeholder="Motivo (queda en Actividad)" />}
             </div>
