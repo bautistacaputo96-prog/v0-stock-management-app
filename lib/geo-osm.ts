@@ -8,10 +8,12 @@
  * La numeración de muchas calles de la zona no está cargada en OpenStreetMap, así
  * que a veces se ubica la calle o el barrio y el punto se ajusta a mano en el mapa.
  */
+import { direccionDeNominatim, direccionDePhoton, redondearCoord, type DireccionMapa } from "@/lib/geo-direccion"
+
 const ZONA = { oeste: -58.95, sur: -35.35, este: -57.85, norte: -34.55 }
 const UA = { "User-Agent": "RebucretProduccion/1.0 (produccionrebucret.com)", "Accept-Language": "es" }
 
-export type Resultado = { nombre: string; lat: number; lng: number; localidad: string | null; exacto: boolean }
+export type Resultado = { nombre: string; lat: number; lng: number; localidad: string | null; exacto: boolean; direccionMapa: DireccionMapa }
 
 const enZona = (r: Resultado) => r.lng >= ZONA.oeste && r.lng <= ZONA.este && r.lat >= ZONA.sur && r.lat <= ZONA.norte
 
@@ -30,7 +32,7 @@ async function photon(q: string): Promise<Resultado[]> {
     const calle = [p.street, p.housenumber].filter(Boolean).join(" ")
     const lugar = p.city || p.district || p.county || ""
     const nombre = [p.name, calle, lugar].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(", ")
-    return { nombre, lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], localidad: lugar || null, exacto: !!p.housenumber }
+    return { nombre, lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], localidad: lugar || null, exacto: !!p.housenumber, direccionMapa: direccionDePhoton(p) }
   })
 }
 
@@ -52,7 +54,27 @@ async function nominatim(q: string): Promise<Resultado[]> {
     lng: Number(x.lon),
     localidad: x.address?.city || x.address?.town || x.address?.village || x.address?.suburb || null,
     exacto: !!x.address?.house_number,
+    direccionMapa: direccionDeNominatim(x),
   }))
+}
+
+/**
+ * Geocodificación inversa (Nominatim reverse): dirección y localidad del punto marcado en el mapa, pegado como
+ * link o como coordenadas. null si Nominatim no responde o no trae nada útil. Las coordenadas van redondeadas a
+ * 5 decimales (~1 m) para que la caché sirva; si Nominatim tarda más de 8 s, se corta.
+ */
+export async function reverse(lat: number, lng: number): Promise<DireccionMapa | null> {
+  const u = new URL("https://nominatim.openstreetmap.org/reverse")
+  u.searchParams.set("format", "jsonv2")
+  u.searchParams.set("lat", String(redondearCoord(lat)))
+  u.searchParams.set("lon", String(redondearCoord(lng)))
+  u.searchParams.set("accept-language", "es")
+  const r = await fetch(u, { headers: UA, next: { revalidate: 86400 }, signal: AbortSignal.timeout(8000) })
+  if (!r.ok) return null
+  const d = await r.json()
+  if (!d || d.error) return null
+  const dir = direccionDeNominatim(d, { inversa: true })
+  return dir.direccion || dir.localidad ? dir : null
 }
 
 /** Busca y devuelve hasta 8 candidatos sin duplicados, primero los que tienen número. */

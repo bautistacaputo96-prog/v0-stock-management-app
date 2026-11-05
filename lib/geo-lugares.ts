@@ -10,6 +10,8 @@
  * Este archivo no importa nada de Next ni de la base: las funciones reciben `fetch` para poder probarlas.
  */
 
+import { direccionDeGoogle, type DireccionMapa } from "@/lib/geo-direccion"
+
 export type FuenteLugar = "google" | "osm"
 
 /** Una sugerencia de la lista (con Google las coordenadas vienen después, al elegirla). */
@@ -22,12 +24,14 @@ export type Sugerencia = {
   fuente: FuenteLugar
   /** Viene de la búsqueda completa ("Enter" de Google Maps) y no del autocompletado */
   busqueda?: boolean
+  /** Dirección y localidad del lugar, si ya vienen con la sugerencia (para completar el formulario de la obra) */
+  direccionMapa?: DireccionMapa | null
 }
 
-export type Lugar = { id: string; nombre: string; direccion: string; lat: number; lng: number; fuente: FuenteLugar }
+export type Lugar = { id: string; nombre: string; direccion: string; lat: number; lng: number; fuente: FuenteLugar; direccionMapa?: DireccionMapa | null }
 
 /** Resultado del buscador de OpenStreetMap (/api/geo/buscar) */
-export type ResultadoOsm = { nombre: string; lat: number; lng: number; localidad?: string | null; exacto?: boolean }
+export type ResultadoOsm = { nombre: string; lat: number; lng: number; localidad?: string | null; exacto?: boolean; direccionMapa?: DireccionMapa | null }
 
 export type Centro = { lat: number; lng: number }
 
@@ -78,7 +82,7 @@ export function normalizarTextSearchGoogle(d: any): Sugerencia[] {
     .map((x) => {
       const principal = x.displayName?.text || String(x.formattedAddress || "").split(",")[0] || ""
       const secundario = x.formattedAddress && x.formattedAddress !== principal ? String(x.formattedAddress) : ""
-      return { id: String(x.id), principal, secundario, lat: Number(x.location.latitude), lng: Number(x.location.longitude), fuente: "google" as const, busqueda: true }
+      return { id: String(x.id), principal, secundario, lat: Number(x.location.latitude), lng: Number(x.location.longitude), fuente: "google" as const, busqueda: true, direccionMapa: direccionDeGoogle(x) }
     })
 }
 
@@ -91,7 +95,7 @@ export function primerasDosPartes(q: string): string | null {
 export function normalizarLugarGoogle(d: any, id: string): Lugar | null {
   const lat = Number(d?.location?.latitude), lng = Number(d?.location?.longitude)
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  return { id, nombre: d?.displayName?.text || d?.formattedAddress || "", direccion: d?.formattedAddress || "", lat, lng, fuente: "google" }
+  return { id, nombre: d?.displayName?.text || d?.formattedAddress || "", direccion: d?.formattedAddress || "", lat, lng, fuente: "google", direccionMapa: direccionDeGoogle(d) }
 }
 
 /** "Calle 123, Barrio, Localidad" → principal "Calle 123", secundario "Barrio, Localidad" */
@@ -107,6 +111,7 @@ export function normalizarOsm(rs: ResultadoOsm[]): Sugerencia[] {
         lat: Number(r.lat),
         lng: Number(r.lng),
         fuente: "osm" as const,
+        direccionMapa: r.direccionMapa ?? null,
       }
     })
 }
@@ -182,7 +187,7 @@ export async function buscarTexto(
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": opts.clave,
-          "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location",
+          "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.addressComponents,places.types",
         },
         body: JSON.stringify({
           textQuery: texto,
@@ -212,7 +217,7 @@ export async function obtenerLugar(
   if (!opts.clave) return { lugar: null, aviso: await motivoErrorGoogle(null, null) }
   try {
     const u = `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}?languageCode=es${opts.sesion ? `&sessionToken=${encodeURIComponent(opts.sesion)}` : ""}`
-    const r = await opts.fetchFn(u, { headers: { "X-Goog-Api-Key": opts.clave, "X-Goog-FieldMask": "location,formattedAddress,displayName" } })
+    const r = await opts.fetchFn(u, { headers: { "X-Goog-Api-Key": opts.clave, "X-Goog-FieldMask": "location,formattedAddress,displayName,addressComponents,types" } })
     if (!r.ok) return { lugar: null, aviso: await motivoErrorGoogle(r, opts.clave) }
     return { lugar: normalizarLugarGoogle(await r.json(), id) }
   } catch (e) {

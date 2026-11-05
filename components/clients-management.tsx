@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
+import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
+import { completarVacios, usarDelMapa, type DireccionMapa } from "@/lib/geo-direccion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -154,6 +155,21 @@ export function ClientsManagement() {
   const [siteForm, setSiteForm] = useState({ ...EMPTY_SITE_FORM })
   const UBIC_VACIA: UbicacionObra = { lat: null, lng: null, fuente: null, km: null, minutos: null }
   const [siteUbic, setSiteUbic] = useState<UbicacionObra>(UBIC_VACIA)
+  // Dirección y localidad del lugar elegido en el mapa: completan los campos vacíos; si difieren, se ofrecen
+  const [siteDirMapa, setSiteDirMapa] = useState<DireccionMapa | null>(null)
+  const recibirDireccionObra = (d: DireccionMapa) => {
+    setSiteDirMapa(d)
+    setSiteForm((f) => {
+      const c = completarVacios({ direccion: f.address, localidad: f.localidad }, d)
+      return { ...f, address: c.direccion, localidad: c.localidad }
+    })
+  }
+  const usarDireccionObraMapa = (d: DireccionMapa) => {
+    setSiteForm((f) => {
+      const c = usarDelMapa({ direccion: f.address, localidad: f.localidad }, d)
+      return { ...f, address: c.direccion, localidad: c.localidad }
+    })
+  }
 
   useEffect(() => { loadClients() }, [])
 
@@ -389,6 +405,7 @@ export function ClientsManagement() {
     setEditingSite(null)
     setSiteForm({ ...EMPTY_SITE_FORM })
     setSiteUbic(UBIC_VACIA)
+    setSiteDirMapa(null)
     loadClients()
   }
 
@@ -416,6 +433,7 @@ export function ClientsManagement() {
   function openEditSite(site: ConstructionSite) {
     setMotivo("")
     setEditingSite(site)
+    setSiteDirMapa(null)
     setSiteUbic({
       lat: site.gps_lat != null ? Number(site.gps_lat) : null,
       lng: site.gps_lng != null ? Number(site.gps_lng) : null,
@@ -563,7 +581,7 @@ export function ClientsManagement() {
                   </p>
                 </div>
                 {puede("clientes", "cargar") && (
-                  <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setSiteUbic(UBIC_VACIA); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
+                  <Button size="sm" onClick={() => { setEditingSite(null); setSiteForm({ ...EMPTY_SITE_FORM }); setSiteUbic(UBIC_VACIA); setSiteDirMapa(null); setIsSiteDialogOpen(true) }} className="gap-1.5 shrink-0">
                     <Plus className="h-4 w-4" /> Nueva Obra
                   </Button>
                 )}
@@ -811,6 +829,7 @@ export function ClientsManagement() {
                 <div className="space-y-1">
                   <Label>Localidad <span className="text-destructive">*</span></Label>
                   <Input value={siteForm.localidad} onChange={(e) => setSiteForm({ ...siteForm, localidad: e.target.value })} placeholder="Ej: Quilmes" />
+                  <DireccionDelMapa direccion={siteForm.address} localidad={siteForm.localidad} mapa={siteDirMapa} onUsar={usarDireccionObraMapa} />
                 </div>
                 <div className="space-y-1">
                   <Label>Ubicación en el mapa</Label>
@@ -821,6 +840,7 @@ export function ClientsManagement() {
                     valor={siteUbic}
                     onChange={setSiteUbic}
                     onTiempoViaje={(min) => setSiteForm((f) => ({ ...f, travel_time_minutes: String(min) }))}
+                    onDireccion={recibirDireccionObra}
                   />
                 </div>
               </div>
