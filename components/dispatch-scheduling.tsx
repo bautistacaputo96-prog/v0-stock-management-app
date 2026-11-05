@@ -37,7 +37,7 @@ import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerencia
 import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
 import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, descarga8De, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
-import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoDescargaObra, m3ParaSugerir, type FuenteTiempo } from "@/lib/viajes"
+import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoDescargaObra, m3ParaSugerir, type FuenteTiempo } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 import { NpBloque } from "@/components/zomatik/np-bloque"
@@ -1382,7 +1382,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                         ? <>Viaje estimado desde {ruta.planta}: <strong>{ruta.km} km · {ruta.minutos} min</strong></>
                         : ruta === null && plantasGps[form.plant_id]?.lat == null ? "La planta no tiene ubicación cargada para calcular el viaje" : "Calculando el viaje..."}
                       {selectedSite.gps_lat != null && <NuevoBadge />}
-                      {idaGps && <span className="text-[11px] text-violet-700">· real GPS: {idaGps.min} min ({idaGps.viajes} viajes), se usa ese</span>}
+                      {idaGps && <span className="text-[11px] text-violet-700">· real GPS: {idaGps.min} min ({textoViajesGps(idaGps)}), se usa ese</span>}
                     </p>
                   )}
                   <div className="grid grid-cols-2 gap-3">
@@ -1396,7 +1396,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                           Se usa: {parseInt(form.viaje_min) > 0
                             ? `${parseInt(form.viaje_min)} min · ${textoFuente({ fuente: (viajeOrigen || "a_mano") as FuenteTiempo })}`
                             : `${tiemposAuto.viaje.min} min · ${textoFuente(tiemposAuto.viaje)}`}
-                          {parseInt(form.viaje_min) > 0 && idaGps && parseInt(form.viaje_min) !== idaGps.min ? ` (real GPS: ${idaGps.min} min, ${idaGps.viajes} viajes)` : ""}
+                          {parseInt(form.viaje_min) > 0 && idaGps && parseInt(form.viaje_min) !== idaGps.min ? ` (real GPS: ${idaGps.min} min, ${textoViajesGps(idaGps)})` : ""}
                         </p>
                       )}
                     </div>
@@ -1409,6 +1409,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                       {tiemposAuto && (
                         <p className="text-[11px] text-muted-foreground">
                           Se usa: {parseInt(form.descarga_min) > 0 ? `${parseInt(form.descarga_min)} min · cargado a mano` : `${tiemposAuto.descarga.min} min · ${textoFuente(tiemposAuto.descarga)}`}
+                          {!(parseInt(form.descarga_min) > 0) && tiemposAuto.descarga.porCamion.m3 !== 8 ? ` (≈ ${tiemposAuto.descarga.porCamion.min} min por camión de ${tiemposAuto.descarga.porCamion.m3.toLocaleString("es-AR")} m³)` : ""}
                         </p>
                       )}
                     </div>

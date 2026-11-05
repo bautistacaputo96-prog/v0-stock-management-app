@@ -11,7 +11,8 @@ Leer antes: `README.md`, `fase-2.md` (viajes, 2b: `viaje_min` y `descarga_min` d
 Que los viajes de la programación se armen con **lo que tardan de verdad los camiones**, medido por el GPS,
 en vez de los números fijos de la planta:
 
-- **Por obra** (3 viajes GPS o más, de 2 días o más): la **descarga real** de esa obra y la **ida real** desde la
+- **Por obra** (3 viajes GPS o más, de 2 días o más; desde el 05/11/2026 la ida también de un solo día si quedan 3
+  viajes coherentes y la obra tiene el viaje por defecto, ver §2): la **descarga real** de esa obra y la **ida real** desde la
   planta que despacha. Ejemplo: CORDONES (Fideicomiso La Tercera) está 78 min por camión en obra con 3 m³; hoy se
   programa con 25 por cada 8 m³.
 - **Por planta** (obras nuevas o con pocos datos): el **tiempo en planta real** y la **descarga directa y con bomba
@@ -41,9 +42,16 @@ cliente; vuelta distinta de la ida.
 ### Viajes que se usan
 De `viajes_gps`:
 - `estado = 'completo'` y `confianza in ('alta','media')` (cruzados con su remito);
-- de los **últimos 90 días** (por `fecha`);
+- de los **últimos 90 días** (por `fecha`); **la ida por obra, de los últimos 365** (desde el 05/11/2026: la distancia
+  no cambia, así una obra que vuelve a pedir conserva su ida real; SANTA RITA tenía sus viajes en abril y caía en 30);
 - sin despachos por árido (`dispatches.is_test_dispatch`);
-- se usa la **mediana**, no el promedio (un camión que se quedó 3 horas no corre el número).
+- se usa la **mediana**, no el promedio (un camión que se quedó 3 horas no corre el número);
+- **atípicos (05/11/2026, `valoresTipicos`)**: antes de la mediana se descartan los valores atípicos. Con 5 viajes
+  o más, los que están a más de 3 × 1,4826 × MAD de la mediana (piso: 1 min o el 10 % de la mediana, para cuando la
+  MAD da 0). Con 3 o 4, como mucho uno: el que está a más de 4 veces (o menos de 1/4) la mediana de los otros, si los
+  otros son parecidos entre sí. Los descartados cuentan para el mínimo de viajes y para los días, pero no para el
+  número, los m³ típicos o bomba/directo. Las pantallas dicen "real GPS · 3 viajes (1 descartado)". Caso: SANTA RITA
+  (enfrente de Canning), idas 105 / 3,8 / 4,8 → 4 min.
 
 Valores absurdos que se descartan, tramo por tramo:
 
@@ -58,6 +66,10 @@ Valores absurdos que se descartan, tramo por tramo:
 - **Ida real** = mediana de `min_ida` de los viajes **desde la planta del pedido** (la ida depende de la planta).
   Se usa con **3 viajes o más de 2 días distintos o más** desde esa planta (Etcheverry tenía 113 min de ida con
   viajes de un solo día). La vuelta del planificador sigue siendo igual a la ida.
+  **Desde el 05/11/2026:** si los viajes son de un solo día, la ida se usa igual cuando quedan 3 o más (sin los
+  atípicos) **coherentes entre sí** (el mayor como mucho 1,5 veces el menor, o una diferencia de 5 min o menos) y la
+  obra tiene el viaje por defecto (30 o vacío); si alguien cargó otro número en la obra, gana ese hasta que haya
+  viajes de 2 días.
 - **Tiempo en obra real** = mediana de `min_obra` con **3 viajes o más de 2 días o más** (de cualquier planta),
   junto con la mediana de los m³ de esos viajes y cuántos fueron con bomba y cuántos directos. Si mezcla los dos
   métodos, la pantalla lo dice ("mezcla viajes con bomba (2) y directos (9)").
@@ -85,6 +97,26 @@ cuando vuelve a planta. La descarga se guarda **por camión de 8 m³** y cada vi
    y la salida. El planificador suma el lavado aparte, así que:
 
    `descarga por 8 m³ = (tiempo en obra − lavado de la planta) × 8 ÷ m³ típicos de la obra`, mínimo 5.
+
+   **Desde el 05/11/2026 (`descargaParaM3`), sin escalar en proporción a los m³** (la descarga tiene una parte fija:
+   posicionarse, armar la bomba, lavar). Para un camión de X m³ (los m³ por camión del pedido; 8 para los parámetros
+   de la planta): si hay **5 viajes o más con m³ a ±1,5 de X**, la mediana sin atípicos de sus minutos; si no, el
+   tiempo típico de todos los viajes, sin escalar. Vale para la obra y para la directa / con bomba de la planta (un
+   pedido de 3 m³ sin descarga de obra usa la de la planta para 3 m³). El motor guarda la descarga "por 8 m³" y la
+   reparte por los m³ de cada viaje: se le pasa (tiempo − lavado) × 8 ÷ X, así el camión del pedido recibe justo el
+   tiempo medido. Las pantallas dicen "≈ 45 min por camión de 8 m³ · 28 viajes".
+   **Días y mínimo de viajes** se cuentan sobre los viajes válidos, antes de descartar atípicos.
+   **Atípicos por grupo de m³:** los del tiempo en obra se buscan dentro de cada grupo de m³ parecidos, no mezclando
+   todos: cada viaje se compara con los viajes a ±1,5 m³ de los suyos (él incluido); así una obra con camiones de 8 m³
+   a 45 min y de 3 m³ a 25 no pierde el grupo chico. Para un camión de X m³ se buscan dentro de los viajes a ±1,5 de X.
+   **Un viaje cuyo grupo tiene menos de 3 viajes no se descarta** (con 1 o 2 no hay con qué compararlo). Se calcula
+   una vez por cada valor distinto de m³ (5.000 viajes: unos 20 ms).
+   **El último camión del pedido, con menos m³ (el resto), recibe la descarga en proporción a sus m³**: el motor
+   reparte la descarga del camión del pedido por m³ (mínimo 5 min). Los camiones completos reciben el tiempo medido.
+   La descarga de la obra se usa si sus m³ típicos están a ±1,5 de los del pedido **o** si tiene 5 viajes o más a
+   ±1,5 de los del pedido (una obra de 8 m³ con 5 viajes de 3 m³ da su tiempo real a un pedido de 3 m³).
+   "(de todos sus viajes: pocos con X m³)" se muestra solo si hay viajes de otros m³; con lavado, "(sin lavado)".
+   La descarga de 8 m³ de cada planta se precalcula y las demás quedan en caché por medida (planta u obra, método) y m³.
 
    Con el lavado en 0 (decisión de Bautista), todo el tiempo en obra cuenta como descarga.
    CORDONES: 78 × 8 ÷ 3 ≈ 208 min por 8 m³; con 3 m³ por camión da 78 en obra.
@@ -166,6 +198,10 @@ Lo del pedido (m³ sugeridos, minutos) se guarda con el pedido, que ya pasa por 
 
 Los tiempos reales **no se guardan**: se calculan en el momento desde `viajes_gps` (≈ 470 viajes en 90 días, una
 consulta paginada) y quedan 10 minutos en memoria del navegador.
+Desde el 05/11/2026 son dos consultas en paralelo: los últimos 90 días completos, y los días 91 a 365 con una
+consulta liviana (solo fecha, planta, obra, ida, tiempo en obra y si es árido) para la ida por obra. Cada una pide la
+primera página con la cuenta y las demás en paralelo. Medido el 05/11 (847 viajes en 365 días): ≈ 400 ms contra
+≈ 370 ms de antes (la primera vez, en frío, 780 ms); lejos del corte de 3 s.
 
 - "Recalculado todas las noches": `viajes_gps` solo cambia con el proceso de las 06:00 (`/api/gps/reconstruir`),
   así que los números quedan fijos durante el día y se actualizan solos cada mañana. No hace falta un paso en el cron.
@@ -260,6 +296,8 @@ Calculados con las mismas funciones y la misma consulta de la app (clave anon), 
 
 **La huella (Canning), 8 m³ a 8:** el GPS da 78 min con 2 m³; con 8 m³ por camión usa la planta (30), no 312.
 **Etcheverry:** sus 113 min de ida desde Canning y 61 desde Hudson eran de un solo día: ahora usa el de la obra (30).
+(05/11/2026: un solo día vale si los viajes son coherentes; los 64 / 113 / 116 del 06/10 no lo son. Hoy Etcheverry
+tiene viajes de varios días y usa su ida real.)
 **Obra nueva:** desde Canning, viaje 30, descarga 30 (con bomba 38), en planta 25; desde Hudson, 30 / 43 / 32.
 **PAVIMENTO de FARIÑA** (el GPS no ve la descarga): igual que una obra nueva.
 
