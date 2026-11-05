@@ -79,6 +79,8 @@ function nuevoEstado(ahora = Date.now()) {
     tiempos: [], fallasSeguidas: 0, sinRed: false,
     secuencia: 0, tamCola: null, pausaServidorHasta: 0, apagado: false, n401: 0,
     recetasPedidas: new Set(), recetasPedidasProx: 0, ultimoAvisoReloj: 0,
+    // Si no se pudo dejar el número como estaba: {variable, valor}, se reintenta una vez en la vuelta siguiente
+    restituirPendiente: null,
     anterior: null, ultimoLatidoMs: 0, ultimaFirma: "",
     // Al arrancar se espera igual los 2 minutos sin cambios antes de barrer (puede haber alguien en REPORTE o RECETAS)
     cambioNumero: { "Receta.neReporte": ahora, "Receta.neReceta": ahora },
@@ -127,9 +129,13 @@ async function leerJson(ruta) {
 // ───────────────────────────── Candado: un solo puente por carpeta ─────────────────────────────
 
 /** ¿Hay otro puente con el candado vigente (renovado hace menos de 2 min)? */
+/**
+ * ¿Hay otro puente con el candado? Vigente (renovado hace menos de 2 min) Y con su proceso vivo: si se cerró la ventana,
+ * el puente nuevo arranca enseguida, sin esperar que venza.
+ */
 export async function candadoAjeno(ahora = Date.now()) {
   const c = await leerJson(P.candado)
-  return !!c && c.token !== E.token && Number.isFinite(Date.parse(c.at)) && ahora - Date.parse(c.at) < CANDADO_VENCE_MS
+  return !!c && c.token !== E.token && Number.isFinite(Date.parse(c.at)) && ahora - Date.parse(c.at) < CANDADO_VENCE_MS && procesoVivo(Number(c.pid))
 }
 
 /** Toma (o renueva) el candado. false si lo tiene otro puente vigente. */
@@ -154,11 +160,7 @@ function procesoVivo(pid) {
 }
 
 /** Para instalar.cmd: ¿hay otro puente andando? Candado vigente Y su proceso vivo. */
-export async function hayOtroAndando(ahora = Date.now()) {
-  if (!(await candadoAjeno(ahora))) return false
-  const c = await leerJson(P.candado)
-  return procesoVivo(Number(c?.pid))
-}
+export const hayOtroAndando = (ahora = Date.now()) => candadoAjeno(ahora)
 
 /**
  * Espera a tener el candado. Al tenerlo, el arranque cuenta desde ahí: la espera de 2 minutos sin cambios de número
@@ -299,7 +301,9 @@ export function leerNumerados(variable, numeros, lista, opciones = {}) {
     const leidos = []
     let cortado = null
     try {
-      for (const n of numeros) {
+      for (const [i, n] of numeros.entries()) {
+        // Entre número y número se renueva el candado (un barrido largo no lo deja vencer); si lo tomó otro, se corta
+        if (i > 0 && !(await tomarCandado())) { cortado = "otro puente tomó el candado"; break }
         await escribirCrudo(variable, n)
         const r = await lecturaEstable(variable, n, listaFinal, receta)
         if (r.cortar) { cortado = r.cortar; break }
@@ -307,18 +311,38 @@ export function leerNumerados(variable, numeros, lista, opciones = {}) {
         else await log(`No se pudo leer ${variable} = ${n} (no hubo dos lecturas iguales)`)
       }
     } finally {
-      try {
-        await escribirCrudo(variable, original)
-        await espera(200)
-        const vuelta = Number((await leerCrudo([variable]))[variable])
-        if (vuelta !== original) await log(`Ojo: ${variable} quedó en ${vuelta} y estaba en ${original}`)
-      } catch (e) {
-        await log(`Ojo: no se pudo dejar ${variable} como estaba (${original}): ${e?.message || e}`)
+      if (!(await restituir(variable, original))) {
+        E.restituirPendiente = { variable, valor: original }
+        await log(`Ojo: no se pudo dejar ${variable} en ${original}: se reintenta en la vuelta siguiente`)
       }
     }
     if (cortado) E.cambioNumero[variable] = Date.now() // alguien está ahí: se espera de nuevo los 2 minutos
     return { leidos, cortado }
   })
+}
+
+/** Deja el número como estaba y lo confirma leyéndolo (sin la cadena: la usa quien ya la tiene). true si quedó. */
+async function restituir(variable, valor) {
+  try {
+    await escribirCrudo(variable, valor)
+    await espera(Math.min(200, ajustes.esperaLecturaMs))
+    return Number((await leerCrudo([variable]))[variable]) === valor
+  } catch {
+    return false
+  }
+}
+
+/** El reintento (uno solo) de dejar el número como estaba. */
+export async function reintentarRestitucion() {
+  const r = E.restituirPendiente
+  if (!r) return
+  E.restituirPendiente = null
+  const ok = await enIndumix(() => restituir(r.variable, r.valor))
+  if (ok) {
+    // Que la vuelta al número de antes no se tome como un cambio de alguien
+    if (E.anterior) E.anterior[r.variable] = String(r.valor)
+    await log(`${r.variable} quedó de nuevo en ${r.valor}`)
+  } else await log(`Ojo: ${r.variable} no se pudo dejar en ${r.valor} tampoco en el reintento: quedó como lo dejó la lectura`)
 }
 
 // ───────────────────────────── Cola para el servidor (cola\*.json) ─────────────────────────────
@@ -463,7 +487,7 @@ export async function bajarConfig() {
 const enCiclo = (v) => !!v && v["Receta.Proceso"] != null && String(v["Receta.Proceso"]).trim().toLowerCase() !== "fin"
 const humedades = (v) => [1, 2, 3, 4].map((i) => v[`Receta.Parametros.HumedadArido${i}`] ?? null)
 
-async function tareaEstado() {
+export async function tareaEstado() {
   let v
   try { v = await leer(E.config.variables.estado) } catch {
     E.prox.estado = Date.now() + (E.sinRed ? 10_000 : cad("estado_quieta_s"))
@@ -472,9 +496,11 @@ async function tareaEstado() {
   const ahora = Date.now()
   const iso = new Date(ahora).toISOString()
   // ¿Alguien está mirando REPORTE o RECETAS en Indumix? (el número cambió)
-  for (const k of Object.keys(E.cambioNumero)) if (E.anterior && v[k] !== E.anterior[k]) E.cambioNumero[k] = ahora
+  // (si el puente dejó un número sin volver, ese cambio es suyo, no de alguien)
+  const pendiente = E.restituirPendiente?.variable
+  for (const k of Object.keys(E.cambioNumero)) if (E.anterior && k !== pendiente && v[k] !== E.anterior[k]) E.cambioNumero[k] = ahora
   // Cualquier cambio en la receta que se está editando (Receta_Editar.*, beReceta) = alguien en RECETAS
-  if (E.anterior && Object.keys(v).some((k) => deEdicion(k) && v[k] !== E.anterior[k])) E.cambioNumero["Receta.neReceta"] = ahora
+  if (E.anterior && pendiente !== "Receta.neReceta" && Object.keys(v).some((k) => deEdicion(k) && v[k] !== E.anterior[k])) E.cambioNumero["Receta.neReceta"] = ahora
   // Inicio y fin de cada carga (para la hora real y la humedad con que se pesó)
   const ya = enCiclo(v), antes = enCiclo(E.anterior)
   if (E.anterior && !antes && ya) E.cargaEnCurso = { inicio_at: iso, humedades: humedades(v) }
@@ -628,6 +654,7 @@ export async function paso() {
       if (ahora >= E.prox.clave) { E.prox.clave = ahora + 10_000; await vigilarClave() }
       if (ahora >= E.prox.config) { E.prox.config = ahora + cad("config_s") / factor(); await bajarConfig() }
       if (E.config && !E.apagado) {
+        if (E.restituirPendiente && !E.sinRed) await reintentarRestitucion()
         if (ahora >= E.prox.estado) await tareaEstado()
         if (!E.sinRed && E.anterior) {
           if (ahora >= E.prox.reportes) await tareaReportes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])

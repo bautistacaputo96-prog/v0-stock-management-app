@@ -1120,4 +1120,6 @@ antes de decir "Listo"; el candado se mira justo antes de cada barrido; cualquie
 (Receta_Editar.*, beReceta, que ahora se leen en el estado) cuenta como alguien en RECETAS. En el servidor: un error de
 la base al verificar la clave da 500 (el puente reintenta), no 401; el mail toma las cargas por created_at; aviso en
 /carga y en el mail cuando Indumix tiene el reporte o la receta fuera de 1–10 / 1–20; si falla la lectura de la
-programación para H1, queda registrado.
+programación para H1, queda registrado. Tercera vuelta: el candado de un proceso que ya no existe no cuenta (al cerrar la ventana el puente nuevo arranca
+enseguida); si no se pudo dejar el número como estaba, se reintenta una vez en la vuelta siguiente y ese cambio no se
+toma como alguien en la pantalla; el candado se renueva entre número y número del barrido.
