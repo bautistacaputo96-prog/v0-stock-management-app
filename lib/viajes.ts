@@ -473,7 +473,7 @@ export function demandaPorMediaHora(viajes: ViajeRow[], dia: Date, desde = "06:0
 // ---------------------------------------------------------------------------
 // Tiempos reales del GPS (docs/migracion-loop/tiempos-gps-programacion.md)
 // Las medianas salen de lib/gps-viajes.ts (cargarTiemposGps); acá se pasan al modelo del planificador:
-//   - tiempo en obra (descarga + lavado) → descarga por 8 m³ = (obra − lavado) × 8 ÷ m³ típicos;
+//   - tiempo en obra (descarga + lavado) → descarga por 8 m³ = minutos por m³ (viaje por viaje) × 8 − lavado × 8 ÷ m³ típicos;
 //   - tiempo en planta → carga (la de la planta, ocupa la boca) + espera (el resto, no ocupa la boca);
 //   - ida real → minutos de viaje.
 // Lo del pedido (viaje_min, descarga_min) gana siempre.
@@ -510,9 +510,13 @@ function idaGpsDe(o: TiemposObraGps | null | undefined, p: PedidoParaViajes): Me
 export const TOLERANCIA_M3_OBRA = 1.5
 const obraAplica = (obra: MedidaObraGps, p: PedidoParaViajes) => Math.abs(m3PorViajeDe(p) - obra.m3) <= TOLERANCIA_M3_OBRA
 
-/** Descarga por camión de 8 m³ a partir del tiempo en obra real (descarga + lavado) y los m³ típicos (mínimo 5). */
-export function descarga8DeObra(obraMin: number, m3: number, lavadoMin: number) {
-  return Math.max(5, Math.round(((obraMin - (lavadoMin || 0)) * 8) / Math.max(0.5, m3 || 8)))
+/**
+ * Descarga por camión de 8 m³ a partir del tiempo en obra real: minutos por m³ (mediana viaje por viaje, descarga +
+ * lavado) × 8, menos el lavado de la planta llevado a 8 m³ con los m³ típicos (mínimo 5). Con el lavado en 0 (las dos
+ * plantas) es minutos por m³ × 8. El motor la lleva a los m³ de cada viaje en proporción (descargaDe).
+ */
+export function descarga8DeObra(o: Pick<MedidaObraGps, "minPorM3" | "m3">, lavadoMin: number) {
+  return Math.max(5, Math.round(o.minPorM3 * 8 - ((lavadoMin || 0) * 8) / Math.max(0.5, o.m3 || 8)))
 }
 /** Espera en planta = tiempo en planta real − carga (nunca negativa). */
 export const esperaDePlanta = (enPlantaMin: number, cargaMin: number) => Math.max(0, Math.round(enPlantaMin - cargaMin))
@@ -527,8 +531,8 @@ export function parametrosConGps(prm: Parametros, plantaId: string | null | unde
   if (!pl && m.descargaDirectaMin == null && m.descargaBombaMin == null && m.esperaPlantaMin == null) return prm
   return {
     ...prm,
-    ...(pl?.directo ? { descargaDirectaMin: descarga8DeObra(pl.directo.min, pl.directo.m3, prm.lavadoMin) } : {}),
-    ...(pl?.bomba ? { descargaBombaMin: descarga8DeObra(pl.bomba.min, pl.bomba.m3, prm.lavadoMin) } : {}),
+    ...(pl?.directo ? { descargaDirectaMin: descarga8DeObra(pl.directo, prm.lavadoMin) } : {}),
+    ...(pl?.bomba ? { descargaBombaMin: descarga8DeObra(pl.bomba, prm.lavadoMin) } : {}),
     ...(pl?.enPlanta ? { esperaPlantaMin: esperaDePlanta(pl.enPlanta.min, prm.cargaMin) } : {}),
     ...(m.descargaDirectaMin != null ? { descargaDirectaMin: m.descargaDirectaMin } : {}),
     ...(m.descargaBombaMin != null ? { descargaBombaMin: m.descargaBombaMin } : {}),
@@ -541,7 +545,7 @@ export function conTiemposGps<P extends PedidoParaViajes>(p: P, prm: Parametros,
   const o = p.construction_site_id && t ? t.obras[p.construction_site_id] : null
   const ida = idaGpsDe(o, p)
   const obra = o?.obra && obraAplica(o.obra, p) ? o.obra : null
-  return { ...p, viaje_min_gps: ida ? ida.min : null, descarga_min_gps: obra ? descarga8DeObra(obra.min, obra.m3, prm.lavadoMin) : null }
+  return { ...p, viaje_min_gps: ida ? ida.min : null, descarga_min_gps: obra ? descarga8DeObra(obra, prm.lavadoMin) : null }
 }
 
 export type TiemposDelPedido = {
@@ -572,7 +576,7 @@ export function tiemposDelPedido(p: PedidoParaViajes, prmBase: Parametros, t: Ti
   const aManoPlanta = (bomba ? m.descargaBombaMin : m.descargaDirectaMin) != null
   const noAplica = o?.obra && !obraAplica(o.obra, p) ? { m3Obra: o.obra.m3, m3Pedido: m3PorViajeDe(p) } : undefined
   const descarga: TiemposDelPedido["descarga"] = Number(p.descarga_min) > 0 ? { min: Number(p.descarga_min), fuente: "a_mano" }
-    : o?.obra && !noAplica ? { min: descarga8DeObra(o.obra.min, o.obra.m3, prm.lavadoMin), fuente: "gps_obra", viajes: o.obra.viajes, ...descartadosDe(o.obra), obra: o.obra }
+    : o?.obra && !noAplica ? { min: descarga8DeObra(o.obra, prm.lavadoMin), fuente: "gps_obra", viajes: o.obra.viajes, ...descartadosDe(o.obra), obra: o.obra }
     : aManoPlanta ? { min: minPlanta, fuente: "planta_a_mano", obraNoAplica: noAplica }
     : plMet ? { min: minPlanta, fuente: "gps_planta", viajes: plMet.viajes, ...descartadosDe(plMet), obra: plMet, obraNoAplica: noAplica }
     : { min: minPlanta, fuente: "planta", obraNoAplica: noAplica }
@@ -614,7 +618,7 @@ export function textoMezclaMetodos(o: MedidaObraGps | undefined): string | null 
 
 /**
  * Lo que hay que saber de la descarga de la obra (null si no hay nada que decir):
- * "En esta obra cada camión estuvo 78 min (con 3 m³, contando el lavado): son unos 205 min por cada 8 m³", o
+ * "En esta obra cada camión estuvo 78 min (con 3 m³, contando el lavado) · ≈ 208 min por 8 m³", o
  * "Esta obra suele llevar 3 m³; con 8 m³ por camión se usan los tiempos de la planta".
  */
 export function textoDescargaObra(td: TiemposDelPedido): string | null {
@@ -623,9 +627,7 @@ export function textoDescargaObra(td: TiemposDelPedido): string | null {
   const o = td.descarga.obra
   if (!o || td.descarga.fuente !== "gps_obra") return null
   const mezcla = textoMezclaMetodos(o)
-  const base = o.m3 === 8
-    ? `En esta obra cada camión estuvo ${o.min} min (con 8 m³, contando el lavado)`
-    : `En esta obra cada camión estuvo ${o.min} min (con ${m3Texto(o.m3)} m³, contando el lavado): son unos ${td.descarga.min} min de descarga por cada 8 m³`
+  const base = `En esta obra cada camión estuvo ${o.min} min (con ${m3Texto(o.m3)} m³, contando el lavado) · ≈ ${td.descarga.min} min por 8 m³`
   return mezcla ? `${base} · ${mezcla}` : base
 }
 

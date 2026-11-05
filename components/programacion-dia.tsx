@@ -506,8 +506,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   {gpsPlanta?.enPlanta && (
                     <p>En planta, de que llega a que sale (sin el primer viaje del día): <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca, es el campo de arriba) + espera antes de volver a cargar (no ocupa la boca).</p>
                   )}
-                  {gpsPlanta?.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³{prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → descarga de 8 m³ {prmGpsSolo.descargaDirectaMin} min.</p>}
-                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.bomba)}) → descarga de 8 m³ {prmGpsSolo.descargaBombaMin} min.</p>}
+                  {gpsPlanta?.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.directo)}){prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → ≈ {prmGpsSolo.descargaDirectaMin} min por 8 m³.</p>}
+                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.bomba)}){prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → ≈ {prmGpsSolo.descargaBombaMin} min por 8 m³.</p>}
                   <div className="divide-y rounded border bg-background">
                     {filasReales.map((f) => (
                       <div key={f.k} className="flex items-center gap-2 flex-wrap px-2 py-1.5">

@@ -41,7 +41,8 @@ cliente; vuelta distinta de la ida.
 ### Viajes que se usan
 De `viajes_gps`:
 - `estado = 'completo'` y `confianza in ('alta','media')` (cruzados con su remito);
-- de los **últimos 90 días** (por `fecha`);
+- de los **últimos 90 días** (por `fecha`); **la ida por obra, de los últimos 365** (desde el 05/11/2026: la distancia
+  no cambia, así una obra que vuelve a pedir conserva su ida real; SANTA RITA tenía sus viajes en abril y caía en 30);
 - sin despachos por árido (`dispatches.is_test_dispatch`);
 - se usa la **mediana**, no el promedio (un camión que se quedó 3 horas no corre el número);
 - **atípicos (05/11/2026, `valoresTipicos`)**: antes de la mediana se descartan los valores atípicos. Con 5 viajes
@@ -94,6 +95,12 @@ cuando vuelve a planta. La descarga se guarda **por camión de 8 m³** y cada vi
    y la salida. El planificador suma el lavado aparte, así que:
 
    `descarga por 8 m³ = (tiempo en obra − lavado de la planta) × 8 ÷ m³ típicos de la obra`, mínimo 5.
+
+   **Desde el 05/11/2026** se calcula con los **minutos por m³ de cada viaje** (`min_obra ÷ m³`): mediana sin los
+   atípicos (buscados sobre esos valores) × 8, menos el lavado × 8 ÷ m³ típicos. Vale para la descarga de la obra y
+   para la directa / con bomba de la planta. Así no depende de en qué grupo de m³ cae la mediana de los m³ (la bomba
+   de Canning saltaba de 31 a 39 según un viaje). Las pantallas dicen "≈ X min por 8 m³". Ojo: supone que la
+   descarga es proporcional a los m³; los camiones con pocos m³ (que tardan más por m³) la suben.
 
    Con el lavado en 0 (decisión de Bautista), todo el tiempo en obra cuenta como descarga.
    CORDONES: 78 × 8 ÷ 3 ≈ 208 min por 8 m³; con 3 m³ por camión da 78 en obra.
