@@ -13,7 +13,7 @@ import { aPuesto, cargarFormulas, materialesDeReporte, type Puesto } from "@/lib
 import {
   CADENCIAS, DIAS_MUESTREO_CRUDO, RUIDO, VARIABLES, claveSinMaterial,
   controlHumedad, controlTolva1, derivaSegundos, estadoDesdeVariables, horaReal, huecosContador, recetaDeReporteDistinta,
-  recetaDesdeVariables, reporteDesdeVariables, textoPerdidas,
+  numeroFueraDeRango, recetaDesdeVariables, reporteDesdeVariables, textoPerdidas,
   type Variables, type Visto,
 } from "@/lib/carga/indumix"
 import { contextoServidor, guardarRecetasLeidas, hhmmAR, horaPuente, registrarEvento, registrarReporte } from "@/lib/carga/servidor"
@@ -46,10 +46,14 @@ export async function verificarClave(clave: string | null, buscar: (hash: string
   return { puesto }
 }
 
-/** Busca el puesto por el hash de su clave (con la clave de servicio). */
+/**
+ * Busca el puesto por el hash de su clave (con la clave de servicio). Un error de la base se tira (la ruta contesta 500 y
+ * el puente reintenta): solo "no existe" es null (401).
+ */
 export async function buscarPorHash(hash: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await sbServicio().from("puestos_carga_credenciales").select("puesto_id, puestos_carga(*)").eq("hash", hash).maybeSingle()
-  if (error || !data) return null
+  if (error) throw error
+  if (!data) return null
   const p = (data as { puestos_carga?: Record<string, unknown> | Record<string, unknown>[] | null }).puestos_carga
   return (Array.isArray(p) ? p[0] : p) || null
 }
@@ -113,6 +117,8 @@ export async function procesarLatido(p: Puesto, b: { variables: Variables; at: s
     if (ev.alarmas.length) await registrarEvento({ carga_id: null, puesto_id: p.id, tipo: "alarma", at: b.at, detalle: { alarmas: ev.alarmas } })
     else await registrarEvento({ carga_id: null, puesto_id: p.id, tipo: "alarma_fin", at: b.at, detalle: { antes: ant?.alarmas || [] } })
   }
+  const fuera = numeroFueraDeRango(ev), fueraAntes = ant ? numeroFueraDeRango(ant) : null
+  if (fuera && fuera !== fueraAntes) await registrarEvento({ carga_id: null, puesto_id: p.id, tipo: "numero_fuera_de_rango", at: b.at, detalle: { texto: fuera, ne_reporte: ev.ne_reporte, ne_receta: ev.ne_receta } })
   if (humedadCambio) await registrarEvento({ carga_id: null, puesto_id: p.id, tipo: "humedad", at: b.at, detalle: { antes: ant?.humedades || null, ahora: ev.humedades } })
   if (tocaHumedad) await controlarHumedad(p, ev)
   if (ev.receta != null && ev.receta !== (ant?.receta ?? null)) await controlarTolva(p, ev)
@@ -136,6 +142,11 @@ async function controlarHumedad(p: Puesto, ev: EstadoVivo) {
     sb.from("scheduled_dispatches").select("id").eq("plant_id", p.plant_id).gte("scheduled_arrival_time", inicioDiaAR(hoy))
       .lt("scheduled_arrival_time", new Date(Date.parse(inicioDiaAR(hoy)) + 86400_000).toISOString()).neq("status", "cancelled").limit(1),
   ])
+  // Si no se pudo leer la programación, se registra y H1 se controla igual (mejor avisar de más que callarlo)
+  if (programados.error) {
+    console.error("[puente] H1: no se pudo leer la programación:", programados.error.message)
+    await registrarEvento({ carga_id: null, puesto_id: p.id, tipo: "error_servidor", detalle: { texto: "No se pudo leer la programación del día para el aviso de humedad", error: programados.error.message } })
+  }
   const m = (med.data as { humidity_percent: number; created_at: string }[] | null)?.[0]
   const ult = (ultimoCambio.data as { at: string }[] | null)?.[0]?.at
   const r = controlHumedad({
@@ -144,7 +155,7 @@ async function controlarHumedad(p: Puesto, ev: EstadoVivo) {
     minutos: minutosAR(ahora),
     cargoHoy: !!ev.en_ciclo || !!(cargas.data as unknown[] | null)?.length,
     sinCambioDesdeAyer: !!ult && ult < inicioDiaAR(hoy),
-    diaConDespachos: !!(programados.data as unknown[] | null)?.length,
+    diaConDespachos: programados.error ? true : !!(programados.data as unknown[] | null)?.length,
   })
   const lista = (abiertas.data || []) as { id: string; titulo: string; detalle: { regla?: string; dia?: string } | null; created_at: string }[]
   for (const a of lista.filter((x) => (x.detalle?.dia || diaAR(Date.parse(x.created_at))) !== hoy)) await cerrarAlerta(a.id, "Era de otro día")

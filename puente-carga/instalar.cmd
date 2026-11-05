@@ -16,9 +16,17 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-rem Si ya habia un puente andando, toma la clave nueva solo (se reinicia); si no, se arranca
+rem Si ya hay un puente andando (candado vigente y proceso vivo), toma la clave nueva solo; si no, se arranca
 "%~dp0node\node.exe" "%~dp0puente.mjs" --hay-otro
 if errorlevel 1 start "PUENTE REBUCRET - NO CERRAR" /min cmd /c ""%~dp0iniciar.cmd""
+echo Esperando que el puente arranque...
+"%~dp0node\node.exe" "%~dp0puente.mjs" --esperar-arranque
+if errorlevel 1 (
+  echo.
+  echo OJO: el puente NO arranco. Abri la carpeta registro y manda el archivo de hoy a Bautista.
+  pause
+  exit /b 1
+)
 echo.
 echo Listo: el puente quedo andando (ventana minimizada "PUENTE REBUCRET - NO CERRAR").
 pause

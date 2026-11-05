@@ -54,6 +54,8 @@ export type DatosCarga = {
   /** avisos de humedad y Tolva 1 del período */
   avisos?: { titulo: string; at: string }[]
   ultimoLatidoAt?: string | null
+  /** el puente no puede barrer: número de reporte o receta fuera de rango en Indumix */
+  avisosIndumix?: { titulo: string; at: string }[]
   /** semanal: recetas de la planta que hoy no coinciden con su fórmula */
   recetasNoCoinciden?: { numero: number; nombre: string; formula: string; texto: string; frena: boolean }[]
 }
@@ -194,7 +196,9 @@ export function seccionCarga(d: DatosCarga): { html: string; n: number } {
   const cambios = resumenCambios(d.versiones || [], d.desde)
   const avisos = d.avisos || []
   const p4 = cambios.length ? h3("Cambios de receta en Indumix") + ul(cambios.map((x) => li(esc(x.texto)))) : ""
-  const p5 = avisos.length ? h3("Humedad y Tolva 1") + ul(avisos.map((x) => li(`${hhmm(x.at)} · ${esc(x.titulo)}`))) : ""
+  const ind = d.avisosIndumix || []
+  const p5 = (avisos.length ? h3("Humedad y Tolva 1") + ul(avisos.map((x) => li(`${hhmm(x.at)} · ${esc(x.titulo)}`))) : "") +
+    (ind.length ? h3("Indumix") + ul(ind.map((x) => li(`${hhmm(x.at)} · ${esc(x.titulo)}`, AMBAR))) : "")
   const semanal = d.semanal && d.recetasNoCoinciden?.length
     ? h3(`Recetas de la planta que hoy no coinciden con su fórmula (${d.recetasNoCoinciden.length})`) +
       ul(d.recetasNoCoinciden.map((r) => li(`Receta ${r.numero} (${esc(r.nombre)}) contra ${esc(r.formula)}: ${esc(r.texto)}`, r.frena ? ROJO : AMBAR)))

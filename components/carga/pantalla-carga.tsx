@@ -32,7 +32,7 @@ import { recetasIniciales } from "@/lib/carga/recetas-sim"
 import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
 import { cantidadPorM3, compararReceta } from "@/lib/carga/receta"
 import { desvio } from "@/lib/carga/auditoria"
-import { estadoPantalla, estadoPlantaDeVivo, objetivoQuieta, piedraCorta } from "@/lib/carga/indumix"
+import { estadoPantalla, estadoPlantaDeVivo, numeroFueraDeRango, objetivoQuieta, piedraCorta } from "@/lib/carga/indumix"
 import { fechaPlc, textoDeriva } from "@/lib/carga/reloj"
 import { Btn, CartelSimulada, Chip, Tag, hhmm, hms, m3t, mmss } from "./comun"
 import { PlantaVivo, TablaPesajes, nombreCorto } from "./planta-vivo"
@@ -359,6 +359,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
         {puesto && puesto.etapa === "apagado" && <Ban>El puesto de carga está apagado: Despachar no manda órdenes a esta cola (las órdenes de prueba sí andan).{puedeEditar ? <> Se prende en <button className="ml-1 text-xs text-blue-800 underline" onClick={() => setTab("recetas")}>Recetas de la planta › Etapa</button>.</> : " Lo prende Bautista."}</Ban>}
         {enPlanta && !P.conectado && <Ban tono="dark">Se cortó la red local entre esta PC y la planta. El PLC sigue solo con la carga en curso. Para parar: parada de emergencia (y el PARAR de Indumix, si su pantalla no corre en esta PC). Al volver se lee el estado real; no arranca nada solo.</Ban>}
         {sinInternet && <Ban>Sin internet. Andan igual: la carga en curso, el PARAR, la planta en vivo y las órdenes que ya bajaron (se cargan igual, sin pedir nada extra). No bajan órdenes nuevas{sinBajar ? ` (${sinBajar} esperando)` : ""}: se carga a mano en Indumix con el remito en Observación y el emparejador las une después.</Ban>}
+        {real && numeroFueraDeRango(puesto?.estado_vivo) ? <Ban>{numeroFueraDeRango(puesto?.estado_vivo)}.</Ban> : null}
         {real && puesto?.estado_vivo?.alarmas?.length ? <Ban tono="red">Indumix: {puesto.estado_vivo.alarmas.map((x) => x.texto).join(" · ")}</Ban> : null}
         {!real && e?.alarmas?.[0] && <Ban tono="red">ALARMA DE INDUMIX: {e.alarmas[0].texto}{e.en_ciclo ? " · la planta se detuvo (lo decide el PLC)" : ""}</Ban>}
         {real && D.alertas.filter((a) => a.estado === "abierta" && (a.tipo === "humedad" || a.tipo === "tolva_material")).map((a) => (

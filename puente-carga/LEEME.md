@@ -29,7 +29,8 @@ Tarda unos 15 minutos. No hace falta ser administrador.
    carpeta nueva llamada `node`, dentro de `rebucret-puente`. Tiene que quedar `rebucret-puente\node\node.exe`.
 3. **Instalá.** Hacé doble clic en `instalar.cmd`. Si aparece **"Windows protegió tu PC"**, tocá **"Más información"** y
    después **"Ejecutar de todas formas"**. Cuando pida la clave, pegala (clic derecho pega) y apretá Enter. Tiene que
-   decir **"Listo: el puente quedo andando"**.
+   decir **"Listo: el puente quedo andando"** (espera hasta 40 segundos a que arranque). Si dice **"OJO: el puente NO
+   arranco"**, mandale a Bautista el archivo de hoy de la carpeta `registro`.
 4. **Que la PC no se duerma.** Inicio › Configuración › Sistema › Inicio/apagado y suspensión: en **"Suspender"** poné
    **"Nunca"** (enchufada). La pantalla se puede apagar, la PC no.
 5. **Que la sesión de Windows quede iniciada.** El puente arranca cuando se inicia la sesión del usuario. Si alguien

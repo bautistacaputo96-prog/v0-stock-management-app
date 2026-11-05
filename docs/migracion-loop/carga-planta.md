@@ -1112,3 +1112,12 @@ se cierra (iniciar.cmd lo relanza) y un `instalar.cmd` con clave nueva reinicia 
 carpeta Inicio usa %USERPROFILE% (anda con tildes o ñ). En el servidor: `leer_recetas` solo con reportes nuevos, horas
 de los reportes sin recortar a "ahora" y, con la hora estimada, solo se une por remito; "corta" respeta el 1 % del
 cemento; H1 solo los días con despachos programados; la clave la genera solo un gerencial; rotativas 19 y 20.
+
+**Segunda revisión (05/11):** la próxima lectura de recetas (programadas y pedidas) se fija antes de barrer y una falla
+de Indumix corta el barrido (como mucho uno por cadencia); la espera de 2 min cuenta desde que el puente consigue el
+candado; `--hay-otro` exige además que el proceso del candado siga vivo e `instalar.cmd` espera a que el puente arranque
+antes de decir "Listo"; el candado se mira justo antes de cada barrido; cualquier cambio en la receta en edición
+(Receta_Editar.*, beReceta, que ahora se leen en el estado) cuenta como alguien en RECETAS. En el servidor: un error de
+la base al verificar la clave da 500 (el puente reintenta), no 401; el mail toma las cargas por created_at; aviso en
+/carga y en el mail cuando Indumix tiene el reporte o la receta fuera de 1–10 / 1–20; si falla la lectura de la
+programación para H1, queda registrado.

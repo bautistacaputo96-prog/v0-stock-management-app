@@ -9,7 +9,8 @@
 // Uso:  node puente.mjs              (lo arranca iniciar.cmd; uno solo por PC, con candado)
 //       node puente.mjs --instalar   (lo usa instalar.cmd: pide la clave, la guarda en config.json y deja el arranque
 //                                     en la carpeta Inicio)
-//       node puente.mjs --hay-otro   (sale con 0 si ya hay un puente andando en esta carpeta)
+//       node puente.mjs --hay-otro   (sale con 0 si ya hay un puente andando en esta carpeta: candado vigente y vivo)
+//       node puente.mjs --esperar-arranque   (espera hasta 40 s a que haya un puente andando; 0 si arrancó)
 import { appendFile, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { createInterface } from "node:readline/promises"
@@ -66,7 +67,7 @@ let P = rutas(dirname(fileURLToPath(import.meta.url)))
 export function usarCarpeta(dir) { P = rutas(dir) }
 
 /** Lo que se puede cambiar en las pruebas (salir del proceso y las esperas). */
-export const ajustes = { salir: (codigo) => process.exit(codigo), esperaLecturaMs: 300, espera401Ms: 5 * 60_000, silencio: false }
+export const ajustes = { salir: (codigo) => process.exit(codigo), esperaLecturaMs: 300, espera401Ms: 5 * 60_000, esperaTurnoMs: 30_000, silencio: false }
 
 // ───────────────────────────── Estado ─────────────────────────────
 
@@ -146,12 +147,42 @@ async function salirSoltando(codigo) {
   ajustes.salir(codigo)
 }
 
-async function esperarTurno() {
+/** ¿El proceso del candado sigue vivo? (un candado fresco de un puente que se colgó o se mató no cuenta) */
+function procesoVivo(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try { process.kill(pid, 0); return true } catch (e) { return e?.code === "EPERM" }
+}
+
+/** Para instalar.cmd: ¿hay otro puente andando? Candado vigente Y su proceso vivo. */
+export async function hayOtroAndando(ahora = Date.now()) {
+  if (!(await candadoAjeno(ahora))) return false
+  const c = await leerJson(P.candado)
+  return procesoVivo(Number(c?.pid))
+}
+
+/**
+ * Espera a tener el candado. Al tenerlo, el arranque cuenta desde ahí: la espera de 2 minutos sin cambios de número
+ * (y "recién arranca") empieza cuando de verdad arranca este puente, no cuando se abrió.
+ */
+export async function esperarTurno() {
   let avisado = false
   while (!(await tomarCandado())) {
     if (!avisado) { avisado = true; await log("Ya hay otro puente andando en esta PC: este espera.") }
-    await espera(30_000)
+    await espera(ajustes.esperaTurnoMs)
   }
+  const ahora = Date.now()
+  E.arranque = ahora
+  E.cambioNumero = { "Receta.neReporte": ahora, "Receta.neReceta": ahora }
+}
+
+/** Para instalar.cmd: espera hasta `ms` a que haya un puente andando (para que "Listo" sea cierto). */
+async function esperarArranque(ms) {
+  const hasta = Date.now() + ms
+  while (Date.now() < hasta) {
+    if (await hayOtroAndando()) return true
+    await espera(1000)
+  }
+  return false
 }
 
 // ───────────────────────────── Pedidos (solo a Indumix y a nuestro servidor) ─────────────────────────────
@@ -236,7 +267,8 @@ async function lecturaEstable(variable, n, lista, receta) {
   let previa = null
   for (let i = 0; i < 6; i++) {
     await espera(ajustes.esperaLecturaMs)
-    const x = await leerCrudo(lista)
+    let x
+    try { x = await leerCrudo(lista) } catch (e) { return { cortar: `Indumix no contestó (${e?.message || e})` } }
     if (receta && !quieta(x)) return { cortar: "arrancó una carga" }
     if (Number(x[variable]) !== n) { previa = null; continue }
     if (previa) {
@@ -441,6 +473,8 @@ async function tareaEstado() {
   const iso = new Date(ahora).toISOString()
   // ¿Alguien está mirando REPORTE o RECETAS en Indumix? (el número cambió)
   for (const k of Object.keys(E.cambioNumero)) if (E.anterior && v[k] !== E.anterior[k]) E.cambioNumero[k] = ahora
+  // Cualquier cambio en la receta que se está editando (Receta_Editar.*, beReceta) = alguien en RECETAS
+  if (E.anterior && Object.keys(v).some((k) => deEdicion(k) && v[k] !== E.anterior[k])) E.cambioNumero["Receta.neReceta"] = ahora
   // Inicio y fin de cada carga (para la hora real y la humedad con que se pesó)
   const ya = enCiclo(v), antes = enCiclo(E.anterior)
   if (E.anterior && !antes && ya) E.cargaEnCurso = { inicio_at: iso, humedades: humedades(v) }
@@ -501,7 +535,10 @@ export async function tareaReportes(slots) {
   }
   if (todos) E.prox.reportes = ahora + cad("reportes_s")
   E.prox.reporte1 = ahora + cad("reporte_s")
-  const { leidos, cortado } = await leerNumerados("Receta.neReporte", slots, E.config.variables.reporte)
+  if (!(await candadoPropio())) return
+  let r
+  try { r = await leerNumerados("Receta.neReporte", slots, E.config.variables.reporte) } catch (e) { await log(`Lectura de reportes fallida: ${e?.message || e}`); return }
+  const { leidos, cortado } = r
   if (cortado) await log(`Lectura de reportes cortada (${cortado})`)
   const reportes = leidos.map((x) => {
     const n = String(x.variables["Receta.Reporte_WEB.NCarga"] ?? "")
@@ -511,24 +548,42 @@ export async function tareaReportes(slots) {
   if (reportes.length) await encolar({ tipo: "reportes", reportes })
 }
 
+/**
+ * Barre recetas. La próxima lectura se fija ANTES de barrer (programada: recetas_s; pedidas: posponer_s), así si
+ * Indumix falla no se reintenta en la vuelta siguiente: como mucho un barrido por cadencia.
+ */
 export async function tareaRecetas(numeros, programada) {
   const ahora = Date.now()
   const motivo = enCiclo(E.anterior) ? "hay una carga en curso" : !quieta(E.anterior) ? "no se sabe si la planta está quieta" : navegando("Receta.neReceta", ahora)
   const posponer = () => cuandoReintentar("Receta.neReceta", ahora)
   if (motivo) {
     await log(`Lectura de recetas pospuesta (${motivo})`)
-    if (programada) E.prox.recetas = posponer()
-    return false
-  }
-  const { leidos, cortado } = await leerNumerados("Receta.neReceta", numeros, E.config.variables.receta)
-  if (leidos.length) await encolar({ tipo: "recetas", recetas: leidos, completa: !cortado && numeros.length >= 20 && leidos.length === numeros.length })
-  if (cortado) {
-    await log(`Lectura de recetas pospuesta (${cortado})`)
-    if (programada) E.prox.recetas = posponer()
+    if (programada) E.prox.recetas = posponer(); else E.recetasPedidasProx = posponer()
     return false
   }
   if (programada) E.prox.recetas = ahora + cad("recetas_s")
+  else E.recetasPedidasProx = ahora + Math.max(cad("posponer_s"), esperaNavegandoMs())
+  if (!(await candadoPropio())) return false
+  let r
+  try { r = await leerNumerados("Receta.neReceta", numeros, E.config.variables.receta) } catch (e) { await log(`Lectura de recetas fallida: ${e?.message || e}`); return false }
+  const { leidos, cortado } = r
+  if (leidos.length) await encolar({ tipo: "recetas", recetas: leidos, completa: !cortado && numeros.length >= 20 && leidos.length === numeros.length })
+  if (cortado) {
+    await log(`Lectura de recetas pospuesta (${cortado})`)
+    // Se reintenta antes que la cadencia completa, pero nunca antes de posponer_s (5 min como mínimo)
+    const t = Math.max(posponer(), ahora + MINIMOS.posponer_s * 1000)
+    if (programada) E.prox.recetas = Math.min(E.prox.recetas, t); else E.recetasPedidasProx = t
+    return false
+  }
   return true
+}
+
+/** Justo antes de barrer: si otro puente tiene el candado, este no barre y se cierra. */
+async function candadoPropio() {
+  if (await tomarCandado()) return true
+  await log("Otro puente tiene el candado: este no barre y se cierra.")
+  ajustes.salir(0)
+  return false
 }
 
 async function tareaTotales() {
@@ -557,6 +612,13 @@ export async function principal() {
   await encolarEvento("arranque", { version: VERSION, node: process.version })
   await limpiarRegistro()
   for (;;) {
+    await paso()
+    await espera(500)
+  }
+}
+
+/** Una vuelta del ciclo principal (exportada para probarla). */
+export async function paso() {
     const ahora = Date.now()
     try {
       if (ahora >= E.prox.candado) {
@@ -574,7 +636,6 @@ export async function principal() {
           else if (E.recetasPedidas.size && ahora >= E.recetasPedidasProx) {
             const lista = [...E.recetasPedidas].filter((n) => n >= 1 && n <= 20).sort((a, b) => a - b)
             if (await tareaRecetas(lista, false)) E.recetasPedidas.clear()
-            else E.recetasPedidasProx = cuandoReintentar("Receta.neReceta", ahora)
           }
           if (ahora >= E.prox.totales) await tareaTotales()
         }
@@ -584,8 +645,6 @@ export async function principal() {
     } catch (e) {
       await log(`Error: ${e?.message || e}`)
     }
-    await espera(500)
-  }
 }
 
 // ───────────────────────────── Instalación (instalar.cmd) ─────────────────────────────
@@ -626,6 +685,7 @@ async function instalar() {
 const esPrincipal = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 if (esPrincipal) {
   if (process.argv.includes("--instalar")) await instalar()
-  else if (process.argv.includes("--hay-otro")) ajustes.salir((await candadoAjeno()) ? 0 : 1)
+  else if (process.argv.includes("--hay-otro")) ajustes.salir((await hayOtroAndando()) ? 0 : 1)
+  else if (process.argv.includes("--esperar-arranque")) ajustes.salir((await esperarArranque(40_000)) ? 0 : 1)
   else await principal()
 }

@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { aPuesto, cargarContexto, cargarFormulas, controlDeFormula, aRecetaLeida } from "@/lib/carga/datos"
 import type { CargaMail, DatosCarga, VersionReceta } from "@/lib/carga/control-mail"
 import type { Salida } from "@/lib/carga/tipos"
+import { numeroFueraDeRango } from "@/lib/carga/indumix"
 
 const diaAR = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" })
 const n = (x: unknown) => (x == null || !Number.isFinite(Number(x)) ? null : Number(x))
@@ -17,7 +18,8 @@ export async function datosControlCarga(sb: SupabaseClient, desde: string, hasta
   const ctx = await cargarContexto(sb, puesto)
   const { data: cg, error: e1 } = await sb.from("cargas")
     .select("id, contador_planta, inicio_at, fin_at, remito, remito_tipo, patente_planta, formula_id, receta_numero, m3, m3_cargados, dispatch_id, formulas(code), mixers(license_plate)")
-    .eq("puesto_id", puesto.id).eq("simulada", false).gte("fin_at", desde).lt("fin_at", hasta).order("fin_at").limit(2000)
+    // Por created_at: lo que se leyó desde el mail anterior (un reporte viejo leído hoy entra hoy, una sola vez)
+    .eq("puesto_id", puesto.id).eq("simulada", false).gte("created_at", desde).lt("created_at", hasta).order("created_at").limit(2000)
   if (e1) throw e1
   const cargas = (cg || []) as any[]
   const ids = cargas.map((c) => c.id)
@@ -41,7 +43,7 @@ export async function datosControlCarga(sb: SupabaseClient, desde: string, hasta
   }))
 
   // Despachos de Canning sin carga, solo de los días en que el puente mandó datos
-  const dias = new Set(cargas.map((c) => diaAR(c.fin_at)))
+  const dias = new Set(cargas.map((c) => diaAR(c.fin_at || c.created_at)))
   let sinCarga: DatosCarga["sinCarga"] = []
   if (dias.size) {
     const { data: dsp } = await sb.from("dispatches").select("id, remito, remito_tipo, created_at, mixers(license_plate)")
@@ -52,10 +54,11 @@ export async function datosControlCarga(sb: SupabaseClient, desde: string, hasta
     sinCarga = lista.filter((d) => !usados.has(d.id)).map((d) => ({ remito: `${d.remito_tipo ? `${d.remito_tipo} ` : ""}${d.remito || ""}`.trim() || null, camion: d.mixers?.license_plate || null, at: d.created_at }))
   }
 
-  const [perd, vers, al] = await Promise.all([
+  const [perd, vers, al, fr] = await Promise.all([
     sb.from("cargas_eventos").select("detalle").eq("puesto_id", puesto.id).eq("tipo", "cargas_perdidas").gte("created_at", desde).lt("created_at", hasta),
     sb.from("recetas_planta").select("*").eq("puesto_id", puesto.id).order("primera_lectura_at").limit(2000),
     sb.from("alertas_carga").select("titulo, created_at").eq("puesto_id", puesto.id).in("tipo", ["humedad", "tolva_material"]).gte("created_at", desde).lt("created_at", hasta).order("created_at"),
+    sb.from("cargas_eventos").select("at, detalle").eq("puesto_id", puesto.id).eq("tipo", "numero_fuera_de_rango").gte("created_at", desde).lt("created_at", hasta).order("at"),
   ])
   // Versiones de las recetas que cambiaron en el período, con la anterior de cada una
   const todas = ((vers.data || []) as Record<string, unknown>[]).map(aRecetaLeida)
@@ -96,6 +99,10 @@ export async function datosControlCarga(sb: SupabaseClient, desde: string, hasta
     desde,
     avisos: ((al.data || []) as any[]).map((a) => ({ titulo: a.titulo, at: a.created_at })),
     ultimoLatidoAt: puesto.ultimo_latido_at,
+    avisosIndumix: [
+      ...((fr.data || []) as any[]).map((e) => ({ titulo: String(e.detalle?.texto || "Número fuera de rango en Indumix"), at: e.at })),
+      ...(numeroFueraDeRango(puesto.estado_vivo) ? [{ titulo: `Ahora: ${numeroFueraDeRango(puesto.estado_vivo)}`, at: puesto.ultimo_latido_at || hasta }] : []),
+    ],
     recetasNoCoinciden,
   }
 }

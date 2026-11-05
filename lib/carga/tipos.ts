@@ -145,6 +145,9 @@ export type EstadoVivo = {
   reloj_plc: string | null
   bocina: boolean | null
   alarmas: { codigo: string; texto: string }[]
+  /** número de reporte y de receta que tiene Indumix en pantalla (el puente solo puede volver a dejar 1-10 y 1-20) */
+  ne_reporte?: number | null
+  ne_receta?: number | null
   /** salud del puente: mediana de respuesta de Indumix y si duplicó los intervalos */
   puente?: { mediana_ms: number | null; lento: boolean; cola?: number | null } | null
 }
