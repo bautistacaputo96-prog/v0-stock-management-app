@@ -13,9 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { NuevoBadge } from "@/components/nuevo-badge"
+import { Hora24 } from "@/components/hora-24"
 import { useToast } from "@/hooks/use-toast"
 import { currentUserName, usePermisos } from "@/lib/current-user"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -521,7 +521,7 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                       <td className="py-1.5 pr-2">{cargas.length ? aHora(Math.round(Math.min(...cargas))) : "—"}</td>
                       <td className="py-1.5 pr-2">{r.viajes.length ? aHora(Math.round(r.medida.fin)) : "—"}</td>
                       <td className="py-1.5 pr-2">
-                        <Input type="time" value={hora} disabled={!ajusta} title={tituloAjusta} onChange={(ev) => ev.target.value && rep.setAjuste(id, { hora: ev.target.value })}
+                        <Hora24 value={hora} disabled={!ajusta} title={tituloAjusta} onChange={(h) => rep.setAjuste(id, { hora: h })}
                           className={cn("h-7 w-[96px] text-xs", aj?.hora && CELDA_CAMBIADA)} />
                         <span className="block text-[10px] text-muted-foreground">sale {sale}</span>
                       </td>
@@ -664,7 +664,7 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                       {r.tramos.slice(1).map((t, k) => (
                         <span key={k} className="flex items-center gap-1 rounded border px-1.5 py-0.5">
                           Pasa a {rep.nombres[t.plantId]} a las
-                          <Input type="time" className="h-6 w-[96px] text-xs" value={t.desde != null ? aHora(Math.max(0, Math.round(t.desde - rep.traslado.minutos))) : ""} onChange={(ev) => rep.setCambio(m.id, k + 1, ev.target.value)} />
+                          <Hora24 className="h-6 w-[96px] text-xs" value={t.desde != null ? aHora(Math.max(0, Math.round(t.desde - rep.traslado.minutos))) : ""} onChange={(h) => rep.setCambio(m.id, k + 1, h)} />
                           <span className="text-muted-foreground">(llega {t.desde != null ? aHora(Math.round(t.desde)) : "—"})</span>
                           <button type="button" className="text-muted-foreground hover:text-destructive" title="Quitar este cambio" onClick={() => rep.quitarCambio(m.id, k + 1)}><X className="h-3 w-3" /></button>
                         </span>
