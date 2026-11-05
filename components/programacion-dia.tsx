@@ -33,7 +33,7 @@ import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerencia
 import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import { type Ocupado } from "@/lib/planificador"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
-import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
+import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
@@ -250,16 +250,17 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   // Tiempos reales de la planta: lo del GPS (sin lo corregido a mano) y lo que se usa, con su fuente
   const prmGpsSolo = useMemo(() => parametrosConGps({ ...prm, aMano: {} }, planta, tiempos), [prm, planta, tiempos])
   const filasReales = ([
-    ["esperaPlantaMin", "Espera en planta (después de volver, antes de cargar)", gpsPlanta?.enPlanta ? gpsPlanta.enPlanta.viajes : null, 0, 0],
-    ["descargaDirectaMin", "Descarga directa (8 m³)", gpsPlanta?.directo ? gpsPlanta.directo.viajes : null, prm.descargaDirectaMin, 1],
-    ["descargaBombaMin", "Descarga con bomba (8 m³)", gpsPlanta?.bomba ? gpsPlanta.bomba.viajes : null, prm.descargaBombaMin, 1],
-  ] as const).map(([k, l, viajesGps, base, minimo]) => {
+    ["esperaPlantaMin", "Espera en planta (después de volver, antes de cargar)", gpsPlanta?.enPlanta ?? null, 0, 0],
+    ["descargaDirectaMin", "Descarga directa (8 m³)", gpsPlanta?.directo ?? null, prm.descargaDirectaMin, 1],
+    ["descargaBombaMin", "Descarga con bomba (8 m³)", gpsPlanta?.bomba ?? null, prm.descargaBombaMin, 1],
+  ] as const).map(([k, l, medidaGps, base, minimo]) => {
     const aMano = prm.aMano?.[k]
+    const viajesGps = medidaGps ? medidaGps.viajes : null
     const gps = viajesGps != null ? Number(prmGpsSolo[k]) || 0 : null
     return {
       k, l, minimo, aMano, gps, viajesGps,
       usa: aMano ?? gps ?? base,
-      fuente: aMano != null ? "cargado a mano" : gps != null ? `real GPS · ${viajesGps} viaje${viajesGps === 1 ? "" : "s"}` : k === "esperaPlantaMin" ? "sin datos del GPS" : "de la planta (sin datos del GPS)",
+      fuente: aMano != null ? "cargado a mano" : gps != null ? `real GPS · ${textoViajesGps(medidaGps)}` : k === "esperaPlantaMin" ? "sin datos del GPS" : "de la planta (sin datos del GPS)",
     }
   })
   const fijarAMano = (k: keyof TiemposAMano, v: number | null) => {
@@ -493,7 +494,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                       return f.aMano != null || f.gps != null ? <span className="block text-violet-700">En los viajes: {f.usa} min · {f.fuente}</span> : null
                     })()}
                     {gpsPlanta && k === "cargaMin" && gpsPlanta.enPlanta && (
-                      <span className="block text-violet-700">En planta real: {gpsPlanta.enPlanta.min} min ({gpsPlanta.enPlanta.viajes} viajes)</span>
+                      <span className="block text-violet-700">En planta real: {gpsPlanta.enPlanta.min} min ({textoViajesGps(gpsPlanta.enPlanta)})</span>
                     )}
                   </label>
                 ))}
@@ -506,7 +507,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                     <p>En planta, de que llega a que sale (sin el primer viaje del día): <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca, es el campo de arriba) + espera antes de volver a cargar (no ocupa la boca).</p>
                   )}
                   {gpsPlanta?.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³{prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → descarga de 8 m³ {prmGpsSolo.descargaDirectaMin} min.</p>}
-                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({gpsPlanta.bomba.viajes} viajes) → descarga de 8 m³ {prmGpsSolo.descargaBombaMin} min.</p>}
+                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.bomba)}) → descarga de 8 m³ {prmGpsSolo.descargaBombaMin} min.</p>}
                   <div className="divide-y rounded border bg-background">
                     {filasReales.map((f) => (
                       <div key={f.k} className="flex items-center gap-2 flex-wrap px-2 py-1.5">

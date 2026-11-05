@@ -180,6 +180,66 @@ export function promedio(xs: (number | null | undefined)[]): number | null {
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
 }
 
+/**
+ * Reglas para descartar valores atípicos (un camión que fue a otro lado antes, una parada mal vista) antes de
+ * tomar la mediana de un tiempo del GPS.
+ */
+export const ATIPICOS = {
+  /** Desde estas muestras se usa la MAD (desvío absoluto mediano); con 3 o 4 se compara cada valor con los otros. */
+  minMuestrasMad: 5,
+  /** Se descarta lo que está a más de k desvíos robustos (1,4826 × MAD) de la mediana. */
+  k: 3,
+  /** Piso del desvío robusto, en minutos: con la MAD en 0 (casi todos iguales) no se descarta lo que está cerca. */
+  pisoMin: 1,
+  /** Piso del desvío robusto como parte de la mediana (10 %). */
+  pisoParte: 0.1,
+  /** Con 3 o 4 muestras: atípico = más de 4 veces la mediana de los otros, o menos de 1/4. */
+  factorPocas: 4,
+}
+export type ReglasAtipicos = typeof ATIPICOS
+
+export type ValoresTipicos = {
+  /** Mediana de los valores que quedan (null si no hay ninguno). */
+  valor: number | null
+  /** Cuántas muestras quedaron. */
+  muestras: number
+  /** Cuántas se descartaron por atípicas. */
+  descartadas: number
+  /** Para cada valor de la entrada, si se usa (los no numéricos van en false y no cuentan como descartados). */
+  usar: boolean[]
+}
+
+/**
+ * Valor típico de un tiempo: descarta los atípicos y toma la mediana del resto.
+ * - 5 muestras o más: se descarta |x − mediana| > 3 × 1,4826 × MAD (con un piso de 1 min o el 10 % de la mediana,
+ *   para cuando la MAD da 0).
+ * - 3 o 4 muestras: se descarta como mucho una, la que está a más de 4 veces (o a menos de 1/4) la mediana de las
+ *   otras, siempre que las otras sean parecidas entre sí (la mayor no pasa de 4 veces la menor). Si no queda claro
+ *   cuál es, no se descarta nada.
+ * - 1 o 2 muestras: no se descarta nada.
+ */
+export function valoresTipicos(xs: (number | null | undefined)[], R: ReglasAtipicos = ATIPICOS): ValoresTipicos {
+  const usar = xs.map((x) => x != null && Number.isFinite(x))
+  const idx = xs.map((_, i) => i).filter((i) => usar[i])
+  const v = idx.map((i) => xs[i] as number)
+  if (v.length >= R.minMuestrasMad) {
+    const med = mediana(v)!
+    const mad = mediana(v.map((x) => Math.abs(x - med)))!
+    const escala = Math.max(1.4826 * mad, R.pisoMin, R.pisoParte * Math.abs(med))
+    idx.forEach((i, q) => { if (Math.abs(v[q] - med) > R.k * escala) usar[i] = false })
+  } else if (v.length >= 3) {
+    const lejos = (x: number, ref: number) => (x > 0 && ref > 0 ? x > R.factorPocas * ref || x * R.factorPocas < ref : x !== ref)
+    const candidatos = idx.filter((_, q) => {
+      const otros = v.filter((_, r) => r !== q)
+      const parecidos = Math.max(...otros) <= R.factorPocas * Math.min(...otros)
+      return parecidos && lejos(v[q], mediana(otros)!)
+    })
+    if (candidatos.length === 1) usar[candidatos[0]] = false
+  }
+  const quedan = xs.filter((_, i) => usar[i]) as number[]
+  return { valor: mediana(quedan), muestras: quedan.length, descartadas: v.length - quedan.length, usar }
+}
+
 const iso = (t: number) => new Date(t * 1000).toISOString()
 const min = (a: number, b: number) => Math.round(((b - a) / 60) * 10) / 10
 const km1 = (x: number) => Math.round(x * 10) / 10
@@ -742,11 +802,14 @@ export function sePuedeAprender(obra: { gps_lat: unknown; gps_source: string | n
 // ---------------------------------------------------------------------------
 export type TiemposMedidos = { ida: number | null; obra: number | null; vuelta: number | null; viajes: number }
 
-/** Mediana de ida, obra y vuelta de los viajes completos que se pasen (ya filtrados y limitados a los últimos N). */
+/**
+ * Valor típico (mediana sin los atípicos, ver valoresTipicos) de ida, obra y vuelta de los viajes completos que se
+ * pasen (ya filtrados y limitados a los últimos N).
+ */
 export function medianasTramos(viajes: Pick<ViajeGpsFila, "min_ida" | "min_obra" | "min_vuelta" | "estado">[]): TiemposMedidos {
   const ok = viajes.filter((v) => v.estado === "completo")
   const r = (xs: (number | null)[]) => {
-    const m = mediana(xs.filter((x): x is number => x != null))
+    const m = valoresTipicos(xs.filter((x): x is number => x != null)).valor
     return m == null ? null : Math.round(m)
   }
   return { ida: r(ok.map((v) => v.min_ida)), obra: r(ok.map((v) => v.min_obra)), vuelta: r(ok.map((v) => v.min_vuelta)), viajes: ok.length }
@@ -759,8 +822,16 @@ export function medianasTramos(viajes: Pick<ViajeGpsFila, "min_ida" | "min_obra"
 /** Reglas: ventana, mínimos de viajes y valores que se descartan por absurdos (minutos o m³, ambos inclusive). */
 export const TIEMPOS_GPS = {
   ventanaDias: 90,
+  /**
+   * Viajes válidos (dentro de los límites) que necesita una obra. Los atípicos no entran en el número pero sí cuentan
+   * para llegar a este mínimo: con 3 viajes y uno atípico, los otros 2 (parecidos entre sí) dan el valor.
+   */
   minViajesObra: 3,
-  /** La ida y el tiempo en obra de una obra se usan con viajes de al menos estos días distintos (un solo día puede ser raro) */
+  /**
+   * La ida y el tiempo en obra de una obra se usan con viajes (de los que quedan) de al menos estos días distintos
+   * (un solo día puede ser raro). Excepción para la ida: si quedan minViajesObra viajes parecidos o más de un solo
+   * día, se devuelve marcada `unDia` y lib/viajes.ts la usa solo si la obra tiene el viaje por defecto (30).
+   */
   minDiasObra: 2,
   /** Planta: tiempo en planta y descarga directa / con bomba (decisión de Bautista 08/10: la de bomba de Canning se usa con 18) */
   minViajesPlanta: 10,
@@ -799,9 +870,12 @@ export type FilaTiemposGps = {
   /** undefined = no se sabe (no se descarta); null = sin llegada previa (se descarta del tiempo en planta) */
   llegada_planta_previa?: string | null
 }
-/** Una mediana y de cuántos viajes sale. */
-export type MedidaGps = { min: number; viajes: number }
-/** Tiempo en obra (mediana) junto con los m³ típicos (mediana) de esos mismos viajes y cuántos fueron con bomba / directo. */
+/**
+ * Valor típico (mediana sin los atípicos) y de cuántos viajes válidos sale. `descartados` (solo si hay) = cuántos de
+ * esos viajes se dejaron afuera por atípicos. `unDia` (solo ida de una obra) = los que quedan son todos de un día.
+ */
+export type MedidaGps = { min: number; viajes: number; descartados?: number; unDia?: true }
+/** Tiempo en obra (típico) junto con los m³ típicos (mediana) de esos mismos viajes y cuántos fueron con bomba / directo. */
 export type MedidaObraGps = MedidaGps & { m3: number; bomba?: number; directo?: number }
 export type M3SugeridoGps = { m3: number; viajes: number; desde: number; hasta: number }
 export type TiemposObraGps = {
@@ -817,18 +891,37 @@ const dentro = (x: number | null | undefined, [a, b]: [number, number]): x is nu
 const r1 = (x: number) => Math.round(x * 10) / 10
 const dias = (fs: FilaTiemposGps[]) => new Set(fs.map((f) => f.fecha ?? "")).size
 
-/** Mediana de un tramo con un mínimo de viajes (y de días) válidos; nula si no alcanza. */
-function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | null, lim: [number, number], minViajes: number, minDias = 1): MedidaGps | null {
-  const v = fs.filter((f) => dentro(valor(f), lim))
-  if (v.length < minViajes || dias(v) < minDias) return null
-  return { min: Math.round(mediana(v.map((f) => valor(f)!))!), viajes: v.length }
+/** Los viajes que quedan sin los atípicos de un tramo, y cuántos se descartaron. */
+function sinAtipicos(v: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | null) {
+  const t = valoresTipicos(v.map(valor))
+  return { quedan: v.filter((_, i) => t.usar[i]), valor: t.valor!, descartados: t.descartadas }
 }
-/** Tiempo en obra + m³ típicos, de los viajes que tienen las dos cosas válidas. */
+const conDescartados = <T extends MedidaGps>(m: T, descartados: number): T => (descartados > 0 ? { ...m, descartados } : m)
+
+/**
+ * Valor típico de un tramo (mediana sin los atípicos) con un mínimo de viajes válidos y de días (contados en los que
+ * quedan); nula si no alcanza. Con `unDia`, si los que quedan son de un solo día pero son minViajes o más, se
+ * devuelve igual marcada (ver TIEMPOS_GPS.minDiasObra).
+ */
+function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | null, lim: [number, number], minViajes: number, minDias = 1, unDia = false): MedidaGps | null {
+  const v = fs.filter((f) => dentro(valor(f), lim))
+  if (v.length < minViajes) return null
+  const s = sinAtipicos(v, valor)
+  const m = conDescartados({ min: Math.round(s.valor), viajes: v.length }, s.descartados)
+  if (dias(s.quedan) >= minDias) return m
+  return unDia && s.quedan.length >= minViajes ? { ...m, unDia: true } : null
+}
+/** Tiempo en obra + m³ típicos, de los viajes que tienen las dos cosas válidas (los m³ y métodos, de los que quedan). */
 function medidaObra(fs: FilaTiemposGps[], P: ReglasTiemposGps, minViajes: number, minDias = 1): MedidaObraGps | null {
   const v = fs.filter((f) => dentro(f.min_obra, P.obra) && dentro(f.m3, P.m3))
-  if (v.length < minViajes || dias(v) < minDias) return null
-  const bomba = v.filter((f) => f.metodo === "bomba").length
-  return { min: Math.round(mediana(v.map((f) => f.min_obra!))!), viajes: v.length, m3: r1(mediana(v.map((f) => f.m3!))!), bomba, directo: v.length - bomba }
+  if (v.length < minViajes) return null
+  const s = sinAtipicos(v, (f) => f.min_obra)
+  if (dias(s.quedan) < minDias) return null
+  const bomba = s.quedan.filter((f) => f.metodo === "bomba").length
+  return conDescartados(
+    { min: Math.round(s.valor), viajes: v.length, m3: r1(mediana(s.quedan.map((f) => f.m3!))!), bomba, directo: s.quedan.length - bomba },
+    s.descartados,
+  )
 }
 /** m³ por camión con un patrón claro: mediana redondeada a 0,5 y la mayoría a ±1 m³ de ella. */
 export function m3Sugerido(m3s: (number | null | undefined)[], P: ReglasTiemposGps = TIEMPOS_GPS): M3SugeridoGps | null {
@@ -872,7 +965,7 @@ export function calcularTiemposGps(filas: FilaTiemposGps[], desde = "", P: Regla
     const ida: Record<string, MedidaGps> = {}
     const visible = fs.filter((f) => dentro(f.min_obra, P.obra)).length >= fs.length * P.parteObraVisible
     for (const pl of visible ? new Set(fs.map((f) => f.plant_id_salida)) : []) {
-      const m = medida(fs.filter((f) => f.plant_id_salida === pl), (f) => f.min_ida, P.ida, P.minViajesObra, P.minDiasObra)
+      const m = medida(fs.filter((f) => f.plant_id_salida === pl), (f) => f.min_ida, P.ida, P.minViajesObra, P.minDiasObra, true)
       if (m) ida[pl] = m
     }
     const obra = visible ? medidaObra(fs, P, P.minViajesObra, P.minDiasObra) : null

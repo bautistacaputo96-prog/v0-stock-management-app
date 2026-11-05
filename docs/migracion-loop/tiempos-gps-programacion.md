@@ -43,7 +43,13 @@ De `viajes_gps`:
 - `estado = 'completo'` y `confianza in ('alta','media')` (cruzados con su remito);
 - de los **últimos 90 días** (por `fecha`);
 - sin despachos por árido (`dispatches.is_test_dispatch`);
-- se usa la **mediana**, no el promedio (un camión que se quedó 3 horas no corre el número).
+- se usa la **mediana**, no el promedio (un camión que se quedó 3 horas no corre el número);
+- **atípicos (05/11/2026, `valoresTipicos`)**: antes de la mediana se descartan los valores atípicos. Con 5 viajes
+  o más, los que están a más de 3 × 1,4826 × MAD de la mediana (piso: 1 min o el 10 % de la mediana, para cuando la
+  MAD da 0). Con 3 o 4, como mucho uno: el que está a más de 4 veces (o menos de 1/4) la mediana de los otros, si los
+  otros son parecidos entre sí. Los descartados cuentan para el mínimo de viajes pero no para el número, ni para los
+  días, los m³ típicos o bomba/directo. Las pantallas dicen "real GPS · 3 viajes (1 descartado)". Caso: SANTA RITA
+  (enfrente de Canning), idas 105 / 3,8 / 4,8 → 4 min.
 
 Valores absurdos que se descartan, tramo por tramo:
 
@@ -58,6 +64,9 @@ Valores absurdos que se descartan, tramo por tramo:
 - **Ida real** = mediana de `min_ida` de los viajes **desde la planta del pedido** (la ida depende de la planta).
   Se usa con **3 viajes o más de 2 días distintos o más** desde esa planta (Etcheverry tenía 113 min de ida con
   viajes de un solo día). La vuelta del planificador sigue siendo igual a la ida.
+  **Desde el 05/11/2026:** si quedan 3 viajes parecidos o más (sin los atípicos) pero son de un solo día, la ida se
+  usa igual cuando la obra tiene el viaje por defecto (30 o vacío); si alguien cargó otro número en la obra, gana ese
+  hasta que haya viajes de 2 días.
 - **Tiempo en obra real** = mediana de `min_obra` con **3 viajes o más de 2 días o más** (de cualquier planta),
   junto con la mediana de los m³ de esos viajes y cuántos fueron con bomba y cuántos directos. Si mezcla los dos
   métodos, la pantalla lo dice ("mezcla viajes con bomba (2) y directos (9)").

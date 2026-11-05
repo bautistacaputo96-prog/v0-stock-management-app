@@ -15,7 +15,7 @@
  * Los viajes no tocan stock.
  */
 import { planificar, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado } from "@/lib/planificador"
-import { cargarTiemposGps, type TiemposGps, type MedidaGps, type MedidaObraGps, type M3SugeridoGps } from "@/lib/gps-viajes"
+import { cargarTiemposGps, type TiemposGps, type TiemposObraGps, type MedidaGps, type MedidaObraGps, type M3SugeridoGps } from "@/lib/gps-viajes"
 
 export type EstadoViaje = "planificado" | "despachado" | "cancelado"
 
@@ -479,7 +479,29 @@ export function demandaPorMediaHora(viajes: ViajeRow[], dia: Date, desde = "06:0
 // Lo del pedido (viaje_min, descarga_min) gana siempre.
 // ---------------------------------------------------------------------------
 export type FuenteTiempo = "pedido" | "a_mano" | "ruta" | "gps_obra" | "gps_planta" | "planta_a_mano" | "obra" | "planta" | "referencia"
-export type TiempoConFuente = { min: number; fuente: FuenteTiempo; viajes?: number }
+export type TiempoConFuente = { min: number; fuente: FuenteTiempo; viajes?: number; descartados?: number }
+
+/** "12 viajes", "12 viajes (1 descartado)": de cuántos viajes sale un tiempo del GPS y cuántos se dejaron afuera por atípicos. */
+export function textoViajesGps(m: { viajes?: number; descartados?: number } | null | undefined): string {
+  if (!m || m.viajes == null) return ""
+  const k = Number(m.descartados) || 0
+  return `${m.viajes} viaje${m.viajes === 1 ? "" : "s"}${k > 0 ? ` (${k} descartado${k === 1 ? "" : "s"})` : ""}`
+}
+const descartadosDe = (m: { descartados?: number }) => (m.descartados ? { descartados: m.descartados } : {})
+
+/** travel_time_minutes que trae una obra si nadie lo cambió (los formularios de obra ponen 30). */
+export const VIAJE_OBRA_POR_DEFECTO = 30
+/**
+ * Ida real de la obra desde la planta del pedido. La de un solo día (3 viajes parecidos o más, ver
+ * TIEMPOS_GPS.minDiasObra) se usa solo si la obra tiene el viaje por defecto (30 o vacío): un número cargado a
+ * propósito en la obra gana hasta que haya viajes de 2 días.
+ */
+function idaGpsDe(o: TiemposObraGps | null | undefined, p: PedidoParaViajes): MedidaGps | undefined {
+  const ida = o?.ida[p.plant_id]
+  if (!ida || !ida.unDia) return ida
+  const tt = Number(p.construction_sites?.travel_time_minutes)
+  return !(tt > 0) || tt === VIAJE_OBRA_POR_DEFECTO ? ida : undefined
+}
 
 /**
  * La descarga de la obra se usa solo si el pedido lleva m³ por camión parecidos a los habituales de la obra (±1,5):
@@ -517,7 +539,7 @@ export function parametrosConGps(prm: Parametros, plantaId: string | null | unde
 /** El pedido con la ida real de su obra (desde su planta) y la descarga real de la obra, para el motor. */
 export function conTiemposGps<P extends PedidoParaViajes>(p: P, prm: Parametros, t: TiemposGps | null | undefined): P {
   const o = p.construction_site_id && t ? t.obras[p.construction_site_id] : null
-  const ida = o?.ida[p.plant_id]
+  const ida = idaGpsDe(o, p)
   const obra = o?.obra && obraAplica(o.obra, p) ? o.obra : null
   return { ...p, viaje_min_gps: ida ? ida.min : null, descarga_min_gps: obra ? descarga8DeObra(obra.min, obra.m3, prm.lavadoMin) : null }
 }
@@ -529,7 +551,7 @@ export type TiemposDelPedido = {
    * obraNoAplica = la obra tiene tiempo real pero el pedido lleva otros m³ por camión (se usa la planta).
    */
   descarga: TiempoConFuente & { obra?: MedidaObraGps; obraNoAplica?: { m3Obra: number; m3Pedido: number } }
-  enPlanta: { min: number; carga: number; espera: number; fuente: "gps_planta" | "planta_a_mano" | "planta"; viajes?: number }
+  enPlanta: { min: number; carga: number; espera: number; fuente: "gps_planta" | "planta_a_mano" | "planta"; viajes?: number; descartados?: number }
   m3Sugerido: M3SugeridoGps | null
 }
 
@@ -539,10 +561,10 @@ export function tiemposDelPedido(p: PedidoParaViajes, prmBase: Parametros, t: Ti
   const m = prmBase.aMano || {}
   const o = p.construction_site_id && t ? t.obras[p.construction_site_id] : null
   const pl = p.plant_id && t ? t.plantas[p.plant_id] : null
-  const ida: MedidaGps | undefined = o?.ida[p.plant_id]
+  const ida = idaGpsDe(o, p)
   const tt = p.construction_sites?.travel_time_minutes
   const viaje: TiempoConFuente = Number(p.viaje_min) > 0 ? { min: Number(p.viaje_min), fuente: "pedido" }
-    : ida ? { min: ida.min, fuente: "gps_obra", viajes: ida.viajes }
+    : ida ? { min: ida.min, fuente: "gps_obra", viajes: ida.viajes, ...descartadosDe(ida) }
     : tt ? { min: tt, fuente: "obra" } : { min: 30, fuente: "referencia" }
   const bomba = conBombaDe(p)
   const plMet = pl ? (bomba ? pl.bomba : pl.directo) : null
@@ -550,22 +572,22 @@ export function tiemposDelPedido(p: PedidoParaViajes, prmBase: Parametros, t: Ti
   const aManoPlanta = (bomba ? m.descargaBombaMin : m.descargaDirectaMin) != null
   const noAplica = o?.obra && !obraAplica(o.obra, p) ? { m3Obra: o.obra.m3, m3Pedido: m3PorViajeDe(p) } : undefined
   const descarga: TiemposDelPedido["descarga"] = Number(p.descarga_min) > 0 ? { min: Number(p.descarga_min), fuente: "a_mano" }
-    : o?.obra && !noAplica ? { min: descarga8DeObra(o.obra.min, o.obra.m3, prm.lavadoMin), fuente: "gps_obra", viajes: o.obra.viajes, obra: o.obra }
+    : o?.obra && !noAplica ? { min: descarga8DeObra(o.obra.min, o.obra.m3, prm.lavadoMin), fuente: "gps_obra", viajes: o.obra.viajes, ...descartadosDe(o.obra), obra: o.obra }
     : aManoPlanta ? { min: minPlanta, fuente: "planta_a_mano", obraNoAplica: noAplica }
-    : plMet ? { min: minPlanta, fuente: "gps_planta", viajes: plMet.viajes, obra: plMet, obraNoAplica: noAplica }
+    : plMet ? { min: minPlanta, fuente: "gps_planta", viajes: plMet.viajes, ...descartadosDe(plMet), obra: plMet, obraNoAplica: noAplica }
     : { min: minPlanta, fuente: "planta", obraNoAplica: noAplica }
   const espera = Math.max(0, Number(prm.esperaPlantaMin) || 0)
   const enPlanta: TiemposDelPedido["enPlanta"] = m.esperaPlantaMin != null
     ? { min: prm.cargaMin + espera, carga: prm.cargaMin, espera, fuente: "planta_a_mano" }
     : pl?.enPlanta
-      ? { min: prm.cargaMin + espera, carga: prm.cargaMin, espera, fuente: "gps_planta", viajes: pl.enPlanta.viajes }
+      ? { min: prm.cargaMin + espera, carga: prm.cargaMin, espera, fuente: "gps_planta", viajes: pl.enPlanta.viajes, ...descartadosDe(pl.enPlanta) }
       : { min: prm.cargaMin, carga: prm.cargaMin, espera: 0, fuente: "planta" }
   return { viaje, descarga, enPlanta, m3Sugerido: o?.m3 || null }
 }
 
-/** "real GPS · 12 viajes", "promedio de la planta · 412 viajes", "cargado a mano"… */
-export function textoFuente(f: { fuente: FuenteTiempo; viajes?: number }): string {
-  const n = f.viajes != null ? ` · ${f.viajes} viaje${f.viajes === 1 ? "" : "s"}` : ""
+/** "real GPS · 12 viajes", "real GPS · 12 viajes (1 descartado)", "promedio de la planta · 412 viajes", "cargado a mano"… */
+export function textoFuente(f: { fuente: FuenteTiempo; viajes?: number; descartados?: number }): string {
+  const n = f.viajes != null ? ` · ${textoViajesGps(f)}` : ""
   switch (f.fuente) {
     case "pedido": return "cargado en el pedido"
     case "a_mano": return "cargado a mano"
