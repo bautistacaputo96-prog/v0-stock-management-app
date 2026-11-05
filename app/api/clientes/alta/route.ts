@@ -4,8 +4,8 @@
  *
  *   POST /api/clientes/alta   {datos, descartados?: ["rebucret:<id>" | "zomatik:<código>"], excepcion?: {motivo}}
  *
- *   - CUIT válido obligatorio (11 dígitos con el dígito verificador; no se acepta DNI), salvo excepción de un
- *     gerencial con motivo (precisión de Bautista del 21/10/2026).
+ *   - CUIT o DNI válido obligatorio (CUIT: 11 dígitos con el dígito verificador; DNI: 7 u 8 dígitos; Bautista,
+ *     05/11/2026), salvo excepción de un gerencial con motivo (precisión de Bautista del 21/10/2026).
  *   - Mismo CUIT/DNI en Rebucret o en Zomatik (aunque el nombre sea otro) → 409 "mismo_documento": no se crea.
  *   - Nombres parecidos en los dos lados → 409 "parecidos" ("¿Es alguno de estos?"). Para seguir hay que mandar
  *     los descartados ("No, es otro cliente").
@@ -42,12 +42,12 @@ export async function POST(req: Request) {
     if (!datos.razon_social) datos.razon_social = nombre
 
     const d0 = documentoValido(datos.cuit)
-    const doc = d0 && d0.tipo === "CUIT" ? d0 : null
+    const doc = d0
     const motivoExc = String(body?.excepcion?.motivo || "").trim()
     if (!doc) {
       if (tipoDe(u) !== "gerencial" || motivoExc.length < 5)
         return NextResponse.json(
-          { codigo: "documento", error: d0?.tipo === "DNI" ? "El alta pide CUIT, no DNI (11 dígitos con el dígito verificador). Sin CUIT, solo un gerencial puede darlo de alta, con motivo." : "Hace falta un CUIT válido (11 dígitos con el dígito verificador correcto). Sin CUIT, solo un gerencial puede darlo de alta, con motivo." },
+          { codigo: "documento", error: "Hace falta un CUIT (11 dígitos con el dígito verificador) o un DNI (7 u 8 dígitos) válido. Sin documento, solo un gerencial puede darlo de alta, con motivo." },
           { status: 400 },
         )
     }
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     const { nuestros, zomatik } = await cargarClientesParaBuscar(sbServicio())
     // Con la excepción (sin CUIT) igual se controla que el documento escrito (por ejemplo, un DNI) no esté repetido
     const v = verificarAlta({ nombre, cuit: d0 ? String(datos.cuit) : null }, nuestros, zomatik)
-    if (v.mismoDoc.length) return NextResponse.json({ codigo: "mismo_documento", error: "Ya existe un cliente con ese CUIT.", conflictos: v.mismoDoc }, { status: 409 })
+    if (v.mismoDoc.length) return NextResponse.json({ codigo: "mismo_documento", error: "Ya existe un cliente con ese CUIT o DNI.", conflictos: v.mismoDoc }, { status: 409 })
     const descartados = new Set<string>(Array.isArray(body?.descartados) ? body.descartados.map(String) : [])
     const pendientes = v.parecidos.filter((p) => !descartados.has(`${p.tipo}:${p.id}`))
     if (pendientes.length) return NextResponse.json({ codigo: "parecidos", error: "¿Es alguno de estos?", conflictos: pendientes }, { status: 409 })
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
       reference: (creado as any).name,
       details: {
         Cliente: nombre,
-        CUIT: doc ? String(datos.cuit) : d0 ? `sin CUIT (${d0.tipo} ${String(datos.cuit)})` : "sin CUIT válido",
+        Documento: doc ? `${doc.tipo} ${String(datos.cuit)}` : "sin CUIT ni DNI válido",
         ...(doc ? {} : { "Excepción de gerencial": motivoExc }),
         ...(descartados.size ? { "Dijo que no es": v.parecidos.filter((p) => descartados.has(`${p.tipo}:${p.id}`)).map((p) => `${p.nombre}${p.tipo === "zomatik" ? " (Zomatik)" : ""}`).join(", ") } : {}),
         "Condición IVA": String(datos.cond_iva || "-"),

@@ -38,7 +38,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
   const [sinCuit, setSinCuit] = useState(false)
   const [motivo, setMotivo] = useState("")
 
-  const cuitOk = documentoValido(formData.cuit)?.tipo === "CUIT"
+  const cuitOk = !!documentoValido(formData.cuit)
   const reiniciar = () => {
     setFormData({ ...VACIO })
     setConflicto(null)
@@ -62,11 +62,11 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
       return
     }
     if (!cuitOk && !(esGerencial && sinCuit)) {
-      toast.error("Hace falta un CUIT válido (11 dígitos con el dígito verificador). No se acepta DNI.")
+      toast.error("Hace falta un CUIT (11 dígitos) o un DNI (7 u 8 dígitos) válido.")
       return
     }
     if (!cuitOk && motivo.trim().length < 5) {
-      toast.error("Escribí por qué se da de alta sin CUIT")
+      toast.error("Escribí por qué se da de alta sin CUIT ni DNI")
       return
     }
     setLoading(true)
@@ -125,15 +125,15 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
           <BuscarZomatik texto={formData.razon_social} plantId={plantId} onTraido={terminar} />
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="cuit">CUIT *</Label>
+              <Label htmlFor="cuit">CUIT o DNI *</Label>
               <Input
                 id="cuit"
                 value={formData.cuit}
                 onChange={(e) => { setFormData({ ...formData, cuit: e.target.value }); setConflicto(null) }}
-                placeholder="XX-XXXXXXXX-X"
+                placeholder="CUIT XX-XXXXXXXX-X o DNI"
               />
               {formData.cuit.trim() && !cuitOk && (
-                <p className="text-xs text-red-700">{documentoValido(formData.cuit)?.tipo === "DNI" ? "El alta pide CUIT, no DNI." : "CUIT inválido (revisá el dígito verificador)."}</p>
+                <p className="text-xs text-red-700">CUIT o DNI inválido (el CUIT lleva 11 dígitos con el verificador; el DNI, 7 u 8).</p>
               )}
             </div>
             <div className="space-y-2">
@@ -152,7 +152,7 @@ export function AddClientDialog({ plantId, trigger, onClientAdded }: AddClientDi
             <div className="space-y-1 rounded-md border p-2 text-xs">
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={sinCuit} onChange={(e) => setSinCuit(e.target.checked)} />
-                Dar de alta sin CUIT (excepción de gerencial)
+                Dar de alta sin CUIT ni DNI (excepción de gerencial)
               </label>
               {sinCuit && <Input className="h-8 text-xs" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Motivo (queda en Actividad)" />}
             </div>
