@@ -186,7 +186,15 @@ export type Ocupado = { camionId: string; desde: number; hasta: number }
  * se suma uno nuevo; si no quedan nuevos, el que pueda cargar antes. Un camión nunca queda en dos viajes que se
  * pisan: ni en este plan ni con sus viajes de `ocupados`.
  */
-export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE, ocupados: Ocupado[] = []): Plan {
+export function planificar(
+  pedidos: Pedido[], camiones: Camion[], prm: Parametros = PARAMETROS_BASE, ocupados: Ocupado[] = [],
+  /**
+   * Cargas de otros pedidos de la misma planta que no entran en este plan (reparto de camiones, lib/reparto.ts):
+   * ocupan la boca de carga igual que las del plan, pero no cuentan en la ocupación ni en la primera carga.
+   * Sin este parámetro el resultado es exactamente el de antes.
+   */
+  cargasOcupadas: { desde: number; hasta: number }[] = [],
+): Plan {
   const inicio = aMin(prm.inicioJornada)
   const fin = aMin(prm.finJornada)
   // Tiempo en planta después de volver, antes de poder cargar otra vez (0 = como antes)
@@ -196,16 +204,17 @@ export function planificar(pedidos: Pedido[], camiones: Camion[], prm: Parametro
   const cargas: { desde: number; hasta: number }[] = []
   const bocas = Math.max(1, Math.floor(prm.bocasCarga || 1))
   const bocaLibreDesde = (t: number) => {
+    const todas = cargasOcupadas.length ? [...cargasOcupadas, ...cargas] : cargas
     if (bocas === 1) {
       // Una sola boca: igual que siempre
       let x = t
-      for (const c of [...cargas].sort((a, b) => a.desde - b.desde)) if (x < c.hasta && x + prm.cargaMin > c.desde) x = c.hasta
+      for (const c of [...todas].sort((a, b) => a.desde - b.desde)) if (x < c.hasta && x + prm.cargaMin > c.desde) x = c.hasta
       return x
     }
     // Varias bocas: el primer momento (t o el fin de alguna carga) con menos cargas superpuestas que bocas
-    const candidatos = [t, ...cargas.map((c) => c.hasta).filter((h) => h > t)].sort((a, b) => a - b)
+    const candidatos = [t, ...todas.map((c) => c.hasta).filter((h) => h > t)].sort((a, b) => a - b)
     for (const x of candidatos) {
-      const ocupadas = cargas.filter((c) => x < c.hasta && x + prm.cargaMin > c.desde).length
+      const ocupadas = todas.filter((c) => x < c.hasta && x + prm.cargaMin > c.desde).length
       if (ocupadas < bocas) return x
     }
     return candidatos[candidatos.length - 1]

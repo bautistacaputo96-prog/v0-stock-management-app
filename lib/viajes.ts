@@ -14,7 +14,7 @@
  * Se guardan con una sola función de la base (guardar_viajes_pedido): todo o nada.
  * Los viajes no tocan stock.
  */
-import { planificar, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado } from "@/lib/planificador"
+import { planificar, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado, type Pedido } from "@/lib/planificador"
 import { cargarTiemposGps, type TiemposGps, type MedidaGps, type MedidaObraGps, type M3SugeridoGps } from "@/lib/gps-viajes"
 
 export type EstadoViaje = "planificado" | "despachado" | "cancelado"
@@ -126,7 +126,7 @@ export function m3Entregados(p: PedidoParaViajes, vs: ViajeRow[]) {
  * m³ = total − lo ya entregado; el primer pendiente llega a la hora pedida más el espaciado de los ya despachados
  * (si se corre la hora del pedido, se corren todos los pendientes).
  */
-function entradaPedido(p: PedidoParaViajes, existentes: ViajeRow[], prm: Parametros) {
+export function entradaPedido(p: PedidoParaViajes, existentes: ViajeRow[], prm: Parametros) {
   const base = inicioDelDia(p.scheduled_arrival_time)
   const despachados = ordenarPorN(existentes.filter((v) => v.estado === "despachado"))
   const pendiente = Math.max(0, Number(p.quantity_m3) - m3Entregados(p, existentes))
@@ -143,6 +143,22 @@ function numerosLibres(existentes: ViajeRow[], cuantos: number) {
 }
 
 type ViajePlan = Plan["viajes"][number]
+
+/**
+ * El pedido como lo usa el planificador (minutos desde el 00:00 del día): lo pendiente desde la llegada que le toca.
+ * Lo usan generarViajes, planDelDia y el reparto de camiones (lib/reparto.ts), así los tres arman igual.
+ */
+export function pedidoParaPlan(p: PedidoParaViajes, pendiente: number, llegada: number, obra = ""): Pedido {
+  return {
+    id: p.id, cliente: "", obra, m3: pendiente, llegada, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p),
+    descargaMin: descargaPropiaDe(p), m3PorViaje: m3PorViajeDe(p), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null,
+  }
+}
+
+/** Viajes del planificador → filas de `viajes` (números libres, horas ISO, camión del plan). */
+export function filasDelPlan(p: PedidoParaViajes, base: number, viajesPlan: ViajePlan[], existentes: ViajeRow[]): ViajeRow[] {
+  return aFilas(p, base, viajesPlan, existentes, (v) => v.camionId)
+}
 
 function aFilas(p: PedidoParaViajes, base: number, viajesPlan: ViajePlan[], existentes: ViajeRow[], camionPorViaje: (v: ViajePlan, i: number) => string | null): ViajeRow[] {
   const nums = numerosLibres(existentes, viajesPlan.length)
@@ -175,11 +191,7 @@ export function generarViajes(
   if (pendiente <= 0.01) return []
   const tam = m3PorViajeDe(p)
   const virtuales: Camion[] = Array.from({ length: Math.ceil(pendiente / tam) + 1 }, (_, i) => ({ id: `v${i}`, patente: "", capacidad: 1000 }))
-  const plan = planificar(
-    [{ id: p.id, cliente: "", obra: "", m3: pendiente, llegada, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p), descargaMin: descargaPropiaDe(p), m3PorViaje: tam, espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null }],
-    virtuales,
-    prm,
-  )
+  const plan = planificar([pedidoParaPlan(p, pendiente, llegada)], virtuales, prm)
   const anteriores = pendientes(existentes)
   const filas = aFilas(p, base, plan.viajes, existentes, (_, i) => anteriores[i]?.mixer_id ?? p.mixer_id ?? null)
   // El camión sugerido que se conserva no puede quedar en dos viajes que se pisan (en este pedido o en otro, de
@@ -202,6 +214,8 @@ export function planDelDia(
   prm: Parametros,
   /** Viajes del día que no entran en este plan (otra planta, otros pedidos): sus camiones están ocupados */
   otrosViajes: ViajeRow[] = [],
+  /** Reparto de camiones: un viaje de otra planta ocupa también el traslado de ida y de vuelta. Sin esto, como antes. */
+  traslado?: TrasladoOcupados,
 ): { plan: Plan | null; filas: Record<string, ViajeRow[]> } {
   const entradas = pedidos
     .filter((p) => p.status !== "completed" && p.status !== "cancelled")
@@ -211,15 +225,10 @@ export function planDelDia(
   // Todos los pedidos del día comparten el mismo 00:00 (el del primero)
   const base = entradas[0].e.base
   const plan = planificar(
-    entradas.map(({ p, e }) => ({
-      id: p.id, cliente: "", obra: p.construction_sites?.name || "", m3: e.pendiente,
-      llegada: e.llegada + (e.base - base) / MIN, viajeMin: viajeMinDe(p), conBomba: conBombaDe(p),
-      descargaMin: descargaPropiaDe(p),
-      m3PorViaje: m3PorViajeDe(p), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null,
-    })),
+    entradas.map(({ p, e }) => pedidoParaPlan(p, e.pendiente, e.llegada + (e.base - base) / MIN, p.construction_sites?.name || "")),
     camiones,
     prm,
-    ocupadosDe([...Object.values(viajesPorPedido).flat().filter((v) => v.estado === "despachado"), ...otrosViajes], base, new Set(entradas.map((x) => x.p.id))),
+    ocupadosDe([...Object.values(viajesPorPedido).flat().filter((v) => v.estado === "despachado"), ...otrosViajes], base, new Set(entradas.map((x) => x.p.id)), traslado),
   )
   const filas: Record<string, ViajeRow[]> = {}
   for (const { p } of entradas) {
@@ -229,11 +238,24 @@ export function planDelDia(
   return { plan, filas }
 }
 
+/**
+ * Traslado entre plantas para las ventanas ocupadas (reparto de camiones, lib/reparto.ts): `plantId` es la planta que
+ * se planifica. Un viaje de otra planta ocupa al camión desde que tiene que salir para llegar a cargar allá (carga −
+ * traslado − espera de allá) hasta que vuelve acá (vuelta + traslado). Las esperas en planta de cada lado se cuentan
+ * para que el planificador (que suma la espera de esta planta) no pida ni de más ni de menos.
+ */
+export type TrasladoOcupados = { plantId: string; minutos: number; esperaEsta?: number; esperaDe?: (plantId: string) => number }
+
 /** Ventanas ocupadas de los camiones (de la carga a la vuelta) para el planificador, en minutos del día. */
-function ocupadosDe(viajes: ViajeRow[], base: number, pedidosDelPlan: Set<string>): Ocupado[] {
+export function ocupadosDe(viajes: ViajeRow[], base: number, pedidosDelPlan: Set<string>, traslado?: TrasladoOcupados): Ocupado[] {
   return viajes
     .filter((v) => v.mixer_id && v.estado !== "cancelado" && !(v.estado === "planificado" && pedidosDelPlan.has(v.pedido_id)))
-    .map((v) => ({ camionId: v.mixer_id!, desde: minDelDia(base, v.hora_carga), hasta: minDelDia(base, v.hora_vuelta) }))
+    .map((v) => {
+      const desde = minDelDia(base, v.hora_carga), hasta = minDelDia(base, v.hora_vuelta)
+      if (!traslado || !v.plant_id || v.plant_id === traslado.plantId || !(traslado.minutos > 0)) return { camionId: v.mixer_id!, desde, hasta }
+      const esperaAlla = Math.max(0, traslado.esperaDe?.(v.plant_id) || 0), esperaAca = Math.max(0, traslado.esperaEsta || 0)
+      return { camionId: v.mixer_id!, desde: desde - traslado.minutos - esperaAlla + esperaAca, hasta: hasta + traslado.minutos }
+    })
 }
 
 // ---------------------------------------------------------------------------
