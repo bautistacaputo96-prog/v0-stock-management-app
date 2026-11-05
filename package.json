@@ -11,6 +11,7 @@
     "test:sesion": "node --experimental-strip-types --no-warnings --test lib/__tests__/sesion-permisos.test.mjs",
     "test:despacho": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/despacho.test.mjs",
     "test:reparto": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/reparto.test.mjs",
+    "test:armado": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs",
     "test:carga": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/carga.test.mjs",
     "test:formulas": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/formulas-tabla.test.mjs lib/__tests__/formulas-nombre.test.mjs lib/__tests__/buscar-texto.test.mjs",
     "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs",

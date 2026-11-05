@@ -25,13 +25,13 @@ import { useToast } from "@/hooks/use-toast"
 import { logActivity } from "@/lib/activity-log"
 import { planificar, aMin, aHora, PARAMETROS_BASE, parametrosDePlanta, columnasDePlanta, type Parametros, type Pedido as PedidoPlan, type TiemposAMano } from "@/lib/planificador"
 import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settings2, Truck, MapPin, ListOrdered, ThumbsUp, BarChart3 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Settings2, Truck, MapPin } from "lucide-react"
 // Fase 2 (solo con el interruptor de funciones nuevas)
 import { currentUserName, useFuncionesNuevas, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, motivoValido } from "@/components/motivo"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
-import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMediaHora, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
+import { cargarViajes, generarViajes, planDelDia, regenerarViajesPedido, totalViajes, viajeMinDe, m3PorViajeDe, choquesDeCamion, camionesLibresPara, claveViaje, explicarFlota, textoChoque, textoConMenosCamiones, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import { type Ocupado } from "@/lib/planificador"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
 import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
@@ -42,7 +42,8 @@ import { cn } from "@/lib/utils"
 // Fase 3: distintivo "Suspendido" (se suspende desde Despacho diario)
 import { textoMotivo } from "@/lib/despacho"
 // Camiones por planta (con el interruptor): docs/specs/2026-11-04-camiones-por-planta.md
-import { useRepartoDia, RepartoCamiones, propuestaConReparto } from "@/components/reparto-camiones"
+import { useRepartoDia, RepartoCamiones } from "@/components/reparto-camiones"
+import { guardarHoraPedido, guardarMetodoPedido, confirmarPedidos } from "@/lib/programacion-acciones"
 
 type Plant = { id: string; name: string }
 type PedidoDB = {
@@ -110,17 +111,19 @@ const textoAMano = (m: TiemposAMano | undefined) => {
   return partes.length ? partes.join(" · ") : "automático (GPS)"
 }
 
-export function ProgramacionDia({ plants }: { plants: Plant[] }) {
+export function ProgramacionDia({ plants, fechaInicial }: { plants: Plant[]; /** yyyy-mm-dd (link ?vista=dia&fecha=) */ fechaInicial?: string | null }) {
   const { toast } = useToast()
   // Fase 0c-1: ajustar un pedido (hora, método, viajes, 👍) = programacion.editar, o cargar y que sea propio.
   // Ordenar el día, guardar el plan de todos y los tiempos de la planta = programacion.editar.
   const { puede, ajustaPedido } = usePermisos()
   const editaTodo = puede("programacion", "editar")
-  // Reparto de camiones: lo edita quien programa o el plantista
-  const editaReparto = puede("programacion", "editar") || puede("despacho", "cargar")
   const [motivoTiempos, setMotivoTiempos] = useState("")
   const [planta, setPlanta] = useState<string>(plants[0]?.id || "")
-  const [dia, setDia] = useState<Date>(() => addDays(startOfDay(new Date()), 1)) // por defecto, mañana
+  // Por defecto, mañana; con el link ?vista=dia&fecha=AAAA-MM-DD, ese día
+  const [dia, setDia] = useState<Date>(() => {
+    if (fechaInicial && /^\d{4}-\d{2}-\d{2}$/.test(fechaInicial)) { const [y, m, d] = fechaInicial.split("-").map(Number); return new Date(y, m - 1, d) }
+    return addDays(startOfDay(new Date()), 1)
+  })
   const [pedidos, setPedidos] = useState<PedidoDB[]>([])
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [disponibles, setDisponibles] = useState<string[]>([])
@@ -137,11 +140,14 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   // En días pasados se puede simular el día entero, incluidos los pedidos ya despachados
   const [simular, setSimular] = useState(false)
   const esPasado = startOfDay(dia) < startOfDay(new Date())
+  // Con cambios sin guardar en el bloque (horas, métodos, reparto), avisar antes de cambiar de día
+  const cambiarDia = (d: Date) => {
+    if (ve && rep.hayCambios && !window.confirm("Tenés cambios sin guardar del día. Si cambiás de día, se pierden. ¿Seguir?")) return
+    setDia(d)
+  }
   // Fase 2: viajes guardados, propuesta de "Ordenar el día", gerenciador y confirmación
   const ve = useFuncionesNuevas()
   const [viajesPorPedido, setViajesPorPedido] = useState<Record<string, ViajeRow[]>>({})
-  const [propuesta, setPropuesta] = useState<Record<string, ViajeRow[]> | null>(null)
-  const [guardandoPlan, setGuardandoPlan] = useState(false)
   const [gerenciar, setGerenciar] = useState<PedidoGerenciador | null>(null)
   const [confirmando, setConfirmando] = useState<string | null>(null)
   // Fase 2b: viajes del mismo día de otros pedidos (la otra planta): sus camiones están ocupados
@@ -234,7 +240,6 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     setPedidos((ps as any) || [])
     setMixers((ms as any) || [])
     setHoras({})
-    setPropuesta(null)
     if (ve) {
       const ids = ((ps as any) || []).map((p: PedidoDB) => p.id)
       const [vs, { data: ot }, tg] = await Promise.all([
@@ -328,33 +333,23 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     const h = horas[p.id]
     if (!h || !ajustaPedido(p)) return
     setGuardando(p.id)
-    const [hh, mm] = h.split(":").map(Number)
-    const llegada = new Date(dia); llegada.setHours(hh, mm, 0, 0)
-    const salida = new Date(llegada.getTime() - (p.construction_sites?.travel_time_minutes || 30) * 60000)
-    // Si la bomba estaba a la misma hora que el primer camión, se mueve con él
-    const moverBomba = "bomba_hora" in p && p.bomba_hora && new Date(p.bomba_hora).getTime() === new Date(p.scheduled_arrival_time).getTime()
-    const { error } = await createClient().from("scheduled_dispatches")
-      .update({ scheduled_arrival_time: llegada.toISOString(), scheduled_departure_time: salida.toISOString(), ...(moverBomba ? { bomba_hora: llegada.toISOString() } : {}) })
-      .eq("id", p.id)
+    const { error } = await guardarHoraPedido(createClient(), p, format(dia, "yyyy-MM-dd"), h)
     setGuardando(null)
     if (error) { toast({ title: "No se pudo guardar la hora", variant: "destructive" }); return }
-    logActivity({ action: "editar", entity: "pedido", entityId: p.id, reference: p.construction_sites?.name || null, plantId: p.plant_id, details: { "Hora de llegada": `${format(new Date(p.scheduled_arrival_time), "HH:mm")} → ${h}` } })
     // Fase 2: los viajes pendientes se corren con la hora (sin el interruptor, solo si el pedido ya tenía)
     const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: !ve, motivo: "hora de llegada" })
     if (rv.error) toast({ title: "La hora se guardó, pero los viajes no", description: rv.error, variant: "destructive" })
     else if (ve && rv.generados != null) toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
     toast({ title: "Hora actualizada", description: `${p.construction_sites?.name}: llegada ${h}` })
     cargar()
-    if (ve) rep.cargar() // el reparto vuelve a leer pedidos y viajes (sin perder lo que se está editando)
   }
 
   async function guardarMetodo(p: PedidoDB, metodo: "bomba" | "directo") {
     if (!ajustaPedido(p)) return
     const cambio = p.metodo_descarga !== metodo
     // Directo: no queda nada de bomba (solo si la base ya tiene esas columnas)
-    const limpiarBomba = metodo === "directo" && "bomba_la_pone" in p ? { bomba_la_pone: null, bomba_empresa_id: null, bomba_hora: null } : {}
-    await createClient().from("scheduled_dispatches").update({ metodo_descarga: metodo, ...limpiarBomba }).eq("id", p.id)
-    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, metodo_descarga: metodo, ...limpiarBomba } : x)))
+    const { cambios } = await guardarMetodoPedido(createClient(), p, metodo)
+    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, ...cambios } as PedidoDB : x)))
     // Fase 2: cambia la descarga, cambia el espaciado de los viajes pendientes (si el pedido ya tenía)
     if (!cambio) return
     const rv = await regenerarViajesPedido(createClient(), p.id, currentUserName(), { soloSiTiene: true, motivo: "método de descarga" })
@@ -363,77 +358,20 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       toast({ title: "Se recalcularon los viajes de este pedido", description: rv.reemplazoManual ? "Se reemplazaron horarios o camiones ajustados a mano. Quedó en Actividad." : undefined })
       setViajesPorPedido(await cargarViajes(createClient(), pedidos.map((x) => x.id)))
     }
-    if (ve) rep.cargar()
   }
 
   // ---------------- Fase 2 ----------------
   const camionesDisponibles = mixers.filter((m) => disp.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
 
-  /** "Ordenar el día": planificar() con todos los pedidos; se muestra y recién se guarda con "Guardar plan del día". */
-  function ordenarDia() {
-    // Con un reparto guardado o en edición, el mismo motor del reparto (las dos plantas y los traslados); si no, como siempre
-    // (con los pedidos, viajes y tiempos que se ven en esta pantalla, aunque los tiempos no estén guardados)
-    const conReparto = ve ? propuestaConReparto(rep, planta, {
-      pedidos: (pedidosEf as unknown as PedidoParaViajes[]).map((p) => ({ p, existentes: viajesPorPedido[p.id] || [], obra: p.construction_sites?.name || "Pedido" })),
-      prm: prmEf,
-    }) : null
-    const filas = conReparto ?? planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes).filas
-    setPropuesta(filas)
-    if (!Object.keys(filas).length) toast({ title: "No hay nada para ordenar", description: "Los pedidos del día ya están despachados o no hay camiones disponibles." })
-  }
-
-  async function guardarPlanDelDia() {
-    if (!propuesta || !editaTodo) return
-    setGuardandoPlan(true)
-    const sb = createClient()
-    const errores: string[] = []
-    let ok = 0
-    for (const [pedidoId, nuevos] of Object.entries(propuesta)) {
-      const fijos = (viajesPorPedido[pedidoId] || []).filter((v) => v.estado !== "planificado")
-      const { error } = await guardarViajes(sb, pedidoId, [...fijos, ...nuevos], currentUserName(), "plan_dia")
-      const p = pedidos.find((x) => x.id === pedidoId)
-      if (error) { errores.push(`${p?.construction_sites?.name || "pedido"}: ${error}`); continue }
-      ok++
-      const detalle: Record<string, string> = { Origen: "Plan del día", Viajes: String(nuevos.length) }
-      nuevos.slice(0, 10).forEach((v) => { detalle[`Viaje ${v.n}`] = `carga ${format(new Date(v.hora_carga), "HH:mm")} · ${v.m3} m³ · ${mixers.find((m) => m.id === v.mixer_id)?.license_plate || "sin camión"}` })
-      await logActivity({ action: "editar", entity: "pedido", entityId: pedidoId, reference: p?.construction_sites?.name || null, plantId: p?.plant_id || planta, details: detalle })
-    }
-    setGuardandoPlan(false)
-    if (errores.length) toast({ title: `Se guardaron ${ok} pedidos; ${errores.length} con error`, description: errores.join(" · "), variant: "destructive" })
-    else toast({ title: "Plan del día guardado", description: `${ok} pedido${ok === 1 ? "" : "s"} con sus viajes y camiones sugeridos` })
-    setPropuesta(null)
-    setViajesPorPedido(await cargarViajes(sb, pedidos.map((x) => x.id)))
-    if (ve) rep.cargar()
-  }
-
   async function confirmarPedido(p: PedidoDB, confirmar: boolean) {
     if (!ajustaPedido(p)) return
     setConfirmando(p.id)
-    const cambios = confirmar ? { confirmado_at: new Date().toISOString(), confirmado_por: currentUserName() } : { confirmado_at: null, confirmado_por: null }
-    const { error } = await createClient().from("scheduled_dispatches").update(cambios).eq("id", p.id)
+    const { ok, errores } = await confirmarPedidos(createClient(), [p], currentUserName(), confirmar)
     setConfirmando(null)
-    if (error) { toast({ title: "No se pudo confirmar", description: error.message, variant: "destructive" }); return }
-    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, ...cambios } : x)))
-    logActivity({ action: "editar", entity: "pedido", entityId: p.id, reference: p.construction_sites?.name || null, plantId: p.plant_id, details: { Confirmado: confirmar ? "no → sí (día anterior)" : "sí → no" } })
+    if (errores.length) { toast({ title: "No se pudo confirmar", description: errores.join(" · "), variant: "destructive" }); return }
+    setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, ...ok[0].cambios } as PedidoDB : x)))
   }
 
-  const activos = pedidos.filter((p) => p.status !== "completed")
-  const confirmados = activos.filter((p) => p.confirmado_at).length
-
-  // Demanda: con los viajes guardados (o los ideales a la hora pedida, si el pedido no tiene)
-  const demanda = useMemo(() => {
-    if (!ve) return []
-    const vs = pedidosEf.filter((p) => p.status !== "completed").flatMap((p) => {
-      const g = viajesPorPedido[p.id]
-      return g?.length ? g.filter((v) => v.estado === "planificado") : generarViajes(p as unknown as PedidoParaViajes, prmEf, [])
-    })
-    return demandaPorMediaHora(vs, dia)
-  }, [ve, pedidosEf, viajesPorPedido, prmEf, dia]) // eslint-disable-line react-hooks/exhaustive-deps
-  // +1 de aire arriba para que la línea de disponibles no quede pegada al borde
-  // Con un reparto guardado o en edición, la línea de disponibles sigue el reparto de esta planta (escalones)
-  const dispEn = (t: number) => (usaReparto ? rep.disponiblesEn(planta, t) ?? disp.length : disp.length)
-  const escalones = usaReparto && !!rep.efectivo
-  const maxDemanda = Math.max(1, disp.length, ...demanda.map((d) => d.camiones)) + 1
 
   const cambiados = Object.keys(horas).filter((id) => {
     const p = pedidos.find((x) => x.id === id)
@@ -461,16 +399,19 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     <div className="space-y-4">
       {/* Controles */}
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Con el interruptor, el bloque es de las dos plantas: la planta se elige solo para los tiempos */}
+        {!ve && (
         <Select value={planta} onValueChange={setPlanta}>
           <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
           <SelectContent>{plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
         </Select>
-        <Button variant="outline" size="icon" onClick={() => setDia(addDays(dia, -1))}><ChevronLeft className="h-4 w-4" /></Button>
+        )}
+        <Button variant="outline" size="icon" onClick={() => cambiarDia(addDays(dia, -1))}><ChevronLeft className="h-4 w-4" /></Button>
         <span className="font-semibold min-w-[200px] text-center">{tituloDia}</span>
-        <Button variant="outline" size="icon" onClick={() => setDia(addDays(dia, 1))}><ChevronRight className="h-4 w-4" /></Button>
-        <Button variant="ghost" size="sm" onClick={() => setDia(startOfDay(new Date()))}>Hoy</Button>
-        <Button variant="ghost" size="sm" onClick={() => setDia(addDays(startOfDay(new Date()), 1))}>Mañana</Button>
-        {esPasado && (
+        <Button variant="outline" size="icon" onClick={() => cambiarDia(addDays(dia, 1))}><ChevronRight className="h-4 w-4" /></Button>
+        <Button variant="ghost" size="sm" onClick={() => cambiarDia(startOfDay(new Date()))}>Hoy</Button>
+        <Button variant="ghost" size="sm" onClick={() => cambiarDia(addDays(startOfDay(new Date()), 1))}>Mañana</Button>
+        {esPasado && !ve && (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer ml-2">
             <input type="checkbox" checked={simular} onChange={(e) => setSimular(e.target.checked)} />
             Simular el día completo (incluye lo ya despachado)
@@ -479,40 +420,11 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
         <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={() => setVerSupuestos(!verSupuestos)}><Settings2 className="h-4 w-4" /> Tiempos y camiones</Button>
       </div>
 
-      {/* Fase 2: ordenar el día y confirmación (solo con el interruptor) */}
-      {ve && !cargando && pedidos.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2">
-          <NuevoBadge />
-          {editaTodo && (
-            <Button size="sm" variant="outline" className="gap-1.5 bg-background" onClick={ordenarDia} disabled={cambiados.length > 0 || camionesDisponibles.length === 0}>
-              <ListOrdered className="h-4 w-4" /> Ordenar el día
-            </Button>
-          )}
-          {editaTodo && cambiados.length > 0 && <span className="text-xs text-amber-700">Guardá las horas cambiadas antes de ordenar.</span>}
-          <span className="text-sm ml-auto flex items-center gap-1.5">
-            <ThumbsUp className="h-4 w-4 text-emerald-700" /> <strong>{confirmados}</strong> de {activos.length} pedido{activos.length === 1 ? "" : "s"} confirmado{activos.length === 1 ? "" : "s"}
-          </span>
-        </div>
-      )}
-
       {verSupuestos && (
         <Card>
           <CardContent className="p-4 space-y-4">
             {usaReparto ? (
-              <div>
-                <p className="text-sm font-medium mb-2 flex items-center gap-1.5">Camiones que salen ese día <NuevoBadge /> <span className="font-normal text-xs text-muted-foreground">(reparto de las dos plantas: se guarda con "Guardar reparto")</span></p>
-                <div className="flex gap-2 flex-wrap">
-                  {mixers.map((m) => {
-                    const enTaller = !rep.delDia.some((x) => x.id === m.id)
-                    const sale = disp.includes(m.id)
-                    return (
-                      <button key={m.id} disabled={enTaller || !editaReparto} onClick={() => rep.setSale(m.id, !sale)} className={cn("rounded-md border px-3 py-1.5 text-sm", sale ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground line-through")} title={enTaller ? "En taller o fuera de servicio" : undefined}>
-                        {m.license_plate} <span className="text-xs text-muted-foreground">{enTaller ? "taller" : `${Number(m.capacity_m3) || 8} m³`}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+              <p className="text-sm text-muted-foreground">Los camiones que salen se eligen en Camiones por planta › Editar.</p>
             ) : (
             <div>
               <p className="text-sm font-medium mb-2">Camiones disponibles ese día</p>
@@ -527,7 +439,12 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
             )}
             <div>
               <p className="text-sm font-medium mb-2">
-                Tiempos de {plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">{ve
+                Tiempos de {ve ? (
+                  <Select value={planta} onValueChange={setPlanta}>
+                    <SelectTrigger className="inline-flex h-7 w-[140px] mx-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>{plants.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                ) : plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">{ve
                   ? "(se guardan en la planta; si hay datos del GPS, los viajes usan el real y estos quedan de respaldo)"
                   : "(valores de referencia hasta medirlos con el GPS; se guardan en la planta)"}</span>
               </p>
@@ -646,9 +563,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       )}
 
       {/* Camiones por planta (con el interruptor): las dos plantas, aunque la vista esté en una */}
-      {ve && <RepartoCamiones rep={rep} dia={dia} />}
+      {ve && <RepartoCamiones rep={rep} dia={dia} onArmarViajes={(p) => setGerenciar(p as unknown as PedidoGerenciador)} onGuardado={() => cargar()} />}
 
-      {cargando ? (
+      {/* Sin el interruptor, la vista de siempre (con el interruptor, todo está en el bloque de arriba) */}
+      {!ve && (cargando ? (
         <div className="py-16 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Cargando pedidos...</div>
       ) : pedidos.length === 0 ? (
         <Card><CardContent className="py-12 text-center text-muted-foreground">No hay pedidos programados para este día en {plants.find((p) => p.id === planta)?.name}. Cargalos en la vista Semana.</CardContent></Card>
@@ -667,45 +585,6 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                 <div key={l} className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">{l}</p><p className="text-lg font-semibold">{v}</p></div>
               ))}
             </div>
-          )}
-
-          {/* Fase 2: gráfico de demanda (camiones necesarios por media hora contra los disponibles) */}
-          {ve && demanda.some((d) => d.camiones > 0) && (
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                  <p className="text-sm font-medium flex items-center gap-1.5"><BarChart3 className="h-4 w-4" /> Camiones necesarios por media hora <NuevoBadge /></p>
-                  <div className="flex gap-3 text-xs text-muted-foreground flex-wrap">
-                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-sky-500" />Necesarios</span>
-                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-500" />Faltan camiones</span>
-                    <span className="flex items-center gap-1"><span className="w-4 border-t-2 border-dashed border-slate-700" />{escalones ? "Disponibles según el reparto" : `Disponibles (${disp.length})`}</span>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <div className="min-w-[640px]">
-                    <div className="relative h-32 flex items-end gap-[3px] border-b">
-                      {!escalones && <div className="absolute inset-x-0 border-t-2 border-dashed border-slate-700 z-10 pointer-events-none" style={{ bottom: `${(disp.length / maxDemanda) * 100}%` }} />}
-                      {demanda.map((d) => {
-                        const hay = escalones ? dispEn(d.inicio) : disp.length
-                        return (
-                        <div key={d.inicio} className="relative flex-1 flex flex-col justify-end h-full" title={`${aHora(d.inicio)}–${aHora(d.inicio + 30)}: ${d.camiones} camión${d.camiones === 1 ? "" : "es"} (hay ${hay})`}>
-                          {escalones && <div className="absolute inset-x-0 border-t-2 border-dashed border-slate-700 z-10 pointer-events-none" style={{ bottom: `${(hay / maxDemanda) * 100}%` }} />}
-                          {d.camiones > 0 && <span className={cn("text-[10px] text-center leading-none mb-0.5", d.camiones > hay ? "text-red-600 font-semibold" : "text-muted-foreground")}>{d.camiones}</span>}
-                          <div className={cn("rounded-t-sm", d.camiones > hay ? "bg-red-500" : "bg-sky-500")} style={{ height: `${(d.camiones / maxDemanda) * 100}%` }} />
-                        </div>
-                        )
-                      })}
-                    </div>
-                    <div className="flex gap-[3px] text-[10px] text-muted-foreground mt-1">
-                      {demanda.map((d, i) => <span key={d.inicio} className="flex-1 text-center">{i % 2 === 0 ? aHora(d.inicio) : ""}</span>)}
-                    </div>
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Cada camión cuenta desde que carga hasta que vuelve a planta, con los viajes guardados (o a la hora pedida si el pedido no tiene viajes). Donde la barra pasa la línea faltan camiones: conviene correr un pedido o conseguir otro camión.
-                </p>
-              </CardContent>
-            </Card>
           )}
 
           {/* Pedidos: hora editable y diagnóstico */}
@@ -824,36 +703,6 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
             </CardContent>
           </Card>
 
-          {/* Fase 2: resultado de "Ordenar el día" (no se guarda solo) */}
-          {ve && propuesta && Object.keys(propuesta).length > 0 && (
-            <Card className="border-violet-300">
-              <CardContent className="p-4 space-y-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-sm font-medium flex items-center gap-1.5"><ListOrdered className="h-4 w-4" /> Plan del día propuesto <NuevoBadge /></p>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => setPropuesta(null)}>Descartar</Button>
-                    {editaTodo && <Button size="sm" onClick={guardarPlanDelDia} disabled={guardandoPlan}>{guardandoPlan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar plan del día"}</Button>}
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">Respeta la boca de carga y los camiones disponibles. Al guardar quedan los viajes y el camión sugerido de cada uno; los ya despachados no se tocan.</p>
-                <div className="divide-y">
-                  {pedidos.filter((p) => propuesta[p.id]?.length).map((p) => (
-                    <div key={p.id} className="py-2 space-y-1">
-                      <p className="text-sm font-medium flex items-center gap-2"><span className="h-3 w-3 rounded-sm shrink-0" style={{ background: colorDe(p.id) }} />{p.clients?.name} · {p.construction_sites?.name}</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {propuesta[p.id].map((v) => (
-                          <span key={v.n} className="rounded border bg-muted/40 px-2 py-0.5 text-xs">
-                            <strong>{v.n}</strong> · {v.m3} m³ · carga {format(new Date(v.hora_carga), "HH:mm")} · llega {format(new Date(v.hora_llegada), "HH:mm")} · {mixers.find((m) => m.id === v.mixer_id)?.license_plate || "sin camión"}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Grilla por camión */}
           {plan && (
             <Card>
@@ -907,13 +756,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
             </Card>
           )}
 
-          <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => { cargar(); if (ve) rep.cargar() }} reparto={usaReparto ? rep.contexto : null} />
-
           {!plan && pedidos.some((p) => p.status !== "completed") && (
             <Card><CardContent className="py-8 text-center text-muted-foreground">Elegí al menos un camión disponible en "Tiempos y camiones".</CardContent></Card>
           )}
         </>
-      )}
+      ))}
+
+      <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => { cargar(); if (ve) rep.cargar() }} reparto={usaReparto ? rep.contexto : null} />
     </div>
   )
 }

@@ -16,7 +16,7 @@
  */
 import { planificar, aMin, aHora, type Parametros, type Camion, type Ocupado, type Pedido, type Plan } from "@/lib/planificador"
 import {
-  entradaPedido, pedidoParaPlan, filasDelPlan, explicarFlota, choquesDeCamion, textoConMenosCamiones,
+  entradaPedido, pedidoParaPlan, filasDelPlan, explicarFlota, choquesDeCamion, textoConMenosCamiones, viajeMinDe, conBombaDe,
   type PedidoParaViajes, type ViajeRow,
 } from "@/lib/viajes"
 
@@ -794,6 +794,72 @@ export function estadoPedido(r: ResultadoPedido): { aTiempo: boolean; texto: str
   return { aTiempo: false, texto, jornada }
 }
 
+/** "HH:MM" de una hora ISO en hora de Argentina (UTC−3 fijo, sin horario de verano desde 2009): igual en el navegador y en el servidor */
+export function horaArgentina(iso: string) {
+  const d = new Date(new Date(iso).getTime() - 3 * 3600_000)
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+}
+
+/** Una fila por pedido: la misma para la tabla de la pantalla, el mail y el resumen para WhatsApp (3.2) */
+export type FilaPedido = {
+  id: string
+  nombre: string
+  cliente: string | null
+  planta: string
+  plantId: string
+  /** Llegada del primer camión a la obra y salida de planta (HH:MM) */
+  llegada: string
+  sale: string
+  metodo: "bomba" | "directo"
+  m3: number
+  viajes: number
+  camiones: { n: number; patentes: string[] }
+  /** Primera carga del armado y fin de la descarga del último viaje (HH:MM) */
+  comienza: string | null
+  termina: string | null
+  aTiempo: boolean
+  /** Minutos tarde contra el ideal; 0 a tiempo o con solo cortes; null sin camión */
+  atrasoMin: number | null
+  estado: string
+  jornada: string | null
+  confirmado: boolean
+}
+
+/**
+ * Las filas de los pedidos pendientes, en el orden del armado (primera carga). `pedidos` = los del día como los usa el
+ * motor (con los ajustes de hora y método y los tiempos del GPS).
+ */
+export function filasPedidos(resultado: ResultadoDia, pedidos: (PedidoParaViajes & { clients?: { name?: string | null } | null; confirmado_at?: string | null })[], plantas: PlantaReparto[], patentes: Record<string, string>): FilaPedido[] {
+  return resultado.pedidos.flatMap((r) => {
+    const p = pedidos.find((x) => x.id === r.id)
+    if (!p) return []
+    const llegadaMs = new Date(p.scheduled_arrival_time).getTime()
+    const e = estadoPedido(r)
+    const cargas = r.viajes.map((v) => v.inicioCarga)
+    return [{
+      id: r.id, nombre: nombreVisible(r.obra), cliente: p.clients?.name ? nombreVisible(p.clients.name) : null,
+      planta: plantas.find((x) => x.id === r.plantId)?.nombre || "", plantId: r.plantId,
+      llegada: horaArgentina(p.scheduled_arrival_time), sale: horaArgentina(new Date(llegadaMs - viajeMinDe(p) * MIN).toISOString()),
+      metodo: conBombaDe(p) ? "bomba" : "directo", m3: Number(p.quantity_m3),
+      viajes: r.viajes.length, camiones: { n: r.camiones.length, patentes: r.camiones.map((id) => patentes[id] || id) },
+      comienza: cargas.length ? hora(Math.min(...cargas)) : null,
+      termina: r.viajes.length ? hora(r.medida.fin) : null,
+      aTiempo: e.aTiempo,
+      atrasoMin: !r.viajes.length ? null : e.aTiempo ? 0 : Math.max(0, Math.round(r.medida.demora)),
+      estado: e.texto, jornada: e.jornada, confirmado: !!p.confirmado_at,
+    }]
+  })
+}
+
+/** "3 pedidos · 140 m³ · 17 viajes · primera carga 07:00 · última vuelta 18:33" */
+export function resumenNumeros(resultado: ResultadoDia, filas: FilaPedido[]) {
+  const vs = resultado.viajes.filter((v) => !v.fijo)
+  const m3 = filas.reduce((s, f) => s + f.m3, 0)
+  const partes = [`${filas.length} ${filas.length === 1 ? "pedido" : "pedidos"}`, `${m3.toLocaleString("es-AR")} m³`, `${vs.length} ${vs.length === 1 ? "viaje" : "viajes"}`]
+  if (vs.length) partes.push(`primera carga ${hora(Math.min(...vs.map((v) => v.inicioCarga)))}`, `última vuelta ${hora(Math.max(...vs.map((v) => v.vuelta)))}`)
+  return partes.join(" · ")
+}
+
 export const PREFIJO_ESCENARIO = "escenario-"
 export const esFicticio = (id: string) => id.startsWith(PREFIJO_ESCENARIO)
 export type Escenario = { extra: number; resultado: ResultadoDia; camiones: CamionReparto[]; ficticios: CamionReparto[] }
@@ -901,7 +967,11 @@ export function lineaTraslados(res: ResultadoDia, conteo: { dia: number; noche: 
   return [...evs, ...arr, cuenta].join(" · ")
 }
 
-export type BloqueDiagrama = { tipo: "viaje" | "traslado"; desde: number; hasta: number; plantId: string; texto: string; pedidoId?: string }
+export type BloqueDiagrama = {
+  tipo: "viaje" | "traslado"; desde: number; hasta: number; plantId: string; texto: string; pedidoId?: string
+  /** Para el tooltip: "carga 07:00 · sale 07:15 · llega 07:45 · termina 08:15 · vuelve 08:45" */
+  detalle: string
+}
 export type FilaDiagrama = { camionId: string; patente: string; ficticio: boolean; bloques: BloqueDiagrama[] }
 
 /**
@@ -910,8 +980,11 @@ export type FilaDiagrama = { camionId: string; patente: string; ficticio: boolea
  */
 export function bloquesDiagrama(res: ResultadoDia, camiones: CamionReparto[], nombres: Record<string, string>, obraDe: (pedidoId: string) => string): FilaDiagrama[] {
   return camiones.map((c) => {
-    const viajes = res.viajes.filter((v) => v.camionId === c.id).map((v): BloqueDiagrama => ({ tipo: "viaje", desde: v.inicioCarga, hasta: v.vuelta, plantId: v.plantId, texto: obraDe(v.pedidoId), pedidoId: v.pedidoId }))
-    const tras = res.traslados.filter((t) => t.camionId === c.id).map((t): BloqueDiagrama => ({ tipo: "traslado", desde: t.sale, hasta: t.llega, plantId: t.a, texto: `→ ${nombres[t.a] || "otra planta"}` }))
+    const viajes = res.viajes.filter((v) => v.camionId === c.id).map((v): BloqueDiagrama => ({
+      tipo: "viaje", desde: v.inicioCarga, hasta: v.vuelta, plantId: v.plantId, texto: obraDe(v.pedidoId), pedidoId: v.pedidoId,
+      detalle: `carga ${hora(v.inicioCarga)} · sale ${hora(v.salida)} · llega ${hora(v.llegada)} · termina ${hora(v.finDescarga)} · vuelve ${hora(v.vuelta)}`,
+    }))
+    const tras = res.traslados.filter((t) => t.camionId === c.id).map((t): BloqueDiagrama => ({ tipo: "traslado", desde: t.sale, hasta: t.llega, plantId: t.a, texto: `→ ${nombres[t.a] || "otra planta"}`, detalle: `sale ${hora(t.sale)} · llega ${hora(t.llega)}` }))
     return { camionId: c.id, patente: c.patente, ficticio: esFicticio(c.id), bloques: [...viajes, ...tras].sort((a, b) => a.desde - b.desde) }
   })
 }

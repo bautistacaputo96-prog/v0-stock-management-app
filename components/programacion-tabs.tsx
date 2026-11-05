@@ -15,7 +15,18 @@ type Plant = { id: string; name: string }
 
 export function ProgramacionTabs({ plants }: { plants: Plant[] }) {
   const [vista, setVista] = useState<"semana" | "dia">("semana")
-  useEffect(() => { try { const v = localStorage.getItem("programacion-vista"); if (v === "dia" || v === "semana") setVista(v) } catch {} }, [])
+  // Link del mail: /programacion?vista=dia&fecha=AAAA-MM-DD abre la vista Día en esa fecha (gana a la vista guardada)
+  const [fecha, setFecha] = useState<string | null>(null)
+  useEffect(() => {
+    let desdeLink = false
+    try {
+      const q = new URLSearchParams(window.location.search)
+      const f = q.get("fecha")
+      if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) setFecha(f)
+      if (q.get("vista") === "dia") { setVista("dia"); desdeLink = true }
+    } catch {}
+    if (!desdeLink) try { const v = localStorage.getItem("programacion-vista"); if (v === "dia" || v === "semana") setVista(v) } catch {}
+  }, [])
   const cambiar = (v: string) => { setVista(v as any); try { localStorage.setItem("programacion-vista", v) } catch {} }
   return (
     <div className="space-y-4">
@@ -25,7 +36,7 @@ export function ProgramacionTabs({ plants }: { plants: Plant[] }) {
           <TabsTrigger value="dia" className="gap-1.5"><CalendarClock className="h-4 w-4" /> Día · ordenar camiones</TabsTrigger>
         </TabsList>
       </Tabs>
-      {vista === "semana" ? <DispatchScheduling plants={plants as any} /> : <ProgramacionDia plants={plants} />}
+      {vista === "semana" ? <DispatchScheduling plants={plants as any} /> : <ProgramacionDia key={fecha || "manana"} plants={plants} fechaInicial={fecha} />}
       <AcopiosBloque />
     </div>
   )
