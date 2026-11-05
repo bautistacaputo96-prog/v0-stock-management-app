@@ -2,7 +2,8 @@
  * Mail del armado del día siguiente (docs/specs/2026-11-05-dia-unificado-y-mail.md, 4.1).
  *
  *   GET  la pasada: pg_cron cada 5 min (job armado-dia-pasada) y, de respaldo, el cron de Vercel a las 17:05 de
- *        Argentina. De 06:00 a 16:59 termina enseguida. Solo con el Bearer del cron.
+ *        Argentina. De 06:00 a 16:59 termina enseguida. Solo con el Bearer del cron y solo en producción (en el
+ *        preview responde sin hacer nada).
  *   POST { fecha, accion: "ver" | "enviar" } con sesión: "Ver el mail" (programacion.ver; no manda ni escribe) y
  *        "Enviar ahora" (programacion.editar). Fuera de producción, "Enviar ahora" manda solo a Bautista con
  *        "[PRUEBA]" y no escribe nada. En el modo prueba local, "Ver el mail" anda sin GPS y "Enviar" no.
@@ -12,7 +13,7 @@ import { exigirSesion, modoPruebaLocal, respuestaModoLocal, respuestaError, sbSe
 import { esLlamadaDeCron } from "@/lib/cron"
 import { puedeCon } from "@/lib/permisos"
 import { pasada, verMail, enviarAhora } from "@/lib/armado-dia-servidor"
-import { validarFechaResumen } from "@/lib/armado-dia"
+import { validarFechaResumen, pasadaPermitida, puedeEnviarFecha } from "@/lib/armado-dia"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -21,6 +22,8 @@ export async function GET(req: Request) {
   if (modoPruebaLocal()) return respuestaModoLocal()
   try {
     if (!esLlamadaDeCron(req)) return NextResponse.json({ error: "Solo el cron." }, { status: 401 })
+    // Fuera de producción (preview) la pasada no hace nada: ni toma el GPS ni manda mails ni escribe
+    if (!pasadaPermitida(process.env.VERCEL_ENV)) return NextResponse.json({ ok: true, motivo: "fuera de producción: la pasada no corre" })
     return NextResponse.json(await pasada(sbServicio(), Date.now()))
   } catch (e) {
     return respuestaError(e)
@@ -45,6 +48,7 @@ export async function POST(req: Request) {
       return NextResponse.json(await verMail(sbServicio(), f.fecha, { gps: !local, prueba }))
     }
     if (!puedeCon(usuario, "programacion", "editar")) return NextResponse.json({ error: "Mandar el mail del armado es de quien programa (programacion.editar)." }, { status: 403 })
+    if (!puedeEnviarFecha(f.fecha, Date.now())) return NextResponse.json({ error: "Solo se manda el armado de hoy o de los días que vienen." }, { status: 400 })
     const res = await enviarAhora(sbServicio(), f.fecha, usuario.name, { prueba })
     return NextResponse.json({ ...res, prueba }, { status: res.ok ? 200 : 502 })
   } catch (e) {

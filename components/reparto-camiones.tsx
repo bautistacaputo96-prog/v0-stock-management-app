@@ -30,6 +30,7 @@ import { choquesDeCamion, claveViaje, conTiemposGps, m3ParaSugerir, parametrosCo
 import { cargarEmpresasBombeo, textoBomba, bombaSinEmpresa, type EmpresaBombeo } from "@/lib/maestros"
 import { textoMotivo } from "@/lib/despacho"
 import { guardarHoraPedido, guardarMetodoPedido, guardarPlanDia, confirmarPedidos, planGuardarYConfirmar, type PlanGuardar } from "@/lib/programacion-acciones"
+import { regenerarViajesPedido } from "@/lib/viajes"
 import { textoEstadoMail, MAIL_ARMADO_A, MAIL_ARMADO_CC, type EstadoMail } from "@/lib/armado-dia"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { format } from "date-fns"
@@ -71,12 +72,15 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
   const cargar = useCallback(async (limpiar = false) => {
     if (!activo || !clavePlantas) return
     setCargando(true)
-    const d = await leerDatosDia(createClient(), fechaDia, plants)
-    setDatos(d)
-    const f = d.traslado.fila
-    setTrasladoForm({ minutos: f ? String(f.minutos) : "", km: f?.km != null ? String(f.km) : "", litros: f?.litros != null ? String(f.litros) : "" })
-    if (limpiar) { setEdicion(null); setAjustes({}) }
-    setCargando(false)
+    try {
+      const d = await leerDatosDia(createClient(), fechaDia, plants)
+      setDatos(d)
+      const f = d.traslado.fila
+      setTrasladoForm({ minutos: f ? String(f.minutos) : "", km: f?.km != null ? String(f.km) : "", litros: f?.litros != null ? String(f.litros) : "" })
+      if (limpiar) { setEdicion(null); setAjustes({}) }
+    } finally {
+      setCargando(false)
+    }
   }, [activo, clavePlantas, fechaDia]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { cargar(true) }, [cargar])
 
@@ -190,7 +194,9 @@ export function useRepartoDia({ dia, plants, activo }: { dia: Date; plants: Plan
 
   const nAjustes = { horas: Object.values(ajustes).filter((a) => a.hora).length, metodos: Object.values(ajustes).filter((a) => a.metodo).length }
   return {
-    vista, datos, fechaDia, ajustes, nAjustes, hayCambios: !!edicion || nAjustes.horas + nAjustes.metodos > 0,
+    vista, datos, fechaDia, ajustes, nAjustes,
+    /** El día con otras opciones (por ejemplo, rearmando también los viajes ajustados a mano) */
+    armarCon: (o: { rearmarManuales?: boolean }) => (datos && listo ? armarVistaDia(datos, { ajustes, edicion, ruta, ...o }) : null), hayCambios: !!edicion || nAjustes.horas + nAjustes.metodos > 0,
     entrada: vista?.entrada || null, obraDe: vista?.obraDe || ((id: string) => id), activo, cargando, listo,
     disponible: !!guardado?.disponible, guardado, plantas, nombres, patentes, camiones, delDia,
     traslado, trasladoFila, ruta, trasladoForm, setTrasladoForm, trasladoCambiado, trasladoValido, guardarTrasladoForm,
@@ -232,6 +238,8 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
   const [verEditor, setVerEditor] = useState(false)
   const [abierto, setAbierto] = useState<string | null>(null)
   const [plan, setPlan] = useState<PlanGuardar | null>(null)
+  // El tilde del cartel: rearmar también los viajes ajustados a mano (destildado por defecto)
+  const [rearmarManuales, setRearmarManuales] = useState(false)
   const [trabajando, setTrabajando] = useState(false)
   const [empresas, setEmpresas] = useState<EmpresaBombeo[]>([])
   // Mail del armado (fase B): "Ver el mail" y "Enviar ahora"
@@ -298,14 +306,49 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
     else toast({ title: "Reparto guardado", description: "Lo ven las dos plantas, desde cualquier computadora. Quedó en Actividad." })
   }
 
-  function abrirGuardarYConfirmar() {
+  /** El plan de "Guardar y confirmar"; con `rearmar`, los ajustados a mano también se rearman (el motor los vuelve a armar) */
+  function abrirGuardarYConfirmar(rearmar = false) {
+    const vr = rearmar && v!.manuales.length ? rep.armarCon({ rearmarManuales: true }) || v! : v!
     const p = planGuardarYConfirmar({
-      tituloDia, ajustes, resultado: base, viajesGuardados: rep.datos?.viajes || {}, vigente: v!.vigente, guardado: rep.guardado?.reparto || null,
-      repartoDisponible: rep.disponible, origen: mismoReparto(v!.vigente, v!.sugerido) ? "sugerido" : "a_mano",
+      tituloDia, ajustes, resultado: vr.resultado, viajesGuardados: rep.datos?.viajes || {}, vigente: vr.vigente, guardado: rep.guardado?.reparto || null,
+      repartoDisponible: rep.disponible, origen: mismoReparto(vr.vigente, vr.sugerido) ? "sugerido" : "a_mano",
       pedidos: (rep.datos?.pedidosHoy || []).map((x) => ({ ...x, nombre: nombrePedido(x) } as any)),
-      puedeAjustar: (x) => ajustaPedido(x),
+      puedeAjustar: (x) => ajustaPedido(x), manuales: v!.manuales, rearmarManuales: rearmar,
     })
+    setRearmarManuales(rearmar)
     setPlan(p)
+  }
+
+  /** Quien solo carga pedidos (programacion.cargar): guarda la hora y el método de sus filas y rearma esos viajes, como el Guardar de siempre */
+  async function guardarMisFilas() {
+    setTrabajando(true)
+    const sb = createClient()
+    const usuario = currentUserName()
+    const hechos: string[] = [], fallas: string[] = []
+    try {
+      for (const [id, a] of Object.entries(ajustes)) {
+        const orig = original(id)
+        if (!orig || !ajustaPedido(orig)) continue
+        const nombre = nombrePedido(orig)
+        if (a.hora) {
+          const { error } = await guardarHoraPedido(sb, orig, rep.fechaDia, a.hora)
+          if (error) { fallas.push(`${nombre} (hora): ${error}`); continue }
+        }
+        if (a.metodo) {
+          const { error } = await guardarMetodoPedido(sb, orig, a.metodo, true)
+          if (error) { fallas.push(`${nombre} (método): ${error}`); continue }
+        }
+        const rv = await regenerarViajesPedido(sb, id, usuario, { soloSiTiene: true, motivo: [a.hora ? "hora de llegada" : "", a.metodo ? "método de descarga" : ""].filter(Boolean).join(" y ") })
+        if (rv.error) fallas.push(`${nombre} (viajes): ${rv.error}`)
+        hechos.push(nombre)
+      }
+    } finally {
+      setTrabajando(false)
+    }
+    if (fallas.length) toast({ title: "Se guardó solo una parte", description: `Guardado: ${hechos.join(", ") || "nada"}. No se guardó: ${fallas.join(" · ")}`, variant: "destructive" })
+    else toast({ title: "Cambios guardados", description: hechos.join(", ") })
+    await rep.cargar(true)
+    onGuardado?.()
   }
 
   async function guardarYConfirmar() {
@@ -436,8 +479,13 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
               )}
               {editaReparto && <Button size="sm" variant="outline" disabled={!!esc} onClick={() => setVerEditor(!verEditor)}>{verEditor ? "Cerrar edición" : "Editar"}</Button>}
               {editaReparto && !esc && rep.hayCambios && <Button size="sm" variant="ghost" onClick={rep.descartar}>Descartar</Button>}
+              {!editaTodo && puede("programacion", "cargar") && Object.keys(ajustes).some((id) => { const o = original(id); return !!o && ajustaPedido(o) }) && (
+                <Button size="sm" onClick={guardarMisFilas} disabled={!!esc || trabajando} title="Guarda la hora y el método de tus pedidos cambiados">
+                  {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar"}
+                </Button>
+              )}
               {editaTodo ? (
-                <Button size="sm" onClick={abrirGuardarYConfirmar} disabled={!!esc || trabajando || sinPedidos} title={esc ? TEXTO_ESCENARIO : undefined}>
+                <Button size="sm" onClick={() => abrirGuardarYConfirmar(false)} disabled={!!esc || trabajando || sinPedidos} title={esc ? TEXTO_ESCENARIO : undefined}>
                   {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar y confirmar"}
                 </Button>
               ) : editaReparto && rep.disponible ? (
@@ -718,6 +766,15 @@ export function RepartoCamiones({ rep, dia, onArmarViajes, onGuardado }: {
                     </div>
                   )}
                   <p>{plan?.texto}</p>
+                  {!!plan?.manuales.length && (
+                    <div className="rounded border px-2 py-1 text-xs space-y-1">
+                      <p><strong>Viajes ajustados a mano: se dejan como están</strong> ({plan.manuales.map((x) => x.nombre).join(", ")}).</p>
+                      <label className="flex items-center gap-1.5">
+                        <input type="checkbox" checked={rearmarManuales} disabled={trabajando} onChange={(ev) => abrirGuardarYConfirmar(ev.target.checked)} />
+                        Rearmarlos también
+                      </label>
+                    </div>
+                  )}
                 </div>
               </AlertDialogDescription>
             </AlertDialogHeader>

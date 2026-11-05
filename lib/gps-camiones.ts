@@ -28,6 +28,12 @@ export type CamionGps = {
   despacho: { id: string; remito: any; m3: any; salida: string; minutos_desde_salida: number | null; cliente: string | null; obra: { id: string; nombre: string; lat: number | null; lng: number | null } | null } | null
 }
 
+/** 00:00 de hoy en Argentina (UTC−3 fijo), como ISO */
+export function inicioHoyAR(ahora: number) {
+  const fecha = new Date(ahora - 3 * 3600_000).toISOString().slice(0, 10)
+  return new Date(`${fecha}T00:00:00-03:00`).toISOString()
+}
+
 /**
  * `soloLectura`: no guarda el vínculo patente ↔ unidad (modo prueba local, mail en el preview).
  * Devuelve además, aparte de la respuesta de siempre, la planta del último despacho de hoy de cada camión.
@@ -37,8 +43,8 @@ export async function leerPosicionesCamiones(sb: SupabaseClient, opts: { soloLec
   const unidades = await posiciones()
   if (!unidades) return { conectado: false, camiones: [], plantaUltimoDespacho: {} }
 
-  const hoy = new Date()
-  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
+  // "Hoy" es el día de Argentina (el servidor corre en UTC: a las 22:00 de Argentina ya es mañana en UTC)
+  const inicio = inicioHoyAR(Date.now())
   const [{ data: plantas }, { data: mixers }, { data: despachos }] = await Promise.all([
     sb.from("plants").select("id, name, gps_lat, gps_lng"),
     sb.from("mixers").select("id, license_plate, gps_unit_id"),

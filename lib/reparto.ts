@@ -86,6 +86,11 @@ export type EntradaDia = {
   reglas?: ReglasReparto
   /** Para revisar a mano (pruebas): camiones como máximo por pedido, sin buscar otra combinación */
   topesFijos?: Record<string, number>
+  /**
+   * Pedidos que no se rearman (viajes ajustados a mano en el gerenciador): quedan con sus viajes guardados, que van
+   * también en `fijos` para que ocupen a sus camiones y la boca.
+   */
+  fijados?: Set<string>
 }
 
 export type Medida = { fin: number; finIdeal: number; cortes: number[]; maxCorte: number; demora: number }
@@ -331,6 +336,24 @@ function prepararPedidos(ent: EntradaDia, reglas: ReglasReparto): Info[] {
 
 type Parcial = Omit<ResultadoPedido, "estado" | "texto" | "cedeA" | "sinArreglo">
 
+/** Un pedido que no se rearma: sus viajes pendientes guardados, tal cual, medidos contra el ideal */
+function pedidoFijado(x: Info, ent: EntradaDia, reglas: ReglasReparto): Parcial {
+  const m = (iso: string) => (new Date(iso).getTime() - ent.base) / MIN
+  const propios = x.pr.existentes.filter((v) => v.estado === "planificado").sort((a, b) => m(a.hora_llegada) - m(b.hora_llegada))
+  const vs: ViajeDia[] = propios.map((v, i) => ({
+    pedidoId: x.ped.id, plantId: x.plantId, camionId: v.mixer_id || "", n: v.n, m3: Number(v.m3),
+    inicioCarga: m(v.hora_carga), salida: m(v.hora_salida), llegada: m(v.hora_llegada), finDescarga: m(v.hora_fin_descarga), vuelta: m(v.hora_vuelta),
+    esperaObra: i ? Math.max(0, Math.round(m(v.hora_llegada) - m(propios[i - 1].hora_fin_descarga))) : 0, fijo: true,
+  }))
+  const medida = medir(vs, x.finIdeal)
+  return {
+    id: x.ped.id, plantId: x.plantId, obra: x.pr.obra, conBomba: x.ped.conBomba, necesarios: x.min.necesarios, flotaIdeal: x.min.flotaIdeal, ritmo: x.min.ritmo,
+    primeraCargaIdeal: x.primeraCarga, ultimaVueltaIdeal: x.ultimaVuelta, finJornada: aMin(x.prm.finJornada),
+    viajes: vs, filas: [], camiones: [...new Set(vs.map((v) => v.camionId).filter(Boolean))], medida,
+    alcanza: vs.length > 0 && alcanza(medida, x.ped.conBomba, reglas), traslados: 0, alternativa: null,
+  }
+}
+
 /** Pasos 2 (un solo armado): cada pedido con los camiones más baratos; `topes` = camiones como máximo (paso 3). */
 function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>, reglas: ReglasReparto) {
   const ctx: Ctx = { plantas: new Map(ent.plantas.map((p) => [p.id, p])), traslado: ent.traslado, reparto: ent.reparto || null }
@@ -338,6 +361,7 @@ function armarUnaVez(ent: EntradaDia, infos: Info[], topes: Map<string, number>,
   const viajes: ViajeDia[] = (ent.fijos || []).map((v) => viajeDeFila(v, ent.base, plantDe)).filter((v): v is ViajeDia => !!v)
   const res: Parcial[] = []
   for (const x of infos) {
+    if (ent.fijados?.has(x.ped.id)) { res.push(pedidoFijado(x, ent, reglas)); continue }
     const espAca = esperaDe(ctx.plantas.get(x.plantId))
     // (a) los que ya están en la planta; (b) el que puede cargar antes; (c) el usado más tarde; (d) patente
     const orden = ent.camiones
@@ -442,7 +466,7 @@ export function armarDia(ent: EntradaDia): ResultadoDia {
   for (let it = 0; it < (ent.topesFijos ? 0 : 30); it++) {
     let mejor: { topes: Map<string, number>; r: typeof r; costo: number[]; quitado: Parcial } | null = null
     for (const x of r.res) {
-      if (x.camiones.length < 2) continue
+      if (x.camiones.length < 2 || ent.fijados?.has(x.id)) continue
       const nuevos = new Map(topes).set(x.id, x.camiones.length - 1)
       const r2 = armarUnaVez(ent, infos, nuevos, reglas)
       const c2 = costoDia(r2.res, r2.viajes, ent.camiones)

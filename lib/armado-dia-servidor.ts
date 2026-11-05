@@ -13,7 +13,7 @@ import { escenarioConMas, cargarReparto } from "@/lib/reparto"
 import { leerPosicionesCamiones, type CamionGps } from "@/lib/gps-camiones"
 import { mailsPorNombre, enviarMail } from "@/lib/mail-servidor"
 import {
-  REGLAS_MAIL_ARMADO, MAIL_ARMADO_A, MAIL_ARMADO_CC, MAIL_ARMADO_PRUEBA, FROM_ARMADO, fechaObjetivo, tomaPendiente, decidirEnvio,
+  REGLAS_MAIL_ARMADO, MAIL_ARMADO_A, MAIL_ARMADO_CC, MAIL_ARMADO_PRUEBA, FROM_ARMADO, fechaObjetivo, tomaPendiente, decidirEnvio, guardarToma,
   amanecerDe, contenidoArmado, huellaDe, cambiosEntre, destinatarios, armarMailArmado, datosMailDeVista, estadoVacio, relojAR, sumarDias,
   type EstadoMail, type Amanecer, type ContenidoArmado, type Desaparecido,
 } from "@/lib/armado-dia"
@@ -31,7 +31,12 @@ async function leerEstado(sb: Sb, fecha: string): Promise<EstadoMail> {
   return data ? { ...estadoVacio(fecha), ...(data as any) } : estadoVacio(fecha)
 }
 async function guardarEstado(sb: Sb, fecha: string, cambios: Record<string, unknown>) {
-  await sb.from("armado_mail").update({ ...cambios, updated_at: new Date().toISOString() }).eq("fecha", fecha)
+  const { error } = await sb.from("armado_mail").update({ ...cambios, updated_at: new Date().toISOString() }).eq("fecha", fecha)
+  if (error) throw new Error(`No se pudo guardar el estado del mail: ${error.message || error}`)
+}
+/** Suelta la reserva sin tapar el error de la pasada si falla */
+async function soltar(sb: Sb, fecha: string) {
+  try { await guardarEstado(sb, fecha, { enviando_hasta: null }) } catch { /* la reserva vence sola a los 2 min */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -40,8 +45,8 @@ async function guardarEstado(sb: Sb, fecha: string, cambios: Record<string, unkn
 export type TomaGps = { amanecer: Amanecer[]; gpsCaido: boolean; hora: string }
 
 /**
- * Lee el GPS y decide dónde arranca cada camión el día `fecha`. `guardar`: reemplaza las filas de amanecer_camiones
- * de esa fecha (la pasada y "Enviar ahora" en producción; nunca el resumen ni el preview).
+ * Lee el GPS y decide dónde arranca cada camión el día `fecha`. `guardar`: guarda las filas en amanecer_camiones (solo
+ * en las tomas programadas de las 17:00 y las 20:00, y solo si el GPS respondió: si Wialon está caído no se pisa nada).
  */
 export async function tomarGps(sb: Sb, fecha: string, opts: { guardar: boolean; ahora?: number }): Promise<TomaGps> {
   const ahora = opts.ahora ?? Date.now()
@@ -63,11 +68,12 @@ export async function tomarGps(sb: Sb, fecha: string, opts: { guardar: boolean; 
       ultimoDespachoPlanta: gps?.plantaUltimoDespacho[m.id] ?? null,
     })
   })
-  if (opts.guardar) {
-    const { error } = await sb.from("amanecer_camiones").delete().eq("fecha", fecha)
-    if (!error && amanecer.length) {
-      await sb.from("amanecer_camiones").insert(amanecer.map((a) => ({ fecha, ...a, tomado_at: new Date(ahora).toISOString() })))
-    }
+  if (opts.guardar && !gpsCaido && amanecer.length) {
+    // Upsert (nunca queda vacía a mitad de camino) y después se sacan los camiones que ya no están activos
+    const { error } = await sb.from("amanecer_camiones").upsert(amanecer.map((a) => ({ fecha, ...a, tomado_at: new Date(ahora).toISOString() })), { onConflict: "fecha,mixer_id" })
+    if (error) throw new Error(`No se pudo guardar dónde amanecen los camiones: ${error.message || error}`)
+    const ids = amanecer.map((a) => a.mixer_id)
+    await sb.from("amanecer_camiones").delete().eq("fecha", fecha).not("mixer_id", "in", `(${ids.join(",")})`)
   }
   return { amanecer, gpsCaido, hora: aHora(relojAR(ahora).min) }
 }
@@ -170,21 +176,23 @@ export async function pasada(sb: Sb, ahora: number = Date.now()): Promise<Record
     let gps: TomaGps | null = null
     if (toma) {
       gps = await tomarGps(sb, fecha, { guardar: true, ahora })
-      await guardarEstado(sb, fecha, toma === "primera" ? { toma_gps_at: new Date(ahora).toISOString() } : { toma_gps_2_at: new Date(ahora).toISOString() })
+      // Con el GPS caído la toma no cuenta como hecha: la pasada siguiente reintenta
+      if (guardarToma(toma, gps.gpsCaido)) await guardarEstado(sb, fecha, toma === "primera" ? { toma_gps_at: new Date(ahora).toISOString() } : { toma_gps_2_at: new Date(ahora).toISOString() })
     }
     const { datos, vista } = await vistaCon(sb, fecha, gps)
     const huella = huellaDe(contenidoArmado(vista, guardadoDe(datos)))
     const d = decidirEnvio(estado, ahora, huella, vista.filas.length > 0)
     if (d.anotarVista) await guardarEstado(sb, fecha, { huella_vista: huella, vista_desde: new Date(ahora).toISOString() })
     if (d.accion !== "enviar") return { ok: true, fecha, accion: d.accion, motivo: d.motivo }
-    // Antes de mandar, el GPS de nuevo (a la noche ya dice más) y el mail con +1/+2
-    const gps2 = await tomarGps(sb, fecha, { guardar: true, ahora })
-    const v2 = await vistaCon(sb, fecha, gps2)
-    const m = await armarMail(sb, v2.datos, v2.vista, { estado, tipo: d.tipo!, prueba: false, toma: gps2, ahora })
+    // Al mandar no se vuelve a tomar el GPS: se usa lo de esta pasada o lo guardado (una actualización no pisa una
+    // toma mejor); si no hay nada guardado, el GPS en el momento, sin guardarlo
+    const toma2 = gps || (datos.amanecer?.length ? null : await tomarGps(sb, fecha, { guardar: false, ahora }))
+    const v2 = toma2 && toma2 !== gps ? await vistaCon(sb, fecha, toma2) : { datos, vista }
+    const m = await armarMail(sb, v2.datos, v2.vista, { estado, tipo: d.tipo!, prueba: false, toma: toma2, ahora })
     const r = await mandarYAnotar(sb, fecha, estado, m, ahora)
     return { ok: r.ok, fecha, accion: "enviar", tipo: d.tipo, error: r.error }
   } finally {
-    await guardarEstado(sb, fecha, { enviando_hasta: null })
+    await soltar(sb, fecha)
   }
 }
 
@@ -219,9 +227,10 @@ export async function enviarAhora(sb: Sb, fecha: string, usuario: string, opts: 
   if (!mia) return { ok: false, error: "Se está mandando el mail de este día en este momento. Probá en un minuto." }
   try {
     const estado = await leerEstado(sb, fecha)
-    const toma = await tomarGps(sb, fecha, { guardar: true, ahora })
-    if (!estado.toma_gps_at) await guardarEstado(sb, fecha, { toma_gps_at: new Date(ahora).toISOString() })
-    const { datos, vista } = await vistaCon(sb, fecha, toma)
+    // Lo guardado de la toma programada; si todavía no hay, el GPS en el momento sin guardarlo
+    const datos0 = await leerDatosDia(sb, fecha, await plantasDe(sb))
+    const toma = datos0.amanecer?.length ? null : await tomarGps(sb, fecha, { guardar: false, ahora })
+    const { datos, vista } = toma ? await vistaCon(sb, fecha, toma) : { datos: datos0, vista: armarVistaDia(datos0) }
     const m = await armarMail(sb, datos, vista, { estado, tipo: estado.envios > 0 ? "actualizacion" : "dia", prueba: false, toma, ahora })
     const r = await mandarYAnotar(sb, fecha, estado, m, ahora)
     if (r.ok) {
@@ -232,7 +241,7 @@ export async function enviarAhora(sb: Sb, fecha: string, usuario: string, opts: 
     }
     return { ...r, a: r.ok ? [...m.to, ...m.cc] : undefined }
   } finally {
-    await guardarEstado(sb, fecha, { enviando_hasta: null })
+    await soltar(sb, fecha)
   }
 }
 

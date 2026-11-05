@@ -109,6 +109,8 @@ export type PlanGuardar = {
   reparto: { reparto: Reparto; origen: "sugerido" | "a_mano" } | null
   viajes: { pedido: { id: string; plant_id: string; nombre: string }; existentes: ViajeRow[]; nuevos: ViajeRow[] }[]
   confirmar: PedidoAccion[]
+  /** Pedidos con viajes ajustados a mano (gerenciador): se dejan como están salvo que se pida rearmarlos */
+  manuales: { id: string; nombre: string }[]
   /** "Guardar y confirmar el jueves 05/11." */
   titulo: string
   /** "Se guarda el reparto de las dos plantas, los viajes de 3 pedidos y se confirman 2 (Santa Rita, Pampero)." */
@@ -133,14 +135,25 @@ export function planGuardarYConfirmar(args: {
   repartoDisponible: boolean
   origen: "sugerido" | "a_mano"
   puedeAjustar: (p: PedidoAccion) => boolean
+  /** Pedidos con viajes ajustados a mano (gerenciador) */
+  manuales?: string[]
+  /** El tilde del cartel: rearmar también los ajustados a mano (`resultado` tiene que venir rearmándolos) */
+  rearmarManuales?: boolean
 }): PlanGuardar {
   const { pedidos, ajustes } = args
   const horas = pedidos.flatMap((p) => (ajustes[p.id]?.hora && args.puedeAjustar(p) ? [{ pedido: p, hora: ajustes[p.id].hora! }] : []))
   const metodos = pedidos.flatMap((p) => (ajustes[p.id]?.metodo && args.puedeAjustar(p) && ajustes[p.id].metodo !== p.metodo_descarga ? [{ pedido: p, metodo: ajustes[p.id].metodo! }] : []))
   const reparto = args.repartoDisponible && args.vigente && !mismoReparto(args.vigente, args.guardado) ? { reparto: args.vigente, origen: args.origen } : null
+  const manuales = new Set(args.manuales || [])
+  // Solo los pedidos cuyos viajes cambian (los que quedan igual no se regraban ni dejan Actividad); los ajustados a mano,
+  // solo con el tilde
   const viajes = args.resultado.pedidos.flatMap((r) => {
     const p = pedidos.find((x) => x.id === r.id)
-    return p && r.filas.length ? [{ pedido: { id: p.id, plant_id: p.plant_id, nombre: p.nombre }, existentes: args.viajesGuardados[p.id] || [], nuevos: r.filas }] : []
+    if (!p || !r.filas.length) return []
+    if (manuales.has(p.id) && !args.rearmarManuales) return []
+    const existentes = args.viajesGuardados[p.id] || []
+    if (mismosViajes(existentes.filter((v) => v.estado === "planificado"), r.filas)) return []
+    return [{ pedido: { id: p.id, plant_id: p.plant_id, nombre: p.nombre }, existentes, nuevos: r.filas }]
   })
   const confirmar = pedidos.filter((p) => !p.confirmado_at && !p.suspendido_at && p.status !== "completed" && p.status !== "cancelled" && args.puedeAjustar(p))
   const partes: string[] = []
@@ -151,5 +164,21 @@ export function planGuardarYConfirmar(args: {
   const texto = partes.length
     ? `Se guarda ${lista(partes)}${conf ? ` y ${conf}` : ""}.`
     : conf ? `${conf.charAt(0).toUpperCase()}${conf.slice(1)}.` : "No hay nada para guardar ni confirmar."
-  return { horas, metodos, reparto, viajes, confirmar, titulo: `Guardar y confirmar el ${args.tituloDia}.`, texto }
+  return {
+    horas, metodos, reparto, viajes, confirmar, titulo: `Guardar y confirmar el ${args.tituloDia}.`, texto,
+    manuales: pedidos.filter((p) => manuales.has(p.id)).map((p) => ({ id: p.id, nombre: p.nombre })),
+  }
+}
+
+/** ¿Los viajes pendientes guardados son los mismos que los nuevos? (número, m³, horas y camión) */
+export function mismosViajes(guardados: ViajeRow[], nuevos: ViajeRow[]) {
+  if (guardados.length !== nuevos.length) return false
+  const ord = (vs: ViajeRow[]) => [...vs].sort((a, b) => a.n - b.n)
+  const t = (iso: string) => new Date(iso).getTime()
+  const a = ord(guardados), b = ord(nuevos)
+  return a.every((x, i) => {
+    const y = b[i]
+    return x.n === y.n && Number(x.m3) === Number(y.m3) && (x.mixer_id || null) === (y.mixer_id || null)
+      && (["hora_carga", "hora_salida", "hora_llegada", "hora_fin_descarga", "hora_vuelta"] as const).every((k) => t(x[k]) === t(y[k]))
+  })
 }

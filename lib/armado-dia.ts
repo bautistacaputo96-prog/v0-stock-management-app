@@ -93,6 +93,15 @@ export function tomaPendiente(e: EstadoMail, ahora: number): "primera" | "segund
   return null
 }
 
+/** La toma se guarda en amanecer_camiones solo si es una de las programadas (17:00, 20:00) y el GPS respondió */
+export const guardarToma = (toma: "primera" | "segunda" | null, gpsCaido: boolean) => !!toma && !gpsCaido
+
+/** La pasada del cron corre solo en producción (en el preview y en local responde sin hacer nada) */
+export const pasadaPermitida = (vercelEnv: string | null | undefined) => vercelEnv === "production"
+
+/** "Enviar ahora": solo el armado de hoy o de días que vienen (hora de Argentina) */
+export const puedeEnviarFecha = (fecha: string, ahora: number) => fecha >= relojAR(ahora).fecha
+
 export type Decision = { accion: "nada" | "esperar" | "enviar"; tipo?: "dia" | "actualizacion"; anotarVista: boolean; motivo: string }
 
 /**
@@ -231,7 +240,9 @@ function fnv1a(s: string) {
 /** La huella del armado: cambia si cambia algo que se ve en el mail (no con la hora de armado ni el orden) */
 export function huellaDe(c: ContenidoArmado) {
   const porId = <T extends { id: string }>(xs: T[]) => [...xs].sort((a, b) => a.id.localeCompare(b.id))
-  return fnv1a(estable({ ...c, pedidos: porId(c.pedidos), arranque: porId(c.arranque), diagrama: [...c.diagrama].sort((a, b) => a.patente.localeCompare(b.patente)) }))
+  // El 👍 no cuenta: confirmar un pedido no dispara una actualización
+  const pedidos = porId(c.pedidos).map(({ confirmado: _c, ...p }) => p)
+  return fnv1a(estable({ ...c, pedidos, arranque: porId(c.arranque), diagrama: [...c.diagrama].sort((a, b) => a.patente.localeCompare(b.patente)) }))
 }
 
 /** Lo que pasó con un pedido que estaba en el mail anterior y ya no está */

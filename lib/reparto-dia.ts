@@ -101,6 +101,13 @@ export async function leerDatosDia(sb: any, fecha: string, plants: { id: string;
   return { fecha, base, plants, plantRows: (pls as any[]) || [], mixers: ((ms as any[]) || []) as MixerDia[], pedidosHoy, pedidosManana, viajes, tiempos, guardado, ayer, traslado, amanecer: (amanecer as AmanecerFila[] | null) || null, armadoMail: armadoMail || null }
 }
 
+/** Pedidos pendientes con viajes pendientes ajustados a mano en el gerenciador (origen "gerenciador") */
+export function pedidosManuales(d: Pick<DatosDia, "pedidosHoy" | "viajes">): string[] {
+  return d.pedidosHoy
+    .filter((p) => p.status !== "completed" && p.status !== "cancelled" && (d.viajes[p.id] || []).some((v) => v.estado === "planificado" && v.origen === "gerenciador"))
+    .map((p) => p.id)
+}
+
 /** El pedido con la hora y el método cambiados en la pantalla (sin guardar) */
 export function aplicarAjustes<P extends PedidoDia>(p: P, a: AjustesPedidos[string] | undefined, fecha: string): P {
   if (!a) return p
@@ -140,6 +147,10 @@ export type VistaDia = {
   filas: FilaPedido[]
   numeros: string
   obraDe: (pedidoId: string) => string
+  /** Pedidos con viajes ajustados a mano (gerenciador) */
+  manuales: string[]
+  /** ¿Se armó rearmando también los manuales? */
+  rearmaManuales: boolean
 }
 
 /**
@@ -147,7 +158,7 @@ export type VistaDia = {
  * `ruta` = la ruta del mapa entre las plantas (respaldo del traslado); `amanece` = dónde arranca cada camión (si no
  * viene, donde durmió según el reparto del día anterior).
  */
-export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edicion?: Reparto | null; ruta?: { minutos: number; km: number } | null; amanece?: Record<string, string | null> } = {}): VistaDia {
+export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edicion?: Reparto | null; ruta?: { minutos: number; km: number } | null; amanece?: Record<string, string | null>; rearmarManuales?: boolean } = {}): VistaDia {
   const { fecha, base } = d
   const plantas: PlantaReparto[] = d.plants.map((p) => {
     const row = d.plantRows.find((x) => x.id === p.id)
@@ -174,8 +185,11 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
     .filter((p) => prmDe(p.plant_id))
     .map((p) => ({ p: conTiemposGps(p, prmDe(p.plant_id)!, d.tiempos), existentes: d.viajes[p.id] || [], obra: nombreVisible(p.construction_sites?.name) || "Pedido" }))
   const pedidosR = aPedidos(pedidos)
-  const fijos = d.pedidosHoy.flatMap((p) => (d.viajes[p.id] || []).filter((v) => v.estado === "despachado"))
-  const entrada: EntradaDia = { base, plantas, camiones, pedidos: pedidosR, traslado, fijos }
+  // Viajes ajustados a mano en el gerenciador: no se rearman (salvo que se pida); sus viajes pendientes ocupan a sus camiones
+  const manuales = pedidosManuales(d)
+  const fijados = opts.rearmarManuales ? new Set<string>() : new Set(manuales)
+  const fijos = d.pedidosHoy.flatMap((p) => (d.viajes[p.id] || []).filter((v) => v.estado === "despachado" || (fijados.has(p.id) && v.estado === "planificado")))
+  const entrada: EntradaDia = { base, plantas, camiones, pedidos: pedidosR, traslado, fijos, fijados }
   const sugerencia = armarDia(entrada)
   const man = aPedidos(d.pedidosManana)
   const noche = dondeDuermen(sugerencia, camiones, plantas, man.length ? { base: base + DIA_MS, plantas, pedidos: man, traslado } : null)
@@ -210,5 +224,6 @@ export function armarVistaDia(d: DatosDia, opts: { ajustes?: AjustesPedidos; edi
   return {
     fecha, base, plantas, nombres, patentes, traslado, amanece, fuenteAmanece, delDia, camiones, noSalen, pedidos, entrada, sugerencia,
     noche, sugerido, efectivo, vigente, resultado, referencia, avisos, contexto, filas, numeros: resumenNumeros(resultado, filas), obraDe,
+    manuales, rearmaManuales: !!opts.rearmarManuales,
   }
 }
