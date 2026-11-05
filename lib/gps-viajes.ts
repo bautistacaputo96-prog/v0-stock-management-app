@@ -831,9 +831,9 @@ export const TIEMPOS_GPS = {
    */
   minViajesObra: 3,
   /**
-   * La ida y el tiempo en obra de una obra se usan con viajes (de los que quedan) de al menos estos días distintos
-   * (un solo día puede ser raro). Excepción para la ida: si quedan minViajesObra viajes parecidos o más de un solo
-   * día, se devuelve marcada `unDia` y lib/viajes.ts la usa solo si la obra tiene el viaje por defecto (30).
+   * La ida y el tiempo en obra de una obra se usan con viajes válidos (antes de descartar atípicos) de al menos estos días distintos
+   * (un solo día puede ser raro). Excepción para la ida: si son de un solo día y quedan minViajesObra viajes parecidos o más,
+   * se devuelve marcada `unDia` y lib/viajes.ts la usa solo si la obra tiene el viaje por defecto (30).
    */
   minDiasObra: 2,
   /** Planta: tiempo en planta y descarga directa / con bomba (decisión de Bautista 08/10: la de bomba de Canning se usa con 18) */
@@ -843,6 +843,13 @@ export const TIEMPOS_GPS = {
   // Menos de 8 min no es una descarga: el GPS no vio bien la parada (pavimentos, el camión avanza descargando)
   obra: [8, 240] as [number, number],
   m3: [0.01, 15] as [number, number],
+  /**
+   * Descarga para un camión de X m³ (descargaParaM3): si hay al menos minViajesM3Parecidos viajes con m³ a ±m3Parecidos
+   * de X, la mediana de sus minutos; si no, la de todos los viajes, sin escalar (la descarga tiene una parte fija:
+   * posicionarse, armar la bomba, lavar; llevarla en proporción a los m³ infla los camiones chicos).
+   */
+  m3Parecidos: 1.5,
+  minViajesM3Parecidos: 5,
   /** m³ sugeridos: al menos esta parte de los viajes a ±1 m³ de la mediana ("patrón claro") */
   parteM3Parecidos: 2 / 3,
   /**
@@ -875,15 +882,19 @@ export type FilaTiemposGps = {
 }
 /**
  * Valor típico (mediana sin los atípicos) y de cuántos viajes válidos sale. `descartados` (solo si hay) = cuántos de
- * esos viajes se dejaron afuera por atípicos. `unDia` (solo ida de una obra) = los que quedan son todos de un día.
+ * esos viajes se dejaron afuera por atípicos. `unDia` (solo ida de una obra) = los viajes válidos son todos de un día.
  */
 export type MedidaGps = { min: number; viajes: number; descartados?: number; unDia?: true }
+/** Un viaje válido para la descarga: minutos en obra y m³ del remito. */
+export type MuestraObraGps = { min: number; m3: number }
 /**
- * Tiempo en obra (mediana) junto con los m³ típicos (mediana) de esos mismos viajes y cuántos fueron con bomba / directo.
- * `minPorM3` = mediana de los minutos en obra por m³, viaje por viaje (sin los atípicos): con eso se lleva la descarga
- * a 8 m³ (lib/viajes.ts descarga8DeObra), así no depende de en qué grupo de m³ cae la mediana de los m³.
+ * Tiempo en obra típico de todos los viajes (mediana sin los atípicos), los m³ típicos (mediana) de esos mismos viajes
+ * y cuántos fueron con bomba / directo. `muestras` = los viajes válidos (antes de descartar), para calcular la descarga
+ * de un camión de otros m³ con los viajes parecidos (descargaParaM3).
  */
-export type MedidaObraGps = MedidaGps & { m3: number; minPorM3: number; bomba?: number; directo?: number }
+export type MedidaObraGps = MedidaGps & { m3: number; bomba?: number; directo?: number; muestras?: MuestraObraGps[] }
+/** Descarga de un camión de `m3` m³: minutos (con el lavado) y de qué viajes sale; parecidos = de los de m³ parecidos. */
+export type DescargaGps = { min: number; m3: number; viajes: number; descartados?: number; parecidos: boolean }
 export type M3SugeridoGps = { m3: number; viajes: number; desde: number; hasta: number }
 export type TiemposObraGps = {
   /** Ida real por planta de salida (la ida depende de la planta) */
@@ -907,8 +918,8 @@ function sinAtipicos(v: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number |
 const conDescartados = <T extends MedidaGps>(m: T, descartados: number): T => (descartados > 0 ? { ...m, descartados } : m)
 
 /**
- * Valor típico de un tramo (mediana sin los atípicos) con un mínimo de viajes válidos y de días (contados en los que
- * quedan); nula si no alcanza. Con `unDia`, si los que quedan son de un solo día pero son minViajes o más, se
+ * Valor típico de un tramo (mediana sin los atípicos) con un mínimo de viajes válidos y de días (los dos contados en
+ * los viajes válidos, antes de descartar atípicos); nula si no alcanza. Con `unDia`, si son de un solo día pero quedan minViajes o más, se
  * devuelve igual marcada (ver TIEMPOS_GPS.minDiasObra).
  */
 function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | null, lim: [number, number], minViajes: number, minDias = 1, unDia = false): MedidaGps | null {
@@ -916,26 +927,39 @@ function medida(fs: FilaTiemposGps[], valor: (f: FilaTiemposGps) => number | nul
   if (v.length < minViajes) return null
   const s = sinAtipicos(v, valor)
   const m = conDescartados({ min: Math.round(s.valor), viajes: v.length }, s.descartados)
-  if (dias(s.quedan) >= minDias) return m
+  if (dias(v) >= minDias) return m
   return unDia && s.quedan.length >= minViajes ? { ...m, unDia: true } : null
 }
 /**
- * Tiempo en obra de los viajes que tienen tiempo en obra y m³ válidos. Los atípicos se buscan en los minutos por m³ de
- * cada viaje; de los que quedan salen los minutos por m³ (mediana), el tiempo en obra y los m³ típicos y los métodos.
+ * Tiempo en obra de los viajes que tienen tiempo en obra y m³ válidos (mínimo de viajes y de días contados en los
+ * válidos). Los atípicos se buscan en los minutos; de los que quedan salen el tiempo típico, los m³ típicos y los métodos.
  */
 function medidaObra(fs: FilaTiemposGps[], P: ReglasTiemposGps, minViajes: number, minDias = 1): MedidaObraGps | null {
   const v = fs.filter((f) => dentro(f.min_obra, P.obra) && dentro(f.m3, P.m3))
-  if (v.length < minViajes) return null
-  const s = sinAtipicos(v, (f) => f.min_obra! / f.m3!)
-  if (dias(s.quedan) < minDias) return null
+  if (v.length < minViajes || dias(v) < minDias) return null
+  const s = sinAtipicos(v, (f) => f.min_obra)
   const bomba = s.quedan.filter((f) => f.metodo === "bomba").length
-  return conDescartados(
-    {
-      min: Math.round(mediana(s.quedan.map((f) => f.min_obra!))!), viajes: v.length, m3: r1(mediana(s.quedan.map((f) => f.m3!))!),
-      minPorM3: Math.round(s.valor * 100) / 100, bomba, directo: s.quedan.length - bomba,
-    },
-    s.descartados,
-  )
+  return {
+    ...conDescartados(
+      { min: Math.round(s.valor), viajes: v.length, m3: r1(mediana(s.quedan.map((f) => f.m3!))!), bomba, directo: s.quedan.length - bomba },
+      s.descartados,
+    ),
+    muestras: v.map((f) => ({ min: f.min_obra!, m3: f.m3! })),
+  }
+}
+
+/**
+ * Descarga (minutos en obra, con el lavado) de un camión de `m3` m³ con una medida de obra o de planta: con
+ * minViajesM3Parecidos viajes o más a ±m3Parecidos m³, la mediana sin atípicos de esos; si no, el tiempo típico de
+ * todos los viajes, sin escalar. Sin `muestras` (medida armada a mano) usa el tiempo típico.
+ */
+export function descargaParaM3(o: MedidaObraGps, m3: number, P: ReglasTiemposGps = TIEMPOS_GPS): DescargaGps {
+  const cerca = (o.muestras || []).filter((x) => Math.abs(x.m3 - m3) <= P.m3Parecidos + 1e-9)
+  if (cerca.length >= P.minViajesM3Parecidos) {
+    const t = valoresTipicos(cerca.map((x) => x.min))
+    return { min: Math.round(t.valor!), m3, viajes: cerca.length, ...(t.descartadas ? { descartados: t.descartadas } : {}), parecidos: true }
+  }
+  return { min: o.min, m3, viajes: o.viajes, ...(o.descartados ? { descartados: o.descartados } : {}), parecidos: false }
 }
 /** m³ por camión con un patrón claro: mediana redondeada a 0,5 y la mayoría a ±1 m³ de ella. */
 export function m3Sugerido(m3s: (number | null | undefined)[], P: ReglasTiemposGps = TIEMPOS_GPS): M3SugeridoGps | null {

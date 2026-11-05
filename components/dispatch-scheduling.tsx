@@ -1409,6 +1409,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                       {tiemposAuto && (
                         <p className="text-[11px] text-muted-foreground">
                           Se usa: {parseInt(form.descarga_min) > 0 ? `${parseInt(form.descarga_min)} min · cargado a mano` : `${tiemposAuto.descarga.min} min · ${textoFuente(tiemposAuto.descarga)}`}
+                          {!(parseInt(form.descarga_min) > 0) && tiemposAuto.descarga.porCamion.m3 !== 8 ? ` (≈ ${tiemposAuto.descarga.porCamion.min} min por camión de ${tiemposAuto.descarga.porCamion.m3.toLocaleString("es-AR")} m³)` : ""}
                         </p>
                       )}
                     </div>

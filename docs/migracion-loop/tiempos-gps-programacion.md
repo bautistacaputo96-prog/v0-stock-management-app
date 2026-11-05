@@ -48,8 +48,8 @@ De `viajes_gps`:
 - **atípicos (05/11/2026, `valoresTipicos`)**: antes de la mediana se descartan los valores atípicos. Con 5 viajes
   o más, los que están a más de 3 × 1,4826 × MAD de la mediana (piso: 1 min o el 10 % de la mediana, para cuando la
   MAD da 0). Con 3 o 4, como mucho uno: el que está a más de 4 veces (o menos de 1/4) la mediana de los otros, si los
-  otros son parecidos entre sí. Los descartados cuentan para el mínimo de viajes pero no para el número, ni para los
-  días, los m³ típicos o bomba/directo. Las pantallas dicen "real GPS · 3 viajes (1 descartado)". Caso: SANTA RITA
+  otros son parecidos entre sí. Los descartados cuentan para el mínimo de viajes y para los días, pero no para el
+  número, los m³ típicos o bomba/directo. Las pantallas dicen "real GPS · 3 viajes (1 descartado)". Caso: SANTA RITA
   (enfrente de Canning), idas 105 / 3,8 / 4,8 → 4 min.
 
 Valores absurdos que se descartan, tramo por tramo:
@@ -96,11 +96,14 @@ cuando vuelve a planta. La descarga se guarda **por camión de 8 m³** y cada vi
 
    `descarga por 8 m³ = (tiempo en obra − lavado de la planta) × 8 ÷ m³ típicos de la obra`, mínimo 5.
 
-   **Desde el 05/11/2026** se calcula con los **minutos por m³ de cada viaje** (`min_obra ÷ m³`): mediana sin los
-   atípicos (buscados sobre esos valores) × 8, menos el lavado × 8 ÷ m³ típicos. Vale para la descarga de la obra y
-   para la directa / con bomba de la planta. Así no depende de en qué grupo de m³ cae la mediana de los m³ (la bomba
-   de Canning saltaba de 31 a 39 según un viaje). Las pantallas dicen "≈ X min por 8 m³". Ojo: supone que la
-   descarga es proporcional a los m³; los camiones con pocos m³ (que tardan más por m³) la suben.
+   **Desde el 05/11/2026 (`descargaParaM3`), sin escalar en proporción a los m³** (la descarga tiene una parte fija:
+   posicionarse, armar la bomba, lavar). Para un camión de X m³ (los m³ por camión del pedido; 8 para los parámetros
+   de la planta): si hay **5 viajes o más con m³ a ±1,5 de X**, la mediana sin atípicos de sus minutos; si no, el
+   tiempo típico de todos los viajes, sin escalar. Vale para la obra y para la directa / con bomba de la planta (un
+   pedido de 3 m³ sin descarga de obra usa la de la planta para 3 m³). El motor guarda la descarga "por 8 m³" y la
+   reparte por los m³ de cada viaje: se le pasa (tiempo − lavado) × 8 ÷ X, así el camión del pedido recibe justo el
+   tiempo medido. Las pantallas dicen "≈ 45 min por camión de 8 m³ · 28 viajes".
+   **Días y mínimo de viajes** se cuentan sobre los viajes válidos, antes de descartar atípicos.
 
    Con el lavado en 0 (decisión de Bautista), todo el tiempo en obra cuenta como descarga.
    CORDONES: 78 × 8 ÷ 3 ≈ 208 min por 8 m³; con 3 m³ por camión da 78 en obra.

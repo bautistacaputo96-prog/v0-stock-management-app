@@ -34,7 +34,7 @@ import { cargarViajes, generarViajes, guardarViajes, planDelDia, demandaPorMedia
 import { type Ocupado } from "@/lib/planificador"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
 import { descargaPropiaDe, parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoTiempos, textoDescargaObra, m3ParaSugerir } from "@/lib/viajes"
-import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
+import { cargarTiemposGps, descargaParaM3, type TiemposGps } from "@/lib/gps-viajes"
 import { addDays, format, startOfDay } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -247,12 +247,15 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     [ve, pedidos, prmEf, tiempos],
   )
   const gpsPlanta = ve && tiempos ? tiempos.plantas[planta] || null : null
+  // Descarga real de la planta para un camión de 8 m³ (viajes con m³ parecidos o, si no hay, todos)
+  const descDirecta = gpsPlanta?.directo ? descargaParaM3(gpsPlanta.directo, 8) : null
+  const descBomba = gpsPlanta?.bomba ? descargaParaM3(gpsPlanta.bomba, 8) : null
   // Tiempos reales de la planta: lo del GPS (sin lo corregido a mano) y lo que se usa, con su fuente
   const prmGpsSolo = useMemo(() => parametrosConGps({ ...prm, aMano: {} }, planta, tiempos), [prm, planta, tiempos])
   const filasReales = ([
     ["esperaPlantaMin", "Espera en planta (después de volver, antes de cargar)", gpsPlanta?.enPlanta ?? null, 0, 0],
-    ["descargaDirectaMin", "Descarga directa (8 m³)", gpsPlanta?.directo ?? null, prm.descargaDirectaMin, 1],
-    ["descargaBombaMin", "Descarga con bomba (8 m³)", gpsPlanta?.bomba ?? null, prm.descargaBombaMin, 1],
+    ["descargaDirectaMin", "Descarga directa (8 m³)", descDirecta, prm.descargaDirectaMin, 1],
+    ["descargaBombaMin", "Descarga con bomba (8 m³)", descBomba, prm.descargaBombaMin, 1],
   ] as const).map(([k, l, medidaGps, base, minimo]) => {
     const aMano = prm.aMano?.[k]
     const viajesGps = medidaGps ? medidaGps.viajes : null
@@ -506,8 +509,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   {gpsPlanta?.enPlanta && (
                     <p>En planta, de que llega a que sale (sin el primer viaje del día): <strong>{gpsPlanta.enPlanta.min} min</strong>. En los viajes cuenta como carga {prm.cargaMin} (ocupa la boca, es el campo de arriba) + espera antes de volver a cargar (no ocupa la boca).</p>
                   )}
-                  {gpsPlanta?.directo && <p>Directo: el camión está {gpsPlanta.directo.min} min en obra con {gpsPlanta.directo.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.directo)}){prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → ≈ {prmGpsSolo.descargaDirectaMin} min por 8 m³.</p>}
-                  {gpsPlanta?.bomba && <p>Con bomba: {gpsPlanta.bomba.min} min en obra con {gpsPlanta.bomba.m3.toLocaleString("es-AR")} m³ ({textoViajesGps(gpsPlanta.bomba)}){prm.lavadoMin > 0 ? `, menos ${prm.lavadoMin} de lavado` : ""} → ≈ {prmGpsSolo.descargaBombaMin} min por 8 m³.</p>}
+                  {descDirecta && <p>Directo: ≈ {prmGpsSolo.descargaDirectaMin} min por camión de 8 m³ · {textoViajesGps(descDirecta)}{descDirecta.parecidos ? "" : " (de todos los viajes: pocos con 8 m³)"}{prm.lavadoMin > 0 ? ` (sin los ${prm.lavadoMin} de lavado)` : ""}.</p>}
+                  {descBomba && <p>Con bomba: ≈ {prmGpsSolo.descargaBombaMin} min por camión de 8 m³ · {textoViajesGps(descBomba)}{descBomba.parecidos ? "" : " (de todos los viajes: pocos con 8 m³)"}{prm.lavadoMin > 0 ? ` (sin los ${prm.lavadoMin} de lavado)` : ""}.</p>}
                   <div className="divide-y rounded border bg-background">
                     {filasReales.map((f) => (
                       <div key={f.k} className="flex items-center gap-2 flex-wrap px-2 py-1.5">
