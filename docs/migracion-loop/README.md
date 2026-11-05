@@ -120,6 +120,7 @@ Tomadas el 29/09/2026 (segunda tanda):
 
 | Fecha | Fase | Qué pasó |
 |---|---|---|
+| 05/11/2026 | Camiones por planta | **Fases 1 y 2 programadas por el obrero** en `feat/camiones-por-planta` ([especificación](../specs/2026-11-04-camiones-por-planta.md)): motor `lib/reparto.ts` (pasos 1 a 5 sobre `planificar()`), bloque "Camiones por planta" en la vista Día, traslado en "Tiempos y camiones", "Ordenar el día" y la línea de disponibles con el reparto, "Tenés N camiones asignados" en el gerenciador. Migración `202611041900_reparto_camiones.sql` **sin aplicar** (sin ella todo sigue como en main). Decisiones provisorias mientras Bautista contesta el punto 11: umbrales recomendados, traslado 60 min o ruta del mapa "a confirmar", duermen en cualquier planta, editan `programacion.editar` y `despacho.cargar`, criterio de menos traslados. `test:reparto` 21/21. Fase 3 pendiente. |
 | 29/09/2026 | — | Relevamiento de Loop e inventario de Rebucret. Propuesta de fases. |
 | 29/09/2026 | 0 | Bautista aprueba empezar por la Fase 0. Se escribe `fase-0.md` (0a errores, 0b motor de despacho, 0d migraciones). |
 | 05–06/10/2026 | — | Aviso por mail de stock en 0 (publicado). PELQUE cargada. Fase 2 (+2b, buscador Google) **publicada 06/10**. Fase 4a (tiempos reales GPS con KPIs y detalle) **publicada 06/10**; carga del historial desde 01/09/2025 en curso. Definiciones de la 0c cerradas. |

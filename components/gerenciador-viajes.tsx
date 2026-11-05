@@ -13,6 +13,10 @@
  * Tiempos reales del GPS: la propuesta, "Agregar viaje" y el cambio de m³ usan la ida y la descarga reales de la
  * obra y el tiempo en planta real (docs/migracion-loop/tiempos-gps-programacion.md); arriba se dice de dónde sale
  * cada número.
+ * Camiones por planta (fase 2 de docs/specs/2026-11-04-camiones-por-planta.md): desde la vista Día llega el reparto
+ * (`reparto`); arriba del Gantt, "Tenés N camiones asignados para este pedido", y al sacar o poner un camión se
+ * recalcula el cronograma con esos camiones (lib/reparto.ts → cronogramaConCamiones), sin grabar. Sin `reparto`
+ * (vista Semana, sin el interruptor) todo sigue como antes.
  */
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -33,6 +37,7 @@ import {
   parametrosConGps, conTiemposGps, tiemposDelPedido, textoTiempos, textoDescargaObra, m3ParaSugerir,
 } from "@/lib/viajes"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
+import { cronogramaConCamiones, camionesParaPedido, textoCronograma, avisosCronograma, type ContextoReparto } from "@/lib/reparto"
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -51,13 +56,15 @@ type Mixer = { id: string; license_plate: string }
 const hh = (iso: string) => format(new Date(iso), "HH:mm")
 const MIN = 60_000
 
-export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEditarPedido }: {
+export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEditarPedido, reparto }: {
   pedido: PedidoGerenciador | null
   open: boolean
   onOpenChange: (v: boolean) => void
   onGuardado?: () => void
   /** Fase 2b: desde la grilla de Semana se abre el gerenciador; desde acá se puede ir al pedido */
   onEditarPedido?: () => void
+  /** Camiones por planta (vista Día, con el interruptor): el reparto del día y los viajes de los otros pedidos */
+  reparto?: ContextoReparto | null
 }) {
   const { toast } = useToast()
   const { ajustaPedido } = usePermisos()
@@ -76,6 +83,8 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const [m3Texto, setM3Texto] = useState<Record<number, string>>({})
   // Fase 2b (D): viajes de otros pedidos del mismo día (cualquier planta: los camiones son compartidos)
   const [otros, setOtros] = useState<(ViajeRow & { obra?: string })[]>([])
+  // Camiones asignados a este pedido (solo con el reparto); null = sin reparto, como antes
+  const [elegidos, setElegidos] = useState<string[] | null>(null)
 
   useEffect(() => {
     if (!open || !pedido) return
@@ -106,8 +115,14 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
       setEmpresas(emps)
       setOriginal(existentes)
       setM3Texto({})
+      // Con el reparto: los camiones de los viajes pendientes guardados o, si no tiene, los que eligió la sugerencia
+      const pendientesCam = [...new Set(existentes.filter((v) => v.estado === "planificado" && v.mixer_id).map((v) => v.mixer_id!))]
+      const asignados = reparto ? (pendientesCam.length ? pendientesCam : reparto.sugeridos[pedido.id] || []) : null
+      setElegidos(asignados)
       if (existentes.length === 0 && pedido.status !== "completed" && pedido.status !== "cancelled") {
-        setViajes(generarViajes(conTiemposGps(pedido, p, tg), p, []))
+        const conTiempos = conTiemposGps(pedido, p, tg)
+        const crono = reparto && asignados?.length ? cronogramaConCamiones(reparto, conTiempos, p, [], asignados) : null
+        setViajes(crono ? crono.filas : generarViajes(conTiempos, p, []))
         setSinGuardar(true)
       } else {
         setViajes(existentes)
@@ -116,7 +131,7 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
       setCargando(false)
     })()
     return () => { vivo = false }
-  }, [open, pedido])
+  }, [open, pedido]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const ordenados = useMemo(() => ordenarPorN(viajes.filter((v) => v.estado !== "cancelado")), [viajes])
   const total = totalViajes(viajes)
@@ -142,6 +157,35 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
   const flota = ped ? explicarFlota(ped, prm, total) : null
   const descObra = td ? textoDescargaObra(td) : null
   const sugM3 = td && pedido ? m3ParaSugerir(td, pedido.m3_por_viaje) : null
+
+  // Camiones por planta: el cronograma con los camiones elegidos y cuáles se ofrecen (los que el reparto tiene en
+  // esta planta a esa hora)
+  const crono = useMemo(() => (reparto && ped && elegidos ? cronogramaConCamiones(reparto, ped, prm, original, elegidos) : null), [reparto, ped, prm, original, elegidos])
+  const ofrecidos = useMemo(() => {
+    if (!reparto || !crono || !pedido) return []
+    const m = (iso: string) => (new Date(iso).getTime() - reparto.base) / MIN
+    const cargas = crono.idealFilas.map((v) => m(v.hora_carga))
+    if (!cargas.length) return []
+    return camionesParaPedido(reparto, pedido.plant_id, Math.min(...cargas), Math.max(...cargas))
+  }, [reparto, crono, pedido])
+  const otroCamion = crono && elegidos ? ofrecidos.find((c) => c.ofrecido && !elegidos.includes(c.id)) : undefined
+  const conUnoMas = useMemo(() => {
+    if (!crono || !otroCamion || !reparto) return null
+    const extra = reparto.camiones.find((c) => c.id === otroCamion.id)
+    if (!extra) return null
+    const { plan } = crono.probar([...crono.elegidos, extra])
+    return plan.viajes.length ? { n: new Set(plan.viajes.map((v) => v.camionId)).size, fin: Math.max(...plan.viajes.map((v) => v.finDescarga)) } : null
+  }, [crono, otroCamion, reparto])
+  function alternarCamion(id: string) {
+    if (!reparto || !ped || !elegidos) return
+    const nuevos = elegidos.includes(id) ? elegidos.filter((x) => x !== id) : [...elegidos, id]
+    setElegidos(nuevos)
+    const c = cronogramaConCamiones(reparto, ped, prm, original, nuevos)
+    if (!c) return
+    // Se recalcula el cronograma (sin grabar): los despachados quedan, los pendientes salen de los camiones elegidos
+    setViajes((vs) => [...vs.filter((v) => v.estado !== "planificado"), ...c.filas])
+    setM3Texto({})
+  }
 
   // Escala horaria del Gantt
   const t0 = ordenados.length ? Math.floor(Math.min(...ordenados.map((v) => new Date(v.hora_carga).getTime())) / (60 * MIN)) * 60 * MIN : 0
@@ -241,6 +285,38 @@ export function GerenciadorViajes({ pedido, open, onOpenChange, onGuardado, onEd
               {faltan < -0.01 && <span className="text-xs text-amber-700">Sobran {Math.abs(faltan)} m³ planificados: quitá un viaje o bajá los m³.</span>}
               {faltan > 0.01 && <span className="text-xs text-amber-700">Faltan {faltan} m³ por planificar.</span>}
             </div>
+            )}
+
+            {/* Camiones por planta (fase 2): con cuántos camiones se arma este pedido */}
+            {reparto && crono && elegidos && (
+              <div className="rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-1.5">
+                <p className="flex items-center gap-1.5 flex-wrap">
+                  <strong className="text-sm">Tenés {elegidos.length} {elegidos.length === 1 ? "camión asignado" : "camiones asignados"} para este pedido:</strong>
+                  {ofrecidos.map((c) => (
+                    <Button key={c.id} size="sm" variant="outline" disabled={soloLectura || !c.ofrecido} title={c.motivo || undefined}
+                      onClick={() => alternarCamion(c.id)}
+                      className={cn("h-6 px-2 text-[11px]", elegidos.includes(c.id) ? "border-primary bg-primary/10 font-semibold" : "text-muted-foreground", !c.ofrecido && "opacity-60")}>
+                      {c.patente}{!c.ofrecido && c.motivo ? ` · ${c.motivo}` : ""}
+                    </Button>
+                  ))}
+                  <NuevoBadge />
+                </p>
+                <p className="text-muted-foreground">Tocá un camión para sacarlo o ponerlo: el cronograma se recalcula sin grabar. Para usar otro camión, cambialo en Camiones por planta.</p>
+                {elegidos.length > 0 && <p className="font-medium">{textoCronograma(elegidos.length, crono.medida, conUnoMas)}</p>}
+                {avisosCronograma(crono, pedido.construction_sites?.name || "El pedido", elegidos.length).map((a, i) => (
+                  <p key={i} className={cn("flex items-center gap-1", crono.alcanza ? "text-amber-700" : "text-red-700")}><AlertTriangle className="h-3 w-3" />{a}</p>
+                ))}
+                {crono.alcanza && elegidos.length > 0 && <p className="text-emerald-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />Alcanzan: {crono.conBomba ? "la bomba" : "la obra"} no espera más de lo aceptado.</p>}
+                {elegidos.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {ordenados.filter((v) => v.estado === "planificado").map((v) => (
+                      <span key={v.n} className="rounded border bg-background px-1.5 py-0.5">
+                        <strong>{v.n}</strong> · {patente(v.mixer_id)} · carga {hh(v.hora_carga)} · sale {hh(v.hora_salida)} · llega {hh(v.hora_llegada)} · termina {hh(v.hora_fin_descarga)} · vuelve {hh(v.hora_vuelta)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Gantt */}

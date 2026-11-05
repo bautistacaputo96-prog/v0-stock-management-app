@@ -49,6 +49,7 @@ const ENTIDADES: Record<string, string> = {
   chofer: "Choferes",
   bomba: "Empresas de bombeo",
   planta: "Tiempos de planta",
+  reparto: "Reparto de camiones",
   orden_trabajo: "Órdenes de trabajo",
   usuario: "Usuarios",
 }

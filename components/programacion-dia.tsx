@@ -11,7 +11,8 @@
  * La hora que se edita acá es la misma del pedido: la ve Despacho diario.
  * Los tiempos (carga, descarga, lavado, jornada, tolerancia, bocas) son de cada planta y se
  * guardan en la base (fase 1): los ve igual cualquiera, desde cualquier computadora.
- * Los camiones disponibles del día siguen en este navegador hasta la fase 2.
+ * Los camiones disponibles del día siguen en este navegador para quien no tiene el interruptor; con el interruptor
+ * (y la migración del reparto aplicada) salen del reparto de camiones por planta (components/reparto-camiones.tsx).
  */
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -40,6 +41,8 @@ import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 // Fase 3: distintivo "Suspendido" (se suspende desde Despacho diario)
 import { textoMotivo } from "@/lib/despacho"
+// Camiones por planta (con el interruptor): docs/specs/2026-11-04-camiones-por-planta.md
+import { useRepartoDia, RepartoCamiones, propuestaConReparto } from "@/components/reparto-camiones"
 
 type Plant = { id: string; name: string }
 type PedidoDB = {
@@ -113,6 +116,8 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   // Ordenar el día, guardar el plan de todos y los tiempos de la planta = programacion.editar.
   const { puede, ajustaPedido } = usePermisos()
   const editaTodo = puede("programacion", "editar")
+  // Reparto de camiones: lo edita quien programa o el plantista
+  const editaReparto = puede("programacion", "editar") || puede("despacho", "cargar")
   const [motivoTiempos, setMotivoTiempos] = useState("")
   const [planta, setPlanta] = useState<string>(plants[0]?.id || "")
   const [dia, setDia] = useState<Date>(() => addDays(startOfDay(new Date()), 1)) // por defecto, mañana
@@ -143,6 +148,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const [otrosViajes, setOtrosViajes] = useState<(ViajeRow & { obra?: string })[]>([])
   // Tiempos reales del GPS (solo con el interruptor; null = los de la planta)
   const [tiempos, setTiempos] = useState<TiemposGps | null>(null)
+  // Camiones por planta (solo con el interruptor). Con la migración aplicada, los camiones del día salen del reparto.
+  const rep = useRepartoDia({ dia, plants, activo: ve })
+  const usaReparto = ve && rep.disponible && rep.listo
+  const disp = useMemo(() => (usaReparto ? rep.camiones.map((c) => c.id) : disponibles), [usaReparto, rep.camiones, disponibles])
 
   // Tiempos de la planta elegida (en la base, no en el navegador)
   const cargarTiempos = useCallback(async () => {
@@ -172,16 +181,28 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       toast({ title: "Revisá la jornada", description: "El fin tiene que ser después del inicio", variant: "destructive" })
       return
     }
+    if (rep.trasladoCambiado && !rep.trasladoValido) {
+      toast({ title: "Revisá el traslado", description: "Los minutos son obligatorios; km y litros, si se cargan, mayores a 0", variant: "destructive" })
+      return
+    }
     setGuardandoTiempos(true)
-    const { error } = await createClient().from("plants").update(columnasDePlanta(prm)).eq("id", planta)
-    setGuardandoTiempos(false)
+    const { error } = tiemposCambiados.length ? await createClient().from("plants").update(columnasDePlanta(prm)).eq("id", planta) : { error: null }
     if (error) {
+      setGuardandoTiempos(false)
       toast({ title: "No se pudieron guardar los tiempos", description: error.message, variant: "destructive" })
+      return
+    }
+    // Traslado entre plantas (reparto de camiones): se guarda con el mismo botón y motivo
+    const tr = rep.trasladoCambiado ? await rep.guardarTrasladoForm() : { error: null, detalle: undefined }
+    setGuardandoTiempos(false)
+    if (tr.error) {
+      toast({ title: "No se pudo guardar el traslado", description: tr.error, variant: "destructive" })
       return
     }
     const nombre = plants.find((p) => p.id === planta)?.name || null
     const detalle: Record<string, string> = {}
     for (const k of tiemposCambiados) detalle[ETIQUETAS[k]] = k === "aMano" ? `${textoAMano(prmGuardado.aMano)} → ${textoAMano(prm.aMano)}` : `${prmGuardado[k]} → ${prm[k]}`
+    if (tr.detalle) detalle[`Traslado ${rep.nombreTraslado}`] = tr.detalle
     detalle.Motivo = motivoTiempos.trim()
     setMotivoTiempos("")
     await logActivity({ action: "editar", entity: "planta", entityId: planta, reference: nombre, plantId: planta, details: detalle })
@@ -285,7 +306,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
         ...(ve ? { descargaMin: descargaPropiaDe(p as unknown as PedidoParaViajes), m3PorViaje: m3PorViajeDe(p as unknown as PedidoParaViajes), espaciadoMin: Number(p.espaciado_min) > 0 ? Number(p.espaciado_min) : null } : {}),
       }))
       .filter((p) => p.m3 > 0.01)
-    const cams = mixers.filter((m) => disponibles.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
+    const cams = mixers.filter((m) => disp.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
     if (!entradas.length || !cams.length) return null
     // Con el interruptor, los camiones que están en viajes de la otra planta no se usan a esa hora
     const base = startOfDay(dia).getTime()
@@ -293,7 +314,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       ? otrosViajes.filter((v) => v.mixer_id).map((v) => ({ camionId: v.mixer_id!, desde: (new Date(v.hora_carga).getTime() - base) / 60000, hasta: (new Date(v.hora_vuelta).getTime() - base) / 60000 }))
       : []
     return planificar(entradas, cams, prmEf, ocupados)
-  }, [pedidosEf, mixers, disponibles, prmEf, horas, simular, ve, otrosViajes, dia]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pedidosEf, mixers, disp, prmEf, horas, simular, ve, otrosViajes, dia]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const colorDe = (pedidoId: string) => COLORES[Math.max(0, pedidos.findIndex((p) => p.id === pedidoId)) % COLORES.length]
 
@@ -338,11 +359,13 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   }
 
   // ---------------- Fase 2 ----------------
-  const camionesDisponibles = mixers.filter((m) => disponibles.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
+  const camionesDisponibles = mixers.filter((m) => disp.includes(m.id)).map((m) => ({ id: m.id, patente: m.license_plate, capacidad: Number(m.capacity_m3) || 8 }))
 
   /** "Ordenar el día": planificar() con todos los pedidos; se muestra y recién se guarda con "Guardar plan del día". */
   function ordenarDia() {
-    const { filas } = planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes)
+    // Con un reparto guardado o en edición, el mismo motor del reparto (las dos plantas y los traslados); si no, como siempre
+    const conReparto = ve ? propuestaConReparto(rep, planta) : null
+    const filas = conReparto ?? planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes).filas
     setPropuesta(filas)
     if (!Object.keys(filas).length) toast({ title: "No hay nada para ordenar", description: "Los pedidos del día ya están despachados o no hay camiones disponibles." })
   }
@@ -394,7 +417,10 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
     return demandaPorMediaHora(vs, dia)
   }, [ve, pedidosEf, viajesPorPedido, prmEf, dia]) // eslint-disable-line react-hooks/exhaustive-deps
   // +1 de aire arriba para que la línea de disponibles no quede pegada al borde
-  const maxDemanda = Math.max(1, disponibles.length, ...demanda.map((d) => d.camiones)) + 1
+  // Con un reparto guardado o en edición, la línea de disponibles sigue el reparto de esta planta (escalones)
+  const dispEn = (t: number) => (usaReparto ? rep.disponiblesEn(planta, t) ?? disp.length : disp.length)
+  const escalones = usaReparto && !!rep.efectivo
+  const maxDemanda = Math.max(1, disp.length, ...demanda.map((d) => d.camiones)) + 1
 
   const cambiados = Object.keys(horas).filter((id) => {
     const p = pedidos.find((x) => x.id === id)
@@ -410,7 +436,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
   const ultimaVuelta = plan?.viajes.length ? Math.max(...plan.viajes.map((v) => v.vuelta)) : null
   // Fase 2b: plan por pedido con los camiones que hay (para "con N camiones termina…") y choques de camión
   const planVe = useMemo(() => (ve ? planDelDia(pedidosEf as unknown as PedidoParaViajes[], viajesPorPedido, camionesDisponibles, prmEf, otrosViajes) : null),
-    [ve, pedidosEf, viajesPorPedido, disponibles, mixers, prmEf, otrosViajes]) // eslint-disable-line react-hooks/exhaustive-deps
+    [ve, pedidosEf, viajesPorPedido, disp, mixers, prmEf, otrosViajes]) // eslint-disable-line react-hooks/exhaustive-deps
   const todosDelDia = useMemo(() => [...Object.values(viajesPorPedido).flat().filter((v) => v.estado !== "cancelado"), ...otrosViajes], [viajesPorPedido, otrosViajes])
   const choques = useMemo(() => (ve ? choquesDeCamion(todosDelDia) : new Map()), [ve, todosDelDia])
   const obraDeViaje = (v: ViajeRow) => (v as any).obra || pedidos.find((x) => x.id === v.pedido_id)?.construction_sites?.name || "otra obra"
@@ -459,6 +485,22 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
       {verSupuestos && (
         <Card>
           <CardContent className="p-4 space-y-4">
+            {usaReparto ? (
+              <div>
+                <p className="text-sm font-medium mb-2 flex items-center gap-1.5">Camiones que salen ese día <NuevoBadge /> <span className="font-normal text-xs text-muted-foreground">(reparto de las dos plantas: se guarda con "Guardar reparto")</span></p>
+                <div className="flex gap-2 flex-wrap">
+                  {mixers.map((m) => {
+                    const enTaller = !rep.delDia.some((x) => x.id === m.id)
+                    const sale = disp.includes(m.id)
+                    return (
+                      <button key={m.id} disabled={enTaller || !editaReparto} onClick={() => rep.setSale(m.id, !sale)} className={cn("rounded-md border px-3 py-1.5 text-sm", sale ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground line-through")} title={enTaller ? "En taller o fuera de servicio" : undefined}>
+                        {m.license_plate} <span className="text-xs text-muted-foreground">{enTaller ? "taller" : `${Number(m.capacity_m3) || 8} m³`}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
             <div>
               <p className="text-sm font-medium mb-2">Camiones disponibles ese día</p>
               <div className="flex gap-2 flex-wrap">
@@ -469,6 +511,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                 ))}
               </div>
             </div>
+            )}
             <div>
               <p className="text-sm font-medium mb-2">
                 Tiempos de {plants.find((p) => p.id === planta)?.name} <span className="font-normal text-muted-foreground">{ve
@@ -550,14 +593,29 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   </div>
                 </label>
               </div>
-              {editaTodo && tiemposCambiados.length > 0 && (
+              {ve && rep.trasladoFila.disponible && (
+                <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 text-xs space-y-1.5">
+                  <p className="font-medium flex items-center gap-1.5">Traslado {rep.nombreTraslado} (mixer vacío) <NuevoBadge /></p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {([["minutos", "min"], ["km", "km"], ["litros", "litros (opcional)"]] as const).map(([k, l]) => (
+                      <label key={k} className="flex items-center gap-1">
+                        <Input type="number" min={1} disabled={!editaTodo} value={rep.trasladoForm[k]} onChange={(e) => rep.setTrasladoForm({ ...rep.trasladoForm, [k]: e.target.value })} className="h-7 w-20" />
+                        <span className="text-muted-foreground">{l}</span>
+                      </label>
+                    ))}
+                    {rep.ruta && <span className="text-muted-foreground">Ruta del mapa: {rep.ruta.minutos} min · {rep.ruta.km.toLocaleString("es-AR")} km</span>}
+                  </div>
+                  {!rep.trasladoFila.fila && <p className="text-amber-700">Sin cargar: el reparto usa {rep.traslado.minutos} min ({rep.traslado.fuente === "ruta" ? "ruta del mapa" : "valor de referencia"}) y lo marca "a confirmar".</p>}
+                </div>
+              )}
+              {editaTodo && (tiemposCambiados.length > 0 || rep.trasladoCambiado) && (
                 <div className="mt-3 max-w-md">
                   <CampoMotivo value={motivoTiempos} onChange={setMotivoTiempos} id="motivo-tiempos" ejemplo="Ej: medimos la carga con el GPS y tarda menos" />
                 </div>
               )}
               <div className="flex items-center gap-3 flex-wrap mt-3">
                 {editaTodo && (
-                  <Button size="sm" onClick={guardarTiempos} disabled={guardandoTiempos || tiemposCambiados.length === 0 || !motivoValido(motivoTiempos)}>
+                  <Button size="sm" onClick={guardarTiempos} disabled={guardandoTiempos || (tiemposCambiados.length === 0 && !rep.trasladoCambiado) || !motivoValido(motivoTiempos)}>
                     {guardandoTiempos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : `Guardar tiempos de ${plants.find((p) => p.id === planta)?.name}`}
                   </Button>
                 )}
@@ -573,6 +631,9 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Camiones por planta (con el interruptor): las dos plantas, aunque la vista esté en una */}
+      {ve && <RepartoCamiones rep={rep} />}
 
       {cargando ? (
         <div className="py-16 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Cargando pedidos...</div>
@@ -604,19 +665,23 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                   <div className="flex gap-3 text-xs text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-sky-500" />Necesarios</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-500" />Faltan camiones</span>
-                    <span className="flex items-center gap-1"><span className="w-4 border-t-2 border-dashed border-slate-700" />Disponibles ({disponibles.length})</span>
+                    <span className="flex items-center gap-1"><span className="w-4 border-t-2 border-dashed border-slate-700" />{escalones ? "Disponibles según el reparto" : `Disponibles (${disp.length})`}</span>
                   </div>
                 </div>
                 <div className="overflow-x-auto">
                   <div className="min-w-[640px]">
                     <div className="relative h-32 flex items-end gap-[3px] border-b">
-                      <div className="absolute inset-x-0 border-t-2 border-dashed border-slate-700 z-10 pointer-events-none" style={{ bottom: `${(disponibles.length / maxDemanda) * 100}%` }} />
-                      {demanda.map((d) => (
-                        <div key={d.inicio} className="flex-1 flex flex-col justify-end h-full" title={`${aHora(d.inicio)}–${aHora(d.inicio + 30)}: ${d.camiones} camión${d.camiones === 1 ? "" : "es"} (hay ${disponibles.length})`}>
-                          {d.camiones > 0 && <span className={cn("text-[10px] text-center leading-none mb-0.5", d.camiones > disponibles.length ? "text-red-600 font-semibold" : "text-muted-foreground")}>{d.camiones}</span>}
-                          <div className={cn("rounded-t-sm", d.camiones > disponibles.length ? "bg-red-500" : "bg-sky-500")} style={{ height: `${(d.camiones / maxDemanda) * 100}%` }} />
+                      {!escalones && <div className="absolute inset-x-0 border-t-2 border-dashed border-slate-700 z-10 pointer-events-none" style={{ bottom: `${(disp.length / maxDemanda) * 100}%` }} />}
+                      {demanda.map((d) => {
+                        const hay = escalones ? dispEn(d.inicio) : disp.length
+                        return (
+                        <div key={d.inicio} className="relative flex-1 flex flex-col justify-end h-full" title={`${aHora(d.inicio)}–${aHora(d.inicio + 30)}: ${d.camiones} camión${d.camiones === 1 ? "" : "es"} (hay ${hay})`}>
+                          {escalones && <div className="absolute inset-x-0 border-t-2 border-dashed border-slate-700 z-10 pointer-events-none" style={{ bottom: `${(hay / maxDemanda) * 100}%` }} />}
+                          {d.camiones > 0 && <span className={cn("text-[10px] text-center leading-none mb-0.5", d.camiones > hay ? "text-red-600 font-semibold" : "text-muted-foreground")}>{d.camiones}</span>}
+                          <div className={cn("rounded-t-sm", d.camiones > hay ? "bg-red-500" : "bg-sky-500")} style={{ height: `${(d.camiones / maxDemanda) * 100}%` }} />
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                     <div className="flex gap-[3px] text-[10px] text-muted-foreground mt-1">
                       {demanda.map((d, i) => <span key={d.inicio} className="flex-1 text-center">{i % 2 === 0 ? aHora(d.inicio) : ""}</span>)}
@@ -713,7 +778,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                         {/* Fase 2b (D): camión asignado que en ese momento está en otro viaje */}
                         {ve && (viajesPorPedido[p.id] || []).filter((v) => v.estado === "planificado" && choques.has(claveViaje(v))).map((v) => {
                           const ch = choques.get(claveViaje(v))!
-                          const libres = camionesLibresPara(v, todosDelDia, mixers.filter((m) => disponibles.includes(m.id))).slice(0, 4)
+                          const libres = camionesLibresPara(v, todosDelDia, mixers.filter((m) => disp.includes(m.id))).slice(0, 4)
                           const pat = (id: string | null | undefined) => mixers.find((m) => m.id === id)?.license_plate || "—"
                           return (
                             <p key={v.n} className="mt-1 text-xs text-red-700 flex items-center gap-1 flex-wrap">
@@ -732,7 +797,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
                             {r.demoraInicio > prm.toleranciaMin ? (
                               <p className="text-red-600 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />El primer camión llega {aHora(r.primeraLlegada)}, {r.demoraInicio} min tarde</p>
                             ) : r.huecosMin > 0 ? (
-                              <p className="text-amber-700 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />Para no cortar hacen falta {r.camionesIdeal} {r.camionesIdeal === 1 ? "camión" : "camiones"} (hay {Math.min(disponibles.length, r.viajes)}): {r.huecosMin} min de espera en total</p>
+                              <p className="text-amber-700 flex items-center gap-1 md:justify-end"><AlertTriangle className="h-3 w-3" />Para no cortar hacen falta {r.camionesIdeal} {r.camionesIdeal === 1 ? "camión" : "camiones"} (hay {Math.min(disp.length, r.viajes)}): {r.huecosMin} min de espera en total</p>
                             ) : (
                               <p className="text-emerald-700 flex items-center gap-1 md:justify-end"><CheckCircle2 className="h-3 w-3" />Sin cortes · {r.camionesUsados} {r.camionesUsados > 1 ? "camiones" : "camión"}{r.viajes > 1 ? `, uno cada ${r.ritmoIdealMin} min` : ""}</p>
                             )}
@@ -829,7 +894,7 @@ export function ProgramacionDia({ plants }: { plants: Plant[] }) {
             </Card>
           )}
 
-          <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => cargar()} />
+          <GerenciadorViajes pedido={gerenciar} open={!!gerenciar} onOpenChange={(v) => !v && setGerenciar(null)} onGuardado={() => { cargar(); if (ve) rep.cargar() }} reparto={usaReparto ? rep.contexto : null} />
 
           {!plan && pedidos.some((p) => p.status !== "completed") && (
             <Card><CardContent className="py-8 text-center text-muted-foreground">Elegí al menos un camión disponible en "Tiempos y camiones".</CardContent></Card>
