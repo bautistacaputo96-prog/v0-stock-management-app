@@ -109,6 +109,10 @@ cuando vuelve a planta. La descarga se guarda **por camión de 8 m³** y cada vi
    **Atípicos por grupo de m³:** los del tiempo en obra se buscan dentro de cada grupo de m³ parecidos, no mezclando
    todos: cada viaje se compara con los viajes a ±1,5 m³ de los suyos (él incluido); así una obra con camiones de 8 m³
    a 45 min y de 3 m³ a 25 no pierde el grupo chico. Para un camión de X m³ se buscan dentro de los viajes a ±1,5 de X.
+   **Un viaje cuyo grupo tiene menos de 3 viajes no se descarta** (con 1 o 2 no hay con qué compararlo). Se calcula
+   una vez por cada valor distinto de m³ (5.000 viajes: unos 20 ms).
+   **El último camión del pedido, con menos m³ (el resto), recibe la descarga en proporción a sus m³**: el motor
+   reparte la descarga del camión del pedido por m³ (mínimo 5 min). Los camiones completos reciben el tiempo medido.
    La descarga de la obra se usa si sus m³ típicos están a ±1,5 de los del pedido **o** si tiene 5 viajes o más a
    ±1,5 de los del pedido (una obra de 8 m³ con 5 viajes de 3 m³ da su tiempo real a un pedido de 3 m³).
    "(de todos sus viajes: pocos con X m³)" se muestra solo si hay viajes de otros m³; con lavado, "(sin lavado)".

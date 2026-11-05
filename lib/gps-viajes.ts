@@ -951,10 +951,14 @@ function coherentes(xs: number[], P: ReglasTiemposGps = TIEMPOS_GPS): boolean {
  * cada viaje se compara con los viajes a ±m3Parecidos m³ de los suyos (él incluido) y se descarta si es atípico ahí.
  */
 function sinAtipicosPorM3(v: FilaTiemposGps[], P: ReglasTiemposGps) {
-  const quedan = v.filter((f) => {
-    const grupo = v.filter((g) => Math.abs(g.m3! - f.m3!) <= P.m3Parecidos + 1e-9)
-    return valoresTipicos(grupo.map((g) => g.min_obra)).usar[grupo.indexOf(f)]
-  })
+  // Un cálculo por cada valor distinto de m³ (los viajes con los mismos m³ comparten el grupo), no uno por viaje
+  const usa = new Map<FilaTiemposGps, boolean>()
+  for (const m3 of new Set(v.map((f) => f.m3!))) {
+    const grupo = v.filter((g) => Math.abs(g.m3! - m3) <= P.m3Parecidos + 1e-9)
+    const t = valoresTipicos(grupo.map((g) => g.min_obra))
+    grupo.forEach((g, i) => { if (g.m3 === m3) usa.set(g, t.usar[i]) })
+  }
+  const quedan = v.filter((f) => usa.get(f))
   const q = quedan.length ? quedan : v
   return { quedan: q, valor: mediana(q.map((f) => f.min_obra!))!, descartados: v.length - q.length }
 }
@@ -999,6 +1003,7 @@ export function descargaParaM3(o: MedidaObraGps, m3: number, P: ReglasTiemposGps
     const otros = muestras.some((x) => !parecido(x))
     d = { min: o.min, m3, viajes: o.viajes, ...(o.descartados ? { descartados: o.descartados } : {}), parecidos: false, ...(otros ? { otrosM3: true as const } : {}) }
   }
+  Object.freeze(d) // sale de la caché: compartido, no se modifica
   cache?.set(m3, d)
   return d
 }
