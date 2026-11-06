@@ -27,7 +27,7 @@ import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
 import { claveMaterial, enToneladas, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
-import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
+import { TIPOS_IMPORTABLES, mismoRemitoCompleto } from "@/lib/ingresos-zomatik/plan"
 import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
 import { usePermisos } from "@/lib/current-user"
 
@@ -230,19 +230,31 @@ export function AddStockEntryDialog({
 
     try {
       const supabase = createClient()
-      // ¿Ese remito ya entró desde Zomatik? (mismo remito normalizado y material, ±30 días). Sin la migración, no se mira.
+      // ¿Ese remito ya está cargado? Mismo material, ±30 días, sin anular. Si entró desde Zomatik (número normalizado):
+      // "Ese remito ya entró desde Zomatik". Si hay otro con el mismo remito completo (punto de venta + número), de
+      // cualquier origen: "Ya hay un ingreso con ese remito". Sin la migración (no hay origen ni anulado_at), solo lo segundo.
       const nro = normalizarRemito(formData.remito)
       if (nro) {
-        const { data: yaEstan, error: eYa } = await supabase
-          .from("stock_entries")
-          .select("id, remito")
-          .eq("material_id", formData.material_id)
-          .eq("origen", "zomatik")
-          .is("anulado_at", null)
-          .gte("entry_date", `${sumarDias(formData.entry_date, -30)}T00:00:00`)
-          .lte("entry_date", `${sumarDias(formData.entry_date, 30)}T23:59:59`)
-        if (!eYa && ((yaEstan as any[]) || []).some((x) => normalizarRemito(x.remito) === nro)) {
+        const buscar = (conColumnasNuevas: boolean) => {
+          let q = supabase
+            .from("stock_entries")
+            .select(conColumnasNuevas ? "id, remito, origen" : "id, remito")
+            .eq("material_id", formData.material_id)
+            .gte("entry_date", `${sumarDias(formData.entry_date, -30)}T00:00:00`)
+            .lte("entry_date", `${sumarDias(formData.entry_date, 30)}T23:59:59`)
+          if (conColumnasNuevas) q = q.is("anulado_at", null)
+          return q
+        }
+        let { data: yaEstan, error: eYa } = await buscar(true)
+        if (eYa) ({ data: yaEstan, error: eYa } = await buscar(false))
+        const filas = eYa ? [] : ((yaEstan as any[]) || [])
+        if (filas.some((x) => x.origen === "zomatik" && normalizarRemito(x.remito) === nro)) {
           toast({ variant: "destructive", title: "Ese remito ya entró desde Zomatik", description: "No se carga dos veces. Buscalo en el historial." })
+          setLoading(false)
+          return
+        }
+        if (filas.some((x) => mismoRemitoCompleto(x.remito, formData.remito))) {
+          toast({ variant: "destructive", title: "Ya hay un ingreso con ese remito", description: "Mismo material y remito en los últimos 30 días. Buscalo en el historial." })
           setLoading(false)
           return
         }

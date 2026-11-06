@@ -929,6 +929,40 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
   }
 }
 
+/**
+ * ¿Dos remitos son el mismo, con punto de venta y número? ("00002 00318903" = "RMP 0002-00318903"; "318903" no es
+ * igual a "0002-00318903": sin el punto de venta no se puede decir). Sin número → false.
+ */
+export function mismoRemitoCompleto(a: unknown, b: unknown): boolean {
+  const x = numeroCompleto(a)
+  return !!x && x === numeroCompleto(b)
+}
+
+/**
+ * Manuales sin vincular que parecen una copia de un importado o emparejado: mismo material y mismo remito completo
+ * (punto de venta + número). Se muestran como "Posible copia de un importado" para eliminarlos.
+ */
+export function posiblesCopias<M extends { id: string; material_id: string; remito: string | null }>(
+  manuales: M[],
+  vinculos: { estado: string; stock_entry_id: string | null; material_id?: string | null; remito?: string | null }[],
+): (M & { remitoZomatik: string })[] {
+  const vinculadas = new Set(vinculos.map((v) => v.stock_entry_id).filter(Boolean))
+  const porClave = new Map<string, string>()
+  for (const v of vinculos) {
+    if ((v.estado !== "importado" && v.estado !== "emparejado") || !v.stock_entry_id || !v.material_id) continue
+    const n = numeroCompleto(v.remito)
+    if (n) porClave.set(`${v.material_id}|${n}`, v.remito || n)
+  }
+  const out: (M & { remitoZomatik: string })[] = []
+  for (const m of manuales) {
+    if (vinculadas.has(m.id)) continue
+    const n = numeroCompleto(m.remito)
+    const z = n ? porClave.get(`${m.material_id}|${n}`) : undefined
+    if (z) out.push({ ...m, remitoZomatik: z })
+  }
+  return out
+}
+
 /** "Si estuviera prendida: 12 nuevos, 30 emparejados, 1 sin importar." */
 export function textoResumen(r: Partial<ResumenPlan> | null | undefined): string {
   if (!r) return "Sin datos."

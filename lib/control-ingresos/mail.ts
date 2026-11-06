@@ -80,6 +80,8 @@ export type ImportacionMail = {
   pendientes: { fecha: string | null; remito: string | null; proveedor: string | null; cantidad: string; planta: string; motivo: string; queHacer: string }[]
   cambios: { fecha: string; material: string; planta: string; kg: number; nota: string }[]
   antesDeF: { fecha: string | null; remito: string | null; motivo: string }[]
+  /** Manuales sin vincular con el mismo remito completo y material que uno de Zomatik. */
+  copias?: { fecha: string; material: string; planta: string; cantidad: number; unidad: string; remito: string | null; cargadoPor: string | null; remitoZomatik?: string }[]
   /** Importados que Zomatik cambió y no se pudo aplicar. */
   noAplicados?: { fecha: string | null; remito: string | null; proveedor: string | null; cantidad: string; planta: string; motivo: string }[]
   manuales: { fecha: string; material: string; planta: string; cantidad: number; unidad: string; remito: string | null; cargadoPor: string | null }[]
@@ -117,6 +119,14 @@ export function htmlImportacion(d: ImportacionMail): string {
       tablaSimple(["Fecha", "Remito", "Proveedor", "Cantidad", "Planta", "Qué pasa"], (d.noAplicados || []).map((x) => [ddmm(x.fecha), x.remito || "-", x.proveedor || "-", x.cantidad, x.planta, x.motivo])),
     ),
     seccion(
+      "Posible copia de un importado (para eliminar)",
+      (d.copias || []).length,
+      tablaSimple(
+        ["Fecha", "Material", "Planta", "Cantidad", "Remito a mano", "En Zomatik", "Cargó"],
+        (d.copias || []).map((m) => [ddmm(m.fecha), m.material, m.planta, `${m.cantidad.toLocaleString("es-AR")} ${m.unidad}`, m.remito || "-", m.remitoZomatik || "-", m.cargadoPor || "-"]),
+      ),
+    ),
+    seccion(
       "Cargados a mano sin Zomatik hace más de 7 días (para eliminar)",
       d.manuales.length,
       tablaSimple(["Fecha", "Material", "Planta", "Cantidad", "Remito", "Cargó"], d.manuales.map((m) => [ddmm(m.fecha), m.material, m.planta, `${m.cantidad.toLocaleString("es-AR")} ${m.unidad}`, m.remito || "-", m.cargadoPor || "-"])),
@@ -128,13 +138,14 @@ export function htmlImportacion(d: ImportacionMail): string {
 }
 
 /** "Rebucret · Ingresos MP: 2 sin importar, 1 cambio" · "…: sin novedades hoy". */
-export function asuntoImportacion(d: { pendientes: number; cambios: number; manuales: number; inconsistencias: number; noAplicados?: number; falloLectura?: boolean }): string {
+export function asuntoImportacion(d: { pendientes: number; cambios: number; manuales: number; inconsistencias: number; noAplicados?: number; copias?: number; falloLectura?: boolean }): string {
   const plural = (n: number, a: string, b: string) => `${n} ${n === 1 ? a : b}`
   const partes = [
     d.pendientes ? `${d.pendientes} sin importar` : null,
     d.cambios ? plural(d.cambios, "cambio", "cambios") : null,
     d.noAplicados ? `${d.noAplicados} sin aplicar` : null,
     d.manuales ? plural(d.manuales, "cargado a mano", "cargados a mano") : null,
+    d.copias ? plural(d.copias, "posible copia", "posibles copias") : null,
     d.inconsistencias ? plural(d.inconsistencias, "inconsistencia", "inconsistencias") : null,
   ].filter(Boolean)
   if (partes.length) return `Rebucret · Ingresos MP: ${partes.join(", ")}`
@@ -201,7 +212,7 @@ function armarMailImportacion(d: Parameters<typeof armarMail>[0] & { importacion
   const n = d.nuevas.length
   const asunto = semanal
     ? ASUNTO_SEMANAL
-    : asuntoImportacion({ pendientes: im.pendientes.length, cambios: im.cambios.length, manuales: im.manuales.length, inconsistencias: n, noAplicados: (im.noAplicados || []).length, falloLectura: d.falloLectura })
+    : asuntoImportacion({ pendientes: im.pendientes.length, cambios: im.cambios.length, manuales: im.manuales.length, inconsistencias: n, noAplicados: (im.noAplicados || []).length, copias: (im.copias || []).length, falloLectura: d.falloLectura })
   const link = `<p style="margin-top:14px"><a href="${esc(d.link)}" style="color:#1d4ed8">Ver y resolver en el sistema</a></p>`
   const fallo = d.falloLectura ? `<div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px;margin-bottom:10px">${esc(LINEA_SIN_LECTURA)}</div>` : ""
   const imp = htmlImportacion(im)

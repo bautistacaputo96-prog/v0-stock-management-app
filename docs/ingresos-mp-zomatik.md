@@ -51,9 +51,11 @@ Mismo turno del robot y sucursal 18 confirmada (la lectura es `leerZomatikCompra
   manual desde F de un material que entra desde Zomatik lo anula con asiento; uno emparejado con Zomatik no se elimina.
 - **Registrar Ingreso**: con la importación prendida, quien no es gerencial no ve los materiales que entran desde Zomatik;
   el gerencial los ve con el aviso y la nota obligatoria. Se guarda `origen = 'manual'`. Si el remito (normalizado) y
-  el material ya entraron desde Zomatik, no deja grabarlo ("Ese remito ya entró desde Zomatik").
+  el material ya entraron desde Zomatik, no deja grabarlo ("Ese remito ya entró desde Zomatik"); si hay otro ingreso
+  con el mismo remito completo y material en ±30 días, tampoco ("Ya hay un ingreso con ese remito").
 - **Control con Zomatik**: bloque Importación (modo, última lectura, en sombra qué haría; prendida: No se pudo importar,
-  Cambios de Zomatik, Zomatik cambió y no se pudo aplicar, Cargados a mano sin Zomatik de más de 7 días con **Eliminar**
+  Cambios de Zomatik, Zomatik cambió y no se pudo aplicar, Posible copia de un importado (mismo remito completo y
+  material que uno de Zomatik) y Cargados a mano sin Zomatik de más de 7 días, los dos con **Eliminar**
   (gerencial, los anula con asiento), Proveedores sin
   vincular, Densidades). El cruce de siempre queda plegado en "Antes del dd/mm" (solo fechas anteriores a F).
 - **Granulometría**: el ensayo se vincula por remito normalizado + material ±30 días; con más de uno, se elige.
@@ -64,7 +66,8 @@ Mismo turno del robot y sucursal 18 confirmada (la lectura es `leerZomatikCompra
   importar, 1 cambio" o "sin novedades hoy", con lo que no se pudo importar, cambios, cargados a mano sin Zomatik,
   densidades faltantes, artículos y proveedores sin vincular, y el cruce viejo de antes de F. Los lunes, el semanal.
 - Zomatik no deja entrar: el aviso único del robot a Bautista. Ninguna pasada buena en 2 h (06–20): a Bautista, uno por día.
-- **Arena Fina sin humedad a las 24 h**: un mail por día a Felipe Calvo (con el control de las 16:25), cada ingreso una
+- **Arena Fina sin humedad a las 24 h**: mail a Felipe Calvo a la mañana (pasadas de las 8) y a la tarde (con el control
+  de las 16:25), una marca por envío; cada ingreso una
   sola vez (la marca se pone cuando el mail salió), y aviso en el momento en Materias Primas para el
   encargado de la planta (`ENCARGADO_PLANTA`: Titan Concretus en Canning, David Herrera en Hudson). No hay un sistema de
   notificaciones dentro de la app.
@@ -77,7 +80,7 @@ Mismo turno del robot y sucursal 18 confirmada (la lectura es `leerZomatikCompra
 - Sin las migraciones la app anda como antes (la carga manual, la edición y el Excel prueban sin las columnas nuevas).
 
 ## Pruebas
-`npm run test:ingresos-zomatik` (22, criterios 1–16 y 19, con `lib/__fixtures__/ingresos-zomatik/lecturas.json`),
+`npm run test:ingresos-zomatik` (23, criterios 1–16 y 19, con `lib/__fixtures__/ingresos-zomatik/lecturas.json`),
 `test:control-ingresos`, `test:control-stock`.
 
 ## Decisiones

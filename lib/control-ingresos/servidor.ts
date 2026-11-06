@@ -379,11 +379,11 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
           .eq("id", opts.corridaId)
           .then(() => {}, () => {})
       }
-      // 1b) Arena Fina de Zomatik sin humedad a las 24 h: un mail por día a Felipe (solo con la importación prendida)
+      // 1b) Arena Fina de Zomatik sin humedad a las 24 h: el mail de la tarde a Felipe (el de la mañana sale con la
+      //     pasada de las 8; solo con la importación prendida)
       try {
         const iz2 = await import("@/lib/ingresos-zomatik/servidor")
-        const h = await iz2.avisarHumedad(sb, t0)
-        if (h) console.log("[control-ingresos]", h)
+        await iz2.avisarHumedad(sb, t0, "tarde")
       } catch (e) {
         console.error("[control-ingresos] aviso de humedad:", e)
       }
@@ -478,6 +478,7 @@ async function importacionParaMail(sb: SupabaseClient, hoy: string, corte: numbe
       antesDeF: semanal ? d.antesDeF : [],
       noAplicados: d.noAplicados.filter((x) => nuevo(x.actualizado)),
       manuales: d.manuales.filter((m) => semanal || cruzo(m.fecha)),
+      copias: d.copias.filter((m) => nuevo(m.creado)),
       sinMaterial: d.sinMaterial,
       sinVincular: d.sinVincular,
       faltaDensidad,

@@ -52,7 +52,8 @@ type Importacion = {
   cambios: { creado: string; fecha: string; material: string; planta: string; kg: number; nota: string }[]
   antesDeF: { fecha: string | null; remito: string | null; motivo: string }[]
   noAplicados?: { fecha: string | null; remito: string | null; proveedor: string | null; cantidad: string; planta: string; motivo: string }[]
-  manuales: { id: string; fecha: string; material: string; planta: string; cantidad: number; unidad: string; remito: string | null; cargadoPor: string | null; dias: number }[]
+  manuales: { id: string; fecha: string; material: string; planta: string; cantidad: number; unidad: string; remito: string | null; cargadoPor: string | null; dias: number; remitoZomatik?: string }[]
+  copias?: Importacion["manuales"]
   sinVincular: { proveedor: string; renglones: number }[]
   densidades: { material_id: string; material: string; planta: string; densidad: number | null }[]
   error?: string
@@ -342,6 +343,47 @@ function BloqueImportacion({ d, gerencial, onCambio }: { d: Importacion; gerenci
   const titulo =
     modo === "real" ? `Importación desde Zomatik: prendida desde el ${ddmm(desde)}` : modo === "sombra" ? `Importación desde Zomatik: en prueba desde el ${ddmm(desde)} (no carga nada)` : "Importación desde Zomatik: apagada"
 
+  // Función (no componente): así los campos de motivo no pierden el foco al escribir
+  const tablaManuales = (filas: Importacion["manuales"]) => (
+            <table className="w-full border-collapse">
+              <tbody>
+                {filas.map((m) => (
+                  <tr key={m.id} className="border-b align-top">
+                    <td className="px-1.5 py-1">{ddmm(m.fecha)}</td>
+                    <td className="px-1.5 py-1">{m.material}</td>
+                    <td className="px-1.5 py-1">{m.planta}</td>
+                    <td className="px-1.5 py-1">
+                      {m.cantidad.toLocaleString("es-AR")} {m.unidad}
+                    </td>
+                    <td className="px-1.5 py-1">
+                      {m.remito || "-"}
+                      {m.remitoZomatik ? <span className="text-muted-foreground"> · Zomatik {m.remitoZomatik}</span> : null}
+                    </td>
+                    <td className="px-1.5 py-1 text-muted-foreground">
+                      {m.cargadoPor || "-"} · {m.dias === 0 ? "hoy" : `hace ${m.dias} d`}
+                    </td>
+                    <td className="px-1.5 py-1">
+                      {gerencial && (
+                        <div className="flex items-center gap-1">
+                          <Input className="h-6 w-36 text-xs" placeholder="Motivo" value={motivos[m.id] || ""} onChange={(e) => setMotivos((x) => ({ ...x, [m.id]: e.target.value }))} />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-1.5 text-xs text-red-700"
+                            disabled={!!ocupado || !(motivos[m.id] || "").trim()}
+                            onClick={() => post(`m${m.id}`, { id: m.id, accion: "eliminar_manual", motivo: motivos[m.id], kg_visto: m.cantidad })}
+                          >
+                            {ocupado === `m${m.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "Eliminar"}
+                          </Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+  )
+
   return (
     <div className="space-y-2 rounded-md border p-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -453,42 +495,13 @@ function BloqueImportacion({ d, gerencial, onCambio }: { d: Importacion; gerenci
               ))}
             </div>
           </Seccion>
+          <Seccion titulo="Posible copia de un importado" n={(d.copias || []).length}>
+            <div className="mb-1 text-muted-foreground">Cargados a mano con el mismo remito y material que uno que ya entró desde Zomatik: el stock está contado dos veces. Eliminalo (queda anulado con asiento).</div>
+            {tablaManuales(d.copias || [])}
+          </Seccion>
           <Seccion titulo="Cargados a mano sin Zomatik (más de 7 días)" n={d.manuales.length}>
             <div className="mb-1 text-muted-foreground">Desde el {ddmm(desde)} lo cargado a mano que a los 7 días no está en Zomatik. Si no tiene que estar, eliminalo (queda anulado con asiento, no se borra).</div>
-            <table className="w-full border-collapse">
-              <tbody>
-                {d.manuales.map((m) => (
-                  <tr key={m.id} className="border-b align-top">
-                    <td className="px-1.5 py-1">{ddmm(m.fecha)}</td>
-                    <td className="px-1.5 py-1">{m.material}</td>
-                    <td className="px-1.5 py-1">{m.planta}</td>
-                    <td className="px-1.5 py-1">
-                      {m.cantidad.toLocaleString("es-AR")} {m.unidad}
-                    </td>
-                    <td className="px-1.5 py-1">{m.remito || "-"}</td>
-                    <td className="px-1.5 py-1 text-muted-foreground">
-                      {m.cargadoPor || "-"} · {m.dias === 0 ? "hoy" : `hace ${m.dias} d`}
-                    </td>
-                    <td className="px-1.5 py-1">
-                      {gerencial && (
-                        <div className="flex items-center gap-1">
-                          <Input className="h-6 w-36 text-xs" placeholder="Motivo" value={motivos[m.id] || ""} onChange={(e) => setMotivos((x) => ({ ...x, [m.id]: e.target.value }))} />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-1.5 text-xs text-red-700"
-                            disabled={!!ocupado || !(motivos[m.id] || "").trim()}
-                            onClick={() => post(`m${m.id}`, { id: m.id, accion: "eliminar_manual", motivo: motivos[m.id], kg_visto: m.cantidad })}
-                          >
-                            {ocupado === `m${m.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "Eliminar"}
-                          </Button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {tablaManuales(d.manuales)}
           </Seccion>
           <Seccion titulo="Proveedores sin vincular (entraron igual)" n={d.sinVincular.length}>
             {d.sinVincular.map((p) => (
