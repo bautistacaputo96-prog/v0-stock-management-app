@@ -20,9 +20,9 @@
 import * as XLSX from "xlsx"
 import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, matrizDeTablaHtml, type Fila } from "@/lib/zomatik/parseo"
-import type { LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
+import type { LlaveAjuste, LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import type { LlaveZ1 } from "@/lib/zomatik/z1-robot"
-import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, cuerpoAutorizarValido, rutaPermitida, rutaDeLocation, rutaEscrituraNp, rutaEscrituraZ1 } from "@/lib/zomatik/web"
+import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, cuerpoAutorizarValido, rutaPermitida, rutaDeLocation, rutaEscrituraAjuste, rutaEscrituraNp, rutaEscrituraZ1 } from "@/lib/zomatik/web"
 import { camposFormulario } from "@/lib/zomatik/np"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
@@ -86,6 +86,8 @@ type InitPedido = RequestInit & {
   escrituraNp?: boolean
   /** Z1: habilita el grupo de OF + remito (solo con la llave de remitir prendida, ver z1-servidor.ts). */
   escrituraZ1?: boolean
+  /** Ajuste de la NP al finalizar: habilita su grupo, ATADO a esta NP (solo con la llave del ajuste, ver ajuste-servidor.ts). */
+  escrituraAjuste?: number
 }
 
 async function pedir(cookie: string | null, path: string, init: InitPedido = {}): Promise<Response> {
@@ -94,7 +96,7 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
   let cuerpo = init.body
   const seguir = init.redirect !== "manual" // el login lee la cookie de la respuesta, sin seguir
   for (let salto = 0; ; salto++) {
-    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo)))
+    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo)) && !(typeof init.escrituraAjuste === "number" && rutaEscrituraAjuste(ruta, metodo, init.escrituraAjuste)))
       throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida: ${metodo} ${ruta.split("?")[0]}`)
     // Autorizar una NP: en el cuerpo solo "autorizar=<entero>" (nada más se puede mandar a esa ruta)
     if (ruta === RUTA_AUTORIZAR_NP) {
@@ -106,7 +108,7 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
     const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
     let r: Response
     try {
-      const { escrituraNp: _e, escrituraZ1: _z, ...resto } = init
+      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ...resto } = init
       r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
         ...resto,
         method: metodo,
@@ -491,6 +493,35 @@ export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
     },
     async post(ruta, cuerpo, contentType) {
       return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true }), ruta)
+    },
+    async sucursal(id) {
+      return elegirSucursal(s.cookie, id)
+    },
+  }
+}
+
+/**
+ * Navegador del ajuste de la NP al finalizar el pedido: el mismo de la NP, con el grupo del ajuste habilitado y ATADO a
+ * la NP `codigoNp` (cualquier otro código se rechaza antes de salir). `llave` la arma `ajuste-servidor.ts` después de
+ * leer `zomatik_np_config.ajustar_activo = true` (y la NP y la de remitir prendidas) en la base.
+ */
+export async function navegadorAjuste(llave: LlaveAjuste, codigoNp: number): Promise<NavegadorNp> {
+  if (!llave || llave.ajustar !== true) throw new ZomatikError("ruta_no_permitida", "El ajuste automático de la NP está apagado para esta planta")
+  if (!Number.isInteger(codigoNp) || codigoNp <= 0) throw new ZomatikError("ruta_no_permitida", "Ajuste de la NP: falta el código de la NP")
+  const s = await obtenerSesion()
+  const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
+    const html = Buffer.from(await r.arrayBuffer()).toString("latin1")
+    const loc = r.status >= 300 && r.status < 400 ? rutaDeLocation(r.headers.get("location") || "", ruta) : null
+    if (loc && /^index\.php/i.test(loc)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    return { status: r.status, location: loc, html }
+  }
+  return {
+    async get(ruta) {
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraAjuste: codigoNp }), ruta)
+    },
+    async post(ruta, cuerpo, contentType) {
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraAjuste: codigoNp }), ruta)
     },
     async sucursal(id) {
       return elegirSucursal(s.cookie, id)

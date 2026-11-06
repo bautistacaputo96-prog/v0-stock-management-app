@@ -152,3 +152,35 @@ export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
   if (/^_validarnumeroremito\.php\?fcomprobante=(7|19)&fnumero=\d{4}-\d{8}(&rnd=\d+)?$/i.test(p)) return true
   return false
 }
+
+// ---------------------------------------------------------------------------
+// 4. Ajuste de la NP al finalizar el pedido (docs/specs/2026-11-06-ajustar-np-al-finalizar.md, 8.1): otro grupo aparte,
+//    solo con la llave del ajuste prendida (zomatik_np_config.ajustar_activo) y ATADO A UNA NP (codigoNp)
+// ---------------------------------------------------------------------------
+
+/** Lo que el ajuste nunca manda: borrar renglones, acciones en lote, autorizar ni agregar artículos. */
+const AJUSTE_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|farticulo|borrar)=/i
+
+/**
+ * Rutas del ajuste de una NP (fase 1: editar la cantidad), cada una atada a la NP `codigoNp` (cualquier otro código o
+ * pedido se rechaza antes de salir):
+ *   GET  modificar_pedidos.php?codigo=N                abrir la NP (marca, botón Grabar, pedidos_unico)
+ *   GET  manage_pedidos.php?…pedidos=N&pedidos_unico=… cargar el detalle grabado, como la página (sin fborrar, faccion,
+ *                                                      fitems, fautorizar ni farticulo)
+ *   POST grabar_pedidos.php?codigo=N                   grabar la cantidad nueva (N > 0: nunca codigo=0)
+ *   GET  listado_pedidos.php / POST …?enviado=1        la fila de la NP (total y estado): ya es lectura
+ * La DEVOL (fase 2) no está: ni listado ni alta ni grabar de devoluciones. El vaciado sigue con el grupo de la NP.
+ */
+export function rutaEscrituraAjuste(path: string, metodo: "GET" | "POST", codigoNp: number): boolean {
+  if (!Number.isInteger(codigoNp) || codigoNp <= 0) return false
+  const p = path.replace(/^\/+/, "")
+  if (AJUSTE_PROHIBIDO.test(p)) return false
+  if (metodo === "POST") return /^listado_pedidos\.php\?enviado=1$/i.test(p) || p.toLowerCase() === `grabar_pedidos.php?codigo=${codigoNp}`
+  if (/^listado_pedidos\.php$/i.test(p)) return true
+  if (p.toLowerCase() === `modificar_pedidos.php?codigo=${codigoNp}`) return true
+  if (/^manage_pedidos\.php\?/i.test(p)) {
+    const q = new URLSearchParams(p.slice(p.indexOf("?") + 1))
+    return q.getAll("pedidos").length === 1 && q.get("pedidos") === String(codigoNp) && /^\d+$/.test(q.get("pedidos_unico") || "") && !q.has("codigo")
+  }
+  return false
+}

@@ -12,6 +12,9 @@
  * NP de proyecto (23.2): sucursal 18 → MATERIAL → depósito → Continuar (trae lo disponible) → cantidad del día →
  *                   sucursal 18 → Grabar → buscar por marca entre las NP de hoy del cliente (el número lo pone Zomatik).
  * Vaciar (23.4):    abrir la NP → controlar la marca → borrar cada renglón → Grabar → abrir de nuevo: sin renglones.
+ * Ajustar (al finalizar el pedido, docs/specs/2026-11-06-ajustar-np-al-finalizar.md): el mismo esqueleto que vaciar,
+ *                   pero con la cantidad en vez del tacho: abrir → marca → un renglón → ¿factura? → cantidad → Grabar →
+ *                   abrir de nuevo: un renglón con la cantidad nueva y el total del listado en proporción.
  * Si no aparece en REBUCRET, se busca por la marca en RUTA 25 (23.3 c): si está ahí, queda "revisar".
  */
 import {
@@ -21,6 +24,7 @@ import {
   autorizacionEnListado, tieneFormAutorizar, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
+import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, facturaDeNp, m3Texto, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional } from "@/lib/zomatik/ajuste"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -28,6 +32,9 @@ import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 
 /** Solo la arma np-servidor.ts después de leer `zomatik_np_config.activo = true`. */
 export type LlaveNp = { readonly activo: true; readonly plantId: string }
+
+/** Solo la arma ajuste-servidor.ts después de leer `zomatik_np_config.ajustar_activo = true` (y la NP y la de remitir). */
+export type LlaveAjuste = { readonly ajustar: true; readonly plantId: string }
 
 export type RespuestaNav = { status: number; location: string | null; html: string }
 
@@ -615,5 +622,174 @@ export async function autorizarNp(nav: NavegadorNp, d: { codigo: number; numero:
     return sin(`Zomatik no la autorizó${rechazo(r) ? ` (${rechazo(r)})` : ""}`, despues.l.html || r.html)
   } catch (e) {
     return sin(mensajeDe(e))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ajustar la cantidad de la NP a lo despachado (al finalizar el pedido, antes de la OF y el remito)
+// ---------------------------------------------------------------------------
+
+export type DatosAjuste = {
+  /** Código de la NP en Zomatik (modificar_pedidos.php?codigo=N) */
+  codigo: number
+  numero: string | null
+  /** La marca de la NP (la que se grabó al generarla): sin ella no se toca */
+  marca: string
+  articuloCodigo?: number | null
+  articuloNombre?: string | null
+  /** Lo que el sistema cree que tiene la NP (zomatik_np.m3): Zomatik tiene que decir lo mismo */
+  m3Np: number
+  /** La cantidad que tiene que quedar */
+  objetivo: number
+  /** Hubo un Grabar que pudo llegar (corte en grabar_np / verificar_np): primero se relee la NP */
+  cortado: boolean
+}
+
+export type ResultadoAjusteNp = {
+  /** con_factura = Zomatik no deja editar la NP (no se tocó o no aceptó el Grabar por la factura) */
+  estado: "ok" | "con_factura" | "revisar" | "error" | "pendiente"
+  mensaje: string | null
+  paso: string
+  /** La cantidad del renglón que se leyó en Zomatik al empezar */
+  leido?: number | null
+  totalAntes?: number | null
+  totalDespues?: number | null
+  /** Por qué se dice que tiene factura (o lo que contestó Zomatik) */
+  facturaTexto?: string | null
+  /** Zomatik ya tenía la cantidad nueva: no se grabó nada */
+  yaEstaba?: boolean
+  grabado?: boolean
+  recorte?: string
+}
+
+export type LecturaAjuste = {
+  pagina: Awaited<ReturnType<typeof abrir>>
+  form: NonNullable<ReturnType<typeof camposFormulario>>
+  accion: string
+  renglon: Renglon
+  det: Detalle | null
+  cantidad: number
+  fila: { total: number | null; estado: string } | null
+}
+
+/** La fila de la NP en el listado de REBUCRET (null si no aparece o el listado vino de otra sucursal). */
+async function filaNp(nav: NavegadorNp, d: { codigo: number; numero: string | null }) {
+  if (!d.numero) return null
+  await aRebucret(nav)
+  const l = await listado(nav, { bus_numero: numeroNormalizado(d.numero) || d.numero }, SUCURSAL_REBUCRET)
+  if (l.sucursalPagina !== SUCURSAL_REBUCRET) return null
+  const f = l.filas.find((x) => x.codigo === d.codigo)
+  return f ? { total: f.total, estado: f.estado } : null
+}
+
+/**
+ * Abre la NP para el ajuste (paso `leer_np`): tiene que tener nuestra marca, grabar sobre ESTA NP (nunca codigo=0), ser
+ * la página de esta NP (hidden `pedidos` = N) y tener UN renglón, del artículo de la NP, con la cantidad legible. El
+ * detalle se carga como la página (manage_pedidos.php con pedidos=N y su pedidos_unico). Lo que no se reconoce: "revisar"
+ * (o "error" si la página cambió de forma), sin grabar nada.
+ */
+export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "codigo" | "numero" | "marca" | "articuloCodigo" | "articuloNombre">, o: { azar?: () => number } = {}): Promise<LecturaAjuste> {
+  const azar = o.azar || (() => Math.floor(Math.random() * 345343))
+  if (!Number.isInteger(d.codigo) || d.codigo <= 0) throw new Corte("revisar", "No se sabe el código de la NP en Zomatik: ajustala a mano.")
+  if (!d.numero) throw new Corte("revisar", "No se sabe el número de la NP: ajustala a mano.")
+  await aRebucret(nav)
+  const a = await abrir(nav, d.codigo)
+  if (!a.form) throw formato("no se abrió la NP", a.html)
+  if (!tieneMarca(a.form.campos.observaciones, d.marca)) throw new Corte("revisar", "La NP no tiene la marca del sistema: no se toca. Revisala en Zomatik.")
+  const accion = a.form.action || ""
+  if (accion.toLowerCase() !== `grabar_pedidos.php?codigo=${d.codigo}`) throw formato("la NP graba en otro lado", a.html)
+  const c = a.form.campos
+  if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
+  const proyecto = Number(c.proyecto || 0) || null
+  const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
+  const leido = await detalleGrabado(nav, a, base, proyecto, azar)
+  const html = leido.det?.html || a.html
+  if (!leido.valido) throw new Corte("revisar", "No se pudo leer el detalle de la NP. No se tocó: revisala.", false, html)
+  if (leido.renglones.length !== 1) throw new Corte("revisar", `La NP tiene ${leido.renglones.length} renglones: no se toca. Revisala en Zomatik.`, false, html)
+  const r = leido.renglones[0]
+  const art = { codigo: d.articuloCodigo, nombre: d.articuloNombre }
+  if ((art.codigo || art.nombre) && !esRenglonDe(r, art)) throw new Corte("revisar", `El renglón de la NP no es ${d.articuloNombre || "el artículo del pedido"}: no se toca. Revisala en Zomatik.`, false, html)
+  const cantidad = numeroZomatik(r.cantidad)
+  if (cantidad === null || !(cantidad > 0)) throw new Corte("revisar", "No se pudo leer la cantidad de la NP. No se tocó: revisala.", false, html)
+  return { pagina: a, form: a.form, accion, renglon: r, det: leido.det, cantidad, fila: await filaNp(nav, d) }
+}
+
+/**
+ * Pone la cantidad de la NP en `objetivo` (achicar o agrandar). Editar es ABSOLUTO (se pone la cantidad, no "restar
+ * 20"): reintentar después de un corte es seguro, pero primero se relee (4.3).
+ *   leer_np       → la NP con la marca, un renglón; la cantidad tiene que ser la del sistema (si no, "revisar").
+ *                   Cortado antes: ya en `objetivo` → ok sin grabar; en la de antes → se vuelve a editar; otra → revisar.
+ *   leer_factura  → 15.1: si Zomatik no deja editarla, "con_factura" y no se toca. Si no se puede saber, "revisar".
+ *   editar_detalle, grabar_np (quien llama lo guarda ANTES de mandar) → Grabar sobre esta NP con el renglón y fparam.
+ *   verificar_np  → abrir otra vez: un renglón en `objetivo`, la marca, y el total del listado en proporción.
+ */
+export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: OpcionesRobot): Promise<ResultadoAjusteNp> {
+  const azar = o.azar || (() => Math.floor(Math.random() * 345343))
+  const boundary = o.boundary || `----rebucret${Date.now().toString(36)}`
+  let paso = "leer_np"
+  let grabado = false
+  const marcar = async (p: string) => {
+    paso = p
+    await o.alPaso?.(p)
+  }
+  const igual = (a: number, b: number) => Math.abs(a - b) <= TOL_AJUSTE
+  let leidoAntes: number | null = null
+  try {
+    if (!(d.objetivo > 0)) return { estado: "revisar", mensaje: "La NP quedaría en 0 m³: no se toca (la decide una persona).", paso }
+    await marcar("leer_np")
+    const l = await leerNpParaAjuste(nav, d, { azar })
+    leidoAntes = l.cantidad
+    // Un corte anterior en el Grabar: lo que dice Zomatik ahora manda
+    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true }
+    if (!igual(l.cantidad, d.m3Np)) return { estado: "revisar", mensaje: msjNpCambio(l.cantidad, d.m3Np), paso, leido: l.cantidad }
+    await marcar("leer_factura")
+    const f = facturaDeNp({ paginaHtml: l.pagina.html, detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null })
+    if (f.estado === "con") return { estado: "con_factura", mensaje: null, paso, leido: l.cantidad, facturaTexto: f.motivo }
+    if (f.estado === "no_se_sabe") return { estado: "revisar", mensaje: MSJ_FACTURA_NO_SE_SABE, paso, leido: l.cantidad, facturaTexto: f.motivo, recorte: recorte(l.det?.html || l.pagina.html) }
+    // El total grabado de antes (para ver que quedó en proporción): sin la fila del listado no se sigue
+    if (!l.fila || l.fila.total === null) return { estado: "revisar", mensaje: `No se encontró la ${d.numero} en el listado de pedidos de REBUCRET. No se tocó: revisala.`, paso, leido: l.cantidad }
+    const totalAntes = l.fila.total
+    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true }
+
+    await marcar("decidir")
+    await marcar("editar_detalle")
+    const rs = [conCantidad(l.renglon, d.objetivo)]
+    await marcar("grabar_np")
+    grabado = true
+    await aRebucret(nav)
+    const { cuerpo, tipo } = cuerpoGrabar(l.form.orden, {}, l.det, rs, boundary)
+    const g = await nav.post(l.accion, cuerpo, tipo)
+    const no = rechazo(g)
+
+    // Comprobar en Zomatik: la NP abierta de nuevo (página nueva) con UN renglón en el objetivo y el total en proporción
+    await marcar("verificar_np")
+    let v: LecturaAjuste | null = null
+    try {
+      v = await leerNpParaAjuste(nav, d, { azar })
+    } catch (e) {
+      if (!(e instanceof Corte)) throw e
+    }
+    if (v && igual(v.cantidad, d.objetivo)) {
+      const despues = v.fila?.total ?? null
+      if (despues !== null && totalProporcional(totalAntes, l.cantidad, despues, d.objetivo))
+        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true }
+      return { estado: "revisar", mensaje: `La NP quedó en ${m3Texto(d.objetivo)} m³ pero el total del listado no cerró (antes ${totalAntes}, ahora ${despues ?? "sin dato"}). Revisala en Zomatik.`, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
+    }
+    if (v && igual(v.cantidad, l.cantidad)) {
+      if (no && rechazoPorFactura(no)) return { estado: "con_factura", mensaje: null, paso: "grabar_np", leido: l.cantidad, facturaTexto: `Zomatik contestó: ${no}`, recorte: recorte(g.html) }
+      if (no) return { estado: "error", mensaje: msjZomatikNoDejo(no), paso: "grabar_np", leido: l.cantidad, recorte: recorte(g.html) }
+      return { estado: "revisar", mensaje: `Se grabó pero la NP sigue en ${m3Texto(l.cantidad)} m³. Revisala en Zomatik.`, paso, leido: l.cantidad, grabado: true, recorte: recorte(g.html) }
+    }
+    return {
+      estado: "revisar",
+      mensaje: `Después de grabar, la NP ${v ? `tiene ${m3Texto(v.cantidad)} m³ (se esperaban ${m3Texto(d.objetivo)})` : "no se pudo leer"}${no ? ` · Zomatik dijo: ${no}` : ""}. Revisala en Zomatik.`,
+      paso, leido: l.cantidad, grabado: true, recorte: recorte(g.html),
+    }
+  } catch (e) {
+    if (e instanceof Corte) return { estado: e.estado === "ok" ? "revisar" : e.estado, mensaje: e.message, paso, leido: leidoAntes, recorte: e.recorte, grabado }
+    const m = mensajeDe(e)
+    // Red o sesión: antes de Grabar se reintenta; durante o después, el próximo intento relee la NP primero
+    if (grabado) return { estado: "pendiente", mensaje: `Se cortó al grabar la NP (${m}). Antes de reintentar se relee en Zomatik.`, paso, grabado: true, leido: leidoAntes }
+    return { estado: esDeRed(e) ? "pendiente" : "error", mensaje: m, paso, leido: leidoAntes }
   }
 }
