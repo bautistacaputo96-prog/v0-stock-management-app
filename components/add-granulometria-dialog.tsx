@@ -15,6 +15,10 @@ import { toast } from "@/hooks/use-toast"
 import { Loader2, AlertCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { logActivity } from "@/lib/activity-log"
+import { normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
+
+/** Un ingreso que puede ser el del ensayo (mismo remito normalizado y material, ±30 días). */
+type IngresoCandidato = { id: string; remito: string | null; entry_date: string; quantity: number }
 
 interface AddGranulometriaDialogProps {
   open: boolean
@@ -44,6 +48,9 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
   const [filteredSuppliers, setFilteredSuppliers] = useState<Supplier[]>([])
   const [moisturePercent, setMoisturePercent] = useState<number | null>(null)
   const [remitoError, setRemitoError] = useState<string>("")
+  // Más de un ingreso con ese remito: hay que elegir (docs/ingresos-mp-zomatik.md, punto 4)
+  const [candidatos, setCandidatos] = useState<IngresoCandidato[]>([])
+  const [ingresoElegido, setIngresoElegido] = useState("")
 
   const [formData, setFormData] = useState({
     extraction_date: new Date().toISOString().split("T")[0],
@@ -193,23 +200,27 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
     setSieveData((prev) => ({ ...prev, [sieve]: value }))
   }
 
-  const validateRemito = async (remito: string, materialId: string): Promise<boolean> => {
-    if (!remito || !materialId) return true
-
+  /**
+   * Ingresos de ese material con el mismo remito normalizado ("318903" = "0002-00318903"), ±30 días de la extracción.
+   * Ya no depende de cómo se escribió el remito (los de Zomatik vienen como 0002-00318903).
+   */
+  const buscarIngresos = async (remito: string, materialId: string, fecha: string): Promise<IngresoCandidato[] | null> => {
+    const nro = normalizarRemito(remito)
+    if (!nro || !materialId) return []
     const supabase = createClient()
+    const f = fecha || new Date().toISOString().slice(0, 10)
     const { data, error } = await supabase
       .from("stock_entries")
-      .select("id, remito")
+      .select("id, remito, entry_date, quantity")
       .eq("material_id", materialId)
-      .eq("remito", remito)
-      .limit(1)
-
+      .gte("entry_date", `${sumarDias(f, -30)}T00:00:00`)
+      .lte("entry_date", `${sumarDias(f, 30)}T23:59:59`)
+      .limit(1000)
     if (error) {
       console.error("Error validating remito:", error)
-      return false
+      return null
     }
-
-    return data && data.length > 0
+    return ((data as IngresoCandidato[]) || []).filter((e) => normalizarRemito(e.remito) === nro)
   }
 
   const calculateResults = () => {
@@ -290,9 +301,8 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
         return
       }
 
-      console.log("[v0] Validating remito:", formData.remito)
-      const isValidRemito = await validateRemito(formData.remito, formData.material_id)
-      console.log("[v0] Remito validation result:", isValidRemito)
+      const encontrados = await buscarIngresos(formData.remito, formData.material_id, formData.extraction_date)
+      const isValidRemito = !!encontrados && encontrados.length > 0
 
       if (!isValidRemito) {
         setRemitoError("No hay un remito asociado a ese agregado")
@@ -304,6 +314,15 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
         setLoading(false)
         return
       }
+
+      // Uno solo: se vincula ese. Más de uno: hay que elegir cuál
+      if (encontrados!.length > 1 && !encontrados!.some((e) => e.id === ingresoElegido)) {
+        setCandidatos(encontrados!)
+        setRemitoError("Hay más de un ingreso con ese remito: elegí cuál")
+        setLoading(false)
+        return
+      }
+      const ingresoId = encontrados!.length === 1 ? encontrados![0].id : ingresoElegido
 
       const supabase = createClient()
       const dryWeight = Number.parseFloat(formData.dry_weight_grams)
@@ -360,6 +379,7 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
           remito: formData.remito,
           plant_id: formData.plant_id,
           comments: formData.comments || null,
+          stock_entry_id: ingresoId,
         })
         .select()
         .single()
@@ -387,12 +407,11 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
 
       console.log("[v0] Sieve results inserted successfully")
 
-      // Update the stock_entry to link the granulometry test
+      // Se vincula por id (antes por remito exacto: si había dos con el mismo remito, se vinculaban los dos)
       const { error: updateError } = await supabase
         .from("stock_entries")
         .update({ granulometry_test_id: testData.id })
-        .eq("remito", formData.remito)
-        .eq("material_id", formData.material_id)
+        .eq("id", ingresoId)
 
       if (updateError) {
         console.error("[v0] Error linking test to stock entry:", updateError)
@@ -429,6 +448,8 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
   }
 
   const resetForm = () => {
+    setCandidatos([])
+    setIngresoElegido("")
     setFormData({
       extraction_date: new Date().toISOString().split("T")[0],
       test_date: "",
@@ -584,10 +605,26 @@ export function AddGranulometriaDialog({ open, onOpenChange, plants, onTestAdded
                 onChange={(e) => {
                   setFormData({ ...formData, remito: e.target.value })
                   setRemitoError("")
+                  setCandidatos([])
+                  setIngresoElegido("")
                 }}
                 required
                 className={remitoError ? "border-destructive" : ""}
               />
+              {candidatos.length > 1 && (
+                <Select value={ingresoElegido} onValueChange={(v) => { setIngresoElegido(v); setRemitoError("") }}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="¿Cuál ingreso?" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {candidatos.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.entry_date.slice(0, 10).split("-").reverse().join("/")} · {c.remito || "-"} · {Number(c.quantity).toLocaleString("es-AR")} kg
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               {remitoError && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />

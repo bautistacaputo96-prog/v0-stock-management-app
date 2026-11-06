@@ -27,6 +27,9 @@ import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
 import { claveMaterial, enToneladas } from "@/lib/control-ingresos/cruce"
+import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
+import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
+import { usePermisos } from "@/lib/current-user"
 
 const HUMIDITY_TOLERANCE = 3.0 // 3% tolerance
 const WET_SAMPLE_WEIGHT = 500 // Fixed wet sample weight in grams
@@ -36,6 +39,9 @@ const KG_SOSPECHOSO = 200
 /** ¿El material viene en camiones de toneladas? (áridos y cemento) */
 const vaEnToneladas = (m: { name: string; tipo?: string | null } | undefined) =>
   !!m && (["arido_fino", "arido_grueso", "cemento"].includes(m.tipo || "") || enToneladas(claveMaterial(m.name)))
+
+/** ¿Entra solo desde Zomatik? (áridos, cemento, aditivos y fibra: docs/ingresos-mp-zomatik.md, 3.7) */
+const entraDeZomatik = (m: { name: string; tipo?: string | null } | undefined) => !!m && (TIPOS_IMPORTABLES.includes(m.tipo || "") || claveMaterial(m.name) !== null)
 
 type Material = {
   id: string
@@ -55,7 +61,19 @@ type Carrier = {
   name: string
 }
 
-export function AddStockEntryDialog({ materials, onSuccess }: { materials: Material[], onSuccess?: () => void }) {
+export function AddStockEntryDialog({
+  materials: todosLosMateriales,
+  onSuccess,
+  importacionActiva = false,
+}: {
+  materials: Material[]
+  onSuccess?: () => void
+  /** Ya entra solo desde Zomatik (modo real y hoy ≥ F): la MP la carga a mano solo un gerencial, con nota. */
+  importacionActiva?: boolean
+}) {
+  const { esGerencial } = usePermisos()
+  // Sin ser gerencial, con la importación prendida, no se ven los materiales que entran desde Zomatik
+  const materials = importacionActiva && !esGerencial ? todosLosMateriales.filter((m) => !entraDeZomatik(m)) : todosLosMateriales
   const [open, setOpen] = useState(false)
   const [addSupplierOpen, setAddSupplierOpen] = useState(false)
   const [addCarrierOpen, setAddCarrierOpen] = useState(false)
@@ -167,6 +185,11 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
       return
     }
 
+    if (importacionActiva && entraDeZomatik(selectedMaterial) && !formData.notes.trim()) {
+      toast({ variant: "destructive", title: "Falta la nota", description: "Este material entra solo desde Zomatik: escribí por qué lo cargás a mano." })
+      return
+    }
+
     if (!formData.remito.trim()) {
       toast({
         variant: "destructive",
@@ -220,9 +243,8 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
       }
 
       // Insert stock entry - quantity muestra peso húmedo, dry_quantity es el control interno
-      const { data: entryData, error: entryError } = await supabase
-        .from("stock_entries")
-        .insert({
+      // origen = 'manual' (sin la migración, como siempre)
+      const { data: entryData, error: entryError } = await insertarIngresoManual(supabase as any, {
           material_id: formData.material_id,
           quantity: originalQuantity, // Peso húmedo visible (lo que ingresó)
           original_quantity: originalQuantity, // Mismo valor para compatibilidad
@@ -236,8 +258,6 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
           created_by: currentUserName(),
           entry_date: `${formData.entry_date}T12:00:00`,
         })
-        .select()
-        .single()
 
       if (entryError) throw entryError
 
@@ -245,67 +265,26 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
       // (trigger update_stock_after_entry). Acá NO se vuelve a sumar: hacerlo
       // duplicaba cada camión (pasó entre el 03/08 y el 09/09/2026).
       // Lo único que la base no lleva es el stock seco de los materiales con humedad.
-      if (requiresGranulometry) {
-        const { data: materialData } = await supabase
-          .from("materials")
-          .select("dry_stock")
-          .eq("id", formData.material_id)
-          .single()
-        await supabase
-          .from("materials")
-          .update({ dry_stock: (materialData?.dry_stock || 0) + dryQuantity })
-          .eq("id", formData.material_id)
-      }
+      // Stock seco, excedente y muestra: la misma lógica que las acciones del historial (lib/ingresos/muestras.ts)
+      const ingreso = { id: entryData.id, material_id: formData.material_id, quantity: originalQuantity, dry_quantity: dryQuantity, remito: formData.remito.trim(), entry_date: formData.entry_date, supplier_id: formData.supplier_id, plant_id: selectedMaterial?.plant_id }
+      // Como siempre, si esto falla el ingreso ya quedó registrado (no se corta)
+      if (requiresGranulometry) await moverStockSeco(supabase as any, formData.material_id, dryQuantity).catch((e) => console.error("dry_stock:", e))
 
       // If humidity exceeds tolerance, log the excess
       if (isSandMaterial && formData.humidity_percentage) {
         const humidity = Number.parseFloat(formData.humidity_percentage)
-        if (humidity > HUMIDITY_TOLERANCE) {
-          const excessHumidity = humidity - HUMIDITY_TOLERANCE
-          const excessQuantityKg = originalQuantity * (excessHumidity / 100)
-          const excessQuantityTn = excessQuantityKg / 1000
-
-          await supabase.from("humidity_excess_log").insert({
-            stock_entry_id: entryData.id,
-            entry_date: formData.entry_date,
-            material_id: formData.material_id,
-            supplier_id: formData.supplier_id,
-            remito: formData.remito.trim(),
-            original_quantity_kg: originalQuantity,
-            humidity_percentage: humidity,
-            tolerance_percentage: HUMIDITY_TOLERANCE,
-            excess_humidity_percentage: excessHumidity,
-            excess_quantity_kg: excessQuantityKg,
-            excess_quantity_tn: excessQuantityTn,
-            plant_id: selectedMaterial?.plant_id,
-          })
-        }
+        if (humidity > HUMIDITY_TOLERANCE) await grabarExcedente(supabase as any, ingreso, humidity, formData.supplier_id, selectedMaterial?.plant_id).catch((e) => console.error("excedente:", e))
       }
 
       // If granulometry sample was taken, create pending test
       if (requiresGranulometry && formData.sample_taken_granulometry === "yes") {
-        const { data: testData, error: testError } = await supabase
-          .from("granulometria_tests")
-          .insert({
-            extraction_date: formData.entry_date,
-            material_id: formData.material_id,
-            supplier_id: formData.supplier_id,
-            provider: filteredSuppliers.find(s => s.id === formData.supplier_id)?.name || "",
-            aggregate_type: selectedMaterial?.name || "",
-            remito: formData.remito.trim(),
-            plant_id: selectedMaterial?.plant_id,
-            stock_entry_id: entryData.id,
-            comments: "Pendiente de completar ensayo",
-          })
-          .select()
-          .single()
-
-        if (!testError && testData) {
-          await supabase
-            .from("stock_entries")
-            .update({ granulometry_test_id: testData.id })
-            .eq("id", entryData.id)
-        }
+        await crearMuestraGranulometria(supabase as any, ingreso, {
+          materialName: selectedMaterial?.name || "",
+          providerName: filteredSuppliers.find((s) => s.id === formData.supplier_id)?.name || "",
+          supplierId: formData.supplier_id,
+          plantId: selectedMaterial?.plant_id,
+          fecha: formData.entry_date,
+        }).catch(() => null)
       }
 
       const displayQuantity = `${originalQuantity.toLocaleString("es-AR")} ${selectedMaterial?.unit}`
@@ -714,8 +693,15 @@ export function AddStockEntryDialog({ materials, onSuccess }: { materials: Mater
               </div>
             )}
 
+            {importacionActiva && entraDeZomatik(selectedMaterial) && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>Este material entra solo desde Zomatik. Cargalo acá solo si no va a estar en Zomatik (la nota es obligatoria).</span>
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="notes">Notas</Label>
+              <Label htmlFor="notes">Notas{importacionActiva && entraDeZomatik(selectedMaterial) ? <span className="text-red-500"> *</span> : null}</Label>
               <Textarea
                 id="notes"
                 value={formData.notes}

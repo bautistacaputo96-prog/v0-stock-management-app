@@ -216,14 +216,28 @@ export function nuevoDeRecuento(notas: unknown): number | null {
   return m ? parseNumero(m[1]) : null
 }
 
+/** Un asiento `correccion_ingreso` (Zomatik o edición a mano): cuánto cambió el ingreso y cuándo se creó el ingreso. */
+export type CorreccionIngreso = { kg: number; creadoAt: string; ingresoCreadoAt: string | null }
+
 /**
  * Libro desde el último recuento: "Nuevo" del recuento + lo que entró, salió y se ajustó después (por cuándo se cargó).
  * `sinRegistro` = stock actual − libro (kg). null si no hay recuento.
+ *
+ * Correcciones de ingresos (docs/ingresos-mp-zomatik.md, 3.5): el ingreso ya tiene la cantidad nueva. Si se creó
+ * después del recuento, el libro ya la usa; si se creó antes, la diferencia se suma acá (si no, saldría como "ajuste
+ * sin registro"). `correccionesAnteriores` = cuántas son de ingresos anteriores al recuento (para revisar).
  */
-export function libroDesdeRecuento(actualKg: number, recuento: { nuevoKg: number; creadoAt: string } | null, movs: (MovNuestro & { creadoAt: string })[]): { libroKg: number; sinRegistroKg: number } | null {
+export function libroDesdeRecuento(
+  actualKg: number,
+  recuento: { nuevoKg: number; creadoAt: string } | null,
+  movs: (MovNuestro & { creadoAt: string })[],
+  correcciones: CorreccionIngreso[] = [],
+): { libroKg: number; sinRegistroKg: number; correccionesAnteriores: number } | null {
   if (!recuento) return null
-  const libroKg = recuento.nuevoKg + movs.filter((m) => m.creadoAt > recuento.creadoAt).reduce((s, m) => s + efecto(m), 0)
-  return { libroKg, sinRegistroKg: actualKg - libroKg }
+  const anteriores = correcciones.filter((c) => c.creadoAt > recuento.creadoAt && !!c.ingresoCreadoAt && c.ingresoCreadoAt <= recuento.creadoAt)
+  const libroKg =
+    recuento.nuevoKg + movs.filter((m) => m.creadoAt > recuento.creadoAt).reduce((s, m) => s + efecto(m), 0) + anteriores.reduce((s, c) => s + c.kg, 0)
+  return { libroKg, sinRegistroKg: actualKg - libroKg, correccionesAnteriores: anteriores.length }
 }
 
 /**

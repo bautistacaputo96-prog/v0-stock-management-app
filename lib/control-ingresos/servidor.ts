@@ -217,14 +217,24 @@ async function todasLasFilas<T>(q: (desde: number, hasta: number) => PromiseLike
 
 /** Nuestros ingresos desde `desde` (fecha de Argentina), con planta, material, proveedor y transportista. */
 export async function leerNuestros(sb: SupabaseClient, desde: string): Promise<IngresoNuestro[]> {
-  const filas = await todasLasFilas<any>((a, b) =>
-    sb
-      .from("stock_entries")
-      .select("id, entry_date, quantity, original_quantity, remito, notes, created_by, materials(name, plant_id, plants(name)), suppliers(name), carriers(name)")
-      .gte("entry_date", `${desde}T03:00:00.000Z`)
-      .order("id")
-      .range(a, b),
-  )
+  const consulta = (sinAnulados: boolean) =>
+    todasLasFilas<any>((a, b) => {
+      let q = sb
+        .from("stock_entries")
+        .select("id, entry_date, quantity, original_quantity, remito, notes, created_by, materials(name, plant_id, plants(name)), suppliers(name), carriers(name)")
+        .gte("entry_date", `${desde}T03:00:00.000Z`)
+      // Los anulados (importación de Zomatik, docs/ingresos-mp-zomatik.md) no se cruzan
+      if (sinAnulados) q = q.is("anulado_at", null)
+      return q.order("id").range(a, b)
+    })
+  let filas: any[]
+  try {
+    filas = await consulta(true)
+  } catch (e: any) {
+    // Sin la migración 202611061000 la columna no existe: como antes
+    if (!/anulado_at/.test(e?.message || "")) throw e
+    filas = await consulta(false)
+  }
   return filas.map((e) => ({
     id: e.id,
     fecha: fechaArgentina(e.entry_date),
@@ -273,6 +283,8 @@ export type ResultadoControl = {
   mail?: { enviado: boolean; a: string[]; motivo?: string }
   /** Lectura del control de stock (solo en el cron); no cambia `ok` del control de remitos. */
   stock?: ResultadoStock
+  /** Importación de los ingresos desde Zomatik con lo leído (docs/ingresos-mp-zomatik.md). */
+  importacion?: import("@/lib/ingresos-zomatik/servidor").ResultadoImportacion
 }
 
 const filaDif = (d: Diferencia, ahora: string) => ({
@@ -327,15 +339,30 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
   let mailAt: string | null = null
   try {
     if (opts.leer) res.lectura = await leerZomatikCompras(sb, desde, hoy, t0)
+    // Importación de ingresos desde Zomatik con lo recién leído, antes del cruce (import dinámico: ese módulo usa la
+    // lectura de este). Apagada: no hace nada.
+    const iz = await import("@/lib/ingresos-zomatik/servidor")
+    if (opts.leer && res.lectura) res.importacion = await iz.importar(sb, { dias: iz.diasDeLectura(res.lectura), t0 })
     const desdeMargen = sumarDias(desde, -MARGEN_DIAS)
-    const [nuestros, zomatik, leidos] = await Promise.all([leerNuestros(sb, desdeMargen), leerCopiaZomatik(sb, desdeMargen), diasLeidos(sb, desdeMargen)])
+    let [nuestros, zomatik, leidos] = await Promise.all([leerNuestros(sb, desdeMargen), leerCopiaZomatik(sb, desdeMargen), diasLeidos(sb, desdeMargen)])
+    // Desde F lo de Zomatik entra solo: el cruce viejo queda para las fechas anteriores y no mira lo ya vinculado
+    const { interruptor } = await iz.leerConfig(sb).catch(() => ({ interruptor: { modo: "apagado" as const, desde: null } }))
+    let hasta: string | undefined
+    if (interruptor.modo === "real" && interruptor.desde) {
+      hasta = sumarDias(interruptor.desde, -1)
+      const vinc = await iz.vinculadosParaCruce(sb)
+      if (vinc) {
+        nuestros = nuestros.filter((n) => !vinc.entradas.has(n.id))
+        zomatik = zomatik.filter((z) => !vinc.claves.has(iz.claveDeCopia(z) || ""))
+      }
+    }
     // Solo cuentan los días de Zomatik leídos en las últimas 30 h: lo demás no se informa ni se resuelve
     const frescos = new Set([...leidos].filter(([, l]) => Date.now() - Date.parse(l) <= FRESCO_MS).map(([d]) => d))
     if (frescos.size === 0) {
       res.ok = false
       res.motivo = `No hay una lectura reciente de Zomatik: no se controló${res.lectura?.error ? ` (${res.lectura.error})` : ""}`
     } else {
-      const oc: OpcionesCruce = { hoy, desde, cubierto: (d) => frescos.has(d) }
+      const oc: OpcionesCruce = { hoy, desde, cubierto: (d) => frescos.has(d), hasta }
       res.resumen = await guardarDiferencias(sb, cruzar(nuestros, zomatik, oc), oc)
       res.resumen.dias_leidos = frescos.size
       if (res.lectura && !res.lectura.ok) res.ok = false
@@ -368,9 +395,9 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
     .update({
       fin: new Date().toISOString(),
       ok: res.ok,
-      lectura: res.lectura || res.stock ? { ...(res.lectura || {}), stock: res.stock ?? null } : null,
+      lectura: res.lectura || res.stock || res.importacion ? { ...(res.lectura || {}), stock: res.stock ?? null, importacion: res.importacion ?? null } : null,
       resumen: res.resumen ?? null,
-      error: [res.motivo, res.lectura?.error, res.mail && !res.mail.enviado ? `mail: ${res.mail.motivo}` : null].filter(Boolean).join(" · ").slice(0, 2000) || null,
+      error: [res.motivo, res.lectura?.error, res.importacion?.ok === false ? `importación: ${res.importacion.motivo}` : null, res.mail && !res.mail.enviado ? `mail: ${res.mail.motivo}` : null].filter(Boolean).join(" · ").slice(0, 2000) || null,
       mail_at: res.mail?.enviado ? mailAt : null,
       mail_a: res.mail?.enviado ? res.mail.a : null,
     })
@@ -417,3 +444,4 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   if (!r.ok) return { enviado: false, a: to, motivo: `Resend respondió ${r.status}` }
   return { enviado: true, a: [...to, ...cc] }
 }
+

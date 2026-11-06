@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2, FlaskConical } from "lucide-react"
 import { ViewGranulometriaDialog } from "./view-granulometria-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -15,11 +15,14 @@ import { useToast } from "@/hooks/use-toast"
 import { logCambio, logDeletion } from "@/lib/activity-log"
 import { usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
+import { IngresoMuestrasDialog } from "@/components/ingreso-muestras-dialog"
+import { esArenaFina } from "@/lib/ingresos/muestras"
 
 type Material = {
   id: string
   name: string
   unit: string
+  plant_id?: string | null
 }
 
 type GranulometriaTest = {
@@ -34,6 +37,13 @@ type Supplier = {
 
 type StockEntry = {
   id: string
+  material_id?: string
+  supplier_id?: string | null
+  /** Texto del proveedor cuando no está vinculado (lo importado de Zomatik sin proveedor conocido). */
+  supplier?: string | null
+  /** 'zomatik' = entró solo desde Zomatik (docs/ingresos-mp-zomatik.md); 'manual' o nulo = a mano. */
+  origen?: string | null
+  anulado_at?: string | null
   quantity: number
   original_quantity: number | null
   dry_quantity?: number | null
@@ -62,7 +72,36 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   const { puede } = usePermisos()
   const puedeEditar = puede("materia_prima", "editar")
   const puedeBorrar = puede("materia_prima", "borrar")
+  const puedeCargar = puede("materia_prima", "cargar")
   const [motivo, setMotivo] = useState("")
+  const [muestra, setMuestra] = useState<{ entry: StockEntry; modo: "humedad" | "granulometria" } | null>(null)
+  // Correcciones con asiento (Zomatik o a mano) de los ingresos de la tabla: insignia "Corregido" con el detalle
+  const [correcciones, setCorrecciones] = useState<Record<string, { kg: number; nota: string; at: string }[]>>({})
+  const idsClave = entries.map((e) => e.id).join(",")
+  useEffect(() => {
+    const ids = entries.map((e) => e.id)
+    if (!ids.length) {
+      setCorrecciones({})
+      return
+    }
+    let vivo = true
+    ;(async () => {
+      const out: Record<string, { kg: number; nota: string; at: string }[]> = {}
+      const supabase = createClient()
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await supabase
+          .from("stock_movements")
+          .select("reference_id, quantity_kg, notes, created_at")
+          .eq("movement_type", "correccion_ingreso")
+          .in("reference_id", ids.slice(i, i + 200))
+        for (const m of (data as any[]) || []) (out[m.reference_id] ||= []).push({ kg: Number(m.quantity_kg) || 0, nota: m.notes || "", at: m.created_at })
+      }
+      if (vivo) setCorrecciones(out)
+    })()
+    return () => {
+      vivo = false
+    }
+  }, [idsClave])
 
   async function handleDelete(motivoBorrado: string) {
     if (!deleteEntry || !puedeBorrar) return
@@ -104,7 +143,21 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     }
     setSaving(true)
     const supabase = createClient()
-    
+
+    // Lo que vino de Zomatik: acá solo se editan las notas (cantidad, fecha y remito se corrigen allá)
+    if (editingEntry.origen === "zomatik") {
+      const { error } = await supabase.from("stock_entries").update({ notes: editNotes || null }).eq("id", editingEntry.id)
+      if (error) toast({ title: "Error", description: "No se pudo actualizar el ingreso", variant: "destructive" })
+      else {
+        await logCambio({ entity: "ingreso", entityId: editingEntry.id, reference: editingEntry.remito || null, antes: { notas: editingEntry.notes || "" }, despues: { notas: editNotes || "" }, etiquetas: { notas: "Notas" }, motivo: motivo.trim() })
+        toast({ title: "Ingreso actualizado" })
+      }
+      onRefresh?.()
+      setEditingEntry(null)
+      setSaving(false)
+      return
+    }
+
     const oldQuantity = editingEntry.quantity
     const newQuantity = parseFloat(editQuantity)
     if (isNaN(newQuantity) || newQuantity <= 0) {
@@ -113,6 +166,38 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       return
     }
     const quantityDiff = newQuantity - oldQuantity
+
+    // Con la migración de la importación: la edición va por el servidor y la diferencia de stock queda con asiento
+    // (correccion_ingreso). Sin la migración (501), como siempre.
+    const r = await fetch("/api/ingresos-zomatik", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accion: "editar", id: editingEntry.id, kg_visto: oldQuantity, kg_nuevo: newQuantity, remito: editRemito, notas: editNotes, fecha: editDate || null, motivo: motivo.trim() }),
+    }).catch(() => null)
+    if (r && r.status !== 501) {
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        toast({ title: "Error", description: j?.error || "No se pudo actualizar el ingreso", variant: "destructive" })
+        setSaving(false)
+        return
+      }
+      const unidad = editingEntry.materials?.unit || ""
+      await logCambio({
+        entity: "ingreso",
+        entityId: editingEntry.id,
+        reference: editRemito || editingEntry.remito || null,
+        antes: { cantidad: `${editingEntry.quantity} ${unidad}`.trim(), remito: editingEntry.remito || "", fecha: editingEntry.entry_date ? new Date(editingEntry.entry_date).toISOString().slice(0, 10) : "", notas: editingEntry.notes || "" },
+        despues: { cantidad: `${newQuantity} ${unidad}`.trim(), remito: editRemito || "", fecha: editDate || "", notas: editNotes || "" },
+        etiquetas: { cantidad: "Cantidad", remito: "Remito", fecha: "Fecha", notas: "Notas" },
+        extra: { Material: editingEntry.materials?.name || "-", Stock: Math.abs(quantityDiff) > 0.0001 ? `corregido con asiento (${quantityDiff > 0 ? "+" : ""}${Math.round(quantityDiff * 1000) / 1000})` : "sin cambios" },
+        motivo: motivo.trim(),
+      })
+      toast({ title: "Ingreso actualizado", description: Math.abs(quantityDiff) > 0.0001 ? "El stock fue ajustado" : undefined })
+      onRefresh?.()
+      setEditingEntry(null)
+      setSaving(false)
+      return
+    }
 
     // Stock seco: mismo criterio que al cargar el ingreso (add-stock-entry-dialog):
     // solo la Arena Fina lleva stock seco, y en seco entra cantidad / (1 + humedad/100).
@@ -212,6 +297,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   }
 
   const isSandMaterial = (name: string) => name.toLowerCase().includes("arena")
+  const fmtCorr = (c: { kg: number; nota: string; at: string }) => `${c.nota || `${c.kg > 0 ? "+" : ""}${c.kg.toLocaleString("es-AR")} kg`} (${new Date(c.at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })})`
 
   return (
     <>
@@ -243,16 +329,44 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                 const hasExcessHumidity = hasHumidity && entry.humidity_percentage! > 3
                 const hasGranulometryTest = entry.granulometry_test_id !== null
                 const testCompleted = entry.granulometria_tests?.fineness_modulus !== null && entry.granulometria_tests?.fineness_modulus !== undefined
+                const anulado = !!entry.anulado_at
+                const deZomatik = entry.origen === "zomatik"
+                const arena = esArenaFina(entry.materials.name)
+                // Lo de Zomatik entra sin humedad: se carga después (lo manual la trae del diálogo)
+                const faltaHumedad = arena && !anulado && deZomatik && entry.humidity_percentage === null
+                const corr = correcciones[entry.id] || []
 
                 return (
-                  <TableRow key={entry.id}>
+                  <TableRow key={entry.id} className={anulado ? "text-muted-foreground line-through" : undefined}>
                     <TableCell className="font-mono">{formatDate(entry.entry_date)}</TableCell>
                     <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {entry.materials.name}
                         <Badge variant="secondary" className="text-xs">
                           {entry.materials.unit}
                         </Badge>
+                        {deZomatik && (
+                          <Badge variant="outline" className="text-xs font-normal no-underline">
+                            Zomatik
+                          </Badge>
+                        )}
+                        {anulado && (
+                          <Badge variant="outline" className="border-red-300 text-xs font-normal text-red-700">
+                            {deZomatik ? "Anulado en Zomatik" : "Anulado"}
+                          </Badge>
+                        )}
+                        {faltaHumedad && (
+                          <Badge variant="outline" className="border-amber-300 text-xs font-normal text-amber-700">
+                            Falta humedad
+                          </Badge>
+                        )}
+                        {!anulado && corr.length > 0 && (
+                          <span title={corr.map(fmtCorr).join(" · ")}>
+                            <Badge variant="outline" className="cursor-help text-xs font-normal">
+                              Corregido
+                            </Badge>
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -260,7 +374,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                         +{entry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                       </div>
                     </TableCell>
-                    <TableCell>{entry.suppliers?.name || "-"}</TableCell>
+                    <TableCell>{entry.suppliers?.name || entry.supplier || "-"}</TableCell>
                     <TableCell>{entry.remito || "-"}</TableCell>
                     <TableCell className="text-center">
                       {hasHumidity ? (
@@ -314,7 +428,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                       {entry.notes || "-"}
                     </TableCell>
                     <TableCell>
-                      {(puedeEditar || puedeBorrar) && (
+                      {!anulado && (puedeEditar || puedeBorrar || (puedeCargar && arena)) && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -322,18 +436,36 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            {puedeCargar && arena && (
+                              <DropdownMenuItem onClick={() => setMuestra({ entry, modo: "humedad" })}>
+                                <Droplets className="h-4 w-4 mr-2" />
+                                {entry.humidity_percentage === null ? "Cargar humedad" : "Corregir humedad"}
+                              </DropdownMenuItem>
+                            )}
+                            {puedeCargar && arena && !entry.sample_taken_granulometry && !entry.granulometry_test_id && (
+                              <DropdownMenuItem onClick={() => setMuestra({ entry, modo: "granulometria" })}>
+                                <FlaskConical className="h-4 w-4 mr-2" />
+                                Muestra de granulometría
+                              </DropdownMenuItem>
+                            )}
                             {puedeEditar && (
                               <DropdownMenuItem onClick={() => openEdit(entry)}>
                                 <Pencil className="h-4 w-4 mr-2" />
                                 Editar
                               </DropdownMenuItem>
                             )}
-                            {puedeBorrar && (
-                              <DropdownMenuItem onClick={() => setDeleteEntry(entry)} className="text-destructive">
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Eliminar
-                              </DropdownMenuItem>
-                            )}
+                            {puedeBorrar &&
+                              (deZomatik ? (
+                                <DropdownMenuItem disabled className="text-muted-foreground">
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Eliminar (se anula en Zomatik)
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onClick={() => setDeleteEntry(entry)} className="text-destructive">
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Eliminar
+                                </DropdownMenuItem>
+                              ))}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -345,6 +477,13 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
           </TableBody>
         </Table>
       </div>
+
+      <IngresoMuestrasDialog
+        ingreso={muestra ? { ...muestra.entry, material_id: muestra.entry.material_id || muestra.entry.materials.id } : null}
+        modo={muestra?.modo || "humedad"}
+        onOpenChange={(open) => !open && setMuestra(null)}
+        onListo={onRefresh}
+      />
 
       {viewGranulometriaId && (
         <ViewGranulometriaDialog
@@ -372,30 +511,25 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                   <p className="font-medium">{editingEntry.suppliers?.name || "-"}</p>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Fecha de ingreso</Label>
-                <Input
-                  type="date"
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Cantidad ({editingEntry.materials.unit})</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={editQuantity}
-                  onChange={(e) => setEditQuantity(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Si cambias la cantidad, el stock se ajustara automaticamente.
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>Remito</Label>
-                <Input value={editRemito} onChange={(e) => setEditRemito(e.target.value)} />
-              </div>
+              {editingEntry.origen === "zomatik" ? (
+                <p className="text-xs text-muted-foreground">Viene de Zomatik: cantidad, fecha y remito se corrigen allá y acá se actualizan solos.</p>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label>Fecha de ingreso</Label>
+                    <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Cantidad ({editingEntry.materials.unit})</Label>
+                    <Input type="number" step="0.01" value={editQuantity} onChange={(e) => setEditQuantity(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Si cambias la cantidad, el stock se ajustara automaticamente.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Remito</Label>
+                    <Input value={editRemito} onChange={(e) => setEditRemito(e.target.value)} />
+                  </div>
+                </>
+              )}
               <div className="space-y-2">
                 <Label>Notas</Label>
                 <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
