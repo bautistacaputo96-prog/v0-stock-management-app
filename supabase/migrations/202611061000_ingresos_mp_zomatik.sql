@@ -341,7 +341,7 @@ BEGIN
       RETURN jsonb_build_object('ok', false, 'motivo', 'Otra pasada ya lo cambió');
     END IF;
     IF t = 'corregir' THEN
-      IF v.estado <> CASE WHEN coalesce((a->>'desanular')::boolean, false) THEN 'anulado' ELSE 'importado' END THEN
+      IF v.estado <> (CASE WHEN coalesce((a->>'desanular')::boolean, false) THEN 'anulado' ELSE 'importado' END) THEN
         RETURN jsonb_build_object('ok', false, 'motivo', 'Cambió el estado');
       END IF;
       PERFORM public._mp_cambiar_cantidad(v.stock_entry_id, (a->>'kg_nuevo')::numeric, 'zomatik', a->>'nota', false, coalesce((a->>'desanular')::boolean, false));
