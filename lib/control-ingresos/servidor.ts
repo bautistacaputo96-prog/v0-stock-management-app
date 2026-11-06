@@ -39,7 +39,7 @@ import {
   type RemitoZomatik,
   type Tramo,
 } from "@/lib/control-ingresos/cruce"
-import { armarMail, esDiaSemanal, type DiferenciaMail } from "@/lib/control-ingresos/mail"
+import { armarMail, esDiaSemanal, type DiferenciaMail, type ImportacionMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
 
@@ -435,7 +435,8 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   if (!to.length) return { enviado: false, a: [], motivo: `${MAIL_A.join(", ")} sin mail cargado` }
   const semanal = esDiaSemanal(hoy)
   const stock = semanal ? await seccionStockParaMail(sb, hoy, null) : null
-  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html })
+  const importacion = await importacionParaMail(sb, hoy, corte, semanal)
+  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html, importacion })
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
@@ -445,3 +446,32 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   return { enviado: true, a: [...to, ...cc] }
 }
 
+/**
+ * Lo de la importación para el mail (fase 2), solo con la importación en modo real y desde F. Diario: los pendientes,
+ * cambios y cargados a mano nuevos desde el mail anterior (`corte`); las listas cortas (densidades, artículos y
+ * proveedores sin vincular) van siempre. Lunes: todo lo abierto. null = como antes.
+ */
+async function importacionParaMail(sb: SupabaseClient, hoy: string, corte: number, semanal: boolean): Promise<ImportacionMail | null> {
+  try {
+    const iz = await import("@/lib/ingresos-zomatik/servidor")
+    const d = await iz.datosImportacion(sb)
+    const i = d.interruptor
+    if (i.modo !== "real" || !i.desde || hoy < i.desde || d.error) return null
+    const nuevo = (iso: string | null | undefined) => semanal || (!!iso && Date.parse(iso) > corte)
+    const faltaDensidad = d.densidades.filter((x) => x.densidad === null && d.pendientes.some((p) => p.motivo_codigo === "densidad" && p.motivo.includes(x.material)))
+    return {
+      desde: i.desde,
+      pendientes: d.pendientes.filter((p) => nuevo(p.primera_vez_at)),
+      cambios: d.cambios.filter((c) => nuevo(c.creado)),
+      antesDeF: semanal ? d.antesDeF : [],
+      // A mano sin Zomatik: del día anterior o antes (lo de hoy todavía puede llegar), nuevos desde el último mail
+      manuales: d.manuales.filter((m) => m.fecha < hoy && (semanal || Date.parse(m.creado) > corte - 24 * 3600_000)),
+      sinMaterial: d.sinMaterial,
+      sinVincular: d.sinVincular,
+      faltaDensidad,
+    }
+  } catch (e) {
+    console.error("[control-ingresos] importación para el mail:", e)
+    return null
+  }
+}
