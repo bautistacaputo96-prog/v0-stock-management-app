@@ -241,6 +241,14 @@ const grupoProveedor = (s: unknown) => {
 export function mismoProveedor(a: unknown, b: unknown): boolean | null {
   const ga = grupoProveedor(a)
   if (ga && ga === grupoProveedor(b)) return true
+  return mismoProveedorPorNombre(a, b)
+}
+
+/**
+ * Lo mismo que `mismoProveedor` pero sin los alias: solo por las palabras del nombre (la importación de Zomatik lo usa
+ * para elegir entre "FENOMIX MATERIALES" y "CEMENTOS AVELLANEDA", que por el alias son el mismo).
+ */
+export function mismoProveedorPorNombre(a: unknown, b: unknown): boolean | null {
   const ta = tokensNombre(a).filter((t) => t.length > 2)
   const tb = tokensNombre(b).filter((t) => t.length > 2)
   if (!ta.length || !tb.length) return null
@@ -588,6 +596,12 @@ export type OpcionesCruce = {
   desde?: string
   /** ¿Ese día de Zomatik está leído (y fresco)? Sin esto, todos. Solo se informa lo que se puede controlar. */
   cubierto?: (fecha: string) => boolean
+  /**
+   * Último día que controla este cruce (AAAA-MM-DD, incluido). Desde la fecha F de la importación de Zomatik
+   * (docs/ingresos-mp-zomatik.md) lo de esas fechas ya sale de Zomatik: una diferencia con todos sus renglones después
+   * de `hasta` no se informa. Sin esto, todo.
+   */
+  hasta?: string
 }
 
 /**
@@ -635,6 +649,7 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
   const out: Diferencia[] = []
   const agregar = (categoria: Categoria, tipo: TipoDiferencia, items: Item[], detalle: string) => {
     if (!evaluable(items.map((i) => i.fecha), { ...opts, desde })) return
+    if (opts.hasta && items.every((i) => i.fecha > opts.hasta!)) return
     const n = items.filter((i) => i.lado === "n")
     const z = items.filter((i) => i.lado === "z")
     out.push({

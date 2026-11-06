@@ -113,13 +113,27 @@ async function diasLeidos(sb: SupabaseClient, desde: string): Promise<Map<string
   return new Map(((data as any[]) || []).map((d) => [d.fecha, d.leido_at]))
 }
 
+export type OpcionesLectura = {
+  /** Días hacia atrás de `desde` (por defecto MARGEN_DIAS, el del control). La pasada corta usa 0. */
+  margen?: number
+  /** Largo de cada tramo (por defecto 34 días). */
+  tramoDias?: number
+  /** Hasta cuándo se lee, desde `t0` (por defecto LECTURA_HASTA_MS). La pasada corta usa 50 s. */
+  hastaMs?: number
+  /** Quién toma el turno del robot (para el diagnóstico). */
+  quien?: string
+}
+
+export type ResultadoLectura = { ok: boolean; tramos: ResultadoTramo[]; error?: string; /** Código de ZomatikError si no se pudo entrar. */ codigo?: string }
+
 /**
  * Lee de Zomatik la ventana, con el turno del robot, hasta `t0 + LECTURA_HASTA_MS` (la espera del turno cuenta). Cada
  * tramo leído entero se graba con sus días marcados como leídos; si no, no cuenta. No corta: devuelve lo que pudo.
+ * La importación (lib/ingresos-zomatik/servidor.ts) le pasa su propia ventana en `opts`.
  */
-export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy: string, t0: number): Promise<{ ok: boolean; tramos: ResultadoTramo[]; error?: string }> {
-  const limite = t0 + LECTURA_HASTA_MS
-  const quien = `control-mp·${t0.toString(36)}`
+export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy: string, t0: number, opts: OpcionesLectura = {}): Promise<ResultadoLectura> {
+  const limite = t0 + (opts.hastaMs ?? LECTURA_HASTA_MS)
+  const quien = opts.quien || `control-mp·${t0.toString(36)}`
   // Mismo turno que la lectura diaria y el robot de las NP (pg_cron cada 10 min)
   let { data, error } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 })
   while (!error && data !== true && Date.now() - t0 < ESPERA_TURNO_MS) {
@@ -132,15 +146,16 @@ export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy:
     sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 90 }).then(() => {}, () => {})
   }, 20_000)
   const tramos: ResultadoTramo[] = []
+  let codigo: string | undefined
   try {
-    const piso = sumarDias(desde, -MARGEN_DIAS)
+    const piso = sumarDias(desde, -(opts.margen ?? MARGEN_DIAS))
     const [{ data: cfg }, leidos] = await Promise.all([sb.from("zomatik_np_config").select("plant_id, deposito"), diasLeidos(sb, piso)])
     const plantas = new Map<number, string>(((cfg as any[]) || []).filter((c) => c.deposito).map((c) => [Number(c.deposito), c.plant_id]))
     const s = await obtenerSesion()
     const form = await discoverForm(s, LISTADO)
     if (!("bus_deposito" in form.fields)) throw errorFormato("El buscador de ESTAD R.COMPRA no tiene el filtro de depósito (¿cambió la página?)")
     if (!form.fechaDesdeField || !form.fechaHastaField) throw errorFormato("El buscador de ESTAD R.COMPRA no tiene las fechas (¿cambió la página?)")
-    for (const t of ordenTramos(tramosLectura(piso, hoy), leidos)) {
+    for (const t of ordenTramos(tramosLectura(piso, hoy, opts.tramoDias), leidos)) {
       if (limite - Date.now() < MINIMO_TRAMO_MS) {
         tramos.push({ ...t, ok: false, motivo: "sin tiempo (queda la lectura anterior)" })
         continue
@@ -169,13 +184,16 @@ export async function leerZomatikCompras(sb: SupabaseClient, desde: string, hoy:
         tramos.push({ ...t, ok: true, filas: copia.length, muestra: muestras })
       } catch (e) {
         tramos.push({ ...t, ok: false, motivo: textoError(e), muestra: muestras })
-        if (e instanceof ZomatikError && ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida"].includes(e.codigo)) break
+        if (e instanceof ZomatikError && ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida"].includes(e.codigo)) {
+          codigo = e.codigo
+          break
+        }
       }
     }
     const fallas = tramos.filter((t) => !t.ok)
-    return { ok: fallas.length === 0, tramos, error: fallas.length ? fallas.map((f) => `${f.desde} a ${f.hasta}: ${f.motivo}`).join(" · ") : undefined }
+    return { ok: fallas.length === 0, tramos, error: fallas.length ? fallas.map((f) => `${f.desde} a ${f.hasta}: ${f.motivo}`).join(" · ") : undefined, codigo }
   } catch (e) {
-    return { ok: false, tramos, error: textoError(e) }
+    return { ok: false, tramos, error: textoError(e), codigo: e instanceof ZomatikError ? e.codigo : undefined }
   } finally {
     clearInterval(renovar)
     await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
