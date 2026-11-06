@@ -4,7 +4,8 @@
  *   GET  pg_cron (Bearer cron_secret de Vault): cada 30 min a los :05 y :35 de 06:05 a 20:35 (últimos 15 días) y a las
  *        05:05 con `?completa=1` (la ventana del control). Entre las 16:00 y las 16:59 no corre: es la hora del control
  *        diario (que también importa después de leer).
- *   POST botón "Traer de Zomatik" (gerencial o materia_prima.editar): la pasada corta, como mucho una cada 2 min.
+ *   POST botón "Traer de Zomatik" (gerencial o materia_prima.editar): la pasada corta, como mucho una cada 2 min
+ *        (origen 'traer' en control_mp_corridas: no se muestra como control).
  *
  * Freno en la base (control_mp_registrar): nunca dos corridas a la vez; la pasada, una cada 20 min. Solo lee de Zomatik
  * (lista cerrada). Con la importación apagada solo lee; en sombra arma el plan sin escribir; en real lo aplica.
@@ -42,7 +43,8 @@ export async function POST() {
     if (r.respuesta) return r.respuesta
     if (!puedeControlar(r.sesion.usuario)) return NextResponse.json({ error: "No tenés permiso para traer de Zomatik." }, { status: 403 })
     if (enHorarioDelCron(t0)) return NextResponse.json({ ok: false, mensaje: "Entre las 16 y las 17 se actualiza solo." }, { status: 409 })
-    const p = await pasada(sbServicio(), { completa: false, origen: "manual", usuario: r.sesion.usuario.name, t0 })
+    // Origen propio ('traer'): no cuenta como "Controlar ahora" ni como la pasada automática
+    const p = await pasada(sbServicio(), { completa: false, origen: "traer", usuario: r.sesion.usuario.name, t0 })
     const imp = p.importacion
     let mensaje: string
     if (p.ocupado) mensaje = "Zomatik está ocupado. Probá en un rato."

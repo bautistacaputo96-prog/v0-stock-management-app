@@ -379,6 +379,14 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
           .eq("id", opts.corridaId)
           .then(() => {}, () => {})
       }
+      // 1b) Arena Fina de Zomatik sin humedad a las 24 h: un mail por día a Felipe (solo con la importación prendida)
+      try {
+        const iz2 = await import("@/lib/ingresos-zomatik/servidor")
+        const h = await iz2.avisarHumedad(sb, t0)
+        if (h) console.log("[control-ingresos]", h)
+      } catch (e) {
+        console.error("[control-ingresos] aviso de humedad:", e)
+      }
       // 2) Después, la lectura de stock nueva (para la pantalla y el próximo mail semanal)
       try {
         res.stock = Date.now() - t0 < STOCK_ULTIMO_INICIO_MS ? await leerStockZomatik(sb, { t0, limite: t0 + STOCK_LIMITE_MS }) : { ok: false, partes: [], error: "sin tiempo después de los remitos", ms: 0 }
@@ -459,13 +467,17 @@ async function importacionParaMail(sb: SupabaseClient, hoy: string, corte: numbe
     if (i.modo !== "real" || !i.desde || hoy < i.desde || d.error) return null
     const nuevo = (iso: string | null | undefined) => semanal || (!!iso && Date.parse(iso) > corte)
     const faltaDensidad = d.densidades.filter((x) => x.densidad === null && d.pendientes.some((p) => p.motivo_codigo === "densidad" && p.motivo.includes(x.material)))
+    // A mano sin Zomatik (la lista ya trae solo los de más de 7 días): en el diario, los que pasaron los 7 días desde el
+    // mail anterior
+    const diaCorte = fechaArgentina(corte)
+    const cruzo = (fecha: string) => sumarDias(fecha, iz.MANUAL_SIN_ZOMATIK_DIAS + 1) > diaCorte
     return {
       desde: i.desde,
       pendientes: d.pendientes.filter((p) => nuevo(p.primera_vez_at)),
       cambios: d.cambios.filter((c) => nuevo(c.creado)),
       antesDeF: semanal ? d.antesDeF : [],
-      // A mano sin Zomatik: del día anterior o antes (lo de hoy todavía puede llegar), nuevos desde el último mail
-      manuales: d.manuales.filter((m) => m.fecha < hoy && (semanal || Date.parse(m.creado) > corte - 24 * 3600_000)),
+      noAplicados: d.noAplicados.filter((x) => nuevo(x.actualizado)),
+      manuales: d.manuales.filter((m) => semanal || cruzo(m.fecha)),
       sinMaterial: d.sinMaterial,
       sinVincular: d.sinVincular,
       faltaDensidad,

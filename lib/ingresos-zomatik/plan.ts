@@ -50,6 +50,8 @@ export const RANGO_LITROS = { min: 1, max: 40_000 }
 export const RANGO_KG = { min: 1, max: 30_000 }
 /** Un tacho de aditivo = 1000 litros (Bautista, 05/11). */
 export const LITROS_POR_TACHO = 1000
+/** Aditivo en litros con esto o menos: puede ser una cantidad de tachos (queda pendiente "¿Son tachos? Revisar"). */
+export const MAX_LITROS_SOSPECHA_TACHO = 5
 
 // ---------------------------------------------------------------------------
 // Interruptor y densidades (integraciones)
@@ -187,7 +189,7 @@ export function kgDeZomatik(t: number): { ok: true; kg: number } | { ok: false; 
 }
 
 export type Problema = { codigo: CodigoMotivo; motivo: string }
-export type CodigoMotivo = "sin_numero" | "repetido" | "sin_deposito" | "material" | "cantidad" | "unidad" | "densidad" | "dudoso" | "borrado" | "ya_no_esta" | "antes_de_f"
+export type CodigoMotivo = "sin_numero" | "repetido" | "sin_deposito" | "material" | "cantidad" | "tachos" | "unidad" | "densidad" | "dudoso" | "borrado" | "ya_no_esta" | "antes_de_f"
 
 /**
  * Cantidad de Zomatik en la unidad del material de Rebucret (lo que va a `stock_entries.quantity`).
@@ -212,6 +214,8 @@ export function cantidadParaMaterial(
   }
   const litros = unidad === "tacho" ? cantidad * LITROS_POR_TACHO : cantidad
   if (!Number.isFinite(litros) || litros < RANGO_LITROS.min || litros > RANGO_LITROS.max) return { ok: false, codigo: "cantidad", motivo: `Cantidad rara (${textoCantidad(cantidad, unidad)})` }
+  // 5 litros o menos de aditivo es raro: seguramente son tachos de 1000 L cargados como litros
+  if (unidad === "l" && cantidad <= MAX_LITROS_SOSPECHA_TACHO) return { ok: false, codigo: "tachos", motivo: "¿Son tachos? Revisar" }
   if (um === "l") return { ok: true, cantidad: redondear(litros) }
   if (um === "kg") {
     const d = densidades[material.id]
@@ -386,7 +390,23 @@ export type IngresoNuevo = {
 
 export type Accion =
   | { tipo: "alta"; clave: string; texto: string; vinculo: DatosVinculo & { proveedor_por_robot: boolean }; ingreso: IngresoNuevo }
-  | { tipo: "emparejar"; clave: string; texto: string; vinculo: DatosVinculo & { motivo: string | null; motivo_codigo: string | null }; entry_id: string; kg_manual_visto: number; reemplazar: boolean; kg_nuevo: number | null; nota: string | null }
+  | {
+      tipo: "emparejar"
+      clave: string
+      texto: string
+      vinculo: DatosVinculo & { motivo: string | null; motivo_codigo: string | null }
+      entry_id: string
+      kg_manual_visto: number
+      reemplazar: boolean
+      kg_nuevo: number | null
+      nota: string | null
+      /**
+       * "Es el mismo" con un manual de otra planta u otro material (desde F): se anula el manual con asiento y se da el
+       * alta donde dice Zomatik, como un cambio de planta. `ingreso` = el alta.
+       */
+      mover?: boolean
+      ingreso?: IngresoNuevo
+    }
   | { tipo: "corregir"; clave: string; texto: string; entry_id: string; kg_visto: number; kg_nuevo: number; desanular: boolean; nota: string; vinculo: Partial<DatosVinculo> }
   | { tipo: "anular"; clave: string; texto: string; entry_id: string; kg_visto: number; nota: string }
   | { tipo: "mover"; clave: string; texto: string; entry_id: string; kg_visto: number; anular_viejo: boolean; nota: string; vinculo: DatosVinculo & { proveedor_por_robot: boolean }; ingreso: IngresoNuevo }
@@ -682,7 +702,27 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
       })
       return
     }
-    if (!igualNum(v.kg_asentado, kg)) {
+    // Misma cantidad y unidad en Zomatik pero otros kg: cambió la densidad del aditivo (solo los importados desde F)
+    const litros = a.unidad === "tacho" ? a.datos.cantidad_zomatik * LITROS_POR_TACHO : a.datos.cantidad_zomatik
+    const porDensidad =
+      (a.unidad === "l" || a.unidad === "tacho") && v.unidad_zomatik === a.unidad && igualNum(v.cantidad_zomatik, a.datos.cantidad_zomatik) && unidadMaterial(a.material!.unit) === "kg" && litros > 0
+    if (!igualNum(v.kg_asentado, kg) && porDensidad && !(v.fecha && v.fecha >= F)) {
+      // Anterior a F: no se toca
+    } else if (!igualNum(v.kg_asentado, kg) && porDensidad) {
+      const antes = (Number(v.kg_asentado) || 0) / litros
+      const ahora = kg / litros
+      acciones.push({
+        tipo: "corregir",
+        clave: a.clave,
+        texto: `${ref(a)}: densidad de ${a.material!.name} ${fmt(antes, 3)} → ${fmt(ahora, 3)} kg/L`,
+        entry_id: v.stock_entry_id!,
+        kg_visto: Number(v.kg_asentado) || 0,
+        kg_nuevo: kg,
+        desanular: false,
+        nota: `Densidad de ${a.material!.name} cambiada de ${fmt(antes, 3)} a ${fmt(ahora, 3)} kg/L: ${ref(a)}, ${textoCantidad(a.datos.cantidad_zomatik, a.unidad)}`,
+        vinculo: {},
+      })
+    } else if (!igualNum(v.kg_asentado, kg)) {
       acciones.push({
         tipo: "corregir",
         clave: a.clave,
@@ -739,8 +779,27 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
     const aMano = `${fmt(Number(m.quantity))} ${unidad}`
     let motivo: string | null = null
     let codigo: string | null = null
-    if (!reemplazar && difiere) {
-      motivo = `Emparejado con un ingreso anterior al ${ddmm(F)}: no se corrige (a mano ${aMano}, Zomatik ${textoCantidad(a.datos.cantidad_zomatik, a.unidad)})`
+    const otroLugar = m.material_id !== a.material!.id
+    if (otroLugar && reemplazar) {
+      const mm = matPorId.get(m.material_id)
+      const deA = `${mm?.name || "otro material"} de ${planta(m.plant_id)} → ${a.material!.name} de ${planta(a.datos.plant_id)}`
+      acciones.push({
+        tipo: "emparejar",
+        clave: a.clave,
+        texto: `${ref(a)} ${ddmm(a.fila.fecha)}: es el ingreso a mano del ${ddmm(m.fecha)} (${deA})`,
+        vinculo: { ...a.datos, motivo: null, motivo_codigo: null },
+        entry_id: m.id,
+        kg_manual_visto: Number(m.quantity),
+        reemplazar: true,
+        kg_nuevo: null,
+        nota: `Era el mismo camión que Zomatik (${deA}): ${ref(a)}, ${textoCantidad(a.datos.cantidad_zomatik, a.unidad)}`,
+        mover: true,
+        ingreso: ingresoDe(a),
+      })
+      return
+    }
+    if (!reemplazar && (difiere || otroLugar)) {
+      motivo = `Emparejado con un ingreso anterior al ${ddmm(F)}: no se corrige (a mano ${aMano}${otroLugar ? ` en ${planta(m.plant_id)}` : ""}, Zomatik ${textoCantidad(a.datos.cantidad_zomatik, a.unidad)}${otroLugar ? ` en ${planta(a.datos.plant_id)}` : ""})`
       codigo = "antes_de_f"
     }
     acciones.push({
@@ -901,6 +960,8 @@ export function textoMotivo(codigo: string | null | undefined, motivo: string | 
       return { motivo: m, queHacer: "Revisá el artículo en Zomatik o el material en Rebucret" }
     case "cantidad":
       return { motivo: m, queHacer: "Corregí la cantidad en Zomatik" }
+    case "tachos":
+      return { motivo: m, queHacer: "Revisá en Zomatik si son litros o tachos de 1000 L" }
     case "densidad":
       return { motivo: m, queHacer: "Cargá la densidad (Control con Zomatik › Densidades)" }
     case "borrado":

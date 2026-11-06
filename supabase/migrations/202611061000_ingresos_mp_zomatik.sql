@@ -9,8 +9,8 @@
 --   stock_movements.movement_type suma 'correccion_ingreso' (el asiento de cada corrección o anulación de un ingreso; el
 --                                 control de stock no lo cuenta en el período: el ingreso ya tiene la cantidad nueva).
 --   zomatik_ingresos_mp           una fila por remito de Zomatik (clave = número completo + artículo), con su ingreso.
---   control_mp_corridas.origen    suma 'pasada' (la lectura cada 30 min y la de la noche).
---   control_mp_registrar()        'pasada': una cada 20 min como mínimo y nunca dos corridas a la vez.
+--   control_mp_corridas.origen    suma 'pasada' (la lectura cada 30 min y la de la noche) y 'traer' ("Traer de Zomatik").
+--   control_mp_registrar()        'pasada': una cada 20 min como mínimo; 'traer': cada 2 min; nunca dos a la vez.
 --   mp_zomatik_aplicar(jsonb)     aplica el plan de una pasada (altas, emparejados, correcciones, anulaciones, cambios de
 --                                 planta, pendientes). Cada acción en su bloque: una que falla no frena las otras.
 --   mp_ingreso_editar(jsonb)      la edición a mano del historial, ahora con asiento (antes cambiaba el stock sin asiento).
@@ -115,7 +115,7 @@ GRANT ALL ON SEQUENCE public.zomatik_ingresos_mp_id_seq TO service_role;
 -- Corridas: la pasada
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.control_mp_corridas DROP CONSTRAINT IF EXISTS control_mp_corridas_origen_check;
-ALTER TABLE public.control_mp_corridas ADD CONSTRAINT control_mp_corridas_origen_check CHECK (origen IN ('cron', 'manual', 'pasada'));
+ALTER TABLE public.control_mp_corridas ADD CONSTRAINT control_mp_corridas_origen_check CHECK (origen IN ('cron', 'manual', 'pasada', 'traer'));
 
 CREATE OR REPLACE FUNCTION public.control_mp_registrar(p_origen text, p_usuario text)
 RETURNS jsonb
@@ -125,14 +125,14 @@ AS $$
 DECLARE
   v_id uuid;
 BEGIN
-  IF p_origen NOT IN ('cron', 'manual', 'pasada') THEN
+  IF p_origen NOT IN ('cron', 'manual', 'pasada', 'traer') THEN
     RETURN jsonb_build_object('motivo', 'Origen inválido');
   END IF;
   PERFORM pg_advisory_xact_lock(hashtext('control_mp_registrar'));
   IF EXISTS (SELECT 1 FROM control_mp_corridas WHERE fin IS NULL AND inicio > now() - interval '6 minutes') THEN
     RETURN jsonb_build_object('motivo', 'Ya se está controlando. Esperá un minuto.');
   END IF;
-  IF p_origen = 'manual' AND EXISTS (SELECT 1 FROM control_mp_corridas WHERE inicio > now() - interval '2 minutes') THEN
+  IF p_origen IN ('manual', 'traer') AND EXISTS (SELECT 1 FROM control_mp_corridas WHERE inicio > now() - interval '2 minutes') THEN
     RETURN jsonb_build_object('motivo', 'Se controló hace menos de 2 min. Esperá un rato.');
   END IF;
   IF p_origen = 'cron' AND EXISTS (SELECT 1 FROM control_mp_corridas WHERE origen = 'cron' AND inicio > now() - interval '60 minutes') THEN
@@ -279,11 +279,12 @@ BEGIN
   IF c IS NULL OR c = '' THEN
     RAISE EXCEPTION 'Falta la clave';
   END IF;
-  IF t IN ('alta', 'emparejar', 'pendiente') THEN
+  -- emparejar crea el vínculo recién después de revisar el ingreso a mano (si se saltea, no queda un vínculo vacío)
+  IF t IN ('alta', 'pendiente') THEN
     INSERT INTO zomatik_ingresos_mp (clave, estado) VALUES (c, 'pendiente') ON CONFLICT (clave) DO NOTHING;
   END IF;
   SELECT * INTO v FROM zomatik_ingresos_mp WHERE clave = c FOR UPDATE;
-  IF NOT FOUND THEN
+  IF NOT FOUND AND t <> 'emparejar' THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'No existe el vínculo');
   END IF;
 
@@ -300,7 +301,7 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'stock_entry_id', v_id);
 
   ELSIF t = 'emparejar' THEN
-    IF v.estado <> 'pendiente' OR v.stock_entry_id IS NOT NULL THEN
+    IF v.id IS NOT NULL AND (v.estado <> 'pendiente' OR v.stock_entry_id IS NOT NULL) THEN
       RETURN jsonb_build_object('ok', false, 'motivo', 'Ya estaba');
     END IF;
     SELECT * INTO e FROM stock_entries WHERE id = (a->>'entry_id')::uuid FOR UPDATE;
@@ -316,7 +317,26 @@ BEGIN
     IF round(coalesce(e.quantity, 0), 2) <> round((a->>'kg_manual_visto')::numeric, 2) THEN
       RETURN jsonb_build_object('ok', false, 'motivo', 'El ingreso a mano cambió');
     END IF;
+    IF v.id IS NULL THEN
+      INSERT INTO zomatik_ingresos_mp (clave, estado) VALUES (c, 'pendiente') ON CONFLICT (clave) DO NOTHING;
+      SELECT * INTO v FROM zomatik_ingresos_mp WHERE clave = c FOR UPDATE;
+      IF v.estado <> 'pendiente' OR v.stock_entry_id IS NOT NULL THEN
+        RETURN jsonb_build_object('ok', false, 'motivo', 'Ya estaba');
+      END IF;
+    END IF;
     v_reem := coalesce((a->>'reemplazar')::boolean, false);
+    IF v_reem AND coalesce((a->>'mover')::boolean, false) THEN
+      -- "Es el mismo" con un manual de otra planta u otro material: se anula el manual con asiento y entra donde
+      -- dice Zomatik (como un cambio de planta), en la misma transacción
+      PERFORM public._mp_cambiar_cantidad(e.id, 0, 'zomatik', a->>'nota', true, false);
+      v_id := public._mp_insertar_ingreso(ing);
+      PERFORM public._mp_vinculo_set(v.id, vin);
+      UPDATE zomatik_ingresos_mp
+         SET estado = 'importado', stock_entry_id = v_id, kg_asentado = round((ing->>'quantity')::numeric, 2),
+             era_manual = true, proveedor_por_robot = true, candidato_id = NULL, falta_desde = NULL, anulado_at = NULL
+       WHERE id = v.id;
+      RETURN jsonb_build_object('ok', true, 'stock_entry_id', v_id, 'anulado', e.id);
+    END IF;
     IF v_reem THEN
       -- Desde F el manual pasa a ser el importado (mismo id: sus muestras quedan), con la cantidad de Zomatik
       UPDATE stock_entries SET origen = 'zomatik' WHERE id = e.id;
@@ -484,12 +504,34 @@ LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  e       stock_entries;
-  v_diff  numeric;
+  e        stock_entries;
+  v_diff   numeric;
+  v_desde  date;
+  v_tipo   text;
 BEGIN
+  -- Solo con la importación prendida (modo real) y para ingresos desde F de materiales que entran desde Zomatik
+  BEGIN
+    SELECT CASE WHEN valor::jsonb->>'modo' = 'real' THEN (valor::jsonb->>'desde')::date END INTO v_desde
+      FROM integraciones WHERE clave = 'mp_ingresos_zomatik';
+  EXCEPTION WHEN OTHERS THEN
+    v_desde := NULL;
+  END;
+  IF v_desde IS NULL THEN
+    RAISE EXCEPTION 'La importación de Zomatik no está prendida';
+  END IF;
+  IF p->>'kg_visto' IS NULL THEN
+    RAISE EXCEPTION 'Falta la cantidad que se vio';
+  END IF;
   SELECT * INTO e FROM stock_entries WHERE id = (p->>'id')::uuid FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'El ingreso ya no existe';
+  END IF;
+  IF (e.entry_date AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < v_desde THEN
+    RAISE EXCEPTION 'Es anterior al % (arranque de la importación): no se toca', to_char(v_desde, 'DD/MM');
+  END IF;
+  SELECT tipo INTO v_tipo FROM materials WHERE id = e.material_id;
+  IF coalesce(v_tipo, '') NOT IN ('arido_fino', 'arido_grueso', 'cemento', 'aditivo_planta', 'aditivo_obra', 'fibra') THEN
+    RAISE EXCEPTION 'Ese material no entra desde Zomatik';
   END IF;
   IF coalesce(e.origen, 'manual') <> 'manual' THEN
     RAISE EXCEPTION 'Viene de Zomatik: se anula allá';
@@ -552,6 +594,7 @@ COMMIT;
 -- DROP TABLE IF EXISTS public.zomatik_ingresos_mp;
 -- DELETE FROM control_mp_corridas WHERE origen = 'pasada';
 -- ALTER TABLE public.control_mp_corridas DROP CONSTRAINT IF EXISTS control_mp_corridas_origen_check;
+-- DELETE FROM control_mp_corridas WHERE origen = 'traer';
 -- ALTER TABLE public.control_mp_corridas ADD CONSTRAINT control_mp_corridas_origen_check CHECK (origen IN ('cron', 'manual'));
 -- -- control_mp_registrar: volver a la versión de 202610271900_control_ingresos_mp.sql (sin 'pasada')
 -- -- Solo si no hay asientos nuevos (SELECT count(*) FROM stock_movements WHERE movement_type = 'correccion_ingreso' = 0):

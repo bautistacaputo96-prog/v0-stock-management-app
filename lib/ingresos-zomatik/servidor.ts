@@ -12,9 +12,10 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { leerZomatikCompras, type ResultadoLectura } from "@/lib/control-ingresos/servidor"
-import { desdeVentana, fechaArgentina, sumarDias, ddmm, MARGEN_DIAS } from "@/lib/control-ingresos/cruce"
 import { textoError } from "@/lib/zomatik/lectura"
 import { enviarMail } from "@/lib/mail-servidor"
+import { esArenaFina } from "@/lib/ingresos/muestras"
+import { desdeVentana, fechaArgentina, sumarDias, ddmm, normalizarRemito, MARGEN_DIAS } from "@/lib/control-ingresos/cruce"
 import { avisarErrorZomatik, avisarFallaAcceso, avisarZomatikVolvio, esFallaDeAcceso } from "@/lib/zomatik/np-servidor"
 import {
   claveRemito,
@@ -270,7 +271,8 @@ async function actividad(sb: SB, acciones: Accion[], porClave: Map<string, any>,
 
 export type ResultadoPasada = { ok: boolean; motivo?: string; ocupado?: boolean; lectura?: ResultadoLectura; importacion?: ResultadoImportacion; avisos?: string[] }
 
-export async function pasada(sb: SB, o: { completa: boolean; origen: "pasada" | "manual"; usuario: string | null; t0: number }): Promise<ResultadoPasada> {
+/** origen: "pasada" (pg_cron) o "traer" (botón "Traer de Zomatik"; no cuenta como control). */
+export async function pasada(sb: SB, o: { completa: boolean; origen: "pasada" | "traer"; usuario: string | null; t0: number }): Promise<ResultadoPasada> {
   const { data: reg, error: eReg } = await sb.rpc("control_mp_registrar", { p_origen: o.origen, p_usuario: o.usuario })
   if (eReg) return { ok: false, motivo: faltaMigracion(eReg) || /Origen inválido/.test(eReg.message) ? MENSAJE_SIN_MIGRACION : textoError(eReg) }
   if ((reg as any)?.motivo) {
@@ -359,21 +361,14 @@ async function avisos(sb: SB, r: ResultadoPasada, t0: number): Promise<string[]>
   } catch (e) {
     console.error("[ingresos-zomatik] aviso sin pasada:", e)
   }
-  // 3. Arena Fina importada sin humedad a las 24 h: mail a Felipe, una vez por ingreso
-  if (modo === "real") {
-    try {
-      const x = await avisarHumedad(sb, t0)
-      if (x) out.push(x)
-    } catch (e) {
-      console.error("[ingresos-zomatik] aviso de humedad:", e)
-    }
-  }
+  // 3. Arena Fina sin humedad a las 24 h: el mail a Felipe sale una vez por día con el control de las 16:25
+  //    (avisarHumedad, desde lib/control-ingresos/servidor.ts); el aviso en la app lo ve el encargado al entrar.
   return out
 }
 
 export type SinHumedad = { id: string; vinculoId: number | null; fecha: string; remito: string | null; material: string; planta: string; plantId: string | null; kg: number; horas: number }
 
-/** Arena Fina de Zomatik (o emparejada) sin humedad, sin anular, cargada hace más de 24 h. */
+/** Arena Fina de Zomatik (o emparejada) sin humedad, sin anular, cargada hace más de 24 h. Mismo criterio que el menú de la fila (esArenaFina). */
 export async function arenasSinHumedad(sb: SB, ahora = Date.now(), desde?: string | null): Promise<SinHumedad[]> {
   const q = sb
     .from("stock_entries")
@@ -387,7 +382,7 @@ export async function arenasSinHumedad(sb: SB, ahora = Date.now(), desde?: strin
   const { data, error } = await q
   if (error) throw error
   return ((data as any[]) || [])
-    .filter((e) => e.materials?.corrige_humedad)
+    .filter((e) => esArenaFina(e.materials?.name))
     .map((e) => ({
       id: e.id,
       vinculoId: null,
@@ -401,8 +396,20 @@ export async function arenasSinHumedad(sb: SB, ahora = Date.now(), desde?: strin
     }))
 }
 
-async function avisarHumedad(sb: SB, ahora: number): Promise<string | null> {
-  const arenas = await arenasSinHumedad(sb, ahora)
+/** Marca de `integraciones`: el día (AAAA-MM-DD) en que salió el mail de Arena Fina sin humedad. */
+export const CLAVE_AVISO_HUMEDAD = "mp_aviso_humedad"
+
+/**
+ * Mail a Felipe con la Arena Fina de Zomatik sin humedad a las 24 h: uno por día como mucho (lo llama el control de las
+ * 16:25), y cada ingreso una sola vez. `aviso_humedad_at` se marca recién cuando el mail salió.
+ */
+export async function avisarHumedad(sb: SB, ahora: number = Date.now()): Promise<string | null> {
+  const { interruptor } = await leerConfig(sb)
+  if (interruptor.modo !== "real" || !interruptor.desde) return null
+  const hoy = fechaArgentina(ahora)
+  const { data: marca } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_AVISO_HUMEDAD).maybeSingle()
+  if ((marca as any)?.valor === hoy) return "humedad: ya se mandó hoy"
+  const arenas = await arenasSinHumedad(sb, ahora, interruptor.desde)
   if (!arenas.length) return null
   const { data: vs, error } = await sb.from("zomatik_ingresos_mp").select("id, stock_entry_id").in("stock_entry_id", arenas.map((a) => a.id)).is("aviso_humedad_at", null)
   if (error) throw error
@@ -419,8 +426,13 @@ async function avisarHumedad(sb: SB, ahora: number): Promise<string | null> {
     <p style="font-size:11px;color:#94a3b8">Se avisa una sola vez por ingreso · produccionrebucret.com</p></div>`
   const m = await enviarMail({ from: `Rebucret - Control MP <${FROM}>`, to: MAIL_HUMEDAD, subject: `Rebucret · Arena Fina sin humedad: ${nuevos.length} ${nuevos.length === 1 ? "ingreso" : "ingresos"}`, html })
   if (!m.ok) return `humedad: ${m.error}`
-  await sb.from("zomatik_ingresos_mp").update({ aviso_humedad_at: new Date().toISOString() }).in("id", ((vs as any[]) || []).filter((v) => nuevos.some((a) => a.id === v.stock_entry_id)).map((v) => v.id))
-  return `humedad: ${nuevos.length} avisados`
+  const { error: eMarca } = await sb
+    .from("zomatik_ingresos_mp")
+    .update({ aviso_humedad_at: new Date().toISOString() })
+    .in("id", ((vs as any[]) || []).filter((v) => nuevos.some((a) => a.id === v.stock_entry_id)).map((v) => v.id))
+  if (eMarca) console.error("[ingresos-zomatik] marca del aviso de humedad:", eMarca.message)
+  await sb.from("integraciones").upsert({ clave: CLAVE_AVISO_HUMEDAD, valor: hoy, actualizado: new Date().toISOString(), conectado_por: "sistema" } as never, { onConflict: "clave" })
+  return `humedad: ${nuevos.length} avisados${eMarca ? " (no se pudo marcar)" : ""}`
 }
 
 const esc = (t: unknown) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!)
@@ -455,6 +467,8 @@ export type DatosImportacion = {
   pendientes: PendienteVista[]
   cambios: { creado: string; fecha: string; material: string; planta: string; kg: number; nota: string }[]
   antesDeF: { fecha: string | null; remito: string | null; motivo: string }[]
+  /** Importados que Zomatik cambió y no se pudo aplicar (cantidad rara, otro material, depósito sin planta…). */
+  noAplicados: { fecha: string | null; remito: string | null; proveedor: string | null; cantidad: string; planta: string; motivo: string; actualizado: string }[]
   manuales: ManualVista[]
   sinVincular: { proveedor: string; renglones: number }[]
   densidades: { material_id: string; material: string; planta: string; densidad: number | null }[]
@@ -462,7 +476,9 @@ export type DatosImportacion = {
   error?: string
 }
 
-const ingVacio = (i: Interruptor): DatosImportacion => ({ interruptor: i, ultimaPasada: null, pendientes: [], cambios: [], antesDeF: [], manuales: [], sinVincular: [], densidades: [], sinMaterial: [] })
+const ingVacio = (i: Interruptor): DatosImportacion => ({ interruptor: i, ultimaPasada: null, pendientes: [], cambios: [], antesDeF: [], noAplicados: [], manuales: [], sinVincular: [], densidades: [], sinMaterial: [] })
+/** "Cargados a mano sin Zomatik": recién después de 7 días (en Zomatik se carga con atraso). */
+export const MANUAL_SIN_ZOMATIK_DIAS = 7
 
 /**
  * Lo de la importación para la pantalla Control con Zomatik y el mail: pendientes, cambios aplicados, manuales desde F
@@ -490,7 +506,7 @@ export async function datosImportacion(sb: SB, o: { ahora?: number } = {}): Prom
       .sort((a, b) => a.planta.localeCompare(b.planta) || a.material.localeCompare(b.material))
     if (i.modo === "apagado" || !i.desde) return out
     const F = i.desde
-    const vinculos = await todas<any>((a, b) => sb.from("zomatik_ingresos_mp").select("id, clave, estado, motivo, motivo_codigo, stock_entry_id, fecha, remito, proveedor, articulo, cantidad_zomatik, unidad_zomatik, plant_id, candidato_id, resolucion, resuelto_por, primera_vez_at").order("id").range(a, b))
+    const vinculos = await todas<any>((a, b) => sb.from("zomatik_ingresos_mp").select("id, clave, estado, motivo, motivo_codigo, stock_entry_id, fecha, remito, remito_norm, proveedor, articulo, cantidad_zomatik, unidad_zomatik, plant_id, material_id, candidato_id, resolucion, resuelto_por, primera_vez_at, actualizado_at").order("id").range(a, b))
     const candidatos = [...new Set(vinculos.filter((v) => v.estado === "pendiente" && v.candidato_id).map((v) => v.candidato_id))]
     const [candRows, manRows, sinProv, movs] = await Promise.all([
       candidatos.length ? sb.from("stock_entries").select("id, entry_date, remito, quantity, material_id").in("id", candidatos) : Promise.resolve({ data: [] as any[] }),
@@ -535,6 +551,17 @@ export async function datosImportacion(sb: SB, o: { ahora?: number } = {}): Prom
       })
       .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
     out.antesDeF = vinculos.filter((v) => v.motivo_codigo === "antes_de_f").map((v) => ({ fecha: v.fecha, remito: v.remito, motivo: v.motivo }))
+    out.noAplicados = vinculos
+      .filter((v) => (v.estado === "importado" || v.estado === "anulado") && v.motivo && v.motivo_codigo !== "antes_de_f")
+      .map((v) => ({
+        fecha: v.fecha,
+        remito: v.remito,
+        proveedor: v.proveedor,
+        cantidad: textoCantidad(v.cantidad_zomatik, v.unidad_zomatik),
+        planta: v.plant_id ? nombrePlanta.get(v.plant_id) || "-" : "otro depósito",
+        motivo: v.motivo,
+        actualizado: v.actualizado_at,
+      }))
     out.cambios = (((movs as any).data as any[]) || []).map((m) => ({
       creado: m.created_at,
       fecha: m.movement_date,
@@ -543,11 +570,24 @@ export async function datosImportacion(sb: SB, o: { ahora?: number } = {}): Prom
       kg: Number(m.quantity_kg) || 0,
       nota: m.notes || "",
     }))
-    // Manuales desde F sin Zomatik (los que no están emparejados ni propuestos como "¿mismo camión?")
+    // Manuales desde F sin Zomatik, de más de 7 días: ni emparejados, ni propuestos como "¿mismo camión?", ni con su
+    // remito (normalizado) y material ya importado desde Zomatik
     const vinculadas = new Set(vinculos.map((v) => v.stock_entry_id).filter(Boolean))
     const propuestos = new Set(candidatos)
+    const importados = new Set(
+      vinculos.filter((v) => v.estado === "importado" || v.estado === "emparejado").map((v) => `${v.material_id}|${v.remito_norm || normalizarRemito(v.remito)}`),
+    )
+    const hoy = fechaArgentina(ahora)
     out.manuales = manRows
-      .filter((e) => e.origen !== "zomatik" && !vinculadas.has(e.id) && !propuestos.has(e.id) && TIPOS_IMPORTABLES.includes(mat.get(e.material_id)?.tipo || ""))
+      .filter(
+        (e) =>
+          e.origen !== "zomatik" &&
+          !vinculadas.has(e.id) &&
+          !propuestos.has(e.id) &&
+          TIPOS_IMPORTABLES.includes(mat.get(e.material_id)?.tipo || "") &&
+          !importados.has(`${e.material_id}|${normalizarRemito(e.remito)}`) &&
+          fechaArgentina(e.entry_date) < sumarDias(hoy, -MANUAL_SIN_ZOMATIK_DIAS),
+      )
       .map((e) => {
         const m = mat.get(e.material_id)
         return {

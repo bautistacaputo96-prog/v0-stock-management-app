@@ -8,7 +8,7 @@
  * Importación de ingresos desde Zomatik (docs/ingresos-mp-zomatik.md): el GET trae también `importacion` (modo, última
  * pasada, pendientes, cambios, cargados a mano sin Zomatik, proveedores sin vincular, densidades). El POST suma:
  *   { id, accion: "mismo" | "distintos" | "descartar", nota? }  resolver un pendiente (lo aplica la próxima pasada)
- *   { id, accion: "eliminar_manual", motivo }                  solo gerencial: anula con asiento un ingreso a mano desde F
+ *   { id, accion: "eliminar_manual", motivo, kg_visto }        solo gerencial: anula con asiento un ingreso a mano desde F
  *   { material_id, accion: "densidad", valor }                 solo gerencial: densidad (kg/L) de un aditivo en kg
  *
  * Solo gerenciales o quien tenga materia_prima.editar (se controla acá, en el servidor). Las tablas no las ve anon.
@@ -129,11 +129,14 @@ async function accionImportacion(usuario: { name: string; tipo?: unknown; permis
     }
     if (accion === "eliminar_manual") {
       if (!gerencial) return NextResponse.json({ error: "Solo un gerencial puede eliminar estos ingresos." }, { status: 403 })
-      if (!/^[0-9a-f-]{36}$/i.test(idDe(body)) || !nota) return NextResponse.json({ error: "Falta el motivo." }, { status: 400 })
+      const kgVisto = Number(body?.kg_visto)
+      if (!/^[0-9a-f-]{36}$/i.test(idDe(body)) || !nota || body?.kg_visto === undefined || body?.kg_visto === null || !Number.isFinite(kgVisto))
+        return NextResponse.json({ error: "Falta el motivo o la cantidad que se vio." }, { status: 400 })
       const { data: e, error: eE } = await sb.from("stock_entries").select("id, quantity, remito, materials(name)").eq("id", idDe(body)).maybeSingle()
       if (eE) throw eE
       if (!e) return NextResponse.json({ error: "El ingreso ya no existe." }, { status: 404 })
-      const { error } = await sb.rpc("mp_ingreso_anular", { p: { id: (e as any).id, kg_visto: (e as any).quantity, usuario: usuario.name, motivo: nota } })
+      // kg_visto: la cantidad que vio la persona en la pantalla (si cambió, la base no lo anula)
+      const { error } = await sb.rpc("mp_ingreso_anular", { p: { id: (e as any).id, kg_visto: kgVisto, usuario: usuario.name, motivo: nota } })
       if (error) {
         if (faltaMigracion(error)) return NextResponse.json({ error: MENSAJE_SIN_MIGRACION }, { status: 500 })
         return NextResponse.json({ error: error.message }, { status: 409 })

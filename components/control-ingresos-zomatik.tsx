@@ -51,6 +51,7 @@ type Importacion = {
   }[]
   cambios: { creado: string; fecha: string; material: string; planta: string; kg: number; nota: string }[]
   antesDeF: { fecha: string | null; remito: string | null; motivo: string }[]
+  noAplicados?: { fecha: string | null; remito: string | null; proveedor: string | null; cantidad: string; planta: string; motivo: string }[]
   manuales: { id: string; fecha: string; material: string; planta: string; cantidad: number; unidad: string; remito: string | null; cargadoPor: string | null; dias: number }[]
   sinVincular: { proveedor: string; renglones: number }[]
   densidades: { material_id: string; material: string; planta: string; densidad: number | null }[]
@@ -308,7 +309,7 @@ export function ControlIngresosZomatik({ plants }: { plants: { id: string; name:
 }
 
 const fmtKg = (kg: number) => `${kg > 0 ? "+" : ""}${kg.toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg`
-const origenPasada = (o: string, u: string | null) => (o === "pasada" ? "automática" : o === "cron" ? "control diario" : u || "a mano")
+const origenPasada = (o: string, u: string | null) => (o === "pasada" ? "automática" : o === "cron" ? "control diario" : o === "traer" ? `Traer de Zomatik, ${u || "a mano"}` : u || "a mano")
 
 /** Bloque de la importación de ingresos desde Zomatik (fases 0 a 2). */
 function BloqueImportacion({ d, gerencial, onCambio }: { d: Importacion; gerencial: boolean; onCambio: () => void }) {
@@ -443,8 +444,17 @@ function BloqueImportacion({ d, gerencial, onCambio }: { d: Importacion; gerenci
               ))}
             </div>
           </Seccion>
-          <Seccion titulo="Cargados a mano sin Zomatik" n={d.manuales.length}>
-            <div className="mb-1 text-muted-foreground">Desde el {ddmm(desde)} lo cargado a mano que no está en Zomatik. Si no tiene que estar, eliminalo (queda anulado con asiento, no se borra).</div>
+          <Seccion titulo="Zomatik cambió y no se pudo aplicar" n={(d.noAplicados || []).length}>
+            <div className="space-y-0.5">
+              {(d.noAplicados || []).map((x, i) => (
+                <div key={i}>
+                  {ddmm(x.fecha)} · {x.remito || "sin Nº"} · {x.proveedor || "-"} · {x.cantidad} · {x.planta} · <span className="text-amber-700">{x.motivo}</span>
+                </div>
+              ))}
+            </div>
+          </Seccion>
+          <Seccion titulo="Cargados a mano sin Zomatik (más de 7 días)" n={d.manuales.length}>
+            <div className="mb-1 text-muted-foreground">Desde el {ddmm(desde)} lo cargado a mano que a los 7 días no está en Zomatik. Si no tiene que estar, eliminalo (queda anulado con asiento, no se borra).</div>
             <table className="w-full border-collapse">
               <tbody>
                 {d.manuales.map((m) => (
@@ -468,7 +478,7 @@ function BloqueImportacion({ d, gerencial, onCambio }: { d: Importacion; gerenci
                             variant="outline"
                             className="h-6 px-1.5 text-xs text-red-700"
                             disabled={!!ocupado || !(motivos[m.id] || "").trim()}
-                            onClick={() => post(`m${m.id}`, { id: m.id, accion: "eliminar_manual", motivo: motivos[m.id] })}
+                            onClick={() => post(`m${m.id}`, { id: m.id, accion: "eliminar_manual", motivo: motivos[m.id], kg_visto: m.cantidad })}
                           >
                             {ocupado === `m${m.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "Eliminar"}
                           </Button>

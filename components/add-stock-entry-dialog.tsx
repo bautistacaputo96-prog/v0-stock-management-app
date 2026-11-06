@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast"
 import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
-import { claveMaterial, enToneladas } from "@/lib/control-ingresos/cruce"
+import { claveMaterial, enToneladas, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
 import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
 import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
 import { usePermisos } from "@/lib/current-user"
@@ -230,6 +230,23 @@ export function AddStockEntryDialog({
 
     try {
       const supabase = createClient()
+      // ¿Ese remito ya entró desde Zomatik? (mismo remito normalizado y material, ±30 días). Sin la migración, no se mira.
+      const nro = normalizarRemito(formData.remito)
+      if (nro) {
+        const { data: yaEstan, error: eYa } = await supabase
+          .from("stock_entries")
+          .select("id, remito")
+          .eq("material_id", formData.material_id)
+          .eq("origen", "zomatik")
+          .is("anulado_at", null)
+          .gte("entry_date", `${sumarDias(formData.entry_date, -30)}T00:00:00`)
+          .lte("entry_date", `${sumarDias(formData.entry_date, 30)}T23:59:59`)
+        if (!eYa && ((yaEstan as any[]) || []).some((x) => normalizarRemito(x.remito) === nro)) {
+          toast({ variant: "destructive", title: "Ese remito ya entró desde Zomatik", description: "No se carga dos veces. Buscalo en el historial." })
+          setLoading(false)
+          return
+        }
+      }
       const originalQuantity = Number.parseFloat(formData.quantity) // This is the wet weight from the truck
       let dryQuantity = originalQuantity
       const humidity = isSandMaterial && formData.humidity_percentage 
@@ -278,13 +295,22 @@ export function AddStockEntryDialog({
 
       // If granulometry sample was taken, create pending test
       if (requiresGranulometry && formData.sample_taken_granulometry === "yes") {
-        await crearMuestraGranulometria(supabase as any, ingreso, {
-          materialName: selectedMaterial?.name || "",
-          providerName: filteredSuppliers.find((s) => s.id === formData.supplier_id)?.name || "",
-          supplierId: formData.supplier_id,
-          plantId: selectedMaterial?.plant_id,
-          fecha: formData.entry_date,
-        }).catch(() => null)
+        try {
+          await crearMuestraGranulometria(supabase as any, ingreso, {
+            materialName: selectedMaterial?.name || "",
+            providerName: filteredSuppliers.find((s) => s.id === formData.supplier_id)?.name || "",
+            supplierId: formData.supplier_id,
+            plantId: selectedMaterial?.plant_id,
+            fecha: formData.entry_date,
+          })
+        } catch (err: any) {
+          // El ingreso ya quedó registrado: se avisa que el ensayo pendiente no se creó
+          toast({
+            variant: "destructive",
+            title: "El ingreso se registró, pero no se creó el ensayo de granulometría",
+            description: `${err?.message || "Error desconocido"}. Cargá la muestra desde el historial (menú de la fila).`,
+          })
+        }
       }
 
       const displayQuantity = `${originalQuantity.toLocaleString("es-AR")} ${selectedMaterial?.unit}`

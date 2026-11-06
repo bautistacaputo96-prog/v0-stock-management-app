@@ -108,6 +108,34 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     setSaving(true)
     const supabase = createClient()
 
+    // Con la migración de la importación: un manual desde F de un material que entra desde Zomatik se anula con
+    // asiento (no se borra); uno emparejado con Zomatik no se puede borrar. Lo decide el servidor; sin la migración
+    // (501) o si no corresponde, se borra como siempre.
+    const r = await fetch("/api/ingresos-zomatik", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accion: "borrar", id: deleteEntry.id, kg_visto: deleteEntry.quantity, motivo: motivoBorrado }),
+    }).catch(() => null)
+    if (!r) {
+      toast({ title: "No se pudo guardar, actualizá la pantalla", variant: "destructive" })
+      setSaving(false)
+      return
+    }
+    const j = r.status === 501 ? {} : await r.json().catch(() => ({}))
+    if (r.status !== 501 && !r.ok) {
+      toast({ title: "No se pudo eliminar", description: j?.error || "Probá de nuevo", variant: "destructive" })
+      setDeleteEntry(null)
+      setSaving(false)
+      return
+    }
+    if (j?.anulado) {
+      toast({ title: "Ingreso anulado", description: "Queda con cantidad 0 y asiento en el stock (no se borra)" })
+      onRefresh?.()
+      setDeleteEntry(null)
+      setSaving(false)
+      return
+    }
+
     // El stock lo descuenta la base sola al borrar el ingreso
     // (trigger trigger_decrease_stock_on_entry_delete, también corrige el stock seco).
     await logDeletion({
@@ -174,7 +202,13 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accion: "editar", id: editingEntry.id, kg_visto: oldQuantity, kg_nuevo: newQuantity, remito: editRemito, notas: editNotes, fecha: editDate || null, motivo: motivo.trim() }),
     }).catch(() => null)
-    if (r && r.status !== 501) {
+    // Error de red: no se aplica nada (podría haberse guardado: hay que mirar la pantalla de nuevo)
+    if (!r) {
+      toast({ title: "No se pudo guardar, actualizá la pantalla", variant: "destructive" })
+      setSaving(false)
+      return
+    }
+    if (r.status !== 501) {
       const j = await r.json().catch(() => ({}))
       if (!r.ok) {
         toast({ title: "Error", description: j?.error || "No se pudo actualizar el ingreso", variant: "destructive" })

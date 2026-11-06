@@ -124,6 +124,8 @@ export async function crearMuestraGranulometria(
       supplier_id: d.supplierId ?? e.supplier_id ?? null,
       provider: d.providerName || "",
       aggregate_type: d.materialName || "",
+      // Obligatorio en la tabla (NOT NULL): el peso fijo de la muestra, como edit-granulometria-dialog
+      sample_weight_grams: PESO_MUESTRA_HUMEDA,
       remito: e.remito || null,
       plant_id: d.plantId ?? e.plant_id ?? null,
       stock_entry_id: e.id,
