@@ -13,14 +13,17 @@
 --                         paso y reintento (igual que zomatik_remitos). Solo la escribe el servidor.
 --   zomatik_ajuste_tomar  toma un ajuste para el robot en una sola sentencia (copia de zomatik_remito_tomar).
 --   zomatik_ajuste_aplicar  con la NP bloqueada: zomatik_np.m3 = objetivo, el uso del pedido = lo despachado y, si a
---                         la NP no le queda libre ni pedido activo, saldo_decision = 'cerrada'. Idempotente.
+--                         la NP no le queda libre ni pedido activo, saldo_decision = 'cerrada'. Idempotente. Con
+--                         p_resuelto_por: "Ya hice la devolución" (NP con factura, DEVOL a mano): lo mismo y queda 'a_mano'.
+--   zomatik_remitos.sin_control_pendiente  un gerencial liberó ESA fila del control del pendiente ("Remitir igual"):
+--                         el remito sale sin comparar lo que trae Zomatik. false por defecto.
 --
 -- Qué pasa con los datos ya cargados:
 --   zomatik_np: m3_original = m3 en todas las filas (copia; m3 no cambia). Las NP nuevas lo toman al aplicar el primer
 --               ajuste (coalesce), porque zomatik_np.m3 no cambia nunca antes de eso.
 --   zomatik_np_config: la llave nueva nace apagada en Canning y Hudson.
---   zomatik_np_uso, zomatik_remitos, zomatik_remito_despachos, zomatik_np_pedido, dispatches, scheduled_dispatches:
---               no se tocan. Los pedidos finalizados antes de prender la llave no se ajustan solos.
+--   zomatik_remitos: columna nueva sin_control_pendiente = false en todas las filas (no cambia nada de lo cargado).
+--   zomatik_np_uso, zomatik_remito_despachos, zomatik_np_pedido, dispatches, scheduled_dispatches: no se tocan. Los pedidos finalizados antes de prender la llave no se ajustan solos.
 
 SET lock_timeout = '3s';
 SET statement_timeout = '60s';
@@ -33,6 +36,9 @@ COMMENT ON COLUMN public.zomatik_np_config.ajustar_desde IS 'Zomatik: cuándo se
 ALTER TABLE public.zomatik_np ADD COLUMN IF NOT EXISTS m3_original numeric(10,3);
 COMMENT ON COLUMN public.zomatik_np.m3_original IS 'Los m³ con que se creó la NP. m3 = lo vigente en Zomatik (después de un ajuste).';
 UPDATE public.zomatik_np SET m3_original = m3 WHERE m3_original IS NULL;
+
+ALTER TABLE public.zomatik_remitos ADD COLUMN IF NOT EXISTS sin_control_pendiente boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN public.zomatik_remitos.sin_control_pendiente IS 'Zomatik: un gerencial liberó este remito del control del pendiente de la NP ("Remitir igual"). Queda en Actividad con el motivo.';
 
 CREATE TABLE IF NOT EXISTS public.zomatik_np_ajustes (
   id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -100,7 +106,9 @@ GRANT EXECUTE ON FUNCTION public.zomatik_ajuste_tomar(uuid, text[]) TO service_r
 
 -- Pasar a la base un ajuste que Zomatik ya tiene (la NP en m3_objetivo). Con la NP bloqueada (no se pisa con una
 -- reserva al mismo tiempo). Idempotente: si ya se aplicó, solo deja el ajuste en 'ok'. Devuelve {ok, libre} o {error}.
-CREATE OR REPLACE FUNCTION public.zomatik_ajuste_aplicar(p_id uuid)
+-- Con p_resuelto_por ("Ya hice la devolución": la NP tiene factura y un gerencial hizo la DEVOL de cant - objetivo a
+-- mano): el ajuste tiene que estar en 'revisar' o 'error' con paso 'devol_a_mano', y queda 'a_mano' con el motivo.
+CREATE OR REPLACE FUNCTION public.zomatik_ajuste_aplicar(p_id uuid, p_resuelto_por text DEFAULT NULL, p_motivo text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = public
@@ -119,8 +127,11 @@ BEGIN
      WHERE id = p_id AND estado = 'generando';
     RETURN jsonb_build_object('ok', true, 'ya', true);
   END IF;
-  IF v_a.estado <> 'generando' THEN
+  IF p_resuelto_por IS NULL AND v_a.estado <> 'generando' THEN
     RETURN jsonb_build_object('error', 'El ajuste cambió mientras se trabajaba.');
+  END IF;
+  IF p_resuelto_por IS NOT NULL AND (v_a.estado NOT IN ('revisar', 'error') OR v_a.paso IS DISTINCT FROM 'devol_a_mano') THEN
+    RETURN jsonb_build_object('error', 'El ajuste no está esperando la devolución. Actualizá la pantalla.');
   END IF;
   IF v_a.m3_objetivo IS NULL OR v_a.m3_objetivo <= 0 OR v_a.m3_despachado IS NULL THEN
     RETURN jsonb_build_object('error', 'Al ajuste le faltan los m³.');
@@ -139,15 +150,22 @@ BEGIN
            saldo_mensaje = format('Ajustada a lo despachado (%s m³) al finalizar el pedido.', trim_scale(v_a.m3_objetivo)), updated_at = now()
      WHERE id = v_a.np_id;
   END IF;
-  UPDATE zomatik_np_ajustes
-     SET estado = 'ok', paso = 'ok', aplicado_at = now(), ok_at = now(), en_curso_desde = NULL, proximo_intento = NULL, mensaje = NULL, updated_at = now()
-   WHERE id = p_id;
+  IF p_resuelto_por IS NOT NULL THEN
+    UPDATE zomatik_np_ajustes
+       SET estado = 'a_mano', paso = 'a_mano', aplicado_at = now(), m3_devuelto = round(coalesce(m3_np, v_np.m3) - m3_objetivo, 3), resuelto_por = p_resuelto_por,
+           resuelto_motivo = p_motivo, mensaje = format('Devolución hecha a mano por %s: %s', p_resuelto_por, coalesce(p_motivo, '')), en_curso_desde = NULL, proximo_intento = NULL, updated_at = now()
+     WHERE id = p_id;
+  ELSE
+    UPDATE zomatik_np_ajustes
+       SET estado = 'ok', paso = 'ok', aplicado_at = now(), ok_at = now(), en_curso_desde = NULL, proximo_intento = NULL, mensaje = NULL, updated_at = now()
+     WHERE id = p_id;
+  END IF;
   RETURN jsonb_build_object('ok', true, 'libre', v_s.libre);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.zomatik_ajuste_aplicar(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.zomatik_ajuste_aplicar(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.zomatik_ajuste_aplicar(uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.zomatik_ajuste_aplicar(uuid, text, text) TO service_role;
 
 RESET lock_timeout;
 RESET statement_timeout;
