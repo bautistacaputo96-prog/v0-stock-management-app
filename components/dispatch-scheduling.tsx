@@ -627,6 +627,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       toast({ title: "Falta el método de descarga", description: "Elegí si el pedido va con bomba o directo. Define cuánto tarda cada camión en obra.", variant: "destructive" })
       return
     }
+    // R o X obligatorio (Bautista, 06/11/2026): define si la NP es NP o NP2 y el remito. Por defecto, el de la obra o el cliente
+    if (!(form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo)) {
+      toast({ title: "Falta elegir R o X", description: "Elegí si el remito va con factura (R) o sin factura (X).", variant: "destructive" })
+      return
+    }
     setSaving(true)
     
     try {
@@ -682,7 +687,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           }
         : {}
       // Fase 3: tipo de remito del pedido. Solo se manda si cambió (así anda igual si la migración no está aplicada)
-      const remitoTipo = form.remito_tipo || null
+      const remitoTipo = form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo || null
       const datosFase3 = (editingDispatch ? (editingDispatch.remito_tipo || null) !== remitoTipo : remitoTipo != null) ? { remito_tipo: remitoTipo } : {}
       let pedidoId: string | null = editingDispatch?.id || null
 
@@ -1487,14 +1492,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 </div>
                 {/* 7. Remito con factura (R) o sin factura (X), al lado de los m³. Por defecto, lo que diga la obra o el cliente */}
                 <div className="space-y-1">
-                  <Label>Remito</Label>
-                  <div className="grid grid-cols-3 gap-1">
+                  <Label>Remito *</Label>
+                  <div className="grid grid-cols-2 gap-1">
                     {([
-                      ["", (selectedSite?.remito_tipo || selectedClient?.remito_tipo) ? `Según obra/cliente (${selectedSite?.remito_tipo || selectedClient?.remito_tipo})` : "Definir en despacho"],
                       ["R", "R · con factura"],
                       ["X", "X · sin factura"],
                     ] as const).map(([k, l]) => (
-                      <Button key={k || "segun"} type="button" variant={form.remito_tipo === k ? "default" : "outline"} className="h-8 px-1 whitespace-normal text-[11px] leading-tight"
+                      <Button key={k} type="button" variant={(form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo) === k ? "default" : "outline"} className="h-8 px-1 whitespace-normal text-[11px] leading-tight"
                         disabled={soloLectura} onClick={() => setForm({ ...form, remito_tipo: k })}>
                         {l}
                       </Button>
