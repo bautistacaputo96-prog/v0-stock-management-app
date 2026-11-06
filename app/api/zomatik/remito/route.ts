@@ -6,8 +6,11 @@
  *        Al finalizar el pedido (o "Remitir en Zomatik"): arma los remitos del día con lo despachado (uno por NP) y el
  *        robot hace la OF y el remito después de responder. Con la llave de remitir apagada no hace nada.
  *        Con la llave del ajuste prendida y el pedido completo, además arma el ajuste de la NP (va antes de la OF).
- *   POST /api/zomatik/remito {accion: "remitir_sin_ajustar", pedido_id, motivo}
- *        Solo gerenciales: la NP se arregló a mano en Zomatik ("Remitir sin ajustar la NP" / "Ya hice la devolución").
+ *   POST /api/zomatik/remito {accion: "remitir_sin_ajustar", pedido_id, motivo, ajuste_id?, eliminada?}
+ *        Solo gerenciales: un ajuste trabado se resolvió a mano ("Remitir sin ajustar la NP", "Ya hice la devolución",
+ *        "Ya hice la NP adicional", NP sin uso: "Ya la eliminé" / dejarla).
+ *   POST /api/zomatik/remito {accion: "remitir_sin_control", pedido_id, motivo, remito_id?}
+ *        Solo gerenciales: el remito frenado por "La NP no quedó ajustada" sale igual (solo esa fila).
  */
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
@@ -15,7 +18,7 @@ import { puedeCon, tipoDe } from "@/lib/permisos"
 import { hoyAR } from "@/lib/zomatik/np"
 import { avisarFallaInesperada, esDeZomatik } from "@/lib/zomatik/np-servidor"
 import { estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
-import { estadoAjustes, prepararAjustesSeguro, remitirSinAjustar } from "@/lib/zomatik/ajuste-servidor"
+import { estadoAjustes, prepararAjustesSeguro, remitirSinAjustar, remitirSinControl } from "@/lib/zomatik/ajuste-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -80,11 +83,13 @@ export async function POST(req: Request) {
     if (!puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
     const body = await req.json().catch(() => ({}))
     const pedidoId = uuid(body?.pedido_id)
-    if (body?.accion === "remitir_sin_ajustar" && pedidoId) {
+    if ((body?.accion === "remitir_sin_ajustar" || body?.accion === "remitir_sin_control") && pedidoId) {
       if (tipoDe(u) !== "gerencial") return NextResponse.json({ error: "Lo resuelve un gerencial." }, { status: 403 })
       const motivo = String(body?.motivo || "").trim().slice(0, 300)
       if (motivo.replace(/\s/g, "").length < 5) return NextResponse.json({ error: "Contá qué hiciste en Zomatik (por ejemplo, el número de la DEVOL)." }, { status: 400 })
-      const out = await remitirSinAjustar(pedidoId, u.name, motivo)
+      const out = body.accion === "remitir_sin_control"
+        ? await remitirSinControl(pedidoId, u.name, motivo, uuid(body?.remito_id))
+        : await remitirSinAjustar(pedidoId, u.name, { motivo, ajusteId: uuid(body?.ajuste_id), eliminada: body?.eliminada === true })
       if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
       after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => caidaDespues(e, { pedidoId, fecha: hoyAR(), usuario: u.name })))
       return NextResponse.json({ ok: true })

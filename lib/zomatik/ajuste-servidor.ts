@@ -25,7 +25,7 @@ import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zom
 import { hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
-  MSJ_ESPERANDO_AJUSTE, PASOS_GRABAR_AJUSTE, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, pendienteEsperado, planificarAjuste, textoAjuste,
+  MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, pendienteEsperado, planificarAjuste, textoAjuste,
   type EstadoAjuste, type PlanAjuste,
 } from "@/lib/zomatik/ajuste"
 import { configZ1, prepararRemitos, type ConfigZ1 } from "@/lib/zomatik/z1-servidor"
@@ -158,7 +158,7 @@ export async function prepararAjustes(pedidoId: string, usuario: string, sb: SB 
     const existe = ya.find((x) => x.np_id === pl.np_id)
     if (existe && existe.estado !== "anulado") continue
     const fila = {
-      tipo: pl.tipo, m3_np: pl.m3_np, m3_objetivo: pl.m3_objetivo, m3_despachado: pl.m3_despachado, estado: pl.estado, mensaje: pl.mensaje, paso: null,
+      tipo: pl.tipo, m3_np: pl.m3_np, m3_objetivo: pl.m3_objetivo, m3_despachado: pl.m3_despachado, estado: pl.estado, mensaje: pl.mensaje, paso: pl.paso ?? null,
       proximo_intento: pl.estado === "pendiente" ? ahora : null, en_curso_desde: null, ok_at: pl.estado === "nada" ? ahora : null, aplicado_at: null, updated_at: ahora,
     }
     if (existe) {
@@ -198,9 +198,13 @@ export async function prepararAjustesSeguro(pedidoId: string, usuario: string, s
 // ---------------------------------------------------------------------------
 
 async function ajusteDe(sb: SB, pedidoId: string, npId: string): Promise<AjusteDB | null> {
-  const { data } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", pedidoId).eq("np_id", npId).maybeSingle()
+  const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", pedidoId).eq("np_id", npId).maybeSingle()
+  if (error) throw error
   return (data as unknown as AjusteDB) || null
 }
+
+/** Mensaje del remito cuando no se pudo leer el ajuste (una falla pasajera de la base): espera, nunca sale libre. */
+export const MSJ_GATE_SIN_LEER = `${MSJ_ESPERANDO_AJUSTE} (no se pudo leer el ajuste: se reintenta)`
 
 export type Gate = { espera: false; pendienteEsperado: number | null } | { espera: true; mensaje: string }
 
@@ -210,10 +214,22 @@ export type Gate = { espera: false; pendienteEsperado: number | null } | { esper
  * traer Zomatik) o a_mano (sin control). Si no, espera. Sin tocar Zomatik.
  */
 export async function gateAjuste(sb: SB, r: { id: string; tipo: string; np_id: string | null; scheduled_dispatch_id: string | null; plant_id: string }, o: { usuario: string; cfg: Record<string, ConfigZ1>; avisar?: AvisarFn }): Promise<Gate> {
+  if (r.tipo !== "pedido" || !r.np_id || !r.scheduled_dispatch_id || !llaveAjuste(o.cfg[r.plant_id])) return { espera: false, pendienteEsperado: null }
+  try {
+    return await gate(sb, { ...r, np_id: r.np_id, scheduled_dispatch_id: r.scheduled_dispatch_id }, o)
+  } catch (e) {
+    // Una falla de la base leyendo el pedido o el ajuste: el remito espera (nunca sale sin el control)
+    console.error("[zomatik-ajuste] gate", r.id, (e as Error)?.message)
+    return { espera: true, mensaje: MSJ_GATE_SIN_LEER }
+  }
+}
+
+async function gate(sb: SB, r: { id: string; np_id: string; scheduled_dispatch_id: string; plant_id: string }, o: { usuario: string; cfg: Record<string, ConfigZ1>; avisar?: AvisarFn }): Promise<Gate> {
   const libre: Gate = { espera: false, pendienteEsperado: null }
-  if (r.tipo !== "pedido" || !r.np_id || !r.scheduled_dispatch_id || !llaveAjuste(o.cfg[r.plant_id])) return libre
-  const { data: ped } = await sb.from("scheduled_dispatches").select("id, status").eq("id", r.scheduled_dispatch_id).maybeSingle()
-  if ((ped as { status?: string } | null)?.status !== "completed") return libre
+  const { data: ped, error: ep } = await sb.from("scheduled_dispatches").select("id, status").eq("id", r.scheduled_dispatch_id).maybeSingle()
+  if (ep) throw ep
+  if (!ped) return { espera: true, mensaje: MSJ_GATE_SIN_LEER }
+  if ((ped as { status?: string }).status !== "completed") return libre
   let a = await ajusteDe(sb, r.scheduled_dispatch_id, r.np_id)
   if (!a || a.estado === "anulado") {
     // Se cortó entre armar el remito y armar el ajuste (o el pedido se había reabierto)
@@ -224,10 +240,16 @@ export async function gateAjuste(sb: SB, r: { id: string; tipo: string; np_id: s
   if (!a || a.estado === "anulado") return { espera: true, mensaje: MSJ_ESPERANDO_AJUSTE }
   if (a.estado === "a_mano") return libre
   if (a.estado === "ok" || a.estado === "nada") {
-    const { data: np } = await sb.from("zomatik_np").select("id, m3").eq("id", r.np_id).maybeSingle()
+    // Un gerencial liberó ESTA fila del control del pendiente ("Remitir igual"): sale sin controlar
+    const { data: rm, error: er } = await sb.from("zomatik_remitos").select("id, sin_control_pendiente").eq("id", r.id).maybeSingle()
+    if (er) throw er
+    if ((rm as { sin_control_pendiente?: boolean } | null)?.sin_control_pendiente === true) return libre
+    const { data: np, error: en } = await sb.from("zomatik_np").select("id, m3").eq("id", r.np_id).maybeSingle()
+    if (en) throw en
+    if (!np) return { espera: true, mensaje: MSJ_GATE_SIN_LEER }
     const otros = await lista<{ id: string; m3: number }>(sb.from("zomatik_remitos").select("id, m3").eq("np_id", r.np_id).eq("remito_estado", "ok"))
     const remitido = otros.filter((x) => x.id !== r.id).reduce((s, x) => s + Number(x.m3), 0)
-    return { espera: false, pendienteEsperado: np ? pendienteEsperado(Number((np as { m3: number }).m3), remitido) : null }
+    return { espera: false, pendienteEsperado: pendienteEsperado(Number((np as { m3: number }).m3), remitido) }
   }
   return { espera: true, mensaje: a.estado === "revisar" || a.estado === "error" ? `${MSJ_ESPERANDO_AJUSTE}: ${a.mensaje || "hay que revisarlo"}` : MSJ_ESPERANDO_AJUSTE }
 }
@@ -399,7 +421,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
           continue
         }
         if (pl.estado === "revisar") {
-          await trabar("revisar", pl.mensaje, { m3_objetivo: pl.m3_objetivo, m3_despachado: pl.m3_despachado })
+          await trabar("revisar", pl.mensaje, { m3_objetivo: pl.m3_objetivo, m3_despachado: pl.m3_despachado, ...(pl.paso ? { paso: pl.paso } : {}) })
           continue
         }
         objetivo = pl.m3_objetivo
@@ -423,8 +445,9 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         },
       })
       if (res.estado === "ok") {
-        if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: res.leido ?? m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("El ajuste cambió mientras se trabajaba")
-        await aplicar(objetivo, res.leido ?? m3Np)
+        // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
+        if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("El ajuste cambió mientras se trabajaba")
+        await aplicar(objetivo, m3Np)
         continue
       }
       if (res.estado === "con_factura") {
@@ -433,15 +456,15 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         const exceso = objetivo > cant + 0.001
         const fac = res.facturaNumero ?? null
         const msj = exceso ? msjConFacturaExceso(objetivo - cant, fac) : msjConFactura(cant - objetivo, fac)
-        const guardo = await guardarSi(sb, a.id, { estado: "revisar", tipo: exceso ? "adicional" : "devol", con_factura: true, factura_texto: [fac, res.facturaTexto].filter(Boolean).join(" · ") || null, m3_np: cant, mensaje: msj, paso: "a_mano", en_curso_desde: null, proximo_intento: null })
+        const guardo = await guardarSi(sb, a.id, { estado: "revisar", tipo: exceso ? "adicional" : "devol", con_factura: true, factura_texto: [fac, res.facturaTexto].filter(Boolean).join(" · ") || null, m3_np: cant, mensaje: msj, paso: exceso ? PASO_ADICIONAL_A_MANO : PASO_DEVOL_A_MANO, en_curso_desde: null, proximo_intento: null })
         await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": "La NP tiene factura: no se tocó", Mensaje: msj, "Por qué": res.facturaTexto, NP: numero, ...(fac ? { Factura: fac } : {}), Marca: a.marca } })
         if (guardo && !a.aviso_juan_at) {
-          const m = await o.dep.avisarJuan(sb, `NP con factura · ${d.cliente || "cliente"} · ${numero || "NP"}${fac ? ` · ${fac}` : ""}`, [
+          const m = await o.dep.avisarJuan(sb, `${exceso ? "NP adicional a mano" : "Devolución a mano"} · NP con factura · ${d.cliente || "cliente"} · ${numero || "NP"}${fac ? ` · ${fac}` : ""}`, [
             `${d.cliente || "Cliente"}${d.obra ? ` · ${d.obra}` : ""}`,
             `${numero || "NP"}: ${m3Texto(cant)} m³ en la NP y ${m3Texto(despachado)} m³ despachados.`,
             fac ? `Factura de la NP: ${fac} (hecha antes de este remito: pago adelantado o remitos de días anteriores ya facturados).` : "La NP ya tiene factura (pago adelantado o remitos de días anteriores ya facturados).",
             exceso ? `Se despacharon ${m3Texto(objetivo - cant)} m³ de más: hacé una NP adicional por esa diferencia a mano en Zomatik.` : `Hacé la devolución (DEVOL) de ${m3Texto(cant - objetivo)} m³ a mano en Zomatik.`,
-            "Después tocá «Ya hice la devolución» en el pedido (Despacho, menú ⋮): recién ahí sale el remito.",
+            exceso ? "Después tocá «Ya hice la NP adicional» en el pedido (Despacho, menú ⋮): recién ahí sale el remito." : "Después tocá «Ya hice la devolución» en el pedido (Despacho, menú ⋮): recién ahí sale el remito.",
             ...(linkNp(d.np.zomatik_codigo) ? [`Ver en Zomatik: ${linkNp(d.np.zomatik_codigo)}`] : []),
             "Revisá si corresponde una nota de crédito.",
             `Por qué el sistema cree que tiene factura: ${res.facturaTexto || "Zomatik no dejó editarla"}`,
@@ -495,32 +518,76 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
 // Escape gerencial y estado para las pantallas
 // ---------------------------------------------------------------------------
 
-/** Estados del ajuste que un gerencial puede dar por resueltos a mano (no mientras el robot lo está trabajando). */
-const RESOLUBLES: EstadoAjuste[] = ["pendiente", "revisar", "error", "ok", "nada"]
+/** Solo un ajuste trabado se resuelve a mano: nunca uno pendiente, generando, ok ni nada (I-3). */
+const TRABADOS: EstadoAjuste[] = ["revisar", "error"]
+
+export type ResolucionAjuste = { motivo: string; ajusteId?: string | null; /** NP sin uso (15.5): true = "ya la eliminé en Zomatik"; false = dejarla */ eliminada?: boolean | null }
 
 /**
- * "Remitir sin ajustar la NP" (y "Ya hice la devolución", fase 1): un gerencial arregló la NP a mano en Zomatik. Los
- * ajustes del pedido quedan "a_mano" con el motivo y sus remitos salen sin el control del pendiente. Lo controla la ruta
- * (solo gerenciales, con motivo).
+ * Un gerencial resolvió a mano UN ajuste trabado (revisar o error) del pedido. Si hay uno solo, ese; si hay más, el que
+ * eligió el diálogo (`ajusteId`). Según el caso:
+ *   devol_a_mano     "Ya hice la devolución" (NP con factura): en la base lo mismo que `aplicar` (zomatik_ajuste_aplicar
+ *                    con la NP bloqueada: m3 = objetivo, uso = lo despachado, saldo cerrado si corresponde) y 'a_mano'.
+ *   adicional_a_mano "Ya hice la NP adicional": 'a_mano', la NP no se toca.
+ *   np_sin_uso       "Ya la eliminé en Zomatik" (la NP queda cerrada, como "Ya la devolví") o "dejarla" (no se toca).
+ *   el resto         "Remitir sin ajustar la NP": 'a_mano', la NP no se toca.
+ * Los remitos del pedido que esperaban salen ya. Lo controla la ruta (solo gerenciales, con motivo).
  */
-export async function remitirSinAjustar(pedidoId: string, usuario: string, motivo: string, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
+export async function remitirSinAjustar(pedidoId: string, usuario: string, r: ResolucionAjuste, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
   const ajustes = await lista<AjusteDB>(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", pedidoId))
-  if (!ajustes.length) return { ok: false, error: "El pedido no tiene ajuste de la NP." }
-  if (ajustes.some((x) => x.estado === "generando")) return { ok: false, error: "Se está ajustando la NP: esperá un minuto y probá de nuevo." }
-  const ids = ajustes.filter((x) => RESOLUBLES.includes(x.estado)).map((x) => x.id)
-  if (!ids.length) return { ok: false, error: "No hay nada para resolver. Actualizá la pantalla." }
+  const trabados = ajustes.filter((x) => TRABADOS.includes(x.estado))
+  if (!trabados.length) return { ok: false, error: "No hay un ajuste trabado para resolver. Actualizá la pantalla." }
+  const a = r.ajusteId ? trabados.find((x) => x.id === r.ajusteId) : trabados.length === 1 ? trabados[0] : null
+  if (!a) return { ok: false, error: r.ajusteId ? "Ese ajuste ya no está trabado. Actualizá la pantalla." : "Hay más de un ajuste trabado: elegí cuál." }
   const ahora = new Date().toISOString()
-  const { data, error } = await sb.from("zomatik_np_ajustes").update({ estado: "a_mano", resuelto_por: usuario, resuelto_motivo: motivo, mensaje: `Resuelto a mano por ${usuario}: ${motivo}`, en_curso_desde: null, proximo_intento: null, updated_at: ahora } as never).in("id", ids).in("estado", RESOLUBLES).select("id")
-  if (error) throw error
-  if (!((data as unknown[]) || []).length) return { ok: false, error: "El ajuste cambió. Actualizá la pantalla." }
+  const { data: np } = await sb.from("zomatik_np").select("id, numero").eq("id", a.np_id).maybeSingle()
+  const numero = (np as { numero?: string | null } | null)?.numero ?? null
+  let que: string
+  if (a.paso === PASO_DEVOL_A_MANO) {
+    const { data, error } = await sb.rpc("zomatik_ajuste_aplicar", { p_id: a.id, p_resuelto_por: usuario, p_motivo: r.motivo })
+    if (error) throw error
+    const x = data as { ok?: boolean; error?: string } | null
+    if (!x?.ok) return { ok: false, error: x?.error || "No se pudo guardar." }
+    que = `Devolución hecha a mano: ${textoAjuste({ numero, m3_np: a.m3_np, m3_objetivo: a.m3_objetivo })}`
+  } else {
+    const msj = a.paso === PASO_ADICIONAL_A_MANO ? `NP adicional hecha a mano por ${usuario}: ${r.motivo}`
+      : a.paso === PASO_NP_SIN_USO ? `${r.eliminada ? "Eliminada en Zomatik" : "Se deja pendiente"} (${usuario}): ${r.motivo}`
+      : `Resuelto a mano por ${usuario}: ${r.motivo}`
+    const { data, error } = await sb.from("zomatik_np_ajustes").update({ estado: "a_mano", resuelto_por: usuario, resuelto_motivo: r.motivo, mensaje: msj, en_curso_desde: null, proximo_intento: null, updated_at: ahora } as never).eq("id", a.id).in("estado", TRABADOS).select("id")
+    if (error) throw error
+    if (!((data as unknown[]) || []).length) return { ok: false, error: "El ajuste cambió. Actualizá la pantalla." }
+    // 15.5 "Ya la eliminé": la NP sale de "NP con saldo" (como "Ya la devolví")
+    if (a.paso === PASO_NP_SIN_USO && r.eliminada)
+      await sb.from("zomatik_np").update({ saldo_decision: "cerrada", saldo_decision_por: usuario, saldo_decision_at: ahora, saldo_mensaje: `Eliminada a mano en Zomatik por ${usuario}: ${r.motivo}`, updated_at: ahora } as never).eq("id", a.np_id)
+    que = a.paso === PASO_ADICIONAL_A_MANO ? "NP adicional hecha a mano (la NP tiene factura)" : a.paso === PASO_NP_SIN_USO ? `NP sin uso: ${r.eliminada ? "eliminada a mano en Zomatik" : "queda pendiente"}` : "Remitir sin ajustar la NP (se arregló a mano en Zomatik)"
+  }
   // Los remitos que esperaban el ajuste salen ahora
   await sb.from("zomatik_remitos").update({ proximo_intento: ahora, updated_at: ahora } as never).eq("scheduled_dispatch_id", pedidoId).eq("estado", "pendiente").eq("paso", "esperando_ajuste")
-  const a0 = ajustes[0]
-  await actividadNp(sb, { usuario, pedidoId, plantId: a0.plant_id, referencia: refDe(pedidoId), detalle: { "Qué pasó": "Remitir sin ajustar la NP (se arregló a mano en Zomatik)", Motivo: motivo, Antes: ajustes.map((x) => `${x.estado}${x.mensaje ? `: ${x.mensaje}` : ""}`).join(" · ") } })
+  await actividadNp(sb, { usuario, pedidoId, plantId: a.plant_id, referencia: refDe(pedidoId), detalle: { "Qué pasó": que, Motivo: r.motivo, NP: numero, Antes: `${a.estado}${a.mensaje ? `: ${a.mensaje}` : ""}`, Marca: a.marca } })
   return { ok: true }
 }
 
-export type EstadoAjusteNp = { estado: EstadoAjuste; tipo: string | null; numero: string | null; m3_np: number | null; m3_objetivo: number | null; mensaje: string | null; con_factura: boolean | null }
+/**
+ * "Remitir igual (sin controlar el pendiente)": un remito quedó en "revisar" porque lo que trae Zomatik no es lo que
+ * esperaba el sistema ("La NP no quedó ajustada"). Un gerencial lo revisó: SOLO esa fila sale sin el control (queda
+ * marcada: "Remitir en Zomatik" no la vuelve a frenar). Los ajustes no se tocan. Queda en Actividad con el motivo.
+ */
+export async function remitirSinControl(pedidoId: string, usuario: string, motivo: string, remitoId?: string | null, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
+  const rs = await lista<{ id: string; estado: string; paso: string | null; mensaje: string | null; marca: string; plant_id: string; m3: number }>(
+    sb.from("zomatik_remitos").select("id, estado, paso, mensaje, marca, plant_id, m3").eq("scheduled_dispatch_id", pedidoId).eq("estado", "revisar"),
+  )
+  const frenados = rs.filter((x) => String(x.mensaje || "").startsWith(MSJ_NP_NO_AJUSTADA))
+  const r = remitoId ? frenados.find((x) => x.id === remitoId) : frenados.length === 1 ? frenados[0] : null
+  if (!r) return { ok: false, error: frenados.length > 1 && !remitoId ? "Hay más de un remito frenado: elegí cuál." : "No hay un remito frenado por el control de la NP. Actualizá la pantalla." }
+  const ahora = new Date().toISOString()
+  const { data, error } = await sb.from("zomatik_remitos").update({ sin_control_pendiente: true, estado: "error", remito_estado: "error", proximo_intento: ahora, mensaje: `Liberado del control de la NP por ${usuario}: ${motivo}`, updated_at: ahora } as never).eq("id", r.id).eq("estado", "revisar").select("id")
+  if (error) throw error
+  if (!((data as unknown[]) || []).length) return { ok: false, error: "El remito cambió. Actualizá la pantalla." }
+  await actividadNp(sb, { usuario, pedidoId, plantId: r.plant_id, referencia: refDe(pedidoId), detalle: { "Qué pasó": "Remitir igual (sin controlar el pendiente de la NP)", Motivo: motivo, Antes: r.mensaje, "m³": r.m3, Marca: r.marca } })
+  return { ok: true }
+}
+
+export type EstadoAjusteNp = { id: string; np_id: string; estado: EstadoAjuste; tipo: string | null; paso: string | null; numero: string | null; m3_np: number | null; m3_objetivo: number | null; mensaje: string | null; con_factura: boolean | null }
 
 /** Los ajustes de cada pedido y qué plantas tienen la llave prendida (para Finalizar y el chip). Sin la migración: vacío. */
 export async function estadoAjustes(ids: string[], sb: SB = sbServicio()): Promise<{ porPedido: Record<string, EstadoAjusteNp[]>; activo: Record<string, boolean> }> {
@@ -534,7 +601,7 @@ export async function estadoAjustes(ids: string[], sb: SB = sbServicio()): Promi
     const porPedido: Record<string, EstadoAjusteNp[]> = {}
     for (const a of as) {
       if (!a.scheduled_dispatch_id) continue
-      ;(porPedido[a.scheduled_dispatch_id] ||= []).push({ estado: a.estado, tipo: a.tipo, numero: numero.get(a.np_id) ?? null, m3_np: a.m3_np === null ? null : Number(a.m3_np), m3_objetivo: a.m3_objetivo === null ? null : Number(a.m3_objetivo), mensaje: a.mensaje, con_factura: a.con_factura })
+      ;(porPedido[a.scheduled_dispatch_id] ||= []).push({ id: a.id, np_id: a.np_id, estado: a.estado, tipo: a.tipo, paso: a.paso, numero: numero.get(a.np_id) ?? null, m3_np: a.m3_np === null ? null : Number(a.m3_np), m3_objetivo: a.m3_objetivo === null ? null : Number(a.m3_objetivo), mensaje: a.mensaje, con_factura: a.con_factura })
     }
     return { porPedido, activo }
   } catch (e) {
