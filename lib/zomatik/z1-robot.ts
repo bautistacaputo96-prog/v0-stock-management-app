@@ -252,6 +252,9 @@ export type DatosRemito = {
   entrega: { direccion: string | null; localidad: string | null; lote: string | null }
   /** Hubo un Grabar antes que pudo llegar: primero se busca el remito por su número */
   buscarAntes: boolean
+  /** Con el ajuste de la NP hecho (docs/specs/2026-11-06-ajustar-np-al-finalizar.md 4.4): el pendiente que tiene que
+   *  traer "Continuar". Si difiere, "revisar" sin grabar. null = no se controla (como antes del ajuste). */
+  pendienteEsperado?: number | null
 }
 
 /** Tope de páginas del paginado de remitos (si hay más, se frena sin grabar). */
@@ -398,6 +401,11 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     const mio = items.filter((x) => esItemDe(x, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
     if (mio.length !== 1) throw formato("el remito", `los pendientes no traen ${d.articuloNombre || "el artículo"} una sola vez`, man.html)
     const it = mio[0]
+    if (d.pendienteEsperado !== null && d.pendienteEsperado !== undefined && (it.pendiente === null || Math.abs(it.pendiente - d.pendienteEsperado) > 0.001)) {
+      const fr = new Freno("revisar", `La NP no quedó ajustada: Zomatik dice ${String(it.pendiente ?? "?").replace(".", ",")} m³ pendientes y el sistema esperaba ${String(Math.round(d.pendienteEsperado * 1000) / 1000).replace(".", ",")}. No se grabó el remito.`, false, man.html)
+      fr.aviso = "La NP no quedó ajustada"
+      throw fr
+    }
     if (it.pendiente === null || d.m3 > it.pendiente + 0.001) throw dato(`A la NP le quedan ${it.pendiente ?? "?"} m³ pendientes de ${it.nombreArticulo} y se despacharon ${cantidadTexto(d.m3)} m³: generá una NP adicional.`)
     if (!it.sinControlStock && d.deposito !== 99 && (it.stock === null || d.m3 > it.stock + 0.001)) {
       const fs = new Freno("pendiente", `No hay stock de ${it.nombreArticulo} en el depósito (${it.stock ?? "?"} m³). Se reintenta.`, true)

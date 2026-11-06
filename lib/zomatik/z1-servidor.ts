@@ -29,14 +29,24 @@ import {
   type DespachoZ1, type NpZ1,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
+import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
+import { PASO_ESPERANDO_AJUSTE } from "@/lib/zomatik/ajuste"
 
 type SB = ReturnType<typeof sbServicio>
 
-export type ConfigZ1 = { plant_id: string; activo: boolean; remitir_activo: boolean; remitir_desde: string | null; deposito: number | null }
+export type ConfigZ1 = {
+  plant_id: string; activo: boolean; remitir_activo: boolean; remitir_desde: string | null; deposito: number | null
+  /** Llave del ajuste de la NP al finalizar (docs/specs/2026-11-06-ajustar-np-al-finalizar.md). Sin la migración, apagada. */
+  ajustar_activo?: boolean; ajustar_desde?: string | null
+}
 
-/** Config por planta. Sin la migración de Z1 (no existe remitir_activo): vacío (todo apagado). */
+/**
+ * Config por planta. Sin la migración de Z1 (no existe remitir_activo): vacío (todo apagado). Sin la del ajuste (no
+ * existe ajustar_activo): lo de Z1 como siempre, con el ajuste apagado.
+ */
 export async function configZ1(sb: SB): Promise<Record<string, ConfigZ1>> {
-  const { data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito")
+  let { data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito, ajustar_activo, ajustar_desde")
+  if (error) ({ data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito"))
   if (error) return {}
   return Object.fromEntries(((data as ConfigZ1[]) || []).map((c) => [c.plant_id, c]))
 }
@@ -198,8 +208,10 @@ export type DependenciasZ1 = {
   robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp }
   /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
+  /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción. */
+  ajuste?: Partial<DependenciasAjuste>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik, ajuste: DEPENDENCIAS_AJUSTE }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -318,10 +330,14 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   if (!quedaTiempo(o.inicio, Date.now())) return { sinTiempo: true, hechas: [] }
   const cfg = await configZ1(sb)
   if (!Object.values(cfg).some((c) => llaveZ1(c))) return { hechas: [] }
-  let q = sb.from("zomatik_remitos").select(COLUMNAS_REMITO).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
-  if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
-  const { data, error } = await q
-  if (error) throw error
+  const leerRemitos = async () => {
+    let q = sb.from("zomatik_remitos").select(COLUMNAS_REMITO).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
+    if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
+    const { data, error } = await q
+    if (error) throw error
+    return data
+  }
+  let data = await leerRemitos()
   // "Remitir en Zomatik" después de corregir: el "revisar" que frenó ANTES de grabar el remito (talonario terminado,
   // obra sin localidad) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
   for (const r of (data as unknown as RemitoDB[]) || []) {
@@ -329,11 +345,20 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
     const { data: ok } = await sb.from("zomatik_remitos").update({ estado: "error", sin_stock: 0, updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").in("paso", PASOS_ANTES_DE_GRABAR).select("id")
     if (((ok as unknown[]) || []).length) r.estado = "error"
   }
-  const ahora = Date.now()
-  const lista = ((data as unknown as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
-    r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : !!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora,
-  )
-  if (!lista.length) return { hechas: [] }
+  // Ajuste de la NP al finalizar (solo con su llave): los ajustes vencidos se trabajan ANTES que las OF y remitos
+  const conAjuste = Object.values(cfg).some((c) => llaveAjuste(c))
+  const depAjuste: DependenciasAjuste = { ...DEPENDENCIAS_AJUSTE, avisarError, ...(dep.ajuste || {}) }
+  const ajustes = conAjuste ? await ajustesATrabajar(sb, cfg, o.pedidoId) : []
+  /** Pedidos cuyos ajustes quedaron listos en esta pasada: sus remitos que esperaban salen ya. */
+  const listos = new Set<string>()
+  const aTrabajar = (filas: unknown) => {
+    const ahora = Date.now()
+    return ((filas as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
+      r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : (!!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora) || (r.estado === "pendiente" && listos.has(r.scheduled_dispatch_id || "")),
+    )
+  }
+  let lista = aTrabajar(data)
+  if (!lista.length && !ajustes.length) return { hechas: [] }
   const quien = `z1·${o.usuario}·${o.inicio.toString(36)}`
   const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
   if (et) throw et
@@ -347,10 +372,32 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   }
   const hechas: ResultadoProcesoZ1["hechas"] = []
   try {
+    if (ajustes.length) {
+      const ra = await trabajarAjustes(sb, ajustes, { usuario: o.usuario, cfg, inicio: o.inicio, manual: !!o.pedidoId, renovar, dep: depAjuste })
+      hechas.push(...ra.hechas)
+      for (const p of ra.listos) listos.add(p)
+      if (ra.corte) return { hechas }
+      // Lo que quedó listo (y un remito nuevo si se agrandó la NP) sale en esta misma pasada
+      if (listos.size) lista = aTrabajar(await leerRemitos())
+    }
     for (const r of lista) {
       if (!quedaTiempo(o.inicio, Date.now())) break
       const llave = llaveZ1(cfg[r.plant_id])
       if (!llave) continue
+      // El remito (y su OF) de un pedido completo espera el ajuste de su NP (4.4). Sin la llave del ajuste, nada
+      let gate: Gate = { espera: false, pendienteEsperado: null }
+      if (conAjuste && llaveAjuste(cfg[r.plant_id])) {
+        gate = await gateAjuste(sb, r, { usuario: o.usuario, cfg, avisar: avisarError })
+        if (gate.espera) {
+          if (r.estado !== "generando") {
+            // Si la fila ya hizo algo en Zomatik (OF, número de remito, un Grabar), su paso no se pisa: lo necesita el reintento
+            const progreso = r.of_estado === "ok" || !!r.of_foto || !!r.remito_numero || /^(grabar|verificar|buscar)_/.test(r.paso || "")
+            await sb.from("zomatik_remitos").update({ mensaje: gate.mensaje, proximo_intento: despuesDe(10), ...(progreso ? {} : { paso: PASO_ESPERANDO_AJUSTE }), updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", r.estado)
+          }
+          hechas.push({ id: r.id, estado: "esperando_ajuste", mensaje: gate.mensaje })
+          continue
+        }
+      }
       const { data: tom, error: e1 } = await sb.rpc("zomatik_remito_tomar", { p_id: r.id, p_desde: ["pendiente", ...(o.pedidoId ? ["error"] : [])] })
       if (e1) throw e1
       const t = (tom as { remito_id: string; estado_anterior: string; paso_anterior: string | null }[] | null)?.[0]
@@ -494,6 +541,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           // Patente vacía, como hoy (29/10): las patentes van en observaciones
           articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre, patente: null, observaciones: obs.observaciones, observacionesimp: obs.observacionesimp,
           numero, entrega: d.entrega, buscarAntes: cortadoRemito,
+          // Con el ajuste de la NP hecho: el pendiente que tiene que traer Zomatik (si no, "revisar" sin grabar)
+          pendienteEsperado: gate.espera ? null : gate.pendienteEsperado,
         }, { hoy: hoyAR(), alPaso })
         if (rm.estado !== "ok") {
           await terminar(rm, "remito")
@@ -567,6 +616,8 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB; avis
     try {
       const r = await prepararRemitos(id, null, usuario, sb)
       if (r.activo) creados += r.creados
+      // El ajuste de la NP de los pedidos completos (solo con su llave; si no aplica, no hace nada)
+      if (r.activo && Object.values(cfg).some((c) => llaveAjuste(c))) await prepararAjustesSeguro(id, usuario, sb)
     } catch (e) {
       console.error("[zomatik-z1] preparar", id, (e as Error)?.message)
     }
@@ -585,14 +636,14 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB; avis
   return { pedidos, creados, avisos }
 }
 
-type EstadoRemito = { estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string }
+type EstadoRemito = { estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso: string | null }
 
 export async function estadoRemitos(ids: string[], sb: SB = sbServicio()): Promise<Record<string, EstadoRemito[]>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_remitos").select("scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
+  const { data, error } = await sb.from("zomatik_remitos").select("scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha, paso").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
   if (error) return {}
   const out: Record<string, EstadoRemito[]> = {}
-  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha })
+  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha, paso: r.paso ?? null })
   return out
 }
 

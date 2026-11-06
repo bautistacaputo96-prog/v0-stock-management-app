@@ -129,6 +129,17 @@ export async function avisarErrorZomatik(sb: SB, titulo: string, lineas: string[
   return mandarAviso(sb, AVISO_ERRORES_ZOMATIK, "Bautista no tiene mail cargado", titulo, lineas)
 }
 
+/**
+ * Quien recibe el aviso de una NP con factura al finalizar el pedido (hay que hacer la devolución a mano y ver si va
+ * una nota de crédito). Decisión de Bautista del 06/11: solo Juan (sumar a alguien es una línea).
+ */
+export const AVISO_AJUSTE_NP = ["Juan Oreguy"]
+
+/** Aviso a Juan de una NP con factura (docs/specs/2026-11-06-ajustar-np-al-finalizar.md, 6 y 15.6). Nunca corta la operación. */
+export async function avisarAjusteNp(sb: SB, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
+  return mandarAviso(sb, AVISO_AJUSTE_NP, "sin mail", titulo, lineas)
+}
+
 async function mandarAviso(sb: SB, nombres: string[], sinMail: string, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
   try {
     if (!process.env.RESEND_API_KEY) return { enviado: false, motivo: "falta RESEND_API_KEY" }
