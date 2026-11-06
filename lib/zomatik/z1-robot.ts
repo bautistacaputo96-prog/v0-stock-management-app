@@ -25,6 +25,7 @@ import {
   tieneTransporte, type FilaOf,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
+import { MSJ_NP_NO_AJUSTADA } from "@/lib/zomatik/ajuste"
 
 /** Solo la arma z1-servidor.ts después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida). */
 export type LlaveZ1 = { readonly remitir: true; readonly plantId: string }
@@ -402,7 +403,7 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
     if (mio.length !== 1) throw formato("el remito", `los pendientes no traen ${d.articuloNombre || "el artículo"} una sola vez`, man.html)
     const it = mio[0]
     if (d.pendienteEsperado !== null && d.pendienteEsperado !== undefined && (it.pendiente === null || Math.abs(it.pendiente - d.pendienteEsperado) > 0.001)) {
-      const fr = new Freno("revisar", `La NP no quedó ajustada: Zomatik dice ${String(it.pendiente ?? "?").replace(".", ",")} m³ pendientes y el sistema esperaba ${String(Math.round(d.pendienteEsperado * 1000) / 1000).replace(".", ",")}. No se grabó el remito.`, false, man.html)
+      const fr = new Freno("revisar", `${MSJ_NP_NO_AJUSTADA}: Zomatik dice ${String(it.pendiente ?? "?").replace(".", ",")} m³ pendientes y el sistema esperaba ${String(Math.round(d.pendienteEsperado * 1000) / 1000).replace(".", ",")}. No se grabó el remito.`, false, man.html)
       fr.aviso = "La NP no quedó ajustada"
       throw fr
     }

@@ -46,7 +46,8 @@ export type ConfigZ1 = {
  */
 export async function configZ1(sb: SB): Promise<Record<string, ConfigZ1>> {
   let { data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito, ajustar_activo, ajustar_desde")
-  if (error) ({ data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito"))
+  // Solo si falta la columna (42703, la migración del ajuste sin aplicar); cualquier otro error, como siempre
+  if (error && (error as { code?: string }).code === "42703") ({ data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito"))
   if (error) return {}
   return Object.fromEntries(((data as ConfigZ1[]) || []).map((c) => [c.plant_id, c]))
 }
@@ -637,14 +638,14 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB; avis
   return { pedidos, creados, avisos }
 }
 
-type EstadoRemito = { estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso: string | null }
+type EstadoRemito = { id: string; estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso: string | null }
 
 export async function estadoRemitos(ids: string[], sb: SB = sbServicio()): Promise<Record<string, EstadoRemito[]>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_remitos").select("scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha, paso").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
+  const { data, error } = await sb.from("zomatik_remitos").select("id, scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha, paso").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
   if (error) return {}
   const out: Record<string, EstadoRemito[]> = {}
-  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha, paso: r.paso ?? null })
+  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ id: r.id, estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha, paso: r.paso ?? null })
   return out
 }
 

@@ -31,6 +31,12 @@ export const PASOS_GRABAR_AJUSTE = ["grabar_np", "verificar_np"]
 /** Paso del remito que espera el ajuste de su NP (no manda el aviso de "pendiente hace más de 1 hora"). */
 export const PASO_ESPERANDO_AJUSTE = "esperando_ajuste"
 export const MSJ_ESPERANDO_AJUSTE = "Esperando el ajuste de la NP"
+/** Pasos de un ajuste en "revisar" que resuelve un gerencial a mano (cada uno con su botón). */
+export const PASO_DEVOL_A_MANO = "devol_a_mano"
+export const PASO_ADICIONAL_A_MANO = "adicional_a_mano"
+export const PASO_NP_SIN_USO = "np_sin_uso"
+/** Comienzo del mensaje del remito frenado por el control del pendiente (z1-robot.ts). */
+export const MSJ_NP_NO_AJUSTADA = "La NP no quedó ajustada"
 
 const corto = (id: string) => String(id).replace(/-/g, "").slice(0, 8)
 
@@ -80,6 +86,8 @@ export type PlanAjuste = {
   m3_objetivo: number
   /** editar = poner la cantidad (achicar o agrandar) · nada · null = para una persona */
   tipo: "editar" | "nada" | null
+  /** np_sin_uso = la NP quedó en 0 (15.5: la decide un gerencial) */
+  paso?: string | null
   estado: "pendiente" | "nada" | "revisar"
   mensaje: string | null
 }
@@ -117,7 +125,7 @@ export function planificarAjuste(e: EntradaAjuste): PlanAjuste[] {
     const remitido = r3(e.remitidoPorNp[x.id] || 0)
     if (Math.abs(remitido - esperadoRemitido) > TOL_AJUSTE)
       return revisar(`Lo remitido contra la ${nombre} (${m3Texto(remitido)} m³) no coincide con lo despachado (${m3Texto(esperadoRemitido)} m³). No se tocó: revisala.`)
-    if (obj <= TOL_AJUSTE) return revisar(`La NP ${x.numero || x.n} quedó sin uso (0 m³): eliminala o dejala pendiente en Zomatik`)
+    if (obj <= TOL_AJUSTE) return { ...revisar(`La NP ${x.numero || x.n} quedó sin uso (0 m³): eliminala o dejala pendiente en Zomatik`), paso: PASO_NP_SIN_USO }
     if (Math.abs(obj - Number(x.m3)) <= TOL_AJUSTE) return { ...base, tipo: "nada", estado: "nada", mensaje: null }
     return { ...base, tipo: "editar", estado: "pendiente", mensaje: null }
   })
@@ -226,8 +234,8 @@ export function pendienteEsperado(m3Np: number, remitidoOk: number, devuelto = 0
 export const msjNpCambio = (tiene: number, esperaba: number) => `La NP cambió en Zomatik (tiene ${m3Texto(tiene)} m³ y el sistema esperaba ${m3Texto(esperaba)}). No se tocó: revisala.`
 export const MSJ_FACTURA_NO_SE_SABE = "No se pudo saber si la NP tiene factura. No se tocó: revisala."
 const conNumero = (factura?: string | null) => (factura ? ` (${factura})` : "")
-export const msjConFactura = (devolver: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)}: hacé la devolución de ${m3Texto(devolver)} m³ a mano y tocá «Ya la hice».`
-export const msjConFacturaExceso = (exceso: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)} y se despacharon ${m3Texto(exceso)} m³ de más: hacé una NP adicional por ${m3Texto(exceso)} m³ a mano y tocá «Ya la hice».`
+export const msjConFactura = (devolver: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)}: hacé la devolución de ${m3Texto(devolver)} m³ a mano y tocá «Ya hice la devolución».`
+export const msjConFacturaExceso = (exceso: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)} y se despacharon ${m3Texto(exceso)} m³ de más: hacé una NP adicional por ${m3Texto(exceso)} m³ a mano y tocá «Ya hice la NP adicional».`
 export const msjFacturaContradice = (factura: string) => `Zomatik lista la factura ${factura} pero la NP se puede editar. No se tocó: revisala.`
 export const msjZomatikNoDejo = (texto: string) => `Zomatik no dejó cambiar la NP: ${texto}.`
 
