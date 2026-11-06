@@ -11,7 +11,7 @@ import { MaterialFilter } from "@/components/material-filter"
 import { HumidityExcessTable } from "@/components/humidity-excess-table"
 import { StockEvolutionChart } from "@/components/stock-evolution-chart"
 import { SuppliersTable } from "@/components/suppliers-table"
-import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download, ClipboardCheck, Scale } from "lucide-react"
+import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download, ClipboardCheck, Scale, RefreshCw } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -22,6 +22,16 @@ import { SeccionProtegida } from "@/components/seccion-protegida"
 import { usePermisos } from "@/lib/current-user"
 import { ControlIngresosZomatik } from "@/components/control-ingresos-zomatik"
 import { ControlStockZomatik } from "@/components/control-stock-zomatik"
+import { useToast } from "@/hooks/use-toast"
+import { esArenaFina } from "@/lib/ingresos/muestras"
+
+/** Estado de la importación de ingresos desde Zomatik (docs/ingresos-mp-zomatik.md), de /api/ingresos-zomatik. */
+type EstadoImportacion = {
+  modo: "apagado" | "sombra" | "real"
+  desde: string | null
+  activa: boolean
+  avisosHumedad: { id: string; fecha: string; remito: string | null; planta: string; horas: number }[]
+}
 
 export default function MateriasPrimasPage() {
   return (
@@ -50,10 +60,36 @@ function MateriasPrimasContent() {
   // Control con Zomatik: gerenciales o materia_prima.editar (el servidor lo vuelve a controlar)
   const veControl = esGerencial || puede("materia_prima", "editar")
   const supabase = createClient()
+  const { toast } = useToast()
+  // Importación desde Zomatik: sin la migración o sin el interruptor, apagada (todo como siempre)
+  const [imp, setImp] = useState<EstadoImportacion>({ modo: "apagado", desde: null, activa: false, avisosHumedad: [] })
+  const [trayendo, setTrayendo] = useState(false)
+  const [soloSinHumedad, setSoloSinHumedad] = useState(false)
 
   useEffect(() => {
     loadPlants()
+    fetch("/api/ingresos-zomatik", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && setImp({ modo: j.modo || "apagado", desde: j.desde || null, activa: !!j.activa, avisosHumedad: j.avisosHumedad || [] }))
+      .catch(() => {})
   }, [])
+
+  async function traerDeZomatik() {
+    setTrayendo(true)
+    try {
+      const r = await fetch("/api/ingresos-zomatik/pasada", { method: "POST" })
+      const j = await r.json().catch(() => ({}))
+      toast({ title: j?.mensaje || j?.error || (r.ok ? "Listo" : "No se pudo traer de Zomatik"), variant: r.ok || r.status === 409 ? undefined : "destructive" })
+    } catch {
+      toast({ title: "No se pudo traer de Zomatik. Probá en un rato.", variant: "destructive" })
+    }
+    setTrayendo(false)
+    loadEntries()
+  }
+
+  // Lo importado de Zomatik entra sin humedad: se carga después desde la fila
+  const sinHumedad = (e: any) => e.origen === "zomatik" && esArenaFina(e.materials?.name) && e.humidity_percentage === null && !e.anulado_at
+  const cuantosSinHumedad = entries.filter(sinHumedad).length
 
   useEffect(() => {
     if (selectedPlant) {
@@ -142,25 +178,29 @@ function MateriasPrimasContent() {
     const { data: mats } = await matQuery
     const matIds = (mats || []).map((m: any) => m.id)
     if (matIds.length === 0) return
-    let q = supabase
-      .from("stock_entries")
-      .select("entry_date, quantity, humidity_percentage, remito, notes, materials(name, plant_id), suppliers(name)")
-      .in("material_id", matIds)
-    if (startDate) q = q.gte("entry_date", `${startDate}T00:00:00`)
-    if (endDate) q = q.lte("entry_date", `${endDate}T23:59:59`)
-    if (scope === "current" && selectedMaterial && selectedMaterial !== "all") q = q.eq("material_id", selectedMaterial)
-    const { data } = await q.order("entry_date", { ascending: false }).limit(10000)
+    const consulta = (columnas: string) => {
+      let q = supabase.from("stock_entries").select(columnas).in("material_id", matIds)
+      if (startDate) q = q.gte("entry_date", `${startDate}T00:00:00`)
+      if (endDate) q = q.lte("entry_date", `${endDate}T23:59:59`)
+      if (scope === "current" && selectedMaterial && selectedMaterial !== "all") q = q.eq("material_id", selectedMaterial)
+      return q.order("entry_date", { ascending: false }).limit(10000)
+    }
+    const base = "entry_date, quantity, humidity_percentage, remito, notes, supplier, materials(name, plant_id), suppliers(name)"
+    // Con la migración de la importación, también el origen; sin ella, como siempre
+    let { data, error } = (await consulta(`${base}, origen, anulado_at`)) as { data: any[] | null; error: any }
+    if (error) ({ data } = (await consulta(base)) as { data: any[] | null; error: any })
     const plantName: Record<string, string> = {}
     plants.forEach((p: any) => (plantName[p.id] = p.name))
     const rows = (data || []).map((e: any) => ({
       Planta: plantName[e.materials?.plant_id] || "-",
       Fecha: e.entry_date ? e.entry_date.split("T")[0].split("-").reverse().join("/") : "-",
       Material: e.materials?.name || "-",
-      Proveedor: e.suppliers?.name || "-",
+      Proveedor: e.suppliers?.name || e.supplier || "-",
       Remito: e.remito || "-",
       "Cantidad (kg)": e.quantity,
       "Humedad %": e.humidity_percentage ?? "-",
       Notas: e.notes || "-",
+      Origen: e.origen === "zomatik" ? (e.anulado_at ? "Zomatik (anulado)" : "Zomatik") : e.anulado_at ? "A mano (anulado)" : "A mano",
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
@@ -188,9 +228,26 @@ function MateriasPrimasContent() {
           {activeTab === "stock" && puede("formulas", "cargar") && (
             <AddMaterialDialog plantId={selectedPlant} plants={plants} onSuccess={loadMaterials} />
           )}
-          {activeTab === "ingresos" && puede("materia_prima", "cargar") && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} />}
+          {activeTab === "ingresos" && veControl && imp.modo !== "apagado" && (
+            <Button variant="outline" className="gap-2" disabled={trayendo} onClick={traerDeZomatik}>
+              {trayendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Traer de Zomatik
+            </Button>
+          )}
+          {activeTab === "ingresos" && puede("materia_prima", "cargar") && <AddStockEntryDialog materials={materials} onSuccess={loadEntries} plants={plants} importacionActiva={imp.activa} />}
         </div>
       </div>
+
+      {imp.avisosHumedad.length > 0 && (
+        <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Arena Fina sin humedad: {imp.avisosHumedad.length} {imp.avisosHumedad.length === 1 ? "ingreso" : "ingresos"} de {[...new Set(imp.avisosHumedad.map((a) => a.planta))].join(" y ")} de hace más de 24 h (
+          {imp.avisosHumedad
+            .slice(0, 5)
+            .map((a) => `${a.fecha.split("-").reverse().slice(0, 2).join("/")} ${a.remito || ""}`.trim())
+            .join(", ")}
+          ). Cargala en Ingresos › menú de la fila › Cargar humedad.
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex h-10 items-center justify-start rounded-lg bg-muted/80 p-1 mb-4 md:mb-6 overflow-x-auto border border-border/50">
@@ -229,6 +286,14 @@ function MateriasPrimasContent() {
       {activeTab === "ingresos" && (
         <>
           <div className="space-y-3 md:space-y-4 mb-4 md:mb-6">
+            {imp.activa && (
+              <div className="text-xs text-muted-foreground">
+                Arena, piedra, cemento, aditivos y fibra entran solos desde Zomatik. Acá cargás humedad y muestra.{" "}
+                <span className="cursor-help" title="Se lee Zomatik cada 30 min, de 6 a 20.">
+                  (?)
+                </span>
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <PlantSelector plants={plants} selectedPlant={selectedPlant} onPlantChange={setSelectedPlant} />
               <DateRangeFilter onFilterChange={handleDateFilterChange} />
@@ -254,10 +319,18 @@ function MateriasPrimasContent() {
               selectedMaterial={selectedMaterial}
               onFilterChange={setSelectedMaterial}
             />
+            {(cuantosSinHumedad > 0 || soloSinHumedad) && (
+              <button
+                className={cn("rounded-md border px-2 py-1 text-xs", soloSinHumedad ? "border-amber-400 bg-amber-50 text-amber-900" : "text-muted-foreground")}
+                onClick={() => setSoloSinHumedad(!soloSinHumedad)}
+              >
+                {soloSinHumedad ? "Ver todos" : `Sin humedad (${cuantosSinHumedad} sin humedad)`}
+              </button>
+            )}
           </div>
 
           <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-            <StockEntriesTable entries={entries} onRefresh={loadEntries} />
+            <StockEntriesTable entries={soloSinHumedad ? entries.filter(sinHumedad) : entries} onRefresh={loadEntries} />
           </div>
         </>
       )}

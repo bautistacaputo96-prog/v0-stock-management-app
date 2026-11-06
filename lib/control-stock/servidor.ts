@@ -252,6 +252,8 @@ export type FilaStock = {
   /** Stock actual − libro desde el último recuento (t). null = sin recuento. */
   sinRegistro: number | null
   ultimoRecuento: string | null
+  /** Correcciones de ingresos (Zomatik o a mano) de ingresos anteriores al último recuento: se aplicaron, revisar. */
+  correccionesAntesRecuento?: number
   zomatik: Lado | null
   comparacion: ReturnType<typeof comparar>
   lectura: { leidoAt: string | null; vieja: boolean; error: string | null; totalEsInicial: boolean | null; totalAcumulado: number | null; saldoInicial: number | null; idarticulo: string | null; verificado: string | null; desde: string | null } | null
@@ -302,6 +304,17 @@ export async function calcularStock(sb: SupabaseClient, desde: string, hasta: st
     ),
   ])
 
+  // Correcciones de ingresos (asiento correccion_ingreso, docs/ingresos-mp-zomatik.md 3.5): para el libro desde el recuento
+  const correcciones = await todasLasFilas<any>((a, b) =>
+    sb.from("stock_movements").select("material_id, quantity_kg, created_at, reference_id").in("material_id", ids).eq("movement_type", "correccion_ingreso").gte("created_at", corte).order("id").range(a, b),
+  ).catch(() => [] as any[])
+  const idsIngresos = [...new Set(correcciones.map((c) => c.reference_id).filter(Boolean))]
+  const creadoIngreso = new Map<string, string>()
+  for (let i = 0; i < idsIngresos.length; i += 200) {
+    const { data } = await sb.from("stock_entries").select("id, created_at").in("id", idsIngresos.slice(i, i + 200))
+    for (const e of (data as any[]) || []) creadoIngreso.set(e.id, e.created_at)
+  }
+
   const zLecturas = await sb.from("zomatik_stock_lecturas").select("*")
   const lecturas = (zLecturas.data as any[]) || []
   const zMovs = await todasLasFilas<any>((a, b) => sb.from("zomatik_stock_movimientos").select("deposito, codigo_articulo, fecha, orden, comprobante, prefijo, descripcion, movimiento, saldo").order("id").range(a, b))
@@ -319,7 +332,12 @@ export async function calcularStock(sb: SupabaseClient, desde: string, hasta: st
     const enPeriodo = movs.filter((x) => x.fecha >= desde)
     const nuestro = resumenNuestro(actual, enPeriodo, desde, hasta)
     const rc = recuentoDe.get(m.id) || null
-    const libro = libroDesdeRecuento(actual, rc, movs)
+    const libro = libroDesdeRecuento(
+      actual,
+      rc,
+      movs,
+      correcciones.filter((c) => c.material_id === m.id).map((c) => ({ kg: Number(c.quantity_kg) || 0, creadoAt: c.created_at, ingresoCreadoAt: creadoIngreso.get(c.reference_id) ?? null })),
+    )
     const mat = MATERIALES.find((x) => x.clave === m.clave)!
     const dep = depositoDe.get(m.plant_id)
     const lec = lecturas.find((l) => l.deposito === dep && l.codigo_articulo === mat.codigo) || null
@@ -339,6 +357,7 @@ export async function calcularStock(sb: SupabaseClient, desde: string, hasta: st
       nuestro,
       sinRegistro: libro && Math.abs(libro.sinRegistroKg) >= 1 ? libro.sinRegistroKg / 1000 : libro ? 0 : null,
       ultimoRecuento: rc?.creadoAt ?? null,
+      correccionesAntesRecuento: libro?.correccionesAnteriores || 0,
       zomatik,
       comparacion: comparar(nuestro, zomatik),
       lectura: lec

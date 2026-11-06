@@ -21,6 +21,7 @@ type Fila = {
   nuestro: Lado
   sinRegistro: number | null
   ultimoRecuento: string | null
+  correccionesAntesRecuento?: number
   zomatik: Lado | null
   comparacion: { final: Dif; neto: Dif; entro: Dif; salio: Dif; rojo: boolean } | null
   lectura: { leidoAt: string | null; vieja: boolean; error: string | null; totalEsInicial: boolean | null; totalAcumulado: number | null; saldoInicial: number | null; idarticulo: string | null; verificado: string | null; desde: string | null } | null
@@ -217,6 +218,7 @@ function Detalle({ f }: { f: Fila }) {
       <div className="text-muted-foreground">
         {f.ultimoRecuento ? `Último recuento: ${hora(f.ultimoRecuento)}` : "Sin recuento"}
         {f.sinRegistro ? ` · el stock actual no cierra con el libro desde ese recuento: ${n1(f.sinRegistro)} t de ajuste sin registro` : ""}
+        {f.ultimoRecuento && f.correccionesAntesRecuento ? ` · ${f.correccionesAntesRecuento} ${f.correccionesAntesRecuento === 1 ? "corrección" : "correcciones"} de un ingreso anterior al recuento del ${new Date(f.ultimoRecuento).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", timeZone: "America/Argentina/Buenos_Aires" })}: revisar` : ""}
         {f.lectura?.leidoAt ? ` · Zomatik leído ${hora(f.lectura.leidoAt)} (idarticulo ${f.lectura.idarticulo || "-"}, ${f.lectura.verificado === "verificado" ? "verificado con los remitos de compra" : "sin verificar"})` : ""}
         {f.lectura && f.lectura.totalEsInicial === false
           ? ` · ojo: el "Total acumulado" de Zomatik (${n1(f.lectura.totalAcumulado)}) no es el saldo inicial (${n1(f.lectura.saldoInicial)})`
