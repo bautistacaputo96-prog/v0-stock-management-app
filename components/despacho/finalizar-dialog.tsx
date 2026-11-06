@@ -12,10 +12,12 @@ import { CabeceraPedido, ChipsMotivo } from "./suspender-dialog"
 import type { PedidoT } from "./tipos"
 
 /** Finalizar con lo enviado, con motivo (reemplaza al Finalizar de la pantalla de siempre). */
-export function FinalizarDialog({ pedido, onClose, onConfirmar }: {
+export function FinalizarDialog({ pedido, onClose, onConfirmar, ajuste }: {
   pedido: PedidoT | null
   onClose: () => void
   onConfirmar: (tipo: MotivoTipo, detalle: string) => Promise<string | null>
+  /** Con la llave del ajuste de la NP prendida: qué le va a pasar a la NP ("Al remitir, la NP2 … baja de 60 a 40 m³.") */
+  ajuste?: string | null
 }) {
   const [tipo, setTipo] = useState<MotivoTipo>("obra_pidio_menos")
   const [detalle, setDetalle] = useState("")
@@ -52,6 +54,7 @@ export function FinalizarDialog({ pedido, onClose, onConfirmar }: {
               <Input className="h-11" value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Ej: con 30 m³ llenaron la platea" />
             </div>
             <p className="text-xs text-muted-foreground">Queda registrado que se cerró con {m3txt(faltaDe(pedido))} m³ sin despachar.</p>
+            {ajuste && <p className="text-xs font-medium">{ajuste}</p>}
             {err && <div className="rounded-lg bg-red-100 px-3 py-2 text-sm font-semibold text-red-800">{err}</div>}
           </div>
         )}

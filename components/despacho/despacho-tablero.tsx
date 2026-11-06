@@ -50,7 +50,8 @@ import { HumedadAcopio } from "./humedad-acopio"
 import { usarArrastre } from "./usar-arrastre"
 import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 import { avisarNp, estadoNpDePedido, useNp, type NpFila } from "@/lib/zomatik/np-cliente"
-import { remitirPedido, useRemitos } from "@/lib/zomatik/z1-cliente"
+import { remitirPedido, remitirSinAjustar, useRemitos } from "@/lib/zomatik/z1-cliente"
+import { textoFinalizar } from "@/lib/zomatik/ajuste"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 
 const MIN = 60_000
@@ -64,7 +65,7 @@ type Tab = "viajes" | "camiones" | "pedidos"
 
 export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[]; onPantallaVieja?: () => void }) {
   const { toast } = useToast()
-  const { puede, ajustaPedido } = usePermisos()
+  const { puede, ajustaPedido, esGerencial } = usePermisos()
   const puedeDespachar = puede("despacho", "cargar")
   const puedeCancelar = puede("programacion", "borrar")
   const puedeCambiarTipo = puede("programacion", "editar")
@@ -97,6 +98,10 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const np = useNp(idsPedidos)
   // Zomatik Z1: OF + remito de cada pedido (con la llave de remitir apagada viene vacío)
   const remitos = useRemitos(idsPedidos)
+  // Ajuste de la NP trabado: "Remitir sin ajustar la NP" / "Ya hice la devolución" (gerenciales, con motivo)
+  const [sinAjustar, setSinAjustar] = useState<{ pedido: PedidoT; factura: boolean } | null>(null)
+  const [motivoSinAjustar, setMotivoSinAjustar] = useState("")
+  const [enviandoSinAjustar, setEnviandoSinAjustar] = useState(false)
 
   // Pantalla
   const [selViaje, setSelViaje] = useState<string | null>(null)
@@ -578,6 +583,23 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     cargar()
     return null
   }
+  async function hacerSinAjustar() {
+    if (!sinAjustar) return
+    setEnviandoSinAjustar(true)
+    const r = await remitirSinAjustar(sinAjustar.pedido.id, motivoSinAjustar.trim())
+    setEnviandoSinAjustar(false)
+    toast({ title: r.ok ? (sinAjustar.factura ? "Devolución registrada" : "Remitiendo sin ajustar la NP") : "No se pudo", description: r.texto, variant: r.ok ? undefined : "destructive" })
+    if (r.ok) {
+      setSinAjustar(null)
+      remitos.recargarEn()
+    }
+  }
+  /** Qué le pasa a la NP al finalizar (solo con la llave del ajuste prendida en la planta). */
+  function textoAjusteFinalizar(p: PedidoT | null): string | null {
+    if (!p || !remitos.ajusteActivo[p.plant_id || planta]) return null
+    const nps = (np.porPedido[p.id]?.nps || []).filter((x) => x.estado === "ok")
+    return textoFinalizar(nps.map((x) => ({ numero: x.numero, m3: Number(x.m3), m3_uso: Number(x.m3_uso) })), Number(p.dispatched_m3 || 0))
+  }
   /** OF + remito en Zomatik de lo despachado ese día (con la llave apagada no hace nada ni avisa). */
   function remitirAhora(pedidoId: string) {
     remitirPedido(pedidoId, format(dia, "yyyy-MM-dd")).then((r) => {
@@ -658,7 +680,9 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         npPorPedido={np.porPedido}
         remitosPorPedido={remitos.porPedido}
         onRemitir={(p) => remitirAhora(p.id)}
-        permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar }}
+        ajustesPorPedido={remitos.ajustes}
+        onSinAjustar={(p, factura) => { setMotivoSinAjustar(""); setSinAjustar({ pedido: p, factura }) }}
+        permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar, gerencial: esGerencial }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}
         onEditarTotal={(p) => { setTotalNuevo(String(p.quantity_m3)); setMotivoTotal(""); setEditarTotal(p) }}
@@ -837,7 +861,23 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         pedido={reabrir} proximaCarga={reabrirViajes[0]?.hora_carga || null} nuevaCarga={nuevaCargaReabrir}
         puedeCorrer={!!reabrir && ajustaPedido(reabrir)} onClose={() => setReabrir(null)} onConfirmar={hacerReabrir}
       />
-      <FinalizarDialog pedido={finalizar} onClose={() => setFinalizar(null)} onConfirmar={hacerFinalizar} />
+      <FinalizarDialog pedido={finalizar} onClose={() => setFinalizar(null)} onConfirmar={hacerFinalizar} ajuste={textoAjusteFinalizar(finalizar)} />
+
+      {/* Ajuste de la NP trabado: se arregló a mano en Zomatik (gerenciales) */}
+      <Dialog open={!!sinAjustar} onOpenChange={(v) => !v && !enviandoSinAjustar && setSinAjustar(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{sinAjustar?.factura ? "Ya hice la devolución" : "Remitir sin ajustar la NP"}</DialogTitle>
+            <DialogDescription>{sinAjustar?.factura ? "¿Ya hiciste la devolución en Zomatik?" : "¿Ya ajustaste la NP a mano en Zomatik?"} El remito sale sin controlar la NP.</DialogDescription>
+          </DialogHeader>
+          {sinAjustar && <div className="text-sm text-muted-foreground">{sinAjustar.pedido.clients?.name} · {sinAjustar.pedido.construction_sites?.name}</div>}
+          <CampoMotivo value={motivoSinAjustar} onChange={setMotivoSinAjustar} id="motivo-sin-ajustar" ejemplo={sinAjustar?.factura ? "Ej: DP2 0001-00000012 por 20 m³" : "Ej: la bajé a 40 m³ a mano"} />
+          <DialogFooter className="gap-2">
+            <Button className="h-11" variant="outline" onClick={() => setSinAjustar(null)} disabled={enviandoSinAjustar}>Cancelar</Button>
+            <Button className="h-11" onClick={hacerSinAjustar} disabled={enviandoSinAjustar || !motivoValido(motivoSinAjustar)}>Sí, remitir</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <CancelarDialog
         pedido={cancelar} onClose={() => setCancelar(null)} onConfirmar={hacerCancelar}
         extra={npCancelarNps === null ? <p className="text-xs text-muted-foreground">Leyendo la NP del pedido…</p> : cancelar && <NpCancelarPregunta nps={npCancelarNps} despachado={Number(cancelar.dispatched_m3 || 0)} valor={npCancelarDecision} onCambio={setNpCancelarDecision} />}

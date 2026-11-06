@@ -5,13 +5,17 @@
  *   POST /api/zomatik/remito {accion: "remitir", pedido_id, fecha?}
  *        Al finalizar el pedido (o "Remitir en Zomatik"): arma los remitos del día con lo despachado (uno por NP) y el
  *        robot hace la OF y el remito después de responder. Con la llave de remitir apagada no hace nada.
+ *        Con la llave del ajuste prendida y el pedido completo, además arma el ajuste de la NP (va antes de la OF).
+ *   POST /api/zomatik/remito {accion: "remitir_sin_ajustar", pedido_id, motivo}
+ *        Solo gerenciales: la NP se arregló a mano en Zomatik ("Remitir sin ajustar la NP" / "Ya hice la devolución").
  */
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
-import { puedeCon } from "@/lib/permisos"
+import { puedeCon, tipoDe } from "@/lib/permisos"
 import { hoyAR } from "@/lib/zomatik/np"
 import { avisarFallaInesperada, esDeZomatik } from "@/lib/zomatik/np-servidor"
 import { estadoRemitos, prepararRemitos, procesarZ1 } from "@/lib/zomatik/z1-servidor"
+import { estadoAjustes, prepararAjustesSeguro, remitirSinAjustar } from "@/lib/zomatik/ajuste-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -55,7 +59,8 @@ export async function GET(req: Request) {
     const u = r.sesion.usuario
     if (!puedeCon(u, "programacion", "ver") && !puedeCon(u, "despacho", "ver")) return NextResponse.json({ error: "No tenés acceso." }, { status: 403 })
     const ids = (new URL(req.url).searchParams.get("pedidos") || "").split(",").map(uuid).filter(Boolean).slice(0, 300) as string[]
-    const res = NextResponse.json({ porPedido: await estadoRemitos(ids) })
+    const [porPedido, ajustes] = await Promise.all([estadoRemitos(ids), estadoAjustes(ids)])
+    const res = NextResponse.json({ porPedido, ajustes: ajustes.porPedido, ajusteActivo: ajustes.activo })
     res.headers.set("Cache-Control", "no-store")
     return res
   } catch (e) {
@@ -75,6 +80,15 @@ export async function POST(req: Request) {
     if (!puedeCon(u, "despacho", "cargar") && !puedeCon(u, "programacion", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
     const body = await req.json().catch(() => ({}))
     const pedidoId = uuid(body?.pedido_id)
+    if (body?.accion === "remitir_sin_ajustar" && pedidoId) {
+      if (tipoDe(u) !== "gerencial") return NextResponse.json({ error: "Lo resuelve un gerencial." }, { status: 403 })
+      const motivo = String(body?.motivo || "").trim().slice(0, 300)
+      if (motivo.replace(/\s/g, "").length < 5) return NextResponse.json({ error: "Contá qué hiciste en Zomatik (por ejemplo, el número de la DEVOL)." }, { status: 400 })
+      const out = await remitirSinAjustar(pedidoId, u.name, motivo)
+      if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
+      after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => caidaDespues(e, { pedidoId, fecha: hoyAR(), usuario: u.name })))
+      return NextResponse.json({ ok: true })
+    }
     if (body?.accion !== "remitir" || !pedidoId) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
     const fecha = typeof body?.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha) ? body.fecha : hoyAR()
     boton = { pedidoId, fecha, usuario: u.name }
@@ -85,8 +99,10 @@ export async function POST(req: Request) {
       if (/zomatik_remito|remitir_activo|does not exist|schema cache/i.test(String((e as Error)?.message || ""))) return NextResponse.json({ activo: false, motivo: "OF y remito: se cargan a mano en Zomatik", sinMigracion: true })
       throw e
     }
+    // El ajuste de la NP (solo con su llave y el pedido completo; si falla o no aplica, el remito sale como hoy)
+    const ajuste = prep.activo ? await prepararAjustesSeguro(pedidoId, u.name) : null
     if (prep.activo) after(() => procesarZ1({ usuario: u.name, pedidoId, inicio }).catch((e) => caidaDespues(e, { pedidoId, fecha, usuario: u.name })))
-    return NextResponse.json(prep)
+    return NextResponse.json(ajuste?.aplica ? { ...prep, ajuste: { pendientes: ajuste.pendientes } } : prep)
   } catch (e) {
     if (boton && !esErrorDeConfiguracion(e)) return fallaInesperada(e, boton)
     return respuestaError(e)

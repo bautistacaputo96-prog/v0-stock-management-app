@@ -14,16 +14,18 @@ import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 import { NpChip } from "@/components/zomatik/np-chip"
 import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
-import { chipRemito, type RemitoEstado } from "@/lib/zomatik/z1-cliente"
+import { ajusteParaResolver, chipRemito, type AjusteEstado, type RemitoEstado } from "@/lib/zomatik/z1-cliente"
 
 export type PermisosPedido = {
   despachar: boolean
   ajusta: (p: PedidoT) => boolean
   cancelar: boolean
+  /** Gerencial: puede resolver a mano el ajuste de la NP ("Remitir sin ajustar la NP") */
+  gerencial?: boolean
 }
 
 export function ColumnaPedidos({
-  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido, npPorPedido = {}, remitosPorPedido = {}, onRemitir,
+  pedidos, viajesPorPedido, totalPorPedido, tipos, empresas, puntualidad, permisos, numeroPedido, npPorPedido = {}, remitosPorPedido = {}, onRemitir, ajustesPorPedido = {}, onSinAjustar,
   onConfirmar, onGerenciador, onEditarTotal, onVerEntregas, onSuspender, onReabrir, onFinalizar, onCancelar,
 }: {
   pedidos: PedidoT[]
@@ -40,6 +42,10 @@ export function ColumnaPedidos({
   /** Zomatik Z1: OF + remito de cada pedido */
   remitosPorPedido?: Record<string, RemitoEstado[]>
   onRemitir?: (p: PedidoT) => void
+  /** Ajuste de la NP al finalizar (vacío con la llave apagada) */
+  ajustesPorPedido?: Record<string, AjusteEstado[]>
+  /** "Remitir sin ajustar la NP" / "Ya hice la devolución" (gerenciales) */
+  onSinAjustar?: (p: PedidoT, factura: boolean) => void
   onConfirmar: (p: PedidoT) => void
   onGerenciador: (p: PedidoT) => void
   onEditarTotal: (p: PedidoT) => void
@@ -114,6 +120,12 @@ export function ColumnaPedidos({
               {permisos.despachar && onRemitir && npPorPedido[p.id]?.activo && desp > 0 && !(remitosPorPedido[p.id] || []).some((r) => r.estado === "generando") && (
                 <DropdownMenuItem className="min-h-[32px]" onClick={() => onRemitir(p)}>📄 Remitir en Zomatik</DropdownMenuItem>
               )}
+              {/* Ajuste de la NP trabado: un gerencial lo resolvió a mano en Zomatik */}
+              {permisos.gerencial && onSinAjustar && ajusteParaResolver(ajustesPorPedido[p.id]) && (
+                <DropdownMenuItem className="min-h-[32px]" onClick={() => onSinAjustar(p, ajusteParaResolver(ajustesPorPedido[p.id]) === "factura")}>
+                  {ajusteParaResolver(ajustesPorPedido[p.id]) === "factura" ? "✓ Ya hice la devolución" : "📄 Remitir sin ajustar la NP"}
+                </DropdownMenuItem>
+              )}
               {!permisos.cancelar && permisos.despachar && (act || susp) && <DropdownMenuItem disabled className="text-xs">Cancelar: solo gerenciales</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -128,7 +140,7 @@ export function ColumnaPedidos({
           <div className="px-2 pb-1 text-[11px] text-muted-foreground">
             {est === "completo" && !finalizado && "✓ Completo"}
             {(() => {
-              const c = chipRemito(remitosPorPedido[p.id])
+              const c = chipRemito(remitosPorPedido[p.id], ajustesPorPedido[p.id])
               return c ? <span title={c.titulo} className={cn("ml-1 rounded px-1", c.clase === "ok" ? "bg-emerald-50 text-emerald-800" : c.clase === "mal" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>{c.texto}</span> : null
             })()}
             {finalizado && `Finalizado con ${m3txt(desp)} de ${m3txt(p.quantity_m3)} m³${p.cierre_motivo_tipo ? ` · ${textoMotivo(p.cierre_motivo_tipo)}` : ""}`}
