@@ -431,13 +431,15 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         // 15.1 y fase 1: la NP no se toca; la devolución (o la NP adicional, si se despachó de más) la hace una persona
         const cant = res.leido ?? m3Np
         const exceso = objetivo > cant + 0.001
-        const msj = exceso ? msjConFacturaExceso(objetivo - cant) : msjConFactura(cant - objetivo)
-        const guardo = await guardarSi(sb, a.id, { estado: "revisar", tipo: exceso ? "adicional" : "devol", con_factura: true, factura_texto: res.facturaTexto ?? null, m3_np: cant, mensaje: msj, paso: "a_mano", en_curso_desde: null, proximo_intento: null })
-        await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": "La NP tiene factura: no se tocó", Mensaje: msj, "Por qué": res.facturaTexto, NP: numero, Marca: a.marca } })
+        const fac = res.facturaNumero ?? null
+        const msj = exceso ? msjConFacturaExceso(objetivo - cant, fac) : msjConFactura(cant - objetivo, fac)
+        const guardo = await guardarSi(sb, a.id, { estado: "revisar", tipo: exceso ? "adicional" : "devol", con_factura: true, factura_texto: [fac, res.facturaTexto].filter(Boolean).join(" · ") || null, m3_np: cant, mensaje: msj, paso: "a_mano", en_curso_desde: null, proximo_intento: null })
+        await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": "La NP tiene factura: no se tocó", Mensaje: msj, "Por qué": res.facturaTexto, NP: numero, ...(fac ? { Factura: fac } : {}), Marca: a.marca } })
         if (guardo && !a.aviso_juan_at) {
-          const m = await o.dep.avisarJuan(sb, `NP con factura · ${d.cliente || "cliente"} · ${numero || "NP"}`, [
+          const m = await o.dep.avisarJuan(sb, `NP con factura · ${d.cliente || "cliente"} · ${numero || "NP"}${fac ? ` · ${fac}` : ""}`, [
             `${d.cliente || "Cliente"}${d.obra ? ` · ${d.obra}` : ""}`,
             `${numero || "NP"}: ${m3Texto(cant)} m³ en la NP y ${m3Texto(despachado)} m³ despachados.`,
+            fac ? `Factura de la NP: ${fac} (hecha antes de este remito: pago adelantado o remitos de días anteriores ya facturados).` : "La NP ya tiene factura (pago adelantado o remitos de días anteriores ya facturados).",
             exceso ? `Se despacharon ${m3Texto(objetivo - cant)} m³ de más: hacé una NP adicional por esa diferencia a mano en Zomatik.` : `Hacé la devolución (DEVOL) de ${m3Texto(cant - objetivo)} m³ a mano en Zomatik.`,
             "Después tocá «Ya hice la devolución» en el pedido (Despacho, menú ⋮): recién ahí sale el remito.",
             ...(linkNp(d.np.zomatik_codigo) ? [`Ver en Zomatik: ${linkNp(d.np.zomatik_codigo)}`] : []),
