@@ -169,6 +169,8 @@ const AJUSTE_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|farticulo|borra
  *                                                      fitems, fautorizar ni farticulo)
  *   POST grabar_pedidos.php?codigo=N                   grabar la cantidad nueva (N > 0: nunca codigo=0)
  *   GET  listado_pedidos.php / POST …?enviado=1        la fila de la NP (total y estado): ya es lectura
+ *   GET  _comprobantes.php?ftarget=pedidos&ftargetid=N  LECTURA: los comprobantes de la NP (remitos y facturas), lo que
+ *                                                      abre "COMPROBANTES / OPERACIONES" (MostrarComprobantes, REAL 06/11)
  * La DEVOL (fase 2) no está: ni listado ni alta ni grabar de devoluciones. El vaciado sigue con el grupo de la NP.
  */
 export function rutaEscrituraAjuste(path: string, metodo: "GET" | "POST", codigoNp: number): boolean {
@@ -178,6 +180,7 @@ export function rutaEscrituraAjuste(path: string, metodo: "GET" | "POST", codigo
   if (metodo === "POST") return /^listado_pedidos\.php\?enviado=1$/i.test(p) || p.toLowerCase() === `grabar_pedidos.php?codigo=${codigoNp}`
   if (/^listado_pedidos\.php$/i.test(p)) return true
   if (p.toLowerCase() === `modificar_pedidos.php?codigo=${codigoNp}`) return true
+  if (new RegExp(`^_comprobantes\\.php\\?ftarget=pedidos&ftargetid=${codigoNp}(&rnd=\\d+)?$`, "i").test(p)) return true
   if (/^manage_pedidos\.php\?/i.test(p)) {
     const q = new URLSearchParams(p.slice(p.indexOf("?") + 1))
     return q.getAll("pedidos").length === 1 && q.get("pedidos") === String(codigoNp) && /^\d+$/.test(q.get("pedidos_unico") || "") && !q.has("codigo")

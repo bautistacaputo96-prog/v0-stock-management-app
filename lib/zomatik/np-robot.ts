@@ -24,7 +24,7 @@ import {
   autorizacionEnListado, tieneFormAutorizar, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type Renglon,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
-import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, facturaDeNp, m3Texto, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional } from "@/lib/zomatik/ajuste"
+import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -656,6 +656,8 @@ export type ResultadoAjusteNp = {
   totalDespues?: number | null
   /** Por qué se dice que tiene factura (o lo que contestó Zomatik) */
   facturaTexto?: string | null
+  /** El número de la factura de la NP, si se leyó en sus comprobantes ("F2 0001-00002455") */
+  facturaNumero?: string | null
   /** Zomatik ya tenía la cantidad nueva: no se grabó nada */
   yaEstaba?: boolean
   grabado?: boolean
@@ -702,8 +704,10 @@ export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "c
   if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
   const proyecto = Number(c.proyecto || 0) || null
   const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
-  const leido = await detalleGrabado(nav, a, base, proyecto, azar)
-  const html = leido.det?.html || a.html
+  // El detalle SIEMPRE como lo carga la página (manage_pedidos.php): el botón Grabar (señal de factura) solo viene ahí
+  const det = await manage(nav, c, [...base, ["flista", c.idlista || "0"]], proyecto, azar)
+  const leido = { det, renglones: det.renglones, valido: esDetalle(det.html) }
+  const html = det.html
   if (!leido.valido) throw new Corte("revisar", "No se pudo leer el detalle de la NP. No se tocó: revisala.", false, html)
   if (leido.renglones.length !== 1) throw new Corte("revisar", `La NP tiene ${leido.renglones.length} renglones: no se toca. Revisala en Zomatik.`, false, html)
   const r = leido.renglones[0]
@@ -712,6 +716,17 @@ export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "c
   const cantidad = numeroZomatik(r.cantidad)
   if (cantidad === null || !(cantidad > 0)) throw new Corte("revisar", "No se pudo leer la cantidad de la NP. No se tocó: revisala.", false, html)
   return { pagina: a, form: a.form, accion, renglon: r, det: leido.det, cantidad, fila: await filaNp(nav, d) }
+}
+
+/** Los comprobantes de la NP (señal B, solo lectura). null si no se pudieron leer: entonces decide solo el detalle. */
+async function comprobantesNp(nav: NavegadorNp, codigo: number, azar: () => number): Promise<Comprobantes | null> {
+  try {
+    const r = await nav.get(`_comprobantes.php?ftarget=pedidos&ftargetid=${codigo}&rnd=${azar()}`)
+    return r.status === 200 ? comprobantesDeNp(r.html) : null
+  } catch (e) {
+    if (esDeRed(e)) throw e // red o sesión: se reintenta todo el ajuste
+    return null
+  }
 }
 
 /**
@@ -743,8 +758,9 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true }
     if (!igual(l.cantidad, d.m3Np)) return { estado: "revisar", mensaje: msjNpCambio(l.cantidad, d.m3Np), paso, leido: l.cantidad }
     await marcar("leer_factura")
-    const f = facturaDeNp({ paginaHtml: l.pagina.html, detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null })
-    if (f.estado === "con") return { estado: "con_factura", mensaje: null, paso, leido: l.cantidad, facturaTexto: f.motivo }
+    const f = facturaDeNp({ detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null, comprobantes: await comprobantesNp(nav, d.codigo, azar) })
+    if (f.estado === "con") return { estado: "con_factura", mensaje: null, paso, leido: l.cantidad, facturaTexto: f.motivo, facturaNumero: f.numero ?? null }
+    if (f.estado === "contradice") return { estado: "revisar", mensaje: msjFacturaContradice(f.numero || "?"), paso, leido: l.cantidad, facturaTexto: f.motivo, facturaNumero: f.numero ?? null, recorte: recorte(l.det?.html || "") }
     if (f.estado === "no_se_sabe") return { estado: "revisar", mensaje: MSJ_FACTURA_NO_SE_SABE, paso, leido: l.cantidad, facturaTexto: f.motivo, recorte: recorte(l.det?.html || l.pagina.html) }
     // El total grabado de antes (para ver que quedó en proporción): sin la fila del listado no se sigue
     if (!l.fila || l.fila.total === null) return { estado: "revisar", mensaje: `No se encontró la ${d.numero} en el listado de pedidos de REBUCRET. No se tocó: revisala.`, paso, leido: l.cantidad }

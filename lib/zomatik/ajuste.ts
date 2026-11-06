@@ -5,10 +5,10 @@
  *
  *   - Qué cantidad tiene que quedar en cada NP del pedido (3.1): obj = cant − lo que reservó el pedido + lo que
  *     despachó contra ella (`despachadoPorUso`, la misma cuenta del saldo). Lo de otros pedidos no se toca.
- *   - "Tiene factura" (15.1): Zomatik no deja editar la NP. Se mira la NP abierta (señal C: sin el botón Grabar o con la
- *     cantidad de solo lectura) y la fila del listado (señal A, si dice FAC). Lo que no se puede leer: "no se sabe".
+ *   - "Tiene factura" (15.1): Zomatik no deja editar la NP. Se mira el detalle de la NP (señal C: sin el botón Grabar,
+ *     REAL) y sus comprobantes (señal B, REAL). Lo que no se puede leer: "no se sabe".
  *   - El pendiente que tiene que traer el remito después del ajuste (4.4).
- * Lo de la NP facturada y la respuesta del Grabar con un remito parcial son SUPUESTO hasta las capturas 2 y 4
+ * Cómo se ve una NP facturada es REAL (06/11); la respuesta del Grabar al editar sigue SUPUESTO hasta la captura 4
  * (lib/__fixtures__/zomatik-ajuste/README.md).
  */
 import { despachadoPorUso, saldoNp, type Renglon, type UsoSaldo } from "@/lib/zomatik/np"
@@ -132,9 +132,10 @@ export function textoAjuste(a: { numero?: string | null; m3_np?: number | null; 
 // ¿La NP tiene factura? (15.1: Zomatik no deja editar la NP)
 // ---------------------------------------------------------------------------
 
-export type Factura = { estado: "con" | "sin" | "no_se_sabe"; motivo: string }
+export type Factura = { estado: "con" | "sin" | "no_se_sabe" | "contradice"; motivo: string; numero?: string | null }
 
 const sinComentarios = (html: string | null | undefined) => String(html ?? "").replace(/<!--[\s\S]*?-->/g, "")
+const textoPlano = (html: string) => sinComentarios(html).replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim()
 
 /** El input de la cantidad del renglón (`cantidad<id>`), tal cual viene. */
 function inputCantidad(html: string, sufijo: string): string | null {
@@ -145,24 +146,53 @@ function inputCantidad(html: string, sufijo: string): string | null {
   return null
 }
 
+/** ¿El detalle trae el botón Grabar? (el input `id="botgrabar"`, no una mención en un script). */
+export function tieneBotonGrabar(html: string | null | undefined): boolean {
+  const h = sinComentarios(html).replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+  return /<input\b[^>]*\bid\s*=\s*["']?botgrabar\b[^>]*>/i.test(h)
+}
+
+export type Comprobantes = { remitos: { codigo: number; numero: string }[]; facturas: { codigo: number; numero: string }[] }
+
 /**
- * Señales de factura, todas de solo lectura (15.1; SUPUESTO hasta las capturas 2 y 4):
- *   A. la fila del listado dice FAC → con factura;
- *   C. la NP abierta (la página o el detalle que carga): sin el botón Grabar (`botgrabar`) o con la cantidad del
- *      renglón de solo lectura (readonly / disabled) → con factura.
- * Sin factura = el detalle se leyó, el renglón tiene la cantidad editable y está el Grabar. Lo demás, "no se sabe".
- * El Grabar que contesta un rechazo que habla de factura o comprobante también es "con factura" (`rechazoPorFactura`).
+ * Los comprobantes de la NP (señal B, REAL 06/11): `GET _comprobantes.php?ftarget=pedidos&ftargetid=N`, lo que abre
+ * "COMPROBANTES / OPERACIONES". Una tabla con la cabecera "comprobantes" y un `<a>` por comprobante: remitos
+ * `modificar_remitos.php?codigo=` (RM / RM2) y facturas `modificar_facturasventa.php?codigo=` (F2 / FA / FB…).
+ * null si la respuesta no tiene esa forma (no se pudo leer).
  */
-export function facturaDeNp(s: { paginaHtml: string; detalleHtml: string | null; renglon: Renglon | null; filaEstado?: string | null }): Factura {
-  if (String(s.filaEstado || "").toUpperCase() === "FAC") return { estado: "con", motivo: "el listado de pedidos la muestra FAC" }
-  if (!s.renglon) return { estado: "no_se_sabe", motivo: "no se leyó el renglón" }
-  const donde = s.detalleHtml ?? s.paginaHtml
-  const input = inputCantidad(donde, s.renglon.sufijo) || inputCantidad(s.paginaHtml, s.renglon.sufijo)
-  if (!input) return { estado: "no_se_sabe", motivo: "no se encontró la cantidad del renglón" }
-  if (/\b(readonly|disabled)\b/i.test(input.replace(/\bvalue\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/i, ""))) return { estado: "con", motivo: "la cantidad es de solo lectura" }
-  const grabar = /\bid\s*=\s*["']?botgrabar\b/i
-  if (!grabar.test(sinComentarios(donde)) && !grabar.test(sinComentarios(s.paginaHtml))) return { estado: "con", motivo: "la NP no tiene el botón Grabar" }
-  return { estado: "sin", motivo: "la NP se puede editar" }
+export function comprobantesDeNp(html: string | null | undefined): Comprobantes | null {
+  const h = sinComentarios(html)
+  if (!/class\s*=\s*["']?contnotas/i.test(h) || !/<td\b[^>]*>\s*comprobantes\s*<\/td>/i.test(h)) return null
+  const out: Comprobantes = { remitos: [], facturas: [] }
+  for (const m of h.matchAll(/<a\b[^>]*href\s*=\s*["']?(modificar_remitos|modificar_facturasventa)\.php\?codigo=(\d+)[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const x = { codigo: Number(m[2]), numero: textoPlano(m[3]) }
+    if (m[1].toLowerCase() === "modificar_remitos") out.remitos.push(x)
+    else out.facturas.push(x)
+  }
+  return out
+}
+
+/**
+ * ¿La NP tiene factura? (REAL, 06/11, en 4 NP): con factura, el detalle que carga la NP (`manage_pedidos.php`, el
+ * `#listaprecios`) NO trae el botón Grabar (`botgrabar`); las cantidades siguen editables. La página estática
+ * `modificar_pedidos.php?codigo=N` nunca lo trae: solo cuenta el DETALLE.
+ *   B. los comprobantes de la NP (`comprobantesDeNp`, null si no se pudieron leer);
+ *   C. el detalle: sin `botgrabar` → con factura.
+ *   A. la fila del listado dice FAC → con factura (SUPUESTO: nunca se vio).
+ * Con factura = B lista una factura o el detalle no tiene el Grabar. Sin factura = el detalle tiene el Grabar y B se
+ * leyó sin factura (o no se pudo leer: queda solo C). B con factura y el Grabar en el detalle: "contradice" (revisar).
+ * Sin detalle o sin la cantidad del renglón: "no se sabe".
+ */
+export function facturaDeNp(s: { detalleHtml: string | null; renglon: Renglon | null; filaEstado?: string | null; comprobantes?: Comprobantes | null }): Factura {
+  if (!s.detalleHtml || !s.renglon) return { estado: "no_se_sabe", motivo: "no se leyó el detalle de la NP" }
+  if (!inputCantidad(s.detalleHtml, s.renglon.sufijo)) return { estado: "no_se_sabe", motivo: "no se encontró la cantidad del renglón" }
+  const grabar = tieneBotonGrabar(s.detalleHtml)
+  const factura = s.comprobantes?.facturas[0] ?? null
+  if (factura && grabar) return { estado: "contradice", motivo: `Zomatik lista la factura ${factura.numero} pero la NP se puede editar`, numero: factura.numero }
+  if (factura) return { estado: "con", motivo: `la NP tiene la factura ${factura.numero}`, numero: factura.numero }
+  if (!grabar) return { estado: "con", motivo: "la NP no tiene el botón Grabar", numero: null }
+  if (String(s.filaEstado || "").toUpperCase() === "FAC") return { estado: "con", motivo: "el listado de pedidos la muestra FAC", numero: null }
+  return { estado: "sin", motivo: s.comprobantes ? "la NP se puede editar y no tiene factura" : "la NP se puede editar (no se pudieron leer sus comprobantes)" }
 }
 
 /** ¿El rechazo del Grabar habla de una factura o un comprobante? (15.1: "con factura", no se reintenta). */
@@ -195,8 +225,10 @@ export function pendienteEsperado(m3Np: number, remitidoOk: number, devuelto = 0
 
 export const msjNpCambio = (tiene: number, esperaba: number) => `La NP cambió en Zomatik (tiene ${m3Texto(tiene)} m³ y el sistema esperaba ${m3Texto(esperaba)}). No se tocó: revisala.`
 export const MSJ_FACTURA_NO_SE_SABE = "No se pudo saber si la NP tiene factura. No se tocó: revisala."
-export const msjConFactura = (devolver: number) => `La NP tiene factura: hacé la devolución de ${m3Texto(devolver)} m³ a mano y tocá «Ya la hice».`
-export const msjConFacturaExceso = (exceso: number) => `La NP tiene factura y se despacharon ${m3Texto(exceso)} m³ de más: hacé una NP adicional por ${m3Texto(exceso)} m³ a mano y tocá «Ya la hice».`
+const conNumero = (factura?: string | null) => (factura ? ` (${factura})` : "")
+export const msjConFactura = (devolver: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)}: hacé la devolución de ${m3Texto(devolver)} m³ a mano y tocá «Ya la hice».`
+export const msjConFacturaExceso = (exceso: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)} y se despacharon ${m3Texto(exceso)} m³ de más: hacé una NP adicional por ${m3Texto(exceso)} m³ a mano y tocá «Ya la hice».`
+export const msjFacturaContradice = (factura: string) => `Zomatik lista la factura ${factura} pero la NP se puede editar. No se tocó: revisala.`
 export const msjZomatikNoDejo = (texto: string) => `Zomatik no dejó cambiar la NP: ${texto}.`
 
 /** Texto de Finalizar (solo con la llave): "Al remitir, la NP2 0001-00002090 baja de 60 a 40 m³." */
