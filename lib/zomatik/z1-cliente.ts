@@ -4,11 +4,12 @@
  * estado de los remitos. Nunca habla con Zomatik: todo pasa por /api/zomatik/remito (servidor, con la llave de remitir).
  */
 import { useCallback, useEffect, useRef, useState } from "react"
+import { MSJ_NP_NO_AJUSTADA, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
 
-export type RemitoEstado = { estado: string; remito_estado?: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso?: string | null }
+export type RemitoEstado = { id?: string; estado: string; remito_estado?: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso?: string | null }
 
 /** El ajuste de una NP del pedido al finalizar (docs/specs/2026-11-06-ajustar-np-al-finalizar.md). */
-export type AjusteEstado = { estado: string; tipo: string | null; numero: string | null; m3_np: number | null; m3_objetivo: number | null; mensaje: string | null; con_factura: boolean | null }
+export type AjusteEstado = { id?: string; np_id?: string; paso?: string | null; estado: string; tipo: string | null; numero: string | null; m3_np: number | null; m3_objetivo: number | null; mensaje: string | null; con_factura: boolean | null }
 
 const m3t = (n: number | null | undefined) => String(Math.round(Number(n || 0) * 1000) / 1000).replace(".", ",")
 
@@ -33,10 +34,39 @@ export async function remitirPedido(pedidoId: string, fecha: string): Promise<{ 
   }
 }
 
-/** "Remitir sin ajustar la NP" / "Ya hice la devolución" (solo gerenciales, con motivo). */
-export async function remitirSinAjustar(pedidoId: string, motivo: string): Promise<{ ok: boolean; texto: string }> {
+/** Qué puede resolver un gerencial a mano: un ajuste trabado (según su caso) o un remito frenado por el control. */
+export type Resolver = { clase: "devolucion" | "adicional" | "sin_uso" | "trabado" | "control"; ajusteId?: string; remitoId?: string; numero: string | null }
+export const ETIQUETA_RESOLVER: Record<Resolver["clase"], string> = {
+  devolucion: "Ya hice la devolución",
+  adicional: "Ya hice la NP adicional",
+  sin_uso: "NP sin uso: ya la eliminé / dejarla",
+  trabado: "Remitir sin ajustar la NP",
+  control: "Remitir igual (sin controlar el pendiente)",
+}
+
+/**
+ * Lo que un gerencial puede resolver del pedido. Mientras un ajuste esté pendiente o generando, nada de ajustes (lo
+ * está trabajando el robot); sí un remito frenado por "La NP no quedó ajustada" (no toca los ajustes).
+ */
+export function paraResolver(as: AjusteEstado[] | undefined, rs?: RemitoEstado[] | undefined): Resolver[] {
+  const out: Resolver[] = []
+  const trabajando = (as || []).some((a) => a.estado === "pendiente" || a.estado === "generando")
+  if (!trabajando)
+    for (const a of (as || []).filter((x) => (x.estado === "revisar" || x.estado === "error") && x.id)) {
+      const clase = a.paso === PASO_DEVOL_A_MANO ? "devolucion" : a.paso === PASO_ADICIONAL_A_MANO ? "adicional" : a.paso === PASO_NP_SIN_USO ? "sin_uso" : "trabado"
+      out.push({ clase, ajusteId: a.id, numero: a.numero })
+    }
+  for (const r of (rs || []).filter((x) => x.estado === "revisar" && x.id && String(x.mensaje || "").startsWith(MSJ_NP_NO_AJUSTADA))) out.push({ clase: "control", remitoId: r.id, numero: null })
+  return out
+}
+
+/** Resolver a mano (solo gerenciales, con motivo): un ajuste trabado o un remito frenado por el control. */
+export async function resolverAMano(pedidoId: string, motivo: string, x: Resolver, eliminada?: boolean): Promise<{ ok: boolean; texto: string }> {
   try {
-    const r = await fetch("/api/zomatik/remito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "remitir_sin_ajustar", pedido_id: pedidoId, motivo }) })
+    const body = x.clase === "control"
+      ? { accion: "remitir_sin_control", pedido_id: pedidoId, motivo, remito_id: x.remitoId }
+      : { accion: "remitir_sin_ajustar", pedido_id: pedidoId, motivo, ajuste_id: x.ajusteId, eliminada: eliminada === true }
+    const r = await fetch("/api/zomatik/remito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
     const j = await r.json().catch(() => ({}))
     return r.ok ? { ok: true, texto: "En unos segundos sale el remito." } : { ok: false, texto: j?.error || `Error ${r.status}` }
   } catch {
@@ -76,13 +106,6 @@ export function useRemitos(ids: string[]) {
   }, [cargar, clave])
   const recargarEn = useCallback((ms = 15_000) => setTimeout(cargar, ms), [cargar])
   return { porPedido, ajustes, ajusteActivo, recargar: cargar, recargarEn }
-}
-
-/** ¿Hay un ajuste trabado que un gerencial puede resolver a mano? "factura" = la NP tiene factura (falta la devolución). */
-export function ajusteParaResolver(as: AjusteEstado[] | undefined): "factura" | "trabado" | null {
-  if (!as?.length) return null
-  if (as.some((a) => a.estado === "revisar" && a.con_factura)) return "factura"
-  return as.some((a) => a.estado === "revisar" || a.estado === "error" || a.estado === "pendiente") ? "trabado" : null
 }
 
 /** Texto corto del chip: "Ajustando NP…", "NP: revisar ajuste", "Remito esperando la NP", "RM2 …2746 ✓", "Remito pendiente"… null = nada. */

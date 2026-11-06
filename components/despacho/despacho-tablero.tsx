@@ -50,7 +50,7 @@ import { HumedadAcopio } from "./humedad-acopio"
 import { usarArrastre } from "./usar-arrastre"
 import type { CamionT, DespachoT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
 import { avisarNp, estadoNpDePedido, useNp, type NpFila } from "@/lib/zomatik/np-cliente"
-import { remitirPedido, remitirSinAjustar, useRemitos } from "@/lib/zomatik/z1-cliente"
+import { ETIQUETA_RESOLVER, remitirPedido, resolverAMano, useRemitos, type Resolver } from "@/lib/zomatik/z1-cliente"
 import { textoFinalizar } from "@/lib/zomatik/ajuste"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 
@@ -98,8 +98,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   const np = useNp(idsPedidos)
   // Zomatik Z1: OF + remito de cada pedido (con la llave de remitir apagada viene vacío)
   const remitos = useRemitos(idsPedidos)
-  // Ajuste de la NP trabado: "Remitir sin ajustar la NP" / "Ya hice la devolución" (gerenciales, con motivo)
-  const [sinAjustar, setSinAjustar] = useState<{ pedido: PedidoT; factura: boolean } | null>(null)
+  // Ajuste de la NP trabado o remito frenado por el control: lo resuelve un gerencial a mano, con motivo
+  const [sinAjustar, setSinAjustar] = useState<{ pedido: PedidoT; x: Resolver } | null>(null)
   const [motivoSinAjustar, setMotivoSinAjustar] = useState("")
   const [enviandoSinAjustar, setEnviandoSinAjustar] = useState(false)
 
@@ -583,12 +583,12 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
     cargar()
     return null
   }
-  async function hacerSinAjustar() {
+  async function hacerSinAjustar(eliminada?: boolean) {
     if (!sinAjustar) return
     setEnviandoSinAjustar(true)
-    const r = await remitirSinAjustar(sinAjustar.pedido.id, motivoSinAjustar.trim())
+    const r = await resolverAMano(sinAjustar.pedido.id, motivoSinAjustar.trim(), sinAjustar.x, eliminada)
     setEnviandoSinAjustar(false)
-    toast({ title: r.ok ? (sinAjustar.factura ? "Devolución registrada" : "Remitiendo sin ajustar la NP") : "No se pudo", description: r.texto, variant: r.ok ? undefined : "destructive" })
+    toast({ title: r.ok ? `${ETIQUETA_RESOLVER[sinAjustar.x.clase]}: listo` : "No se pudo", description: r.texto, variant: r.ok ? undefined : "destructive" })
     if (r.ok) {
       setSinAjustar(null)
       remitos.recargarEn()
@@ -681,7 +681,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
         remitosPorPedido={remitos.porPedido}
         onRemitir={(p) => remitirAhora(p.id)}
         ajustesPorPedido={remitos.ajustes}
-        onSinAjustar={(p, factura) => { setMotivoSinAjustar(""); setSinAjustar({ pedido: p, factura }) }}
+        onSinAjustar={(p, x) => { setMotivoSinAjustar(""); setSinAjustar({ pedido: p, x }) }}
         permisos={{ despachar: puedeDespachar, ajusta: (p) => ajustaPedido(p), cancelar: puedeCancelar, gerencial: esGerencial }}
         onConfirmar={confirmarPedido}
         onGerenciador={(p) => setGerenciar({ ...(p as any), plant_id: p.plant_id || planta })}
@@ -867,14 +867,25 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
       <Dialog open={!!sinAjustar} onOpenChange={(v) => !v && !enviandoSinAjustar && setSinAjustar(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{sinAjustar?.factura ? "Ya hice la devolución" : "Remitir sin ajustar la NP"}</DialogTitle>
-            <DialogDescription>{sinAjustar?.factura ? "¿Ya hiciste la devolución en Zomatik?" : "¿Ya ajustaste la NP a mano en Zomatik?"} El remito sale sin controlar la NP.</DialogDescription>
+            <DialogTitle>{sinAjustar ? ETIQUETA_RESOLVER[sinAjustar.x.clase] : ""}</DialogTitle>
+            <DialogDescription>
+              {sinAjustar?.x.clase === "devolucion" ? "¿Ya hiciste la devolución en Zomatik? La NP queda con lo despachado."
+                : sinAjustar?.x.clase === "adicional" ? "¿Ya hiciste la NP adicional en Zomatik?"
+                : sinAjustar?.x.clase === "sin_uso" ? `${sinAjustar.x.numero || "La NP"} no se usó. ¿La eliminaste en Zomatik o queda pendiente?`
+                : sinAjustar?.x.clase === "control" ? "El remito sale sin controlar el pendiente de la NP. ¿Ya la revisaste en Zomatik?"
+                : "¿Ya ajustaste la NP a mano en Zomatik? El remito sale sin controlar la NP."}
+            </DialogDescription>
           </DialogHeader>
-          {sinAjustar && <div className="text-sm text-muted-foreground">{sinAjustar.pedido.clients?.name} · {sinAjustar.pedido.construction_sites?.name}</div>}
-          <CampoMotivo value={motivoSinAjustar} onChange={setMotivoSinAjustar} id="motivo-sin-ajustar" ejemplo={sinAjustar?.factura ? "Ej: DP2 0001-00000012 por 20 m³" : "Ej: la bajé a 40 m³ a mano"} />
+          {sinAjustar && <div className="text-sm text-muted-foreground">{sinAjustar.pedido.clients?.name} · {sinAjustar.pedido.construction_sites?.name}{sinAjustar.x.numero ? ` · ${sinAjustar.x.numero}` : ""}</div>}
+          <CampoMotivo value={motivoSinAjustar} onChange={setMotivoSinAjustar} id="motivo-sin-ajustar" ejemplo={sinAjustar?.x.clase === "devolucion" ? "Ej: DP2 0001-00000012 por 20 m³" : sinAjustar?.x.clase === "adicional" ? "Ej: NP2 0001-00002101 por 0,4 m³" : sinAjustar?.x.clase === "sin_uso" ? "Ej: la eliminé, no la iban a usar" : "Ej: la bajé a 40 m³ a mano"} />
           <DialogFooter className="gap-2">
             <Button className="h-11" variant="outline" onClick={() => setSinAjustar(null)} disabled={enviandoSinAjustar}>Cancelar</Button>
-            <Button className="h-11" onClick={hacerSinAjustar} disabled={enviandoSinAjustar || !motivoValido(motivoSinAjustar)}>Sí, remitir</Button>
+            {sinAjustar?.x.clase === "sin_uso"
+              ? <>
+                <Button className="h-11" variant="outline" onClick={() => hacerSinAjustar(false)} disabled={enviandoSinAjustar || !motivoValido(motivoSinAjustar)}>Dejarla pendiente</Button>
+                <Button className="h-11" onClick={() => hacerSinAjustar(true)} disabled={enviandoSinAjustar || !motivoValido(motivoSinAjustar)}>Ya la eliminé</Button>
+              </>
+              : <Button className="h-11" onClick={() => hacerSinAjustar()} disabled={enviandoSinAjustar || !motivoValido(motivoSinAjustar)}>Sí, remitir</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

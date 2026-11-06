@@ -14,7 +14,7 @@ import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 import { NpChip } from "@/components/zomatik/np-chip"
 import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
-import { ajusteParaResolver, chipRemito, type AjusteEstado, type RemitoEstado } from "@/lib/zomatik/z1-cliente"
+import { ETIQUETA_RESOLVER, chipRemito, paraResolver, type AjusteEstado, type RemitoEstado, type Resolver } from "@/lib/zomatik/z1-cliente"
 
 export type PermisosPedido = {
   despachar: boolean
@@ -44,8 +44,8 @@ export function ColumnaPedidos({
   onRemitir?: (p: PedidoT) => void
   /** Ajuste de la NP al finalizar (vacío con la llave apagada) */
   ajustesPorPedido?: Record<string, AjusteEstado[]>
-  /** "Remitir sin ajustar la NP" / "Ya hice la devolución" (gerenciales) */
-  onSinAjustar?: (p: PedidoT, factura: boolean) => void
+  /** Resolver a mano un ajuste trabado o un remito frenado por el control de la NP (gerenciales) */
+  onSinAjustar?: (p: PedidoT, x: Resolver) => void
   onConfirmar: (p: PedidoT) => void
   onGerenciador: (p: PedidoT) => void
   onEditarTotal: (p: PedidoT) => void
@@ -121,11 +121,11 @@ export function ColumnaPedidos({
                 <DropdownMenuItem className="min-h-[32px]" onClick={() => onRemitir(p)}>📄 Remitir en Zomatik</DropdownMenuItem>
               )}
               {/* Ajuste de la NP trabado: un gerencial lo resolvió a mano en Zomatik */}
-              {permisos.gerencial && onSinAjustar && ajusteParaResolver(ajustesPorPedido[p.id]) && (
-                <DropdownMenuItem className="min-h-[32px]" onClick={() => onSinAjustar(p, ajusteParaResolver(ajustesPorPedido[p.id]) === "factura")}>
-                  {ajusteParaResolver(ajustesPorPedido[p.id]) === "factura" ? "✓ Ya hice la devolución" : "📄 Remitir sin ajustar la NP"}
+              {permisos.gerencial && onSinAjustar && paraResolver(ajustesPorPedido[p.id], remitosPorPedido[p.id]).map((x, i, todos) => (
+                <DropdownMenuItem key={`${x.ajusteId || x.remitoId}`} className="min-h-[32px]" onClick={() => onSinAjustar(p, x)}>
+                  {x.clase === "control" ? "📄" : "✓"} {ETIQUETA_RESOLVER[x.clase]}{todos.length > 1 && x.numero ? ` · ${x.numero}` : ""}
                 </DropdownMenuItem>
-              )}
+              ))}
               {!permisos.cancelar && permisos.despachar && (act || susp) && <DropdownMenuItem disabled className="text-xs">Cancelar: solo gerenciales</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
