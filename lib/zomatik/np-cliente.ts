@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ControlDespacho, EstadoNp, ModoNp, TipoNp } from "@/lib/zomatik/np"
+import type { EstadoCliente, EstadoFormula, HitArticuloVincular, HitClienteVincular } from "@/lib/zomatik/vincular-servidor"
 
 export type NpFila = {
   id: string; n: number; estado: EstadoNp; tipo: TipoNp; m3: number; numero: string | null; zomatik_codigo: number | null
@@ -86,6 +87,62 @@ export async function generarNpAhora(pedidoId: string): Promise<{ ok: boolean; t
     return { ok: false, texto: "No había nada para generar." }
   } catch {
     return { ok: false, texto: "Sin conexión" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Vincular con Zomatik desde el pedido (04/11/2026): /api/zomatik/vincular
+// ---------------------------------------------------------------------------
+
+export type EstadoVinculosPedido = { cliente: EstadoCliente | null; formula: EstadoFormula | null }
+
+/** Qué le falta vincular al cliente y a la fórmula del pedido, con sugerencias. null si no respondió. */
+export async function estadoVinculos(clientId: string | null, formulaId: string | null): Promise<EstadoVinculosPedido | { error: string }> {
+  try {
+    const q = new URLSearchParams()
+    if (clientId) q.set("client_id", clientId)
+    if (formulaId) q.set("formula_id", formulaId)
+    const r = await fetch(`/api/zomatik/vincular?${q}`, { cache: "no-store" })
+    const j = await json(r)
+    return r.ok ? (j as EstadoVinculosPedido) : { error: j?.error || `Error ${r.status}` }
+  } catch {
+    return { error: "Sin conexión" }
+  }
+}
+
+/** Buscador del cartel: clientes de la copia de Zomatik o artículos. */
+export async function buscarParaVincular(
+  tipo: "cliente" | "articulo",
+  q: string,
+  o: { clientId?: string | null; formulaId?: string | null } = {},
+): Promise<{ clientes?: HitClienteVincular[]; articulos?: HitArticuloVincular[]; error?: string }> {
+  try {
+    const p = new URLSearchParams({ buscar: tipo, q })
+    if (o.clientId) p.set("client_id", o.clientId)
+    if (o.formulaId) p.set("formula_id", o.formulaId)
+    const r = await fetch(`/api/zomatik/vincular?${p}`, { cache: "no-store" })
+    const j = await json(r)
+    return r.ok ? j : { error: j?.error || `Error ${r.status}` }
+  } catch {
+    return { error: "Sin conexión" }
+  }
+}
+
+export type ItemVincular = { tipo: "cliente" | "formula"; id: string; codigo: number }
+
+/** Vincula desde el pedido (solo lo que falta). `pedidoId` = el pedido guardado; sin él, "pedido nuevo". */
+export async function vincularDesdePedido(items: ItemVincular[], pedidoId?: string | null): Promise<{ ok: boolean; errores: string[]; resultados: { ok: boolean; tipo?: string; codigo?: number; nombre?: string; error?: string }[] }> {
+  try {
+    const r = await fetch("/api/zomatik/vincular", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ desde: "pedido", pedido_id: pedidoId || undefined, items: items.map((x) => ({ ...x, accion: "vincular" })) }),
+    })
+    const j = await json(r)
+    if (!j?.resultados) return { ok: false, errores: [j?.error || `Error ${r.status}`], resultados: [] }
+    return { ok: !!j.ok, errores: (j.errores || []).filter(Boolean), resultados: j.resultados }
+  } catch {
+    return { ok: false, errores: ["Sin conexión"], resultados: [] }
   }
 }
 

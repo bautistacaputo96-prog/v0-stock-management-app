@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer, RefreshCw } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Clock, MapPin, Truck, AlertTriangle, X, Calendar, Check, ChevronsUpDown, MoreHorizontal, Pencil, Trash2, UserPlus, TruckIcon, Printer, RefreshCw, Link2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format, addDays, startOfWeek, addWeeks, subWeeks, isSameDay, parseISO, setHours, setMinutes, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
@@ -47,9 +47,12 @@ import { NpSaldos } from "@/components/zomatik/np-saldos"
 import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { VincularCartel } from "@/components/zomatik/vincular-cartel"
+import { esFaltaDeVinculo } from "@/lib/zomatik/np"
+import { puedeVincularDesdePedido } from "@/lib/permisos"
 
 type Plant = { id: string; name: string }
-type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null }
+type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null; zomatik_codigo?: number | null }
 type ConstructionSite = {
   id: string; name: string; address: string | null; client_id: string;
   localidad?: string | null; gps_lat?: number | null; gps_lng?: number | null;
@@ -58,7 +61,7 @@ type ConstructionSite = {
   remito_tipo?: "R" | "X" | null; // fase 3
 }
 type Mixer = { id: string; license_plate: string; capacity_m3: number; status: string }
-type Formula = { id: string; name: string; code: string; useful_life_minutes: number; plant_id: string }
+type Formula = { id: string; name: string; code: string; useful_life_minutes: number; plant_id: string; zomatik_articulo_codigo?: number | null; zomatik_vinculo?: string | null }
 type ScheduledDispatch = {
   id: string; plant_id: string; client_id: string; construction_site_id: string;
   formula_id: string; mixer_id: string | null; quantity_m3: number;
@@ -245,7 +248,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [cuitPrompt, setCuitPrompt] = useState("")
   const { toast } = useToast()
   // Fase 0c-1: permisos. Ajustar un pedido = programacion.editar, o cargar y que el pedido sea propio
-  const { puede, ajustaPedido, esGerencial } = usePermisos()
+  const { puede, ajustaPedido, esGerencial, usuario } = usePermisos()
+  // Vincular con Zomatik desde el pedido (04/11): programacion.cargar o editar
+  const puedeVincular = puedeVincularDesdePedido(usuario)
   // Viaje y descarga los calcula el sistema (GPS, ruta o planta): quien programa no los toca; solo un gerencial los corrige
   const corrigeTiempos = esGerencial
   const puedeCrear = puede("programacion", "cargar")
@@ -267,6 +272,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [npPreguntada, setNpPreguntada] = useState(false)
   // El pedido con NP cambió de fecha: ¿se mueve la NP? (sección 25)
   const [npMoverFecha, setNpMoverFecha] = useState<boolean | null>(null)
+  // Cartel "Falta vincular con Zomatik" (04/11): desde el formulario o desde el menú ⋯ de un pedido con la NP en error
+  const [vincular, setVincular] = useState<null | { modo: "form" } | { modo: "menu"; pedido: ScheduledDispatch }>(null)
+  // En este diálogo: ya se eligió "Guardar sin vincular" (no vuelve a saltar) y se vinculó algo (reintentar la NP en error)
+  const [npSinVincular, setNpSinVincular] = useState(false)
+  const [npVinculoHecho, setNpVinculoHecho] = useState(false)
   // Para volver a leer la lista "NP con saldo" después de guardar o cancelar
   const [npSaldosVersion, setNpSaldosVersion] = useState(0)
   // Formulario abierto en modo lectura (pedido ajeno sin permiso de editar)
@@ -374,7 +384,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       supabase.from("clients").select("*, construction_sites(*)").eq("active", true).order("name"),
       supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
       // Cargar todas las fórmulas con su planta (para filtrar el combo por planta del despacho)
-      supabase.from("formulas").select("id, name, code, useful_life_minutes, plant_id").order("code"),
+      supabase.from("formulas").select("id, name, code, useful_life_minutes, plant_id, zomatik_articulo_codigo, zomatik_vinculo").order("code"),
       cargarEmpresasBombeo(supabase),
     ])
 
@@ -542,6 +552,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setNpDialogo(null)
     setNpLectura("ok")
     setNpPreguntada(false)
+    setNpSinVincular(false)
+    setNpVinculoHecho(false)
     pedidoAbierto.current = null
     setIsDialogOpen(true)
   }
@@ -583,6 +595,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // la NP de ESTE pedido aparte (no depende de la lista de la semana) con 5 s como mucho.
     pedidoAbierto.current = dispatch.id
     setNpMoverFecha(null)
+    setNpSinVincular(false)
+    setNpVinculoHecho(false)
     const deLaSemana = np.porPedido[dispatch.id] || null
     const aplicar = (est: EstadoPedidoNp) => {
       const el = est.eleccion
@@ -616,7 +630,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setIsDialogOpen(true)
   }
 
-  async function handleSave() {
+  async function handleSave(opciones: { sinVincular?: boolean } = {}) {
     if (saving) return // Prevenir doble click
     if (editingDispatch ? soloLectura : !puedeCrear) return
     if (editingDispatch && !motivoValido(motivo)) {
@@ -630,6 +644,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // R o X obligatorio (Bautista, 06/11/2026): define si la NP es NP o NP2 y el remito. Por defecto, el de la obra o el cliente
     if (!(form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo)) {
       toast({ title: "Falta elegir R o X", description: "Elegí si el remito va con factura (R) o sin factura (X).", variant: "destructive" })
+      return
+    }
+    // Zomatik (04/11): falta vincular el cliente o la fórmula y la NP sale sola → el cartel, antes de grabar nada.
+    // Solo con lo que está en memoria (no frena Guardar)
+    if (debeVincularAntes() && !opciones.sinVincular) {
+      setVincular({ modo: "form" })
       return
     }
     setSaving(true)
@@ -826,6 +846,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
         else if (rnp.usadas) toast({ title: "El pedido usa la NP con saldo", description: "No se generó otra NP." })
         else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        // Se vinculó algo en este diálogo y el pedido tenía la NP en error: sin cambios, avisarNp no corre el robot
+        if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && !npFaltan.cliente && !npFaltan.formula && npDialogo?.nps.some((x) => x.estado === "error")) {
+          const r = await generarNpAhora(pedidoId)
+          toast({ title: r.ok ? "NP lista" : "No se generó la NP", description: r.texto, variant: r.ok ? undefined : "destructive" })
+        }
         np.recargarEn()
         setNpSaldosVersion((v) => v + 1)
       }
@@ -911,7 +936,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   async function generarAhora(d: ScheduledDispatch) {
     toast({ title: "Generando la NP en Zomatik…", description: "Puede tardar hasta medio minuto." })
     const r = await generarNpAhora(d.id)
-    toast({ title: r.ok ? "NP lista" : "No se generó la NP", description: r.texto, variant: r.ok ? undefined : "destructive" })
+    const texto = !r.ok && esFaltaDeVinculo(r.texto) && puedeVincular ? `${r.texto} Tocá ⋯ › Vincular con Zomatik.` : r.texto
+    toast({ title: r.ok ? "NP lista" : "No se generó la NP", description: texto, variant: r.ok ? undefined : "destructive" })
     np.recargar()
   }
 
@@ -938,11 +964,18 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Viajes <NuevoBadge className="ml-2" />
             </DropdownMenuItem>
           )}
-          {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error) */}
-          {puedeCrear && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
+          {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error). Con cargar o editar, como la ruta */}
+          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
             <DropdownMenuItem onClick={() => generarAhora(d)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Generar NP ahora
+            </DropdownMenuItem>
+          )}
+          {/* Zomatik (04/11): la NP quedó en error porque falta vincular el cliente o la fórmula */}
+          {puedeVincular && np.porPedido[d.id]?.activo && !["cancelled", "completed"].includes(d.status) && np.porPedido[d.id]?.nps.some((x) => x.estado === "error" && esFaltaDeVinculo(x.mensaje)) && (
+            <DropdownMenuItem onClick={() => setVincular({ modo: "menu", pedido: d })}>
+              <Link2 className="h-4 w-4 mr-2" />
+              Vincular con Zomatik
             </DropdownMenuItem>
           )}
           {puede("programacion", "borrar") && (
@@ -1029,6 +1062,32 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     } finally {
       setRepitiendo(false)
     }
+  }
+
+  // Zomatik (04/11): qué le falta vincular al pedido, con lo que ya está en memoria (el servidor lo vuelve a mirar)
+  const selectedFormula = formulas.find((f) => f.id === form.formula_id)
+  const npFaltan = {
+    cliente: selectedClient && selectedClient.zomatik_codigo == null ? selectedClient.name : null,
+    formula: selectedFormula && selectedFormula.zomatik_articulo_codigo == null ? selectedFormula.code || selectedFormula.name : null,
+  }
+  /** ¿Guardar abre el cartel? Llave prendida, alta o pedido que entra en la NP automática, falta algo, no "Usar NP con
+   * saldo", sin NP ok y sin haber elegido "Guardar sin vincular" en este diálogo. */
+  function debeVincularAntes(): boolean {
+    const planta = form.plant_id || (selectedPlant === "all" ? newDispatchPlant : selectedPlant)
+    if (!puedeVincular || !np.plantas[planta]?.activo) return false
+    if (editingDispatch && !npDialogo?.entra) return false
+    if (!npFaltan.cliente && !npFaltan.formula) return false
+    if (npEleccion.tipo === "saldo") return false
+    if (editingDispatch && npDialogo?.nps.some((x) => x.estado === "ok")) return false
+    return !npSinVincular
+  }
+  /** Después de vincular: el cliente o la fórmula en memoria, para que el control no vuelva a saltar. */
+  function alVincular(tipo: "cliente" | "formula", codigo: number, vinculoHecho: boolean) {
+    const ids = vincular?.modo === "menu" ? { cliente: vincular.pedido.client_id, formula: vincular.pedido.formula_id } : { cliente: form.client_id, formula: form.formula_id }
+    if (tipo === "cliente") setClients((cs) => cs.map((c) => (c.id === ids.cliente ? { ...c, zomatik_codigo: codigo } : c)))
+    else setFormulas((fs) => fs.map((f) => (f.id === ids.formula ? { ...f, zomatik_articulo_codigo: codigo, zomatik_vinculo: f.zomatik_vinculo && f.zomatik_vinculo !== "sin_par" ? f.zomatik_vinculo : "manual" } : f)))
+    // Solo si de verdad se vinculó algo en este diálogo (no si el cartel encontró que ya estaba vinculado)
+    if (vinculoHecho) setNpVinculoHecho(true)
   }
 
   // Resumen fijo al pie y "Falta: …" (spec 19.3.4 y 19.3.5)
@@ -1631,6 +1690,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 estado={editingDispatch ? npDialogo : null}
                 fallo={npLectura === "fallo"}
                 proponer={!editingDispatch ? !npPreguntada : npEleccionLista && npLectura === "ok" && !npDialogo?.eleccion}
+                faltan={npFaltan}
+                onVincular={puedeVincular ? () => setVincular({ modo: "form" }) : undefined}
               />
             </SeccionPedido>
 
@@ -1729,13 +1790,61 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             )}
             <Button variant="outline" size="sm" onClick={() => setIsDialogOpen(false)}>Cerrar</Button>
             {!soloLectura && (
-              <Button size="sm" onClick={handleSave} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo)) || (npFechaCambiada && npMoverFecha === null)}>
+              <Button size="sm" onClick={() => handleSave()} disabled={saving || !form.plant_id || !form.client_id || !form.construction_site_id || !form.formula_id || !form.metodo_descarga || (!!editingDispatch && !motivoValido(motivo)) || (npFechaCambiada && npMoverFecha === null)}>
                 {saving ? "Guardando..." : editingDispatch ? "Guardar" : np.plantas[form.plant_id]?.activo ? "Programar y generar NP" : "Programar"}
               </Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Zomatik (04/11): "Falta vincular con Zomatik", desde el formulario (antes de grabar) o desde el menú ⋯ */}
+      {vincular?.modo === "form" && (
+        <VincularCartel
+          open
+          clientId={form.client_id || null}
+          formulaId={form.formula_id || null}
+          plantId={form.plant_id || null}
+          // El pedido guardado, solo si el formulario sigue con su cliente y su fórmula (si no, "pedido nuevo")
+          pedidoId={editingDispatch && editingDispatch.client_id === form.client_id && editingDispatch.formula_id === form.formula_id ? editingDispatch.id : null}
+          alTerminar="nada"
+          onVinculado={(tipo, codigo, _nombre, hecho) => alVincular(tipo, codigo, hecho)}
+          onUsarCliente={(c) => {
+            if (!clients.some((x) => x.id === c.id)) setClients((cs) => [...cs, { id: c.id, name: c.name, zomatik_codigo: c.zomatik_codigo, construction_sites: [] }])
+            const obraDelCliente = !!selectedSite && selectedSite.client_id === c.id
+            setForm({ ...form, client_id: c.id, construction_site_id: obraDelCliente ? form.construction_site_id : "" })
+            if (!obraDelCliente) {
+              setVincular(null)
+              toast({ title: `Cliente: ${c.name}`, description: "La obra era de otro cliente: elegila de nuevo." })
+            }
+          }}
+          onGuardar={() => {
+            setVincular(null)
+            handleSave()
+          }}
+          onGuardarSinVincular={() => {
+            setVincular(null)
+            setNpSinVincular(true)
+            handleSave({ sinVincular: true })
+          }}
+          onCerrar={() => setVincular(null)}
+        />
+      )}
+      {vincular?.modo === "menu" && (
+        <VincularCartel
+          open
+          clientId={vincular.pedido.client_id}
+          formulaId={vincular.pedido.formula_id}
+          plantId={vincular.pedido.plant_id}
+          pedidoId={vincular.pedido.id}
+          alTerminar="generar"
+          onVinculado={(tipo, codigo) => alVincular(tipo, codigo, false)} // fuera del formulario: no hay diálogo que reintentar
+          onCerrar={() => {
+            setVincular(null)
+            np.recargar()
+          }}
+        />
+      )}
 
       {/* Zomatik Z2b: NP con saldo (pedidos cancelados o con sobrante): quedan pendientes hasta Reprogramar o Devolver */}
       <NpSaldos visible={hayNpActiva} puedeCargar={puedeCrear} plantId={selectedPlant} onReprogramar={reprogramarNp} recargarCon={npSaldosVersion} />

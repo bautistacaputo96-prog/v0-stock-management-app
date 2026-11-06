@@ -304,6 +304,14 @@ export function puedeAjustarPedido(usuario: UsuarioPermisos, pedido: { created_b
   return propio !== "" && propio === normalizarNombre(usuario.name)
 }
 
+/**
+ * Vincular un cliente o una fórmula con Zomatik desde el pedido (04/11/2026, docs/specs/2026-11-04-vincular-al-programar.md):
+ * quien programa (`programacion.cargar`) o corrige pedidos (`programacion.editar`). También "Generar NP ahora".
+ */
+export function puedeVincularDesdePedido(usuario: UsuarioPermisos): boolean {
+  return puedeCon(usuario, "programacion", "cargar") || puedeCon(usuario, "programacion", "editar")
+}
+
 export type Diferencia = { seccion: SeccionClave; accion: Accion; valor: boolean; plantilla: boolean }
 
 /** Casillas distintas de la plantilla del tipo ("agregado a mano" / "quitado a mano"; en gerencial, solo quitado). */

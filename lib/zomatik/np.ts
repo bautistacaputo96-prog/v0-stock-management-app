@@ -14,6 +14,21 @@
  */
 
 // ---------------------------------------------------------------------------
+// Falta de vínculo con Zomatik (el robot frena antes de tocar nada)
+// ---------------------------------------------------------------------------
+
+/** Lo que dice el robot cuando el cliente no tiene código de Zomatik (los tests comparan el texto completo). */
+export const MSJ_SIN_CLIENTE = "El cliente no está vinculado con Zomatik"
+/** Lo que dice el robot cuando la fórmula no tiene artículo (o el artículo no tiene "Codigo Sistema"). */
+export const MSJ_SIN_ARTICULO = "La fórmula no está vinculada con un artículo de Zomatik"
+
+/** ¿El error de la NP es porque falta vincular el cliente o la fórmula? (se resuelve vinculando desde el pedido). */
+export function esFaltaDeVinculo(mensaje: string | null | undefined): boolean {
+  const m = String(mensaje ?? "")
+  return m.startsWith(MSJ_SIN_CLIENTE) || m.startsWith(MSJ_SIN_ARTICULO)
+}
+
+// ---------------------------------------------------------------------------
 // Estados
 // ---------------------------------------------------------------------------
 

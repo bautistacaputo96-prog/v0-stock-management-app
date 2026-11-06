@@ -27,8 +27,8 @@ import { tokensNombre } from "@/lib/zomatik/parseo"
 type Conf = "alta" | "media" | "baja"
 type Prop = { confianza: Conf; motivo: string; evidencia: string }
 type Cand = { codigo: number; nombre: string; evidencia: string; confianza: Conf }
-type FilaC = { id: string; name: string; cuit: string | null; despachos: number; vinculo: string | null; vinculado_por: string | null; zomatik_codigo: number | null; zomatik_nombre: string | null; duplicado: string | null; propuesta: (Prop & { codigo: number; nombre: string; cuit: string | null }) | null; candidatos: Cand[] }
-type FilaF = { id: string; name: string; planta: string; vinculo: string | null; vinculado_por: string | null; codigo: number | null; nombre: string | null; propuesta: (Prop & { codigo: number; nombre: string }) | null; ranking: { codigo: number; nombre: string; pct: number; dias: number; base: number }[] }
+type FilaC = { id: string; name: string; cuit: string | null; despachos: number; vinculo: string | null; vinculado_por: string | null; por_gerencial?: boolean; zomatik_codigo: number | null; zomatik_nombre: string | null; duplicado: string | null; propuesta: (Prop & { codigo: number; nombre: string; cuit: string | null }) | null; candidatos: Cand[] }
+type FilaF = { id: string; name: string; planta: string; vinculo: string | null; vinculado_por: string | null; por_gerencial?: boolean; codigo: number | null; nombre: string | null; propuesta: (Prop & { codigo: number; nombre: string }) | null; ranking: { codigo: number; nombre: string; pct: number; dias: number; base: number }[] }
 type FilaP = { codigo: number; numero: string; cliente_codigo: number | null; cliente_nombre: string | null; obra: string | null; ultima_entrega: string | null; construction_site_id: string | null; vinculo: string | null; clientes: { id: string; name: string; origen: string }[]; obras: { id: string; name: string; cliente: string }[]; propuesta: (Prop & { id: string; nombre: string; cliente: string }) | null }
 type ZCli = { codigo: number; razon_social: string; cuit: string | null; localidad: string | null; remitos_12m: number; vinculado: boolean; generico: boolean }
 type ZAnio = {
@@ -45,7 +45,7 @@ type Dias = { evidencia: string; nuestros: { fecha: string; m3: number; obra: st
 type Item = { tipo: "cliente" | "formula" | "proyecto"; id: string; accion: "vincular" | "sin_par" | "quitar"; codigo?: string | number | null; etiqueta?: string; soloSiLibre?: boolean }
 
 type Pestaña = "clientes" | "formulas" | "proyectos" | "traer" | "duplicados" | "sincuit"
-type Filtro = "revisar" | "alta" | "vinculados" | "todos"
+type Filtro = "revisar" | "alta" | "vinculados" | "pedido" | "todos"
 
 const fechaCorta = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(2, 4)}` : "")
 const ORIGEN: Record<string, string> = { auto: "primera carga", manual: "a mano", traido: "traído de Zomatik", sin_par: "" }
@@ -185,6 +185,10 @@ function VerDias({ tipo, id, codigo }: { tipo: "cliente" | "formula" | "proyecto
 export function PantallaVinculos() {
   const [pestaña, setPestaña] = useState<Pestaña>("clientes")
   const [filtro, setFiltro] = useState<Filtro>("revisar")
+  // "De un pedido" es solo de Clientes y Fórmulas
+  useEffect(() => {
+    if (filtro === "pedido" && pestaña !== "clientes" && pestaña !== "formulas") setFiltro("revisar")
+  }, [pestaña, filtro])
   const [buscar, setBuscar] = useState("")
   const [d, setD] = useState<Datos | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -310,8 +314,10 @@ export function PantallaVinculos() {
     const w = t.flatMap((x) => tokensNombre(x))
     return q.every((x) => w.some((y) => y.startsWith(x)))
   }
-  const pasa = (vinculo: string | null, p: { confianza: Conf } | null) =>
-    filtro === "todos" || (filtro === "revisar" ? !vinculo : filtro === "alta" ? !vinculo && p?.confianza === "alta" : !!vinculo)
+  // "De un pedido" (04/11): vínculo a mano que no hizo un gerencial (lo vinculó quien programa, desde el pedido)
+  const pasa = (vinculo: string | null, p: { confianza: Conf } | null, porGerencial?: boolean) =>
+    filtro === "todos" ||
+    (filtro === "revisar" ? !vinculo : filtro === "alta" ? !vinculo && p?.confianza === "alta" : filtro === "pedido" ? vinculo === "manual" && porGerencial === false : !!vinculo)
 
   const itemsZ = useMemo(
     () => (d?.zomatik || []).map((z) => ({ id: String(z.codigo), label: z.razon_social, hint: [z.generico ? "genérico" : "", z.cuit && `CUIT ${z.cuit}`, z.localidad, z.remitos_12m ? `${z.remitos_12m} remitos en el año` : "", z.vinculado ? "ya vinculado" : ""].filter(Boolean).join(" · ") })),
@@ -414,6 +420,7 @@ export function PantallaVinculos() {
             <option value="revisar">Para revisar</option>
             <option value="alta">Para revisar, confianza alta</option>
             <option value="vinculados">Revisados</option>
+            {(pestaña === "clientes" || pestaña === "formulas") && <option value="pedido">De un pedido</option>}
             <option value="todos">Todos</option>
           </select>
         )}
@@ -432,7 +439,7 @@ export function PantallaVinculos() {
             </thead>
             <tbody>
               {d.clientes
-                .filter((c) => pasa(c.vinculo, c.propuesta) && coincide(c.name))
+                .filter((c) => pasa(c.vinculo, c.propuesta, c.por_gerencial) && coincide(c.name))
                 .map((c) => (
                   <Fragment key={c.id}>
                   <tr className="border-b align-top last:border-0">
@@ -510,7 +517,7 @@ export function PantallaVinculos() {
             </thead>
             <tbody>
               {d.formulas
-                .filter((f) => pasa(f.vinculo, f.propuesta) && coincide(f.name, f.planta))
+                .filter((f) => pasa(f.vinculo, f.propuesta, f.por_gerencial) && coincide(f.name, f.planta))
                 .sort((a, b) => a.planta.localeCompare(b.planta) || a.name.localeCompare(b.name))
                 .map((f) => (
                   <Fragment key={f.id}>

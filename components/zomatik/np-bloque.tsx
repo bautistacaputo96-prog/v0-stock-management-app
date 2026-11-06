@@ -9,11 +9,15 @@
  * Al editar, el bloque se habilita recién cuando llegó la elección guardada (así no se pisa). Si el pedido cambió de
  * fecha y ya tiene NP, pregunta si se mueve la NP.
  * Con la llave de la planta apagada: "NP: se carga a mano en Zomatik", como hoy.
+ * Si al cliente o a la fórmula les falta el vínculo con Zomatik, avisa y ofrece "Vincular" (04/11, quien programa).
  */
 import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
 import { cargarNpSaldos, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen } from "@/lib/zomatik/np-cliente"
 import { NpChip } from "@/components/zomatik/np-chip"
+import { usePermisos } from "@/lib/current-user"
+import { puedeVincularDesdePedido } from "@/lib/permisos"
+import { esFaltaDeVinculo } from "@/lib/zomatik/np"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -37,7 +41,7 @@ const OPCIONES = [
 ] as const
 
 export function NpBloque({
-  planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha,
+  planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -60,7 +64,13 @@ export function NpBloque({
   fechaCambiada: boolean
   moverFecha: boolean | null
   onMoverFecha: (v: boolean) => void
+  /** Lo que falta vincular con Zomatik (de lo que ya está en memoria): el nombre del cliente y/o de la fórmula. */
+  faltan?: { cliente: string | null; formula: string | null }
+  /** Abre el cartel "Falta vincular con Zomatik" (solo si puede vincular desde el pedido). */
+  onVincular?: () => void
 }) {
+  const { usuario } = usePermisos()
+  const puedeVincular = puedeVincularDesdePedido(usuario) && !!onVincular
   const [proyectos, setProyectos] = useState<Proyecto[] | null>(null)
   const [sinVinculo, setSinVinculo] = useState(false)
   const [saldos, setSaldos] = useState<NpSaldo[] | null>(null)
@@ -111,9 +121,23 @@ export function NpBloque({
   const excede = valor.tipo === "proyecto" && disp.m3 !== null && m3 > 0 && contra > disp.m3 + 0.001
   const yaTiene = (estado?.nps || []).filter((x) => ["pendiente", "generando", "ok", "revisar", "error"].includes(x.estado))
   const saldoElegido = saldos?.find((x) => x.id === valor.np_id) || null
+  // Falta vincular el cliente o la fórmula: sin eso la NP no sale (04/11). Un pedido de antes de prender la NP o con
+  // "Usar NP con saldo", no
+  const faltaTexto = [faltan?.cliente && `el cliente «${faltan.cliente}»`, faltan?.formula && `la fórmula «${faltan.formula}»`].filter(Boolean).join(" y ")
+  const avisoVinculo = !!faltaTexto && !(estado && !estado.entra) && valor.tipo !== "saldo"
+  const errorPorVinculo = yaTiene.some((x) => x.estado === "error" && esFaltaDeVinculo(x.mensaje))
+  const botonVincular = puedeVincular && !soloLectura ? (
+    <button type="button" className="rounded border border-amber-400 bg-white px-2 py-0.5 text-xs font-medium" onClick={onVincular}>Vincular</button>
+  ) : null
 
   return (
     <div className="space-y-1.5">
+      {avisoVinculo && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+          <span className="min-w-0 flex-1">Falta vincular con Zomatik: {faltaTexto}. Sin eso la NP no sale.</span>
+          {botonVincular}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3">
         {OPCIONES.map(([k, l, d]) => (
           <button
@@ -218,6 +242,7 @@ export function NpBloque({
           <span className="text-muted-foreground">Ya tiene:</span>
           <NpChip estado={estado} />
           {yaTiene.filter((x) => x.mensaje && x.estado !== "ok").map((x) => <span key={x.id} className="text-red-700">{x.mensaje}</span>)}
+          {errorPorVinculo && !avisoVinculo && botonVincular}
         </div>
       )}
     </div>

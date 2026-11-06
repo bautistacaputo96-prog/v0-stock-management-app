@@ -5,14 +5,14 @@
  *   POST /api/zomatik/np {accion: "sincronizar", pedido_id, eleccion?}
  *        Después de guardar, cancelar o cambiar los m³ de un pedido: decide qué NP crear, vaciar o anular. La respuesta
  *        sale enseguida y el robot trabaja después (`after`). Con la llave apagada no hace nada.
- *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar): espera al robot
+ *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar o editar): espera al robot
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
  *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
  *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
  */
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
-import { puedeCon, tipoDe } from "@/lib/permisos"
+import { puedeCon, puedeVincularDesdePedido, tipoDe } from "@/lib/permisos"
 import { avisarFallaInesperada, esDeZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
@@ -115,7 +115,8 @@ export async function POST(req: Request) {
     const pedidoId = uuid(body?.pedido_id)
     if (!pedidoId) return NextResponse.json({ error: "Falta el pedido" }, { status: 400 })
     const puedeProg = puedeCon(u, "programacion", "cargar")
-    if (accion === "generar" && !puedeProg) return NextResponse.json({ error: "\"Generar NP ahora\" es de Programación." }, { status: 403 })
+    // "Generar NP ahora": también con programacion.editar (quien puede vincular desde el pedido puede reintentar, 04/11)
+    if (accion === "generar" && !puedeVincularDesdePedido(u)) return NextResponse.json({ error: "\"Generar NP ahora\" es de Programación." }, { status: 403 })
     if (accion === "sincronizar" && !puedeProg && !puedeCon(u, "despacho", "cargar")) return NextResponse.json({ error: "No tenés permiso." }, { status: 403 })
     if (accion !== "sincronizar" && accion !== "generar") return NextResponse.json({ error: "Acción desconocida" }, { status: 400 })
     boton = { accion, pedidoId, usuario: u.name }

@@ -20,7 +20,7 @@ import { CLAVE_BLOQUEO_LOGIN, discoverForm, fetchExport, navegadorNp, obtenerSes
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import { autorizarNp, generarNp, vaciarNp, type DatosNp, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
-import { SUCURSAL_REBUCRET, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
+import { SUCURSAL_REBUCRET, esFaltaDeVinculo, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
   pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
@@ -963,7 +963,10 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
         `Paso: ${r.paso || "?"}`,
         `Marca en observaciones: ${np.marca}`,
         // Una NP en "error" no la vuelve a tomar la pasada (solo el botón): el mail dice la verdad
-        "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
+        // Falta vincular el cliente o la fórmula: quien programa lo vincula desde el pedido y la NP se reintenta (04/11)
+        esFaltaDeVinculo(r.mensaje)
+          ? "Vinculalo desde el pedido (⋯ › Vincular con Zomatik) y la NP se reintenta sola; si lo vincula un gerencial en Vínculos, tocá Generar NP ahora."
+          : "No se reintenta sola: corregilo y tocá \"Generar NP ahora\" en el pedido.",
         "El pedido está guardado.",
         ...(r.recorte ? [`Respuesta de Zomatik (recorte): ${r.recorte}`] : []),
       ])
