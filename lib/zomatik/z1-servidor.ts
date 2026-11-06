@@ -208,10 +208,11 @@ export type DependenciasZ1 = {
   robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp }
   /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
-  /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción. */
+  /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción: los arma
+   *  `procesarZ1` al correr (no acá, por el import circular con ajuste-servidor.ts). */
   ajuste?: Partial<DependenciasAjuste>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik, ajuste: DEPENDENCIAS_AJUSTE }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
