@@ -11,11 +11,14 @@ import { MaterialFilter } from "@/components/material-filter"
 import { HumidityExcessTable } from "@/components/humidity-excess-table"
 import { StockEvolutionChart } from "@/components/stock-evolution-chart"
 import { SuppliersTable } from "@/components/suppliers-table"
-import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download, ClipboardCheck, Scale, RefreshCw } from "lucide-react"
+import { TrendingUp, Droplets, Loader2, Package, BarChart3, Truck, Download, ClipboardCheck, Scale, RefreshCw, Search } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { normalizarBusqueda } from "@/lib/clientes-buscar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import * as XLSX from "xlsx"
 import { SeccionProtegida } from "@/components/seccion-protegida"
@@ -65,6 +68,7 @@ function MateriasPrimasContent() {
   const [imp, setImp] = useState<EstadoImportacion>({ modo: "apagado", desde: null, activa: false, avisosHumedad: [] })
   const [trayendo, setTrayendo] = useState(false)
   const [soloSinHumedad, setSoloSinHumedad] = useState(false)
+  const [busqueda, setBusqueda] = useState("")
 
   useEffect(() => {
     loadPlants()
@@ -90,6 +94,17 @@ function MateriasPrimasContent() {
   // Lo importado de Zomatik entra sin humedad: se carga después desde la fila
   const sinHumedad = (e: any) => e.origen === "zomatik" && esArenaFina(e.materials?.name) && e.humidity_percentage === null && !e.anulado_at
   const cuantosSinHumedad = entries.filter(sinHumedad).length
+
+  // Buscador: sobre lo ya cargado, sin tildes ni mayúsculas; cada palabra tiene que aparecer en algún campo
+  const palabras = normalizarBusqueda(busqueda).split(" ").filter(Boolean)
+  const coincide = (e: any) => {
+    if (palabras.length === 0) return true
+    const texto = normalizarBusqueda(
+      [e.remito, e.suppliers?.name, e.supplier, e.materials?.name, e.notes, e.carriers?.name, e.carriers?.driver_name].filter(Boolean).join(" ")
+    )
+    return palabras.every((p) => texto.includes(p))
+  }
+  const entriesVisibles = entries.filter((e) => (!soloSinHumedad || sinHumedad(e)) && coincide(e))
 
   useEffect(() => {
     if (selectedPlant) {
@@ -133,6 +148,10 @@ function MateriasPrimasContent() {
         suppliers (
           id,
           name
+        ),
+        carriers:carrier_id (
+          name,
+          driver_name
         ),
         granulometria_tests:granulometry_test_id (
           id,
@@ -314,11 +333,33 @@ function MateriasPrimasContent() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <MaterialFilter
-              materials={materials}
-              selectedMaterial={selectedMaterial}
-              onFilterChange={setSelectedMaterial}
-            />
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+              <MaterialFilter
+                materials={materials}
+                selectedMaterial={selectedMaterial}
+                onFilterChange={setSelectedMaterial}
+              />
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="buscar-ingresos">Buscar</Label>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="buscar-ingresos"
+                      value={busqueda}
+                      onChange={(e) => setBusqueda(e.target.value)}
+                      placeholder="Remito, proveedor, transporte…"
+                      className="w-[250px] pl-9"
+                    />
+                  </div>
+                  {palabras.length > 0 && (
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {entriesVisibles.length} {entriesVisibles.length === 1 ? "ingreso" : "ingresos"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
             {(cuantosSinHumedad > 0 || soloSinHumedad) && (
               <button
                 className={cn("rounded-md border px-2 py-1 text-xs", soloSinHumedad ? "border-amber-400 bg-amber-50 text-amber-900" : "text-muted-foreground")}
@@ -330,7 +371,7 @@ function MateriasPrimasContent() {
           </div>
 
           <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-            <StockEntriesTable entries={soloSinHumedad ? entries.filter(sinHumedad) : entries} onRefresh={loadEntries} />
+            <StockEntriesTable entries={entriesVisibles} onRefresh={loadEntries} />
           </div>
         </>
       )}
