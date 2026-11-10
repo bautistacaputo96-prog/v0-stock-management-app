@@ -380,12 +380,13 @@ const PASOS_REMITO_GRABADO = ["grabar_remito", "verificar_remito", "buscar_remit
  * de remito a mano. No usa el reparto de lo despachado (`despachadoPorUso`).
  */
 async function remitidoContra(sb: SB, npId: string, pedidoId: string | null): Promise<number> {
-  let q = sb.from("zomatik_remitos").select("m3, remito_estado, paso").eq("np_id", npId).neq("estado", "anulado")
+  let q = sb.from("zomatik_remitos").select("m3, estado, remito_estado, paso").eq("np_id", npId).neq("estado", "anulado")
   q = pedidoId ? q.eq("scheduled_dispatch_id", pedidoId) : q.is("scheduled_dispatch_id", null)
   const { data, error } = await q
   if (error) throw error
-  const filas = (data as { m3: number; remito_estado: string | null; paso: string | null }[]) || []
-  const total = filas.filter((r) => r.remito_estado === "ok" || PASOS_REMITO_GRABADO.includes(r.paso || "")).reduce((s, r) => s + (Number(r.m3) || 0), 0)
+  const filas = (data as { m3: number; estado: string | null; remito_estado: string | null; paso: string | null }[]) || []
+  // Un remito cortado al grabar puede estar en Zomatik; uno que Zomatik rechazó (estado "error") no.
+  const total = filas.filter((r) => r.remito_estado === "ok" || (r.estado !== "error" && PASOS_REMITO_GRABADO.includes(r.paso || ""))).reduce((s, r) => s + (Number(r.m3) || 0), 0)
   return Math.round(total * 1000) / 1000
 }
 
