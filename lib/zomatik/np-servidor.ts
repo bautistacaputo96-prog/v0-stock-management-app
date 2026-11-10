@@ -370,6 +370,24 @@ async function usosDe(sb: SB, campo: "np_id" | "scheduled_dispatch_id", ids: str
   return (data as unknown as UsoDB[]) || []
 }
 
+/**
+ * Desactiva los usos de una NP que se anuló. Si la NP nunca llegó a Zomatik (sin número), no se remitió nada contra
+ * ella: la foto de lo despachado queda en 0 y lo despachado del pedido sigue siendo de su NP nueva (si no, la NP nueva
+ * ve menos despachado, muestra un saldo falso y el remito sale corto). Con número, como siempre: la foto de lo
+ * despachado hasta ahora (`zomatik_np_desvincular`).
+ */
+async function desvincularDeAnulada(sb: SB, np: { id: string; numero: string | null | undefined }, usoIds: string[], motivo: string): Promise<void> {
+  for (const id of usoIds) {
+    if (np.numero) {
+      await rpc(sb, "zomatik_np_desvincular", { p_uso: id, p_motivo: motivo })
+      continue
+    }
+    // Una sola sentencia (activo y foto juntos), solo si el uso sigue activo: como la función de la base
+    const { error } = await sb.from("zomatik_np_uso").update({ activo: false, despachado_fijo: 0, motivo, updated_at: new Date().toISOString() } as never).eq("id", id).eq("np_id", np.id).eq("activo", true)
+    if (error) throw error
+  }
+}
+
 /** Saldo de cada NP: reparte lo despachado de cada pedido entre sus NP (np.ts, `saldoNp`). */
 export async function saldosDe(sb: SB, nps: { id: string; m3: number }[]): Promise<Map<string, SaldoNp>> {
   const out = new Map<string, SaldoNp>()
@@ -544,8 +562,9 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
     if (ea) throw ea
     const ids = ((an as { id: string }[]) || []).map((x) => x.id)
     anuladas = ids.length
-    // El uso se desactiva con la foto de lo despachado (en modo aviso se pudo despachar con la NP pendiente)
-    for (const u of usos.filter((x) => ids.includes(x.np_id))) await rpc(sb, "zomatik_np_desvincular", { p_uso: u.id, p_motivo: "NP anulada" })
+    // El uso se desactiva. En modo aviso se pudo despachar con la NP pendiente, pero contra ella no se remitió nada (nunca
+    // llegó a Zomatik): la foto queda en 0 y lo despachado lo toma la NP que la reemplaza.
+    for (const id of ids) await desvincularDeAnulada(sb, { id, numero: npsUso.find((x) => x.id === id)?.numero }, usos.filter((x) => x.np_id === id).map((x) => x.id), "NP anulada")
   }
   const incompleto = anuladas < plan.anular.length
   if (incompleto) plan.avisos.push("Una NP se estaba generando mientras se cambiaba el pedido: se vuelve a mirar en la próxima pasada.")
@@ -922,7 +941,8 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
       await guardarSi(sb, np.id, G, { estado: "revisar", en_curso_desde: null, mensaje: "El pedido se canceló y esta NP se cortó al grabar: puede estar en Zomatik. Buscala por la marca y vaciala.", proximo_intento: null })
       return { estado: "revisar", mensaje: null }
     }
-    await guardarSi(sb, np.id, G, { estado: "anulada", en_curso_desde: null, mensaje: "El pedido se canceló antes de generarla", proximo_intento: null })
+    if (await guardarSi(sb, np.id, G, { estado: "anulada", en_curso_desde: null, mensaje: "El pedido se canceló antes de generarla", proximo_intento: null }))
+      await desvincularDeAnulada(sb, np, (await usosDe(sb, "np_id", [np.id])).filter((u) => u.activo).map((u) => u.id), "NP anulada")
     return { estado: "anulada", mensaje: null }
   }
   const datos = await datosParaRobot(sb, np, planta, buscarAntes)
@@ -1288,6 +1308,9 @@ export async function revisarNp(npId: string, decision: "otra" | "buena", usuari
     if (!(await guardarSi(sb, np.id, "revisar", { estado: "ok", mensaje: `Revisada por ${usuario}`, ok_at: new Date().toISOString() }))) return { ok: false, error: "La NP cambió. Actualizá la pantalla." }
   } else {
     if (!(await guardarSi(sb, np.id, "revisar", { estado: "anulada", mensaje: `${np.mensaje || ""} · Revisada por ${usuario}: se genera otra`.replace(/^ · /, "") }))) return { ok: false, error: "La NP cambió. Actualizá la pantalla." }
+    // Sin número nunca quedó en Zomatik (o no se remitió nada contra ella): su uso no se lleva lo despachado del pedido.
+    // Con número, como hasta ahora (no se toca).
+    if (!np.numero) await desvincularDeAnulada(sb, np, (await usosDe(sb, "np_id", [np.id])).filter((u) => u.activo).map((u) => u.id), "NP anulada (revisada: se genera otra)")
     if (np.scheduled_dispatch_id) await sincronizarPedido(np.scheduled_dispatch_id, usuario, null, sb, { usuarioId })
   }
   await actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { "Qué pasó": decision === "buena" ? `NP revisada: queda ${np.numero}` : "NP revisada: se genera otra", NP: np.numero, Antes: np.mensaje } })
