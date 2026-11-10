@@ -12,7 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
-import { Plus, MoreHorizontal, Pencil, Trash2, Package, Search, Loader2 } from "lucide-react"
+import { Plus, MoreHorizontal, Pencil, Trash2, Package, Search, Loader2, X } from "lucide-react"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { AddCarrierDialog } from "@/components/add-carrier-dialog"
 import { format, parseISO } from "date-fns"
 import { usePermisos } from "@/lib/current-user"
 import { logActivity, logCambio, logDeletion } from "@/lib/activity-log"
@@ -31,6 +33,14 @@ type Supplier = {
 type Material = {
   id: string
   name: string
+}
+
+type Carrier = {
+  id: string
+  name: string
+  driver_name: string | null
+  phone: string | null
+  supplier_id: string
 }
 
 export function SuppliersTable({ plantId }: { plantId: string }) {
@@ -53,6 +63,12 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
   // Fase 0c-1: proveedores = materia prima (cargar / editar / borrar); editar y borrar piden motivo
   const { puede } = usePermisos()
   const [motivo, setMotivo] = useState("")
+  // Transportes (tabla carriers) de cada proveedor: se agregan y se quitan con materia_prima.cargar
+  const [carriers, setCarriers] = useState<Carrier[]>([])
+  const [carrierSupplier, setCarrierSupplier] = useState<Supplier | null>(null)
+  const [quitarCarrier, setQuitarCarrier] = useState<Carrier | null>(null)
+  // null = todavía contando los ingresos que lo usan
+  const [usosCarrier, setUsosCarrier] = useState<number | null>(null)
 
   useEffect(() => {
     if (plantId) {
@@ -93,8 +109,76 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
         materials: s.material_suppliers?.map((ms: any) => ms.materials?.name).filter(Boolean) || [],
       }))
       setSuppliers(formattedSuppliers)
+      await loadCarriers(formattedSuppliers.map((s) => s.id))
     }
     setLoading(false)
+  }
+
+  async function loadCarriers(supplierIds: string[]) {
+    if (supplierIds.length === 0) {
+      setCarriers([])
+      return
+    }
+    const { data } = await supabase
+      .from("carriers")
+      .select("id, name, driver_name, phone, supplier_id")
+      .in("supplier_id", supplierIds)
+      .order("name")
+    setCarriers((data as Carrier[]) || [])
+  }
+
+  async function abrirQuitarCarrier(carrier: Carrier) {
+    setQuitarCarrier(carrier)
+    setUsosCarrier(null)
+    // Si algún ingreso lo usa no se borra: la FK es ON DELETE SET NULL y le borraría el transporte a esos ingresos
+    const { count, error } = await supabase
+      .from("stock_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("carrier_id", carrier.id)
+    if (error) {
+      toast({ title: "Error", description: "No se pudo revisar si el transporte tiene ingresos", variant: "destructive" })
+      setQuitarCarrier(null)
+      return
+    }
+    setUsosCarrier(count ?? 0)
+  }
+
+  async function handleQuitarCarrier() {
+    if (!quitarCarrier || usosCarrier !== 0 || !puede("materia_prima", "cargar")) return
+    setSaving(true)
+    // Se vuelve a contar justo antes de borrar, por si se cargó un ingreso mientras tanto
+    const { count, error: errorConteo } = await supabase
+      .from("stock_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("carrier_id", quitarCarrier.id)
+    if (errorConteo || (count ?? 0) > 0) {
+      toast({
+        title: "No se puede quitar",
+        description: errorConteo ? "No se pudo revisar si el transporte tiene ingresos" : `Tiene ${count} ingresos cargados`,
+        variant: "destructive",
+      })
+      setSaving(false)
+      setQuitarCarrier(null)
+      return
+    }
+    const { error } = await supabase.from("carriers").delete().eq("id", quitarCarrier.id)
+    if (error) {
+      toast({ title: "Error", description: "No se pudo quitar el transporte", variant: "destructive" })
+    } else {
+      const proveedor = suppliers.find((s) => s.id === quitarCarrier.supplier_id)?.name || "-"
+      toast({ title: "Transporte quitado" })
+      logActivity({
+        action: "borrar",
+        entity: "transportista",
+        entityId: quitarCarrier.id,
+        reference: quitarCarrier.name,
+        plantId,
+        details: { Transportista: quitarCarrier.name, Chofer: quitarCarrier.driver_name || "-", "Teléfono": quitarCarrier.phone || "-", Proveedor: proveedor },
+      })
+      setCarriers((prev) => prev.filter((c) => c.id !== quitarCarrier.id))
+    }
+    setSaving(false)
+    setQuitarCarrier(null)
   }
 
   async function loadMaterials() {
@@ -369,6 +453,7 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
                 <TableHead>Contacto</TableHead>
                 <TableHead>Telefono</TableHead>
                 <TableHead>Materiales</TableHead>
+                <TableHead>Transportes</TableHead>
                 <TableHead>Fecha Alta</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
               </TableRow>
@@ -376,7 +461,7 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
             <TableBody>
               {filteredSuppliers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {searchTerm ? "No se encontraron proveedores" : "No hay proveedores registrados"}
                   </TableCell>
                 </TableRow>
@@ -396,6 +481,44 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
                           ))
                         ) : (
                           <span className="text-muted-foreground text-sm">Sin materiales</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {carriers
+                          .filter((c) => c.supplier_id === supplier.id)
+                          .map((c) => (
+                            <Badge key={c.id} variant="outline" className="text-xs font-normal gap-1">
+                              {c.name}
+                              {c.driver_name && <span className="text-muted-foreground">· {c.driver_name}</span>}
+                              {puede("materia_prima", "cargar") && (
+                                <button
+                                  type="button"
+                                  onClick={() => abrirQuitarCarrier(c)}
+                                  className="ml-0.5 rounded-sm text-muted-foreground hover:text-destructive"
+                                  title="Quitar transporte"
+                                  aria-label={`Quitar ${c.name}`}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </Badge>
+                          ))}
+                        {!carriers.some((c) => c.supplier_id === supplier.id) && !puede("materia_prima", "cargar") && (
+                          <span className="text-muted-foreground text-sm">-</span>
+                        )}
+                        {puede("materia_prima", "cargar") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-1.5 text-xs text-muted-foreground"
+                            onClick={() => setCarrierSupplier(supplier)}
+                            title="Agregar transporte"
+                          >
+                            <Plus className="h-3 w-3" />
+                            Transporte
+                          </Button>
                         )}
                       </div>
                     </TableCell>
@@ -454,6 +577,52 @@ export function SuppliersTable({ plantId }: { plantId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Agregar transporte al proveedor (mismo diálogo que al cargar un ingreso) */}
+      {carrierSupplier && (
+        <AddCarrierDialog
+          open={!!carrierSupplier}
+          onOpenChange={(open) => !open && setCarrierSupplier(null)}
+          supplierId={carrierSupplier.id}
+          supplierName={carrierSupplier.name}
+          onCarrierAdded={() => loadCarriers(suppliers.map((s) => s.id))}
+        />
+      )}
+
+      {/* Quitar transporte: solo si ningún ingreso lo usa */}
+      <AlertDialog open={!!quitarCarrier} onOpenChange={(open) => !open && !saving && setQuitarCarrier(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Quitar transporte</AlertDialogTitle>
+            <AlertDialogDescription>
+              {usosCarrier === null ? (
+                "Revisando ingresos…"
+              ) : usosCarrier > 0 ? (
+                `Tiene ${usosCarrier} ${usosCarrier === 1 ? "ingreso cargado" : "ingresos cargados"}, no se puede quitar.`
+              ) : (
+                <>
+                  Se quita <strong>{quitarCarrier?.name}</strong> de los transportes de este proveedor.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>{usosCarrier !== null && usosCarrier > 0 ? "Cerrar" : "Cancelar"}</AlertDialogCancel>
+            {usosCarrier === 0 && (
+              <AlertDialogAction
+                disabled={saving}
+                onClick={(e) => {
+                  e.preventDefault()
+                  handleQuitarCarrier()
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {saving ? "Quitando..." : "Quitar"}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Eliminar: con motivo (fase 0c-1) */}
       <ConfirmarConMotivo
