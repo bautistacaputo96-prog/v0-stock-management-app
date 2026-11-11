@@ -502,13 +502,30 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           await terminar({ estado: "error", mensaje: "La planta no tiene depósito de Zomatik.", paso: "inicio" }, "OF")
           continue
         }
-        /** La NP ya tiene remitos hechos a mano: la fila se cierra sin tocar Zomatik (10/11). */
+        /**
+         * La NP ya tiene remitos hechos a mano: la fila se cierra sin tocar Zomatik (10/11) y va un mail a Bautista, uno
+         * por fila: solo después de cerrarla (una fila cerrada no se vuelve a tomar), así nunca se repite.
+         */
         const cerrarAMano = async (numeros: string[]) => {
           const m = msjRemitoAMano(numeros)
           if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", remito_numero: numeros.join(", "), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
             throw new Cambio("El remito cambió mientras se generaba")
           await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca } })
           hechas.push({ id: r.id, estado: "ok", mensaje: m })
+          try {
+            const { data: pc } = r.scheduled_dispatch_id ? await sb.from("scheduled_dispatches").select("clients(name)").eq("id", r.scheduled_dispatch_id).maybeSingle() : { data: null }
+            const cliente = (pc as { clients?: { name?: string | null } | null } | null)?.clients?.name || "(sin cliente)"
+            const aviso = await avisarError(sb, `Remito hecho a mano: el robot no lo repitió · ${ref}`, [
+              `Cliente: ${cliente}`,
+              `Fecha: ${r.fecha} · ${r.m3} m³ · NP: ${d.np?.numero || "?"}`,
+              `Remito que ya estaba en Zomatik: ${numeros.join(", ")}`,
+              "El robot no lo hizo para no duplicar: revisá que ese remito cubra estos m³.",
+              `Marca: ${r.marca}`,
+            ])
+            if (!aviso.enviado) console.error("[zomatik-z1] aviso de remito a mano:", aviso.motivo)
+          } catch (e) {
+            console.error("[zomatik-z1] aviso de remito a mano:", (e as Error)?.message)
+          }
         }
         // 0) Antes de la OF: ¿la NP ya tiene un remito hecho a mano? (10/11) Solo lectura. El número que esta fila guardó
         //    antes de un Grabar cortado cuenta como nuestro: lo resuelve la búsqueda del remito (por la marca).
