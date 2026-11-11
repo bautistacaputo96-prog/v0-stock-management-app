@@ -345,15 +345,18 @@ export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "1
   })
 }
 
-export type RemitoAMano = { estado: "libre" } | { estado: "a_mano"; numeros: string[] } | { estado: "ilegible"; mensaje: string }
+/** `propio`: el remito de la NP con el número que la fila guardó antes de un Grabar cortado (puede ser el del robot). */
+export type RemitoAMano = { estado: "libre" } | { estado: "a_mano"; numeros: string[]; propio?: string | null } | { estado: "ilegible"; mensaje: string }
 
 /**
  * ¿La NP ya tiene un remito que no hizo el sistema? (10/11: Fernando remitió a mano lo que el robot no sacó). Solo
  * lectura: sucursal REBUCRET y GET _comprobantes.php de la NP (lo que abre "COMPROBANTES / OPERACIONES"). Cualquier
  * remito (RM / RM2) cuyo código o número no esté entre `nuestros` alcanza: no se comparan m³. Si la respuesta no se
  * entiende, "ilegible" (nunca se sigue a ciegas); red o sesión: la excepción sigue y quien llama reintenta.
+ * `propio`: el número que la fila guardó antes de un Grabar cortado. Si está en la NP no cuenta como hecho a mano (lo
+ * resuelve la búsqueda por la marca); si además hay otro, vuelve en `propio` para no pisarlo.
  */
-export async function remitoAManoEnNp(nav: NavegadorNp, d: { npCodigo: number; nuestros: RemitoNuestro[] }, o: { azar?: () => number } = {}): Promise<RemitoAMano> {
+export async function remitoAManoEnNp(nav: NavegadorNp, d: { npCodigo: number; nuestros: RemitoNuestro[]; propio?: RemitoNuestro | null }, o: { azar?: () => number } = {}): Promise<RemitoAMano> {
   if (!Number.isInteger(d.npCodigo) || d.npCodigo <= 0) return { estado: "ilegible", mensaje: MSJ_COMPROBANTES_ILEGIBLES }
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   await aRebucret(nav)
@@ -361,7 +364,9 @@ export async function remitoAManoEnNp(nav: NavegadorNp, d: { npCodigo: number; n
   const c = r.status === 200 ? comprobantesDeNp(r.html) : null
   if (!c) return { estado: "ilegible", mensaje: MSJ_COMPROBANTES_ILEGIBLES }
   const ajenos = remitosAjenos(c.remitos, d.nuestros)
-  return ajenos.length ? { estado: "a_mano", numeros: ajenos.map((x) => x.numero) } : { estado: "libre" }
+  const propios = d.propio ? ajenos.filter((x) => !remitosAjenos([x], [d.propio!]).length) : []
+  const otros = ajenos.filter((x) => !propios.includes(x))
+  return otros.length ? { estado: "a_mano", numeros: otros.map((x) => x.numero), propio: propios[0]?.numero ?? null } : { estado: "libre" }
 }
 
 const siguiente = (numero: string) => `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`

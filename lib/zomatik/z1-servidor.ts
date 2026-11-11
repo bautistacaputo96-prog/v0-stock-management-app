@@ -29,7 +29,7 @@ import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
-  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
+  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
   type DespachoZ1, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
@@ -303,14 +303,21 @@ export async function controlarCambiosZ1(usuario: string, o: { dias?: string[]; 
   return avisos
 }
 
+/** Pasos de un remito en los que el Grabar pudo llegar a Zomatik (el número guardado puede ser un remito del robot). */
+const PASOS_REMITO_GRABADO = ["grabar_remito", "verificar_remito", "buscar_remito"]
+
 /**
- * Los remitos que grabó el sistema contra la NP (remito "ok", no "a_mano"): solo esos no cuentan como hechos a mano.
- * Un error de la base corta (la fila vuelve a "pendiente"): nunca se sigue sin saberlo.
+ * Los remitos que grabó (o pudo grabar) el sistema contra la NP: los "ok" (no los "a_mano") y los de OTRAS filas con un
+ * número que quedaron después de Grabar (`PASOS_REMITO_GRABADO`, p. ej. un "revisar" de verificar_remito). Solo esos
+ * no cuentan como hechos a mano. Un error de la base corta (la fila vuelve a "pendiente"): nunca se sigue sin saberlo.
  */
-async function remitosNuestros(sb: SB, npId: string): Promise<RemitoNuestro[]> {
+async function remitosNuestros(sb: SB, npId: string, filaId: string): Promise<RemitoNuestro[]> {
+  type Fila = { remito_numero: string | null; remito_codigo: number | null; comprobante: "7" | "19" | null }
   const { data, error } = await sb.from("zomatik_remitos").select("remito_numero, remito_codigo, comprobante").eq("np_id", npId).eq("estado", "ok").eq("remito_estado", "ok")
   if (error) throw error
-  return ((data as { remito_numero: string | null; remito_codigo: number | null; comprobante: "7" | "19" | null }[]) || []).map((x) => ({ numero: x.remito_numero, codigo: x.remito_codigo, comprobante: x.comprobante }))
+  const { data: g, error: e2 } = await sb.from("zomatik_remitos").select("remito_numero, remito_codigo, comprobante").eq("np_id", npId).in("paso", PASOS_REMITO_GRABADO).not("remito_numero", "is", null).neq("estado", "anulado").neq("id", filaId)
+  if (e2) throw e2
+  return [...((data as Fila[]) || []), ...((g as Fila[]) || [])].map((x) => ({ numero: x.remito_numero, codigo: x.remito_codigo, comprobante: x.comprobante }))
 }
 
 /** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir"). */
@@ -318,13 +325,16 @@ const PASOS_ANTES_DE_GRABAR = ["elegir_numero", "formulario_remito", "continuar_
 
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
-  const [{ data: np }, { data: f }, { data: ped }] = await Promise.all([
-    r.np_id ? sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado, marca, paso, scheduled_dispatch_id, plant_id").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null }),
-    r.formula_id ? sb.from("formulas").select("id, code, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", r.formula_id).maybeSingle() : Promise.resolve({ data: null }),
-    r.scheduled_dispatch_id ? sb.from("scheduled_dispatches").select("id, construction_sites(name, address, localidad)").eq("id", r.scheduled_dispatch_id).maybeSingle() : Promise.resolve({ data: null }),
+  const [{ data: np, error: e1 }, { data: f, error: e2 }, { data: ped, error: e3 }] = await Promise.all([
+    r.np_id ? sb.from("zomatik_np").select("id, n, numero, zomatik_codigo, estado, marca, paso, scheduled_dispatch_id, plant_id").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    r.formula_id ? sb.from("formulas").select("id, code, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", r.formula_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    r.scheduled_dispatch_id ? sb.from("scheduled_dispatches").select("id, construction_sites(name, address, localidad)").eq("id", r.scheduled_dispatch_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ])
+  // Si falla la base, no se sigue con datos a medias: la fila vuelve a "pendiente" y se reintenta (no "error")
+  if (e1 || e2 || e3) throw e1 || e2 || e3
   const codArt = (f as { zomatik_articulo_codigo?: number | null } | null)?.zomatik_articulo_codigo ?? null
-  const { data: a } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre, codigo_sistema").eq("codigo", codArt).maybeSingle() : { data: null }
+  const { data: a, error: e4 } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre, codigo_sistema").eq("codigo", codArt).maybeSingle() : { data: null, error: null }
+  if (e4) throw e4
   const obra = (ped as { construction_sites?: { name?: string | null; address?: string | null; localidad?: string | null } | null } | null)?.construction_sites ?? null
   return {
     np: np as { id: string; numero: string | null; zomatik_codigo: number | null; estado: string; marca: string; paso: string | null; scheduled_dispatch_id: string | null; plant_id: string | null } | null,
@@ -506,11 +516,12 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
          * La NP ya tiene remitos hechos a mano: la fila se cierra sin tocar Zomatik (10/11) y va un mail a Bautista, uno
          * por fila: solo después de cerrarla (una fila cerrada no se vuelve a tomar), así nunca se repite.
          */
-        const cerrarAMano = async (numeros: string[]) => {
-          const m = msjRemitoAMano(numeros)
-          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", remito_numero: numeros.join(", "), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
+        // `propio`: se cortó al grabar el remito del robot y ese número está en la NP. No se pisa: los dos quedan nombrados
+        const cerrarAMano = async (numeros: string[], propio: string | null = null) => {
+          const m = propio ? `${msjRemitoAMano(numeros)}. ${msjDosRemitos(propio, numeros)}` : msjRemitoAMano(numeros)
+          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", ...(propio ? {} : { remito_numero: numeros.join(", ") }), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
             throw new Cambio("El remito cambió mientras se generaba")
-          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca } })
+          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca, ...(propio ? { "Remito del robot": propio, "Remito a mano": numeros.join(", ") } : {}) } })
           hechas.push({ id: r.id, estado: "ok", mensaje: m })
           try {
             const { data: pc } = r.scheduled_dispatch_id ? await sb.from("scheduled_dispatches").select("clients(name)").eq("id", r.scheduled_dispatch_id).maybeSingle() : { data: null }
@@ -520,6 +531,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
               `Fecha: ${r.fecha} · ${r.m3} m³ · NP: ${d.np?.numero || "?"}`,
               `Remito que ya estaba en Zomatik: ${numeros.join(", ")}`,
               "El robot no lo hizo para no duplicar: revisá que ese remito cubra estos m³.",
+              ...(propio ? [msjDosRemitos(propio, numeros)] : []),
               `Marca: ${r.marca}`,
             ])
             if (!aviso.enviado) console.error("[zomatik-z1] aviso de remito a mano:", aviso.motivo)
@@ -528,20 +540,21 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           }
         }
         // 0) Antes de la OF: ¿la NP ya tiene un remito hecho a mano? (10/11) Solo lectura. El número que esta fila guardó
-        //    antes de un Grabar cortado cuenta como nuestro: lo resuelve la búsqueda del remito (por la marca).
+        //    antes de un Grabar cortado (`cortadoRemito`) cuenta como nuestro: lo resuelve la búsqueda del remito (por la
+        //    marca). Si además hay otro, se cierra sin pisar ese número.
         if (r.tipo === "pedido") {
           if (!d.np?.zomatik_codigo) {
-            await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, "remito")
+            await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, r.of_estado === "ok" ? "remito" : "OF")
             continue
           }
-          const propio: RemitoNuestro[] = r.remito_numero ? [{ numero: r.remito_numero, codigo: r.remito_codigo, comprobante: r.comprobante }] : []
-          const am = await dep.robot.remitoAManoEnNp(nav, { npCodigo: d.np.zomatik_codigo, nuestros: [...(await remitosNuestros(sb, r.np_id!)), ...propio] })
+          const propio: RemitoNuestro | null = cortadoRemito && r.remito_numero ? { numero: r.remito_numero, codigo: r.remito_codigo, comprobante: r.comprobante } : null
+          const am = await dep.robot.remitoAManoEnNp(nav, { npCodigo: d.np.zomatik_codigo, nuestros: await remitosNuestros(sb, r.np_id!, r.id), propio })
           if (am.estado === "ilegible") {
             await terminar({ estado: "pendiente", mensaje: am.mensaje, paso: "comprobantes_np", reintentar: true }, r.of_estado === "ok" ? "remito" : "OF")
             continue
           }
           if (am.estado === "a_mano") {
-            await cerrarAMano(am.numeros)
+            await cerrarAMano(am.numeros, am.propio ?? null)
             continue
           }
         }
@@ -603,7 +616,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           // Con el ajuste de la NP hecho: el pendiente que tiene que traer Zomatik (si no, "revisar" sin grabar)
           pendienteEsperado: gate.espera ? null : gate.pendienteEsperado,
           // Justo antes de grabar se vuelven a leer los comprobantes de la NP: cualquier remito que no sea uno de estos frena
-          nuestros: await remitosNuestros(sb, r.np_id!),
+          nuestros: await remitosNuestros(sb, r.np_id!, r.id),
         }, { hoy: hoyAR(), alPaso })
         if (rm.aMano?.length) {
           await cerrarAMano(rm.aMano)

@@ -162,21 +162,34 @@ export function tieneBotonGrabar(html: string | null | undefined): boolean {
 
 export type Comprobantes = { remitos: { codigo: number; numero: string }[]; facturas: { codigo: number; numero: string }[] }
 
+/** El link de un comprobante que se sabe leer: remito (RM / RM2) o factura. */
+const LINK_COMPROBANTE = /<a\b[^>]*href\s*=\s*["']?(modificar_remitos|modificar_facturasventa)\.php\?codigo=(\d+)[^>]*>([\s\S]*?)<\/a>/gi
+
 /**
  * Los comprobantes de la NP (señal B, REAL 06/11): `GET _comprobantes.php?ftarget=pedidos&ftargetid=N`, lo que abre
  * "COMPROBANTES / OPERACIONES". Una tabla con la cabecera "comprobantes" y un `<a>` por comprobante: remitos
  * `modificar_remitos.php?codigo=` (RM / RM2) y facturas `modificar_facturasventa.php?codigo=` (F2 / FA / FB…).
- * null si la respuesta no tiene esa forma (no se pudo leer).
+ * null si la respuesta no tiene esa forma (no se pudo leer). También null (10/11, nunca se sigue a ciegas) si queda una
+ * fila de la tabla sin uno de esos links, o un número con forma de remito (RM / RM2 0000-00000000) fuera de ellos.
  */
 export function comprobantesDeNp(html: string | null | undefined): Comprobantes | null {
   const h = sinComentarios(html)
   if (!/class\s*=\s*["']?contnotas/i.test(h) || !/<td\b[^>]*>\s*comprobantes\s*<\/td>/i.test(h)) return null
   const out: Comprobantes = { remitos: [], facturas: [] }
-  for (const m of h.matchAll(/<a\b[^>]*href\s*=\s*["']?(modificar_remitos|modificar_facturasventa)\.php\?codigo=(\d+)[^>]*>([\s\S]*?)<\/a>/gi)) {
+  for (const m of h.matchAll(LINK_COMPROBANTE)) {
     const x = { codigo: Number(m[2]), numero: textoPlano(m[3]) }
     if (m[1].toLowerCase() === "modificar_remitos") out.remitos.push(x)
     else out.facturas.push(x)
   }
+  // Cada fila (menos la cabecera y las vacías) tiene que ser un comprobante que se leyó
+  for (const fila of h.match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []) {
+    if (/^\s*comprobantes\s*$/i.test(textoPlano(fila))) continue
+    LINK_COMPROBANTE.lastIndex = 0
+    if (LINK_COMPROBANTE.test(fila)) continue
+    if (textoPlano(fila) || /<(a|img|input)\b/i.test(fila)) return null
+  }
+  // Un remito que no vino como link no se sabe de quién es
+  if (/\bRM2?\s*\d{4}\s*-\s*\d{8}\b/i.test(textoPlano(h.replace(LINK_COMPROBANTE, " ")))) return null
   return out
 }
 

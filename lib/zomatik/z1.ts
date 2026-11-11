@@ -603,4 +603,6 @@ export function remitosAjenos(remitosNp: { codigo: number; numero: string }[], n
 }
 
 export const msjRemitoAMano = (numeros: string[]) => `Ya estaba remitido a mano en Zomatik (${numeros.join(", ")}): el robot no lo repite`
+/** Se cortó al grabar el remito del robot (`propio`, en la NP) y además hay uno a mano: los dos quedan nombrados. */
+export const msjDosRemitos = (propio: string, numeros: string[]) => `Puede haber dos remitos: ${propio} (robot) y ${numeros.join(", ")} (a mano), revisalos. El robot no hizo otro.`
 export const MSJ_COMPROBANTES_ILEGIBLES = "No se pudieron leer los comprobantes de la NP en Zomatik (para saber si ya se remitió a mano): no se siguió. Se reintenta."
