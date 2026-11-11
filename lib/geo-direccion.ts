@@ -129,5 +129,19 @@ export function usarDelMapa(actual: { direccion: string; localidad: string }, ma
   return { direccion: mapa.direccion || actual.direccion, localidad: mapa.localidad || actual.localidad }
 }
 
+/**
+ * Localidad de la obra como se guarda (10/11/2026): sin espacios de más y con mayúscula inicial en cada palabra
+ * ("  san VICENTE " → "San Vicente"). Zomatik la exige en el remito. Solo para lo nuevo que se guarda.
+ */
+export function normalizarLocalidad(v: string | null | undefined): string {
+  return limpio(v)
+    .split(" ")
+    .map((p) => (p ? p.charAt(0).toLocaleUpperCase("es") + p.slice(1).toLocaleLowerCase("es") : p))
+    .join(" ")
+}
+
+/** Mensaje cuando falta la localidad de la obra (alta, edición y al programar) */
+export const FALTA_LOCALIDAD = "Falta la localidad (elegí la ubicación en el mapa o escribila)"
+
 /** "Av. X 123, Canning" */
 export const textoDireccion = (d: DireccionMapa) => [d.direccion, d.localidad].filter(Boolean).join(", ")

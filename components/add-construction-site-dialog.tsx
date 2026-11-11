@@ -13,14 +13,14 @@ import { toast } from "sonner"
 import { logActivity } from "@/lib/activity-log"
 import { Plus } from "lucide-react"
 import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
-import { completarVacios, usarDelMapa, type DireccionMapa } from "@/lib/geo-direccion"
+import { completarVacios, usarDelMapa, normalizarLocalidad, FALTA_LOCALIDAD, type DireccionMapa } from "@/lib/geo-direccion"
 import { crearTurnos } from "@/lib/turnos"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AddConstructionSiteDialogProps {
   clientId: string
   trigger?: React.ReactNode
-  onSiteAdded?: (site: { id: string; name: string; address: string | null; client_id: string; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean; reception_hours_start: string | null; reception_hours_end: string | null }) => void
+  onSiteAdded?: (site: { id: string; name: string; address: string | null; localidad: string | null; client_id: string; travel_time_minutes: number; unload_time_minutes: number; requires_pump: boolean; reception_hours_start: string | null; reception_hours_end: string | null }) => void
 }
 
 export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: AddConstructionSiteDialogProps) {
@@ -87,6 +87,12 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
       toast.error("El nombre de la obra es obligatorio")
       return
     }
+    // Localidad obligatoria (10/11/2026): Zomatik la exige en el remito
+    const localidad = normalizarLocalidad(formData.localidad)
+    if (!localidad) {
+      toast.error(FALTA_LOCALIDAD)
+      return
+    }
 
     setLoading(true)
 
@@ -96,7 +102,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
         .insert({
           name: formData.name,
           address: formData.address || null,
-          localidad: formData.localidad || null,
+          localidad,
           client_id: clientId,
           gps_lat: ubic.lat,
           gps_lng: ubic.lng,
@@ -114,7 +120,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
       if (error) throw error
 
       toast.success("Obra agregada exitosamente")
-      logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: formData.localidad || "-", "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
+      logActivity({ action: "crear", entity: "obra", entityId: data?.id, reference: data?.name, details: { Obra: formData.name, "Dirección": formData.address || "-", Localidad: localidad, "Viaje (min)": parseInt(formData.travel_time_minutes) || 30 } })
       setFormData(FORM_VACIO)
       setUbic(UBIC_VACIA)
       setDirMapa(null)
@@ -125,6 +131,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
           id: data.id,
           name: data.name,
           address: data.address,
+          localidad: data.localidad ?? localidad,
           client_id: data.client_id,
           travel_time_minutes: data.travel_time_minutes,
           unload_time_minutes: data.unload_time_minutes,
@@ -176,7 +183,7 @@ export function AddConstructionSiteDialog({ clientId, trigger, onSiteAdded }: Ad
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="localidad">Localidad</Label>
+            <Label htmlFor="localidad">Localidad *</Label>
             <Input
               id="localidad"
               value={formData.localidad}

@@ -5,15 +5,20 @@
  * lo que falta: corregir un vínculo es de un gerencial, en Vínculos. Todo pasa por /api/zomatik/vincular.
  *   - En el formulario (`alTerminar: "nada"`): cuando ya no falta nada, vuelve a "Guardar".
  *   - Desde el menú ⋯ de un pedido con la NP en error (`alTerminar: "generar"`): al terminar reintenta la NP.
+ * En el formulario también pide la localidad de la obra si no la tiene (10/11/2026: Zomatik la exige en el remito).
+ * Se guarda en la obra; sin ella no se puede guardar el pedido (tampoco con «Guardar sin vincular»). Con
+ * `conVinculos: false` el cartel es solo para la localidad (no consulta Zomatik).
  */
 import { useEffect, useRef, useState } from "react"
 import { Check, ChevronsUpDown, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import { normalizarLocalidad, FALTA_LOCALIDAD } from "@/lib/geo-direccion"
 import { interpretarNombre } from "@/lib/formulas-nombre"
 import { buscarParaVincular, estadoVinculos, generarNpAhora, vincularDesdePedido, type EstadoVinculosPedido } from "@/lib/zomatik/np-cliente"
 import { otraPlantaDelArticulo } from "@/lib/zomatik/vinculos"
@@ -95,6 +100,7 @@ function Buscador<T extends { codigo: number }>({
 
 export function VincularCartel({
   open, clientId, formulaId, plantId, pedidoId, onVinculado, onUsarCliente, alTerminar, onGuardar, onGuardarSinVincular, onCerrar,
+  conVinculos = true, obraSinLocalidad = null, guardarLocalidad,
 }: {
   open: boolean
   clientId: string | null
@@ -111,6 +117,12 @@ export function VincularCartel({
   onGuardar?: () => void
   onGuardarSinVincular?: () => void
   onCerrar: () => void
+  /** false = no falta vincular nada, el cartel es solo para la localidad (no consulta Zomatik) */
+  conVinculos?: boolean
+  /** Solo en el formulario: la obra del pedido no tiene localidad */
+  obraSinLocalidad?: { id: string; name: string } | null
+  /** Guarda la localidad (ya normalizada) en la obra; devuelve el error o null */
+  guardarLocalidad?: (localidad: string) => Promise<string | null>
 }) {
   const { toast } = useToast()
   const [estado, setEstado] = useState<EstadoVinculosPedido | null>(null)
@@ -119,6 +131,9 @@ export function VincularCartel({
   const [grabando, setGrabando] = useState<string | null>(null)
   const [np, setNp] = useState<{ generando: boolean; texto?: string; ok?: boolean } | null>(null)
   const generada = useRef(false)
+  // Localidad de la obra: lo que se escribe y lo que quedó guardado
+  const [localidad, setLocalidad] = useState("")
+  const [localidadHecha, setLocalidadHecha] = useState<{ obra: { id: string; name: string }; localidad: string } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -127,7 +142,13 @@ export function VincularCartel({
     setError(null)
     setHecho({})
     setNp(null)
+    setLocalidad("")
+    setLocalidadHecha(null)
     generada.current = false
+    if (!conVinculos) {
+      setEstado({ cliente: null, formula: null })
+      return
+    }
     estadoVinculos(clientId, formulaId).then((r) => {
       if (!vivo) return
       if ("error" in r) return setError(r.error)
@@ -139,11 +160,12 @@ export function VincularCartel({
     return () => {
       vivo = false
     }
-  }, [open, clientId, formulaId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, clientId, formulaId, conVinculos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const faltaCliente = !!estado?.cliente?.falta && !hecho.cliente
   const faltaFormula = !!estado?.formula?.falta && !hecho.formula
-  const listo = !!estado && !faltaCliente && !faltaFormula
+  const faltaLocalidad = !!obraSinLocalidad && !localidadHecha
+  const listo = !!estado && !faltaCliente && !faltaFormula && !faltaLocalidad
 
   // Desde el menú ⋯: cuando ya no falta nada, se reintenta la NP (una sola vez)
   useEffect(() => {
@@ -170,17 +192,61 @@ export function VincularCartel({
     onVinculado(tipo, codigo, nombre, true)
   }
 
+  async function grabarLocalidad() {
+    const v = normalizarLocalidad(localidad)
+    if (!v) {
+      toast({ title: "Falta la localidad", description: FALTA_LOCALIDAD, variant: "destructive" })
+      return
+    }
+    if (!guardarLocalidad || !obraSinLocalidad) return
+    const obra = obraSinLocalidad
+    setGrabando("localidad")
+    const err = await guardarLocalidad(v)
+    setGrabando(null)
+    if (err) {
+      toast({ title: "No se guardó la localidad", description: err, variant: "destructive" })
+      return
+    }
+    setLocalidadHecha({ obra, localidad: v })
+  }
+
   const c = estado?.cliente
   const f = estado?.formula
+  // Una vez guardada, la obra ya tiene localidad en la pantalla de atrás: se sigue mostrando la que se guardó
+  const obraLoc = obraSinLocalidad || localidadHecha?.obra || null
+  const conLocalidad = !!obraLoc
+  const titulo = !conLocalidad ? "Falta vincular con Zomatik" : conVinculos ? "Falta completar el pedido" : "Falta la localidad de la obra"
   const partes = f ? interpretarNombre(f.code || f.name) : null
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onCerrar()}>
       <DialogContent className="sm:max-w-[680px] max-h-[90vh] overflow-y-auto text-[13px]">
         <DialogHeader>
-          <DialogTitle>Falta vincular con Zomatik</DialogTitle>
-          <DialogDescription>Elegí el que corresponde: queda para los próximos pedidos.</DialogDescription>
+          <DialogTitle>{titulo}</DialogTitle>
+          <DialogDescription>{conVinculos ? "Elegí el que corresponde: queda para los próximos pedidos." : "Zomatik la pide en el remito. Queda guardada en la obra."}</DialogDescription>
         </DialogHeader>
+
+        {obraLoc && (
+          <div className="space-y-1.5 rounded-md border p-2">
+            <p className="font-medium">Obra: {obraLoc.name} · ¿en qué localidad está?</p>
+            {localidadHecha ? (
+              <p className="text-xs text-green-800"><Check className="mr-1 inline h-3 w-3" />Localidad: {localidadHecha.localidad}</p>
+            ) : (
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  grabarLocalidad()
+                }}
+              >
+                <Input value={localidad} onChange={(e) => setLocalidad(e.target.value)} placeholder="Ej: San Vicente" className="h-7 max-w-[260px] text-xs" autoFocus disabled={!!grabando} />
+                <Button type="submit" size="sm" className="h-7 px-2 text-xs" disabled={!!grabando || !localidad.trim()}>
+                  {grabando === "localidad" ? "Guardando…" : "Guardar en la obra"}
+                </Button>
+              </form>
+            )}
+          </div>
+        )}
 
         {!estado && !error && <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Buscando…</p>}
         {error && <p className="text-xs text-red-700">{error}</p>}
@@ -306,13 +372,13 @@ export function VincularCartel({
         {listo && alTerminar === "nada" && <p className="text-xs text-green-800">Ya no falta nada: tocá Guardar.</p>}
 
         <DialogFooter className="gap-2 sm:items-center">
-          {alTerminar === "nada" && onGuardarSinVincular && !listo && (
+          {alTerminar === "nada" && onGuardarSinVincular && !listo && !faltaLocalidad && (
             <span className="mr-auto text-[11px] text-muted-foreground">«Guardar sin vincular»: se guarda y la NP queda pendiente; le llega un mail a Bautista.</span>
           )}
           <Button type="button" variant="outline" size="sm" onClick={onCerrar} disabled={np?.generando}>
             {alTerminar === "generar" ? "Cerrar" : "Volver"}
           </Button>
-          {alTerminar === "nada" && onGuardarSinVincular && !listo && (
+          {alTerminar === "nada" && onGuardarSinVincular && !listo && !faltaLocalidad && (
             <Button type="button" variant="outline" size="sm" disabled={!!grabando} onClick={onGuardarSinVincular}>
               Guardar sin vincular
             </Button>

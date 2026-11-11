@@ -189,7 +189,10 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
    */
   async function avisarDireccion(n: number, lat: number, lng: number, dir: DireccionMapa | null | undefined, esperar: boolean) {
     if (!onDireccion) return
-    if (tieneDireccion(dir)) { onDireccion(dir); return }
+    if (tieneDireccion(dir) && dir.localidad) { onDireccion(dir); return }
+    // El lugar trae la dirección pero no la localidad (obligatoria, 10/11): se usa ya y la localidad sale de la consulta inversa
+    const conDireccion = tieneDireccion(dir) ? dir : null
+    if (conDireccion) onDireccion(conDireccion)
     if (esperar) {
       await new Promise((ok) => setTimeout(ok, ESPERA_A_MANO_MS))
       if (!ultimaEleccion.vigente(n)) return
@@ -202,7 +205,12 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
         mapa = { direccion: d.direccion ?? null, localidad: d.localidad ?? null }
       }
     } catch {}
-    if (ultimaEleccion.vigente(n)) onDireccion(mapa)
+    if (!ultimaEleccion.vigente(n)) return
+    if (conDireccion) {
+      if (mapa.localidad) onDireccion({ direccion: conDireccion.direccion, localidad: mapa.localidad })
+      return
+    }
+    onDireccion(mapa)
   }
 
   async function elegir(lat: number, lng: number, fuente: UbicacionObra["fuente"], dir?: DireccionMapa | null, aMano = false) {
