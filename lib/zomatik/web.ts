@@ -134,6 +134,8 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   POST grabar_remitos.php?codigo=0                       grabar el remito (solo alta)
  *   GET  modificar_pedidos.php?codigo=N                    abrir la NP para ver la marca antes de autorizarla
  *   POST _autorizarpedido.php?orden=…&torden=              autorizar la NP antes del remito (solo autorizar=<entero>)
+ *   GET  _comprobantes.php?ftarget=pedidos&ftargetid=N     LECTURA: los comprobantes de la NP (remitos y facturas), para
+ *                                                          no repetir un remito que ya se hizo a mano (10/11)
  * Nunca borrar, anular ni modificar uno existente.
  */
 export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
@@ -150,6 +152,7 @@ export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
   if (/^traerdatossecundarios\.php\?fcliente=\d+(&rnd=\d+)?$/i.test(p)) return true
   if (/^manage_remitos\.php\?/i.test(p)) return /[?&]fpedido=\d+/.test(p)
   if (/^_validarnumeroremito\.php\?fcomprobante=(7|19)&fnumero=\d{4}-\d{8}(&rnd=\d+)?$/i.test(p)) return true
+  if (/^_comprobantes\.php\?ftarget=pedidos&ftargetid=\d+(&rnd=\d+)?$/i.test(p)) return true
   return false
 }
 

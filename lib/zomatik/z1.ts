@@ -573,3 +573,34 @@ export function opcionDeSelect(html: string, nombre: string, texto: RegExp): str
   }
   return null
 }
+
+// ---------------------------------------------------------------------------
+// Remito hecho a mano (10/11): el robot nunca repite lo que ya se remitió en Zomatik
+// ---------------------------------------------------------------------------
+
+/** Un remito que grabó el sistema (o el número que guardó antes de grabar): código y/o número. */
+export type RemitoNuestro = { codigo?: number | null; numero: string | null; comprobante?: "7" | "19" | null }
+
+/**
+ * "RM2 0099-00002765": el prefijo (el que trae el número o, si no lo trae, el del comprobante) y el número normalizado.
+ * null si no tiene número.
+ */
+export function claveRemito(numero: string | null | undefined, comprobante?: "7" | "19" | null): string | null {
+  const n = numeroNormalizado(numero)
+  if (!n) return null
+  const pref = String(numero ?? "").toUpperCase().match(/\b(RM2?)\s/)?.[1] ?? (comprobante ? PREFIJO_REMITO[comprobante] : "")
+  return `${pref} ${n}`.trim()
+}
+
+/**
+ * Los remitos de la NP en Zomatik (sus comprobantes) que NO hizo el sistema: ni su código ni su número están entre
+ * `nuestros`. No se comparan m³: cualquier remito a mano sobre la NP alcanza para no tocarla.
+ */
+export function remitosAjenos(remitosNp: { codigo: number; numero: string }[], nuestros: RemitoNuestro[]): { codigo: number; numero: string }[] {
+  const codigos = new Set(nuestros.map((x) => Number(x.codigo)).filter((c) => c > 0))
+  const claves = new Set(nuestros.map((x) => claveRemito(x.numero, x.comprobante)).filter(Boolean))
+  return remitosNp.filter((x) => !(x.codigo > 0 && codigos.has(x.codigo)) && !claves.has(claveRemito(x.numero)))
+}
+
+export const msjRemitoAMano = (numeros: string[]) => `Ya estaba remitido a mano en Zomatik (${numeros.join(", ")}): el robot no lo repite`
+export const MSJ_COMPROBANTES_ILEGIBLES = "No se pudieron leer los comprobantes de la NP en Zomatik (para saber si ya se remitió a mano): no se siguió. Se reintenta."

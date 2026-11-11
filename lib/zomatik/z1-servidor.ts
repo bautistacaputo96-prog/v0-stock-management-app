@@ -12,6 +12,10 @@
  * Número del remito (Bautista 29/10, "del anterior"): el más alto del talonario + 1, validado justo antes de grabar.
  * Talonario terminado: "revisar", aviso "Cargar talonario nuevo de RM/RM2 en Zomatik" y se reintenta con "Remitir".
  *
+ * Remito hecho a mano (10/11): antes de la OF y justo antes de grabar el remito se leen los comprobantes de la NP en
+ * Zomatik. Si tiene un remito que no grabó el sistema, la fila no se toca: "ok" con el remito "a_mano" y el número leído.
+ * Si no se pueden leer, queda "pendiente" y se reintenta (nunca se sigue a ciegas).
+ *
  * LLAVE PROPIA: `zomatik_np_config.remitir_activo` (apagada por defecto), y además la de la NP. `llaveZ1()` es el único
  * lugar que arma la llave que pide `navegadorZ1()`.
  */
@@ -23,10 +27,10 @@ import {
 } from "@/lib/zomatik/np-servidor"
 import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
-import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
+import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
-  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
-  type DespachoZ1, type NpZ1,
+  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
+  type DespachoZ1, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
@@ -206,14 +210,14 @@ export type DependenciasZ1 = {
   navegador: (llave: LlaveZ1) => Promise<NavegadorNp>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
-  robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp }
+  robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
   /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción: los arma
    *  `procesarZ1` al correr (no acá, por el import circular con ajuste-servidor.ts). */
   ajuste?: Partial<DependenciasAjuste>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp }, avisarError: avisarErrorZomatik }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp, remitoAManoEnNp }, avisarError: avisarErrorZomatik }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -297,6 +301,16 @@ export async function controlarCambiosZ1(usuario: string, o: { dias?: string[]; 
     avisos++
   }
   return avisos
+}
+
+/**
+ * Los remitos que grabó el sistema contra la NP (remito "ok", no "a_mano"): solo esos no cuentan como hechos a mano.
+ * Un error de la base corta (la fila vuelve a "pendiente"): nunca se sigue sin saberlo.
+ */
+async function remitosNuestros(sb: SB, npId: string): Promise<RemitoNuestro[]> {
+  const { data, error } = await sb.from("zomatik_remitos").select("remito_numero, remito_codigo, comprobante").eq("np_id", npId).eq("estado", "ok").eq("remito_estado", "ok")
+  if (error) throw error
+  return ((data as { remito_numero: string | null; remito_codigo: number | null; comprobante: "7" | "19" | null }[]) || []).map((x) => ({ numero: x.remito_numero, codigo: x.remito_codigo, comprobante: x.comprobante }))
 }
 
 /** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir"). */
@@ -488,6 +502,32 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           await terminar({ estado: "error", mensaje: "La planta no tiene depósito de Zomatik.", paso: "inicio" }, "OF")
           continue
         }
+        /** La NP ya tiene remitos hechos a mano: la fila se cierra sin tocar Zomatik (10/11). */
+        const cerrarAMano = async (numeros: string[]) => {
+          const m = msjRemitoAMano(numeros)
+          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", remito_numero: numeros.join(", "), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
+            throw new Cambio("El remito cambió mientras se generaba")
+          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca } })
+          hechas.push({ id: r.id, estado: "ok", mensaje: m })
+        }
+        // 0) Antes de la OF: ¿la NP ya tiene un remito hecho a mano? (10/11) Solo lectura. El número que esta fila guardó
+        //    antes de un Grabar cortado cuenta como nuestro: lo resuelve la búsqueda del remito (por la marca).
+        if (r.tipo === "pedido") {
+          if (!d.np?.zomatik_codigo) {
+            await terminar({ estado: "error", mensaje: "La NP del remito no está en Zomatik.", paso: "inicio" }, "remito")
+            continue
+          }
+          const propio: RemitoNuestro[] = r.remito_numero ? [{ numero: r.remito_numero, codigo: r.remito_codigo, comprobante: r.comprobante }] : []
+          const am = await dep.robot.remitoAManoEnNp(nav, { npCodigo: d.np.zomatik_codigo, nuestros: [...(await remitosNuestros(sb, r.np_id!)), ...propio] })
+          if (am.estado === "ilegible") {
+            await terminar({ estado: "pendiente", mensaje: am.mensaje, paso: "comprobantes_np", reintentar: true }, r.of_estado === "ok" ? "remito" : "OF")
+            continue
+          }
+          if (am.estado === "a_mano") {
+            await cerrarAMano(am.numeros)
+            continue
+          }
+        }
         // 1) La OF (si todavía no salió)
         if (r.of_estado !== "ok") {
           const of = await dep.robot.generarOf(nav, { marca: r.marca, deposito, fecha: String(r.fecha), m3: Number(r.m3), articuloCodigoSistema: d.articuloCodigoSistema, articuloNombre: d.articuloNombre, foto: r.of_foto, fotoDia: r.of_foto_dia, buscarAntes: cortadoOf }, { hoy: hoyAR(), alPaso })
@@ -545,7 +585,13 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           numero, entrega: d.entrega, buscarAntes: cortadoRemito,
           // Con el ajuste de la NP hecho: el pendiente que tiene que traer Zomatik (si no, "revisar" sin grabar)
           pendienteEsperado: gate.espera ? null : gate.pendienteEsperado,
+          // Justo antes de grabar se vuelven a leer los comprobantes de la NP: cualquier remito que no sea uno de estos frena
+          nuestros: await remitosNuestros(sb, r.np_id!),
         }, { hoy: hoyAR(), alPaso })
+        if (rm.aMano?.length) {
+          await cerrarAMano(rm.aMano)
+          continue
+        }
         if (rm.estado !== "ok") {
           await terminar(rm, "remito")
           continue

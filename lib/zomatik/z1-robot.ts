@@ -10,7 +10,8 @@
  *   el número (entrada aparte, `elegirNumeroRemito`: el más alto del talonario + 1, Bautista 29/10) → sucursal 18 →
  *   modificar_remitos.php?pedido=<NP> → Continuar (manage_remitos: los pendientes de la NP, con la cantidad precargada
  *   con TODO lo pendiente) → el renglón del artículo con los m³ del día y los demás en 0 → _validarnumeroremito justo
- *   antes de grabar (usado: el siguiente, hasta 5; talonario terminado: "revisar" y aviso) → sucursal 18 → Grabar →
+ *   antes de grabar (usado: el siguiente, hasta 5; talonario terminado: "revisar" y aviso) → sucursal 18 → los
+ *   comprobantes de la NP (si ya tiene un remito que no es nuestro, hecho a mano, no se graba: 10/11) → Grabar →
  *   listado por número + la marca → ok.
  * Si una respuesta no tiene la forma esperada, se frena SIN GRABAR y queda un recorte para Actividad.
  */
@@ -20,12 +21,12 @@ import {
 } from "@/lib/zomatik/np"
 import {
   CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, datosClienteRemito, esItemDe, esMultipart, fparamOf, formularioOf,
-  formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, numeroRemitoLibre, ofNuevas, opcionDeSelect, paginadoDe, registrosTotal,
-  siguienteNumeroRemito, tieneDeposito,
-  tieneTransporte, type FilaOf,
+  formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, MSJ_COMPROBANTES_ILEGIBLES, msjRemitoAMano, numeroRemitoLibre, ofNuevas, opcionDeSelect, paginadoDe,
+  registrosTotal, remitosAjenos, siguienteNumeroRemito, tieneDeposito,
+  tieneTransporte, type FilaOf, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
-import { MSJ_NP_NO_AJUSTADA } from "@/lib/zomatik/ajuste"
+import { MSJ_NP_NO_AJUSTADA, comprobantesDeNp } from "@/lib/zomatik/ajuste"
 
 /** Solo la arma z1-servidor.ts después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida). */
 export type LlaveZ1 = { readonly remitir: true; readonly plantId: string }
@@ -46,6 +47,8 @@ export type ResultadoZ1 = {
   olvidarNumero?: boolean
   /** Pendiente porque Zomatik no tiene stock del artículo (se cuentan: a los MAX_SIN_STOCK, "revisar") */
   sinStock?: boolean
+  /** No se grabó: la NP ya tiene estos remitos hechos a mano (10/11). Quien llama cierra la fila como "a mano". */
+  aMano?: string[]
 }
 
 export type OpcionesZ1 = {
@@ -256,6 +259,8 @@ export type DatosRemito = {
   /** Con el ajuste de la NP hecho (docs/specs/2026-11-06-ajustar-np-al-finalizar.md 4.4): el pendiente que tiene que
    *  traer "Continuar". Si difiere, "revisar" sin grabar. null = no se controla (como antes del ajuste). */
   pendienteEsperado?: number | null
+  /** Los remitos que grabó el sistema contra esta NP: justo antes de grabar, cualquier otro remito de la NP frena (10/11). */
+  nuestros: RemitoNuestro[]
 }
 
 /** Tope de páginas del paginado de remitos (si hay más, se frena sin grabar). */
@@ -338,6 +343,25 @@ export async function elegirNumeroRemito(nav: NavegadorNp, comprobante: "7" | "1
     if (!numero) throw formato("el remito", `no se encontró el talonario de ${PREFIJO_REMITO[comprobante]}`)
     return { estado: "ok", mensaje: null, numero, paso: "elegir_numero" }
   })
+}
+
+export type RemitoAMano = { estado: "libre" } | { estado: "a_mano"; numeros: string[] } | { estado: "ilegible"; mensaje: string }
+
+/**
+ * ¿La NP ya tiene un remito que no hizo el sistema? (10/11: Fernando remitió a mano lo que el robot no sacó). Solo
+ * lectura: sucursal REBUCRET y GET _comprobantes.php de la NP (lo que abre "COMPROBANTES / OPERACIONES"). Cualquier
+ * remito (RM / RM2) cuyo código o número no esté entre `nuestros` alcanza: no se comparan m³. Si la respuesta no se
+ * entiende, "ilegible" (nunca se sigue a ciegas); red o sesión: la excepción sigue y quien llama reintenta.
+ */
+export async function remitoAManoEnNp(nav: NavegadorNp, d: { npCodigo: number; nuestros: RemitoNuestro[] }, o: { azar?: () => number } = {}): Promise<RemitoAMano> {
+  if (!Number.isInteger(d.npCodigo) || d.npCodigo <= 0) return { estado: "ilegible", mensaje: MSJ_COMPROBANTES_ILEGIBLES }
+  const azar = o.azar || (() => Math.floor(Math.random() * 345343))
+  await aRebucret(nav)
+  const r = await nav.get(`_comprobantes.php?ftarget=pedidos&ftargetid=${d.npCodigo}&rnd=${azar()}`)
+  const c = r.status === 200 ? comprobantesDeNp(r.html) : null
+  if (!c) return { estado: "ilegible", mensaje: MSJ_COMPROBANTES_ILEGIBLES }
+  const ajenos = remitosAjenos(c.remitos, d.nuestros)
+  return ajenos.length ? { estado: "a_mano", numeros: ajenos.map((x) => x.numero) } : { estado: "libre" }
 }
 
 const siguiente = (numero: string) => `${numero.slice(0, 5)}${String(Number(numero.slice(5)) + 1).padStart(8, "0")}`
@@ -433,6 +457,11 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
       if (i >= 4) throw dato(`Los ${pref} ${d.numero} a ${numero} ya están usados en Zomatik. Revisá el talonario.`)
       numero = siguiente(numero)
     }
+    // Justo antes de grabar, otra vez (10/11): ¿se remitió a mano mientras tanto? Solo lectura; deja la sucursal en 18
+    await marcar("comprobantes_np")
+    const am = await remitoAManoEnNp(nav, { npCodigo: d.npCodigo, nuestros: d.nuestros || [] }, { azar })
+    if (am.estado === "ilegible") throw new Freno("pendiente", am.mensaje, true)
+    if (am.estado === "a_mano") return { estado: "revisar", aMano: am.numeros, mensaje: msjRemitoAMano(am.numeros), paso: "comprobantes_np" }
     await marcar("grabar_remito", { numero })
     const valores: Record<string, string> = {
       ...delCliente, comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1",
