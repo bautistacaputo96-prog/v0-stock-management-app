@@ -223,6 +223,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [selectedPlant, setSelectedPlant] = useState("all") // "all" para todas las plantas
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }))
   const [dispatches, setDispatches] = useState<ScheduledDispatch[]>([])
+  // Pendientes de días anteriores: pedidos que ya pasaron sin despacharse (debajo de la tabla)
+  const [pendientes, setPendientes] = useState<ScheduledDispatch[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [mixers, setMixers] = useState<Mixer[]>([])
   const [formulas, setFormulas] = useState<Formula[]>([])
@@ -379,16 +381,34 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       dispatchesQuery = dispatchesQuery.eq("plant_id", selectedPlant)
     }
 
-    const [dispatchesRes, clientsRes, mixersRes, formulasRes, empresasRes] = await Promise.all([
+    // Pendientes de días anteriores: salida antes de hoy (hora Argentina), de los últimos 30 días (lo de antes es
+    // basura de la carga inicial), sin cerrar ni cancelar y sin nada despachado
+    const hoyAr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" })
+    const inicioHoyAr = new Date(`${hoyAr}T00:00:00-03:00`)
+    let pendientesQuery = supabase
+      .from("scheduled_dispatches")
+      .select("*, clients(id, name), construction_sites(*), formulas(id, name, code), mixers(id, license_plate, capacity_m3)")
+      .gte("scheduled_departure_time", addDays(inicioHoyAr, -30).toISOString())
+      .lt("scheduled_departure_time", inicioHoyAr.toISOString())
+      .not("status", "in", "(completed,cancelled,delivered)")
+      .or("dispatched_m3.is.null,dispatched_m3.eq.0")
+      .order("scheduled_departure_time")
+    if (selectedPlant !== "all") {
+      pendientesQuery = pendientesQuery.eq("plant_id", selectedPlant)
+    }
+
+    const [dispatchesRes, clientsRes, mixersRes, formulasRes, empresasRes, pendientesRes] = await Promise.all([
       dispatchesQuery,
       supabase.from("clients").select("*, construction_sites(*)").eq("active", true).order("name"),
       supabase.from("mixers").select("*").eq("active", true).order("license_plate"),
       // Cargar todas las fórmulas con su planta (para filtrar el combo por planta del despacho)
       supabase.from("formulas").select("id, name, code, useful_life_minutes, plant_id, zomatik_articulo_codigo, zomatik_vinculo").order("code"),
       cargarEmpresasBombeo(supabase),
+      pendientesQuery,
     ])
 
     setDispatches(dispatchesRes.data || [])
+    setPendientes((pendientesRes.data as ScheduledDispatch[]) || [])
     setClients(clientsRes.data || [])
     setMixers(mixersRes.data || [])
     setFormulas(formulasRes.data || [])
@@ -1284,6 +1304,41 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pendientes de días anteriores: Reprogramar = el formulario del pedido; Cancelar = el mismo cancelar de siempre */}
+      {pendientes.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50/40 px-3 py-2">
+          <div className="mb-1 flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Pendientes de días anteriores</h3>
+            <span className="cursor-help text-xs text-muted-foreground" title="Pedidos de días que ya pasaron y no se despacharon. Reprogramalos o cancelalos.">
+              (?)
+            </span>
+          </div>
+          <div className="divide-y text-xs">
+            {pendientes.map((d) => {
+              const rx = d.remito_tipo || d.construction_sites?.remito_tipo || clients.find((c) => c.id === d.client_id)?.remito_tipo || null
+              return (
+                <div key={d.id} className="flex flex-wrap items-center gap-2 py-1">
+                  <span className="w-24 shrink-0 tabular-nums">{format(parseISO(d.scheduled_arrival_time), "EEE dd/MM HH:mm", { locale: es })}</span>
+                  {selectedPlant === "all" && plantNameById[d.plant_id] && <span className="text-muted-foreground">{plantNameById[d.plant_id]}</span>}
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{d.clients?.name || "-"}</span> · {d.construction_sites?.name || "-"} · {d.formulas?.code || "-"} · <b className="tabular-nums">{d.quantity_m3} m³</b> · {rx || "R/X sin definir"}
+                  </span>
+                  {d.suspendido_at && (
+                    <span className="text-[10px] font-semibold text-slate-700" title="Suspendido desde Despacho diario">⏸ Suspendido · {textoMotivo(d.suspendido_motivo_tipo)}</span>
+                  )}
+                  {ajustaPedido(d) && (
+                    <Button size="sm" className="h-6 px-2 text-[11px]" onClick={() => openEditDispatch(d)}>Reprogramar</Button>
+                  )}
+                  {puede("programacion", "borrar") && (
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] text-destructive" onClick={() => setCancelar(d)}>Cancelar</Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Formulario del pedido: ventana grande y compacta (pedido de Bautista del 21/10), con las 7 mejoras de la spec 19.3 */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
