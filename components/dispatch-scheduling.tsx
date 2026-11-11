@@ -50,6 +50,7 @@ import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type El
 import { VincularCartel } from "@/components/zomatik/vincular-cartel"
 import { esFaltaDeVinculo } from "@/lib/zomatik/np"
 import { puedeVincularDesdePedido } from "@/lib/permisos"
+import { normalizarLocalidad } from "@/lib/geo-direccion"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null; zomatik_codigo?: number | null }
@@ -273,7 +274,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   // El pedido con NP cambió de fecha: ¿se mueve la NP? (sección 25)
   const [npMoverFecha, setNpMoverFecha] = useState<boolean | null>(null)
   // Cartel "Falta vincular con Zomatik" (04/11): desde el formulario o desde el menú ⋯ de un pedido con la NP en error
-  const [vincular, setVincular] = useState<null | { modo: "form" } | { modo: "menu"; pedido: ScheduledDispatch }>(null)
+  // También pide la localidad de la obra si no la tiene (10/11/2026); `conVinculos: false` = solo la localidad
+  const [vincular, setVincular] = useState<null | { modo: "form"; conVinculos?: boolean } | { modo: "menu"; pedido: ScheduledDispatch }>(null)
   // En este diálogo: ya se eligió "Guardar sin vincular" (no vuelve a saltar) y se vinculó algo (reintentar la NP en error)
   const [npSinVincular, setNpSinVincular] = useState(false)
   const [npVinculoHecho, setNpVinculoHecho] = useState(false)
@@ -647,9 +649,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       return
     }
     // Zomatik (04/11): falta vincular el cliente o la fórmula y la NP sale sola → el cartel, antes de grabar nada.
-    // Solo con lo que está en memoria (no frena Guardar)
-    if (debeVincularAntes() && !opciones.sinVincular) {
-      setVincular({ modo: "form" })
+    // Solo con lo que está en memoria (no frena Guardar). La obra sin localidad (10/11/2026) también abre el cartel
+    // y esa no se saltea: Zomatik la exige en el remito.
+    const faltaVincular = debeVincularAntes() && !opciones.sinVincular
+    if (faltaVincular || obraSinLocalidad) {
+      setVincular({ modo: "form", conVinculos: faltaVincular })
       return
     }
     setSaving(true)
@@ -1080,6 +1084,18 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     if (npEleccion.tipo === "saldo") return false
     if (editingDispatch && npDialogo?.nps.some((x) => x.estado === "ok")) return false
     return !npSinVincular
+  }
+  /** La obra del pedido sin localidad (10/11/2026): el cartel la pide antes de guardar */
+  const obraSinLocalidad = selectedSite && !normalizarLocalidad(selectedSite.localidad) ? { id: selectedSite.id, name: selectedSite.name } : null
+  /** Guarda en la obra la localidad que se completó en el cartel (ya normalizada); devuelve el error o null */
+  async function guardarLocalidadObra(localidad: string): Promise<string | null> {
+    if (!obraSinLocalidad) return null
+    const obra = obraSinLocalidad
+    const { error } = await createClient().from("construction_sites").update({ localidad } as any).eq("id", obra.id)
+    if (error) return error.message
+    setClients((cs) => cs.map((c) => ({ ...c, construction_sites: c.construction_sites?.map((s) => (s.id === obra.id ? { ...s, localidad } : s)) })))
+    logActivity({ action: "editar", entity: "obra", entityId: obra.id, reference: obra.name, plantId: form.plant_id || null, details: { Obra: obra.name, Localidad: localidad, Desde: "Programación (al guardar el pedido)" } })
+    return null
   }
   /** Después de vincular: el cliente o la fórmula en memoria, para que el control no vuelva a saltar. */
   function alVincular(tipo: "cliente" | "formula", codigo: number, vinculoHecho: boolean) {
@@ -1808,6 +1824,9 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           // El pedido guardado, solo si el formulario sigue con su cliente y su fórmula (si no, "pedido nuevo")
           pedidoId={editingDispatch && editingDispatch.client_id === form.client_id && editingDispatch.formula_id === form.formula_id ? editingDispatch.id : null}
           alTerminar="nada"
+          conVinculos={vincular.conVinculos !== false}
+          obraSinLocalidad={obraSinLocalidad}
+          guardarLocalidad={guardarLocalidadObra}
           onVinculado={(tipo, codigo, _nombre, hecho) => alVincular(tipo, codigo, hecho)}
           onUsarCliente={(c) => {
             if (!clients.some((x) => x.id === c.id)) setClients((cs) => [...cs, { id: c.id, name: c.name, zomatik_codigo: c.zomatik_codigo, construction_sites: [] }])
