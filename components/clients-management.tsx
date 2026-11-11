@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
-import { completarVacios, usarDelMapa, type DireccionMapa } from "@/lib/geo-direccion"
+import { completarVacios, usarDelMapa, normalizarLocalidad, FALTA_LOCALIDAD, type DireccionMapa } from "@/lib/geo-direccion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -348,8 +348,10 @@ export function ClientsManagement() {
       toast({ title: "Error", description: "La dirección es obligatoria", variant: "destructive" })
       return
     }
-    if (!siteForm.localidad.trim()) {
-      toast({ title: "Error", description: "La localidad es obligatoria", variant: "destructive" })
+    // Localidad obligatoria: Zomatik la exige en el remito. Se guarda sin espacios de más y con mayúscula inicial (10/11/2026)
+    const localidad = normalizarLocalidad(siteForm.localidad)
+    if (!localidad) {
+      toast({ title: "Falta la localidad", description: FALTA_LOCALIDAD, variant: "destructive" })
       return
     }
 
@@ -357,7 +359,7 @@ export function ClientsManagement() {
     const siteData = {
       name:                   siteForm.name.trim(),
       address:                siteForm.address.trim(),
-      localidad:              siteForm.localidad.trim(),
+      localidad,
       client_id:              selectedClient.id,
       travel_time_minutes:    parseInt(siteForm.travel_time_minutes) || 30,
       unload_time_minutes:    parseInt(siteForm.unload_time_minutes) || 20,
@@ -913,7 +915,7 @@ export function ClientsManagement() {
           {editingSite && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-obra" ejemplo="Ej: el cliente pasó otra dirección" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsSiteDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveSite} disabled={!siteForm.name || !siteForm.address || !siteForm.localidad || (!!editingSite && !motivoValido(motivo))}>
+            <Button onClick={handleSaveSite} disabled={!siteForm.name || !siteForm.address || (!!editingSite && !motivoValido(motivo))}>
               {editingSite ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>
