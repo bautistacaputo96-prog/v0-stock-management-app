@@ -186,6 +186,9 @@ export function ClientsManagement() {
       toast({ title: "Error", description: "No se pudieron cargar los clientes", variant: "destructive" })
     } else {
       setClients(data || [])
+      // El cliente abierto se refresca con lo recién guardado: si no, una segunda edición de la obra parte de los datos
+      // viejos y pisa lo que se guardó antes (dirección y ubicación volvían atrás, 10/11/2026).
+      setSelectedClient((prev) => (prev ? (data || []).find((c) => c.id === prev.id) ?? prev : prev))
     }
     setLoading(false)
   }
