@@ -110,6 +110,15 @@ export function esSerieRebucret(numero: unknown): boolean {
   return punto === SERIE_REBUCRET.punto && v >= SERIE_REBUCRET.desde && v <= SERIE_REBUCRET.hasta
 }
 
+/**
+ * Bloque de 100 números para buscar en el listado de pedidos ("NP2 0001-00002095" → "0001-000020"): el control de NP
+ * eliminadas busca el bloque entero, así la búsqueda trae las vecinas de la serie y se sabe que el listado respondió.
+ */
+export function bloqueNp(numero: unknown): string | null {
+  const n = numeroNormalizado(numero)
+  return n ? n.slice(0, -2) : null
+}
+
 /** "NP 0001-00001176" / "NP2 0001-00002080". */
 export function numeroCompleto(comprobante: "15" | "16", numero: string): string {
   return `${PREFIJO[comprobante]} ${numeroNormalizado(numero) || numero}`

@@ -21,7 +21,7 @@ import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
-  autorizacionEnListado, tieneFormAutorizar, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type Renglon,
+  autorizacionEnListado, tieneFormAutorizar, bloqueNp, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
@@ -808,4 +808,90 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     if (grabado) return { estado: "pendiente", mensaje: `Se cortó al grabar la NP (${m}). Antes de reintentar se relee en Zomatik.`, paso, grabado: true, leido: leidoAntes }
     return { estado: esDeRed(e) ? "pendiente" : "error", mensaje: m, paso, leido: leidoAntes }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Control de NP eliminadas a mano en Zomatik (SOLO LECTURA: listado de pedidos de REBUCRET)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que dice una lectura: la NP está, no está (con el listado leído bien y trayendo NP de su serie) o no se pudo saber.
+ * Con "ilegible" no se concluye nada.
+ */
+export type LecturaNp = { estado: "esta" } | { estado: "no_esta" } | { estado: "ilegible"; motivo: string }
+
+export type NpAControlar = { id: string; numero: string; codigo: number | null }
+
+/** ¿La fila del listado es esta NP? Por el código de Zomatik o por el número y el comprobante (NP / NP2). */
+function esLaNp(f: FilaPedido, np: NpAControlar): boolean {
+  if (np.codigo && f.codigo === np.codigo) return true
+  return numeroNormalizado(f.numero) === numeroNormalizado(np.numero) && comprobanteDeNumero(f.numero) === comprobanteDeNumero(np.numero)
+}
+
+/**
+ * Busca cada NP en el listado de pedidos de REBUCRET, sin escribir nada. Por cada bloque de 100 números ("0001-000020")
+ * se lee el listado con ese número: tiene que venir de REBUCRET, en una sola página y con NP de la misma serie y
+ * comprobante (si no, "ilegible"). Si la NP no aparece en el bloque, se confirma con su número exacto (como `porNumero`):
+ * recién si tampoco aparece, "no_esta". Una falla de red o de sesión deja todo lo que falta "ilegible".
+ * `seguir`: si devuelve false, no se lee otro bloque (lo que quede, sin lectura).
+ */
+export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o: { latir?: () => Promise<void>; seguir?: () => boolean } = {}): Promise<Map<string, LecturaNp>> {
+  const out = new Map<string, LecturaNp>()
+  const bloques = new Map<string, NpAControlar[]>()
+  for (const np of nps) {
+    const b = bloqueNp(np.numero)
+    if (!b || !esSerieRebucret(np.numero)) {
+      out.set(np.id, { estado: "ilegible", motivo: "el número no es de la serie de REBUCRET" })
+      continue
+    }
+    bloques.set(b, [...(bloques.get(b) || []), np])
+  }
+  const ilegibles = (lista: NpAControlar[], motivo: string) => lista.forEach((np) => out.set(np.id, { estado: "ilegible", motivo }))
+  /** El listado de REBUCRET con ese número (o "ilegible" con el motivo). */
+  const leer = async (numero: string): Promise<{ filas: FilaPedido[] } | { motivo: string }> => {
+    await o.latir?.()
+    await aRebucret(nav)
+    const l = await listado(nav, { bus_numero: numero }, SUCURSAL_REBUCRET)
+    if (l.sucursalPagina !== SUCURSAL_REBUCRET) return { motivo: "el listado de pedidos vino de otra sucursal" }
+    if ((l.paginas ?? 1) > 1 || l.paginado) return { motivo: "el listado de pedidos tiene más de una página" }
+    return { filas: l.filas }
+  }
+  const lista = [...bloques.entries()]
+  for (let i = 0; i < lista.length; i++) {
+    const [bloque, deBloque] = lista[i]
+    if (o.seguir && !o.seguir()) break
+    try {
+      const l = await leer(bloque)
+      if ("motivo" in l) {
+        ilegibles(deBloque, l.motivo)
+        continue
+      }
+      for (const np of deBloque) {
+        if (l.filas.some((f) => esLaNp(f, np))) {
+          out.set(np.id, { estado: "esta" })
+          continue
+        }
+        // La búsqueda tiene que traer otras NP de la misma serie y comprobante: si no trae ninguna, no se sabe si anduvo
+        const comp = comprobanteDeNumero(np.numero)
+        const deSerie = l.filas.filter((f) => esSerieRebucret(f.numero) && bloqueNp(f.numero) === bloque && comprobanteDeNumero(f.numero) === comp)
+        if (!deSerie.length) {
+          out.set(np.id, { estado: "ilegible", motivo: "la búsqueda no trajo NP de esa serie" })
+          continue
+        }
+        // Segunda mirada, por el número exacto
+        const exacta = await leer(numeroNormalizado(np.numero) || np.numero)
+        if ("motivo" in exacta) out.set(np.id, { estado: "ilegible", motivo: exacta.motivo })
+        else out.set(np.id, exacta.filas.some((f) => esLaNp(f, np)) ? { estado: "esta" } : { estado: "no_esta" })
+      }
+    } catch (e) {
+      const sinLeer = deBloque.filter((np) => !out.has(np.id))
+      ilegibles(sinLeer, mensajeDe(e))
+      if (esDeRed(e)) {
+        // Sin sesión o sin red no se insiste: lo que falta queda sin lectura
+        for (const [, resto] of lista.slice(i + 1)) ilegibles(resto, mensajeDe(e))
+        break
+      }
+    }
+  }
+  return out
 }

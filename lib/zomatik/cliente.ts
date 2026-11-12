@@ -474,6 +474,32 @@ export async function navegadorNp(llave: LlaveNp): Promise<NavegadorNp> {
 }
 
 /**
+ * Navegador de SOLO LECTURA con la forma del de la NP (para el control de NP eliminadas, `buscarNpEnZomatik`): no
+ * habilita ningún grupo de escritura, así que solo pasa lo de la lista cerrada de lectura (sucursal y buscadores).
+ */
+export async function navegadorLectura(): Promise<NavegadorNp> {
+  const s = await obtenerSesion()
+  const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
+    const html = Buffer.from(await r.arrayBuffer()).toString("latin1")
+    const loc = r.status >= 300 && r.status < 400 ? rutaDeLocation(r.headers.get("location") || "", ruta) : null
+    if (loc && /^index\.php/i.test(loc)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+    return { status: r.status, location: loc, html }
+  }
+  return {
+    async get(ruta) {
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual" }), ruta)
+    },
+    async post(ruta, cuerpo, contentType) {
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual" }), ruta)
+    },
+    async sucursal(id) {
+      return elegirSucursal(s.cookie, id)
+    },
+  }
+}
+
+/**
  * Navegador del robot de OF + remito (Z1): igual al de la NP, con el grupo de Z1 habilitado. `llave` la arma
  * `z1-servidor.ts` después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida) en la base.
  */
