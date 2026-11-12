@@ -1273,8 +1273,21 @@ export const DIAS_CONTROL_ELIMINADAS = 60
 export const ENTRE_LECTURAS_MS = 6 * 60 * 60_000
 /** `details.Control` de las entradas de Actividad del control (la marca de "sospechosa" vive ahí, sin cambiar la base). */
 export const CONTROL_ELIMINADA = "np_eliminada"
+/** Llave del control (`integraciones`): corre solo si existe esta fila. Sin la fila (como arranca), apagado. */
+export const CLAVE_CONTROL_ELIMINADAS = "np_control_eliminadas"
+/** Noches seguidas con todo ilegible (`integraciones`, valor `{"noches":[…],"avisado":bool}`): se borra al leer bien. */
+export const CLAVE_CONTROL_ILEGIBLE = "np_control_eliminadas_ilegible"
+/** Con tantas noches seguidas sin poder leer, un mail a Bautista (uno solo hasta que vuelva a leer bien). */
+export const NOCHES_ILEGIBLE_AVISO = 3
+/** Más de esto "no está" en una misma pasada = posible falla de lectura: no se marca ninguna. */
+export const MAX_NO_ESTA = 2
+/** Las lecturas en Zomatik paran con este margen antes del límite de la función. */
+export const MARGEN_LECTURA_MS = 20_000
+/** Antes de cada cambio en la base (o un mail) tiene que quedar al menos esto. */
+const MARGEN_ESCRITURA_MS = 10_000
 export const MSJ_ELIMINADA_REVISAR = "La NP fue eliminada en Zomatik: ¿la hicieron a mano? Revisá antes de generar otra"
 export const msjEliminadaAnulada = (hoy: string) => `Eliminada en Zomatik (detectado el ${hoy.slice(8, 10)}/${hoy.slice(5, 7)})`
+const ddmm = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`
 
 export type DependenciasControl = {
   /** Navegador de solo lectura (en las pruebas, uno simulado). */
@@ -1284,128 +1297,216 @@ export type DependenciasControl = {
 }
 export const DEPENDENCIAS_CONTROL: DependenciasControl = { navegador: navegadorLectura, buscar: buscarNpEnZomatik, avisarError: avisarErrorZomatik }
 
-export type ResultadoControl = { controladas: number; ilegibles: number; sospechosas: number; anuladas: number; revisar: number; ocupado?: boolean; sinTiempo?: boolean }
+export type ResultadoControl = {
+  controladas: number; ilegibles: number; sospechosas: number; anuladas: number; revisar: number; avisos: number
+  apagado?: boolean; ocupado?: boolean; sinTiempo?: boolean; freno?: boolean
+}
 
 type MarcaControl = { Lectura?: string; NpId?: string; Avisado?: string; creada: string }
 
+/** Las entradas de Actividad del control (lo más nuevo primero). */
+async function marcasControl(sb: SB): Promise<MarcaControl[]> {
+  const desde = new Date(Date.now() - (DIAS_CONTROL_ELIMINADAS + 10) * 86_400_000).toISOString()
+  const { data, error } = await sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np").eq("details->>Control", CONTROL_ELIMINADA).gte("created_at", desde).order("created_at", { ascending: false }).limit(2000)
+  if (error) throw error
+  return ((data as { details: Record<string, unknown> | null; created_at: string }[] | null) || []).map((x) => ({ ...(x.details || {}), creada: x.created_at }) as MarcaControl)
+}
+
+const logControl = (sb: SB, usuario: string, np: FilaNpDB, detalle: Record<string, unknown>) =>
+  actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { ...detalle, Control: CONTROL_ELIMINADA, NpId: np.id, NP: np.numero, Marca: np.marca } })
+
+/** Los pedidos activos (ni completos ni cancelados) que usan la NP, y sus usos activos. */
+async function usoActivoDe(sb: SB, npId: string): Promise<{ usos: UsoDB[]; activos: { id: string; status: string }[] }> {
+  const usos = (await usosDe(sb, "np_id", [npId])).filter((u) => u.activo)
+  const pedidoIds = [...new Set(usos.map((u) => u.scheduled_dispatch_id).filter(Boolean) as string[])]
+  const { data: peds, error } = pedidoIds.length ? await sb.from("scheduled_dispatches").select("id, status").in("id", pedidoIds) : { data: [], error: null }
+  if (error) throw error
+  return { usos, activos: ((peds as { id: string; status: string }[]) || []).filter((p) => p.status !== "completed" && p.status !== "cancelled") }
+}
+
 /**
- * Busca en el listado de pedidos de Zomatik (REBUCRET, solo lectura) las NP "ok" con número de los últimos 60 días. Una
- * NP que no aparece (con el listado leído bien y trayendo NP de su serie) queda SOSPECHOSA en Actividad; si en otra
- * pasada (6 h después o más) sigue sin aparecer, se da por eliminada:
- *   - pedido activo (no completo ni cancelado) que la usa: "revisar" + un mail a Bautista (no se anula: si no,
- *     `sincronizarPedido` generaría otra y podría duplicar una que se hizo a mano);
- *   - si no (pedido completo o cancelado, sin usos activos, o saldo cerrado): "anulada", los usos inactivos con lo
- *     remitido de verdad contra ella (`remitidoContra`) y Actividad.
- * Si aparece después de una sospecha, la sospecha se cierra. Con el listado ilegible no se concluye nada.
+ * Con la llave (`integraciones.np_control_eliminadas`) prendida, busca en el listado de pedidos de Zomatik (REBUCRET,
+ * solo lectura) las NP "ok" con número de los últimos 60 días. Una NP que no aparece (con el listado leído bien) queda
+ * SOSPECHOSA en Actividad; si en otra pasada (6 h después o más) sigue sin aparecer, se da por eliminada:
+ *   - un pedido activo (no completo ni cancelado) la usa: "revisar" + un mail a Bautista (no se anula: si no,
+ *     `sincronizarPedido` generaría otra y podría duplicar una que se hizo a mano). Si el mail no sale, se reintenta;
+ *   - si no: "anulada", con los usos inactivos y lo remitido de verdad contra ella (`remitidoContra`), y Actividad.
+ * Freno: si en una pasada faltan más de 2, no se marca ninguna (posible falla de lectura) y se avisa. Con el listado
+ * ilegible no se concluye nada; 3 noches seguidas así, un mail. Si aparece después de una sospecha, se cierra.
  */
 export async function controlarNpEliminadas(usuario: string, o: { inicio: number; hastaMs?: number; sb?: SB; dep?: DependenciasControl } = { inicio: Date.now() }): Promise<ResultadoControl> {
   const sb = o.sb ?? sbServicio()
   const dep = o.dep ?? DEPENDENCIAS_CONTROL
+  const avisarError = dep.avisarError ?? avisarErrorZomatik
   const hasta = o.hastaMs ?? 55_000
-  const res: ResultadoControl = { controladas: 0, ilegibles: 0, sospechosas: 0, anuladas: 0, revisar: 0 }
-  if (Date.now() - o.inicio > hasta - 15_000) return { ...res, sinTiempo: true }
+  const quedan = () => hasta - (Date.now() - o.inicio)
+  const res: ResultadoControl = { controladas: 0, ilegibles: 0, sospechosas: 0, anuladas: 0, revisar: 0, avisos: 0 }
+  const { data: llave, error: el } = await sb.from("integraciones").select("clave").eq("clave", CLAVE_CONTROL_ELIMINADAS).maybeSingle()
+  if (el) throw el
+  if (!llave) return { ...res, apagado: true }
+  if (quedan() < MARGEN_LECTURA_MS + 5_000) return { ...res, sinTiempo: true }
   const hoy = hoyAR()
   const desde = new Date(Date.parse(`${hoy}T12:00:00Z`) - DIAS_CONTROL_ELIMINADAS * 86_400_000).toISOString().slice(0, 10)
-  const { data, error } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "ok").not("numero", "is", null).gte("fecha", desde).order("fecha").limit(500)
+  const { data, error } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "ok").not("numero", "is", null).gte("fecha", desde).order("fecha", { ascending: false }).limit(500)
   if (error) throw error
   const nps = ((data as unknown as FilaNpDB[]) || []).filter((x) => x.numero && esSerieRebucret(x.numero) && (!x.sucursal || x.sucursal === SUCURSAL_REBUCRET))
-  if (!nps.length) return res
   res.controladas = nps.length
 
-  // Lectura en Zomatik con el turno del robot (no se cruza con una NP que se está generando en otra sucursal)
-  const quien = `control·${usuario}·${o.inicio.toString(36)}`
-  const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
-  if (et) throw et
-  if (turno !== true) return { ...res, ocupado: true }
-  let lecturas = new Map<string, LecturaNp>()
-  try {
-    let ultima = Date.now()
-    const latir = async () => {
-      if (Date.now() - ultima < 10_000) return
-      ultima = Date.now()
-      await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
+  if (nps.length) {
+    // Lectura en Zomatik con el turno del robot (no se cruza con una NP que se está generando en otra sucursal)
+    const quien = `control·${usuario}·${o.inicio.toString(36)}`
+    const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
+    if (et) throw et
+    let lecturas = new Map<string, LecturaNp>()
+    if (turno !== true) res.ocupado = true
+    else {
+      try {
+        let ultima = Date.now()
+        const latir = async () => {
+          if (Date.now() - ultima < 10_000) return
+          ultima = Date.now()
+          await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
+        }
+        const nav = await dep.navegador()
+        lecturas = await (dep.buscar ?? buscarNpEnZomatik)(nav, nps.map((x) => ({ id: x.id, numero: x.numero!, codigo: x.zomatik_codigo })), { latir, seguir: () => quedan() > MARGEN_LECTURA_MS })
+      } catch (e) {
+        // Sin sesión o sin red: no se concluye nada
+        console.error("[zomatik-np] control de eliminadas:", errorInterno(e) ?? mensajeZomatik(e))
+      } finally {
+        await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
+      }
     }
-    const nav = await dep.navegador()
-    lecturas = await (dep.buscar ?? buscarNpEnZomatik)(nav, nps.map((x) => ({ id: x.id, numero: x.numero!, codigo: x.zomatik_codigo })), { latir, seguir: () => Date.now() - o.inicio < hasta - 5_000 })
-  } catch (e) {
-    // Sin sesión o sin red: no se concluye nada
-    console.error("[zomatik-np] control de eliminadas:", errorInterno(e) ?? mensajeZomatik(e))
-  } finally {
-    await sb.rpc("zomatik_robot_soltar", { p_quien: quien })
-  }
 
-  // Las lecturas anteriores (la última de cada NP manda)
-  const desdeMarcas = new Date(Date.now() - (DIAS_CONTROL_ELIMINADAS + 10) * 86_400_000).toISOString()
-  const { data: act } = await sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np").eq("details->>Control", CONTROL_ELIMINADA).gte("created_at", desdeMarcas).order("created_at", { ascending: false }).limit(2000)
-  const marcas = ((act as { details: Record<string, unknown> | null; created_at: string }[] | null) || []).map((x) => ({ ...(x.details || {}), creada: x.created_at }) as MarcaControl)
-  const ultimaDe = (id: string) => marcas.find((m) => m.NpId === id)
-  const ahora = Date.now()
-  const log = (np: FilaNpDB, detalle: Record<string, unknown>) =>
-    actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`, detalle: { ...detalle, Control: CONTROL_ELIMINADA, NpId: np.id, NP: np.numero, Marca: np.marca } })
+    // Freno: muchas que faltan a la vez parece una falla de lectura, no NP borradas a mano
+    const faltan = nps.filter((x) => lecturas.get(x.id)?.estado === "no_esta")
+    if (faltan.length > MAX_NO_ESTA) {
+      res.freno = true
+      for (const x of faltan) lecturas.set(x.id, { estado: "ilegible", motivo: "posible falla de lectura" })
+      const r = await avisarError(sb, "Control de NP eliminadas: posible falla de lectura", [
+        `Esta noche ${faltan.length} NP no aparecieron en el listado de pedidos de Zomatik: ${faltan.map((x) => x.numero).join(", ")}.`,
+        `Con más de ${MAX_NO_ESTA} a la vez no se marca ninguna: puede ser una falla de lectura. Fijate en Zomatik si de verdad las eliminaron.`,
+      ])
+      if (!r.enviado) console.error("[zomatik-np] aviso del freno:", r.motivo)
+    }
 
-  for (const np of nps) {
-    const l = lecturas.get(np.id)
-    const ultima = ultimaDe(np.id)
-    const sospechosa = ultima?.Lectura === "sospecha"
-    try {
-      if (!l || l.estado === "ilegible") {
-        res.ilegibles++
-        continue
+    const marcas = await marcasControl(sb)
+    const ahora = Date.now()
+    const log = (np: FilaNpDB, d: Record<string, unknown>) => logControl(sb, usuario, np, d)
+    for (const np of nps) {
+      const l = lecturas.get(np.id)
+      const ultima = marcas.find((m) => m.NpId === np.id)
+      const sospechosa = ultima?.Lectura === "sospecha"
+      try {
+        if (!l || l.estado === "ilegible") {
+          res.ilegibles++
+          continue
+        }
+        if (quedan() < MARGEN_ESCRITURA_MS) continue // sin tiempo: lo que falte, en la próxima pasada
+        if (l.estado === "esta") {
+          if (sospechosa) await log(np, { "Qué pasó": `${np.numero} volvió a aparecer en Zomatik: no estaba eliminada`, Lectura: "aparece" })
+          continue
+        }
+        // No está: la primera vez queda sospechosa; en otra pasada, eliminada
+        if (!sospechosa) {
+          await log(np, { "Qué pasó": `${np.numero} no aparece en el listado de Zomatik: se vuelve a mirar en la próxima pasada`, Lectura: "sospecha" })
+          res.sospechosas++
+          continue
+        }
+        if (ahora - Date.parse(ultima!.creada) < ENTRE_LECTURAS_MS) continue // misma pasada (o una repetida): se espera la próxima
+        const r = await npEliminada(sb, np, { usuario, hoy, log })
+        if (r === "anulada") res.anuladas++
+        if (r === "revisar") res.revisar++
+      } catch (e) {
+        console.error("[zomatik-np] control de eliminadas", np.numero, (e as Error)?.message)
       }
-      if (l.estado === "esta") {
-        if (sospechosa) await log(np, { "Qué pasó": `${np.numero} volvió a aparecer en Zomatik: no estaba eliminada`, Lectura: "aparece" })
-        continue
+    }
+    // Noches seguidas sin poder leer nada (no cuenta si el robot estaba ocupado)
+    if (!res.ocupado) {
+      try {
+        await registrarNoche(sb, hoy, !nps.some((x) => ["esta", "no_esta"].includes(lecturas.get(x.id)?.estado || "")), avisarError)
+      } catch (e) {
+        console.error("[zomatik-np] noches ilegibles", (e as Error)?.message)
       }
-      // No está: la primera vez queda sospechosa; en otra pasada, eliminada
-      if (!sospechosa) {
-        await log(np, { "Qué pasó": `${np.numero} no aparece en el listado de Zomatik: se vuelve a mirar en la próxima pasada`, Lectura: "sospecha" })
-        res.sospechosas++
-        continue
-      }
-      if (ahora - Date.parse(ultima!.creada) < ENTRE_LECTURAS_MS) continue // misma pasada (o una repetida): se espera la próxima
-      const r = await npEliminada(sb, np, { usuario, hoy, log, avisarError: dep.avisarError ?? avisarErrorZomatik, yaAvisada: marcas.some((m) => m.NpId === np.id && m.Lectura === "revisar" && m.Avisado === "sí") })
-      if (r === "anulada") res.anuladas++
-      if (r === "revisar") res.revisar++
-    } catch (e) {
-      console.error("[zomatik-np] control de eliminadas", np.numero, (e as Error)?.message)
     }
   }
+  // El mail de las que quedaron "revisar" (también el que no salió en una pasada anterior)
+  res.avisos = await avisosEliminadas(sb, { usuario, avisarError, quedan })
   return res
 }
 
 /** Una NP confirmada como eliminada en Zomatik: "revisar" si la usa un pedido activo; si no, "anulada". */
-async function npEliminada(
-  sb: SB,
-  np: FilaNpDB,
-  o: { usuario: string; hoy: string; log: (np: FilaNpDB, d: Record<string, unknown>) => Promise<void>; avisarError: AvisarFn; yaAvisada: boolean },
-): Promise<"anulada" | "revisar" | "cambió"> {
-  const usos = (await usosDe(sb, "np_id", [np.id])).filter((u) => u.activo)
-  const pedidoIds = [...new Set(usos.map((u) => u.scheduled_dispatch_id).filter(Boolean) as string[])]
-  const { data: peds, error } = pedidoIds.length ? await sb.from("scheduled_dispatches").select("id, status").in("id", pedidoIds) : { data: [], error: null }
-  if (error) throw error
-  const activos = ((peds as { id: string; status: string }[]) || []).filter((p) => p.status !== "completed" && p.status !== "cancelled")
-  if (np.saldo_decision !== "cerrada" && activos.length) {
+async function npEliminada(sb: SB, np: FilaNpDB, o: { usuario: string; hoy: string; log: (np: FilaNpDB, d: Record<string, unknown>) => Promise<void> }): Promise<"anulada" | "revisar" | "cambió"> {
+  const { usos, activos } = await usoActivoDe(sb, np.id)
+  if (activos.length) {
+    // El mail lo manda `avisosEliminadas` (y lo reintenta si no sale)
     if (!(await guardarSi(sb, np.id, "ok", { estado: "revisar", mensaje: MSJ_ELIMINADA_REVISAR, proximo_intento: null }))) return "cambió"
-    // Un solo mail por NP
-    let avisado = o.yaAvisada ? "sí" : "no"
-    if (!o.yaAvisada) {
-      const r = await o.avisarError(sb, `NP eliminada en Zomatik: ${np.numero}`, [
-        `La ${np.numero} no aparece más en el listado de pedidos de Zomatik (dos controles seguidos).`,
-        `La usa ${activos.length === 1 ? "un pedido activo" : `${activos.length} pedidos activos`}: ${activos.map((p) => `Pedido ${p.id.slice(0, 8)}`).join(", ")}.`,
-        "No se anuló ni se genera otra sola: puede que la hayan rehecho a mano. Revisala en Programación (Revisar NP) antes de generar otra.",
-        `Marca en observaciones: ${np.marca}`,
-      ])
-      if (!r.enviado) console.error("[zomatik-np] aviso de NP eliminada:", r.motivo)
-      avisado = r.enviado ? "sí" : "no"
-    }
-    await o.log(np, { "Qué pasó": `${np.numero} fue eliminada en Zomatik y la usa un pedido activo: para revisar`, Lectura: "revisar", Avisado: avisado })
+    await o.log(np, { "Qué pasó": `${np.numero} fue eliminada en Zomatik y la usa un pedido activo: para revisar`, Lectura: "revisar" })
     return "revisar"
   }
-  if (!(await guardarSi(sb, np.id, "ok", { estado: "anulada", mensaje: msjEliminadaAnulada(o.hoy), proximo_intento: null }))) return "cambió"
-  // Los usos quedan inactivos con lo remitido de verdad contra ella (suele ser 0)
+  // Primero los usos (inactivos, con lo remitido de verdad contra ella: suele ser 0) y después la NP. Si se corta en el
+  // medio, la NP sigue "ok" con la sospecha y la próxima pasada la vuelve a confirmar y termina.
   await desvincularDeAnulada(sb, np, usos, "NP eliminada en Zomatik")
+  if (!(await guardarSi(sb, np.id, "ok", { estado: "anulada", mensaje: msjEliminadaAnulada(o.hoy), proximo_intento: null }))) return "cambió"
   await o.log(np, { "Qué pasó": `${np.numero} fue eliminada en Zomatik: se anuló`, Lectura: "anulada" })
   return "anulada"
+}
+
+/**
+ * Mail a Bautista de cada NP que el control dejó "revisar", uno solo por NP: lo que ya salió se ve en Actividad
+ * (`Lectura: "aviso"`, `Avisado: "sí"`). Si no salió, se reintenta en la próxima pasada.
+ */
+async function avisosEliminadas(sb: SB, o: { usuario: string; avisarError: AvisarFn; quedan: () => number }): Promise<number> {
+  const { data, error } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "revisar").eq("mensaje", MSJ_ELIMINADA_REVISAR).limit(50)
+  if (error) throw error
+  const nps = (data as unknown as FilaNpDB[]) || []
+  if (!nps.length) return 0
+  const marcas = await marcasControl(sb)
+  let enviados = 0
+  for (const np of nps) {
+    if (marcas.some((m) => m.NpId === np.id && m.Lectura === "aviso" && m.Avisado === "sí")) continue
+    if (o.quedan() < MARGEN_ESCRITURA_MS) break
+    try {
+      const { activos } = await usoActivoDe(sb, np.id)
+      const r = await o.avisarError(sb, `NP eliminada en Zomatik: ${np.numero}`, [
+        `La ${np.numero} no aparece más en el listado de pedidos de Zomatik (dos controles en noches distintas).`,
+        activos.length ? `La usa ${activos.length === 1 ? "un pedido activo" : `${activos.length} pedidos activos`}: ${activos.map((p) => `Pedido ${p.id.slice(0, 8)}`).join(", ")}.` : "",
+        "No se anuló ni se genera otra sola: puede que la hayan rehecho a mano. Revisala en Programación (Revisar NP) antes de generar otra.",
+        `Marca en observaciones: ${np.marca}`,
+      ].filter(Boolean))
+      if (!r.enviado) console.error("[zomatik-np] aviso de NP eliminada:", r.motivo)
+      await logControl(sb, o.usuario, np, { "Qué pasó": r.enviado ? `Aviso a Bautista: ${np.numero} eliminada en Zomatik` : `No salió el aviso de ${np.numero} eliminada en Zomatik: se reintenta en la próxima pasada`, Lectura: "aviso", Avisado: r.enviado ? "sí" : "no" })
+      if (r.enviado) enviados++
+    } catch (e) {
+      console.error("[zomatik-np] aviso de NP eliminada", np.numero, (e as Error)?.message)
+    }
+  }
+  return enviados
+}
+
+/** Lleva la cuenta de noches seguidas con todo ilegible; a la 3.ª, un mail (uno solo hasta que vuelva a leer bien). */
+async function registrarNoche(sb: SB, hoy: string, todoIlegible: boolean, avisar: AvisarFn): Promise<void> {
+  if (!todoIlegible) {
+    await sb.from("integraciones").delete().eq("clave", CLAVE_CONTROL_ILEGIBLE)
+    return
+  }
+  const { data } = await sb.from("integraciones").select("valor").eq("clave", CLAVE_CONTROL_ILEGIBLE).maybeSingle()
+  let antes: { noches?: unknown; avisado?: unknown } = {}
+  try {
+    antes = JSON.parse((data as { valor?: string } | null)?.valor || "{}")
+  } catch {
+    // mal escrita: se empieza de cero
+  }
+  const noches = [...new Set([...(Array.isArray(antes.noches) ? antes.noches.map(String) : []), hoy])].sort().slice(-10)
+  let avisado = antes.avisado === true
+  if (!avisado && noches.length >= NOCHES_ILEGIBLE_AVISO) {
+    const r = await avisar(sb, "Control de NP eliminadas: no puede leer Zomatik", [
+      `Hace ${noches.length} noches seguidas que el control no puede leer el listado de pedidos de Zomatik (${noches.map(ddmm).join(", ")}).`,
+      "Mientras siga así no detecta las NP eliminadas a mano. Este aviso llega una sola vez hasta que vuelva a leer bien.",
+    ])
+    if (!r.enviado) console.error("[zomatik-np] aviso de noches ilegibles:", r.motivo)
+    avisado = r.enviado
+  }
+  await sb.from("integraciones").upsert({ clave: CLAVE_CONTROL_ILEGIBLE, valor: JSON.stringify({ noches, avisado }), actualizado: new Date().toISOString(), conectado_por: "sistema" } as never, { onConflict: "clave" })
 }
 
 // ---------------------------------------------------------------------------

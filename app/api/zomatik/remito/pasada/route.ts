@@ -1,7 +1,8 @@
 /**
  * Zomatik Z1 · Pasada de la noche (16.3): remite lo del día que quedó sin remitir (pedidos finalizados o no) y trabaja
  * lo pendiente. Solo el cron, con `Authorization: Bearer <CRON_SECRET>`. Con la llave de remitir apagada no hace nada.
- * Después, con el tiempo que quede, el control de NP eliminadas a mano en Zomatik (solo lectura, np-servidor.ts).
+ * Después, con el tiempo que quede, el control de NP eliminadas a mano en Zomatik (solo lectura, np-servidor.ts): corre
+ * solo si existe la fila `np_control_eliminadas` en `integraciones` (arranca apagado: sin la fila no hace nada).
  */
 import { NextResponse } from "next/server"
 import { respuestaError } from "@/lib/auth/servidor"

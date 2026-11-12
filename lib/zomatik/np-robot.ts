@@ -173,14 +173,16 @@ type Busqueda = { estado: "esta"; sucursal: string; codigo: number; numero: stri
 
 /**
  * Listado de pedidos con los filtros del buscador (descubre los campos como Z0). Devuelve también la sucursal que
- * muestra la página (si otro sistema la cambió en el medio, se nota) y cuántas páginas tiene.
+ * muestra la página (si otro sistema la cambió en el medio, se nota) y cuántas páginas tiene. Con `limpio`, todos los
+ * `bus_*` que trae el buscador van en blanco salvo los de `filtros` y la sucursal (lista blanca, como `listarOf`).
  */
-async function listado(nav: NavegadorNp, filtros: Record<string, string>, sucursal: string) {
+async function listado(nav: NavegadorNp, filtros: Record<string, string>, sucursal: string, limpio = false) {
   const pag = await nav.get("listado_pedidos.php")
   const f = camposFormulario(pag.html, /listado_pedidos\.php\?enviado=1|name="formulario"/i)
   if (!f) throw formato("buscador de pedidos")
+  const base = limpio ? Object.fromEntries(Object.entries(f.campos).map(([k, v]) => [k, /^bus_/i.test(k) ? "" : v])) : f.campos
   // En REBUCRET se filtra la sucursal 18 (el select trae 18, 20 y 22); en RUTA 25 se deja vacío
-  const campos = { ...f.campos, exportar: "0", bus_sucursal: sucursal === SUCURSAL_REBUCRET ? SUCURSAL_REBUCRET : "", ...filtros }
+  const campos = { ...base, exportar: "0", bus_sucursal: sucursal === SUCURSAL_REBUCRET ? SUCURSAL_REBUCRET : "", ...filtros }
   const r = await nav.post("listado_pedidos.php?enviado=1", bytes(queryLatin1(Object.entries(campos))), "application/x-www-form-urlencoded")
   return {
     html: r.html,
@@ -829,11 +831,13 @@ function esLaNp(f: FilaPedido, np: NpAControlar): boolean {
 }
 
 /**
- * Busca cada NP en el listado de pedidos de REBUCRET, sin escribir nada. Por cada bloque de 100 números ("0001-000020")
- * se lee el listado con ese número: tiene que venir de REBUCRET, en una sola página y con NP de la misma serie y
- * comprobante (si no, "ilegible"). Si la NP no aparece en el bloque, se confirma con su número exacto (como `porNumero`):
- * recién si tampoco aparece, "no_esta". Una falla de red o de sesión deja todo lo que falta "ilegible".
- * `seguir`: si devuelve false, no se lee otro bloque (lo que quede, sin lectura).
+ * Busca cada NP en el listado de pedidos de REBUCRET, sin escribir nada. Todos los `bus_*` del buscador van en blanco
+ * salvo el número y la sucursal (lista blanca). Por cada bloque de 100 números ("0001-000020") se lee el listado con
+ * ese número: tiene que venir de REBUCRET, en una sola página, con TODAS las filas de ese bloque y alguna NP de la misma
+ * serie y comprobante (si no, "ilegible": también así se nota si `bus_numero` se ignora o filtra distinto). Si la NP no
+ * aparece en el bloque, se confirma con su número exacto (todas las filas con ese número): recién si tampoco aparece,
+ * "no_esta". Una falla de red o de sesión deja todo lo que falta "ilegible".
+ * `seguir`: si devuelve false, no se lee nada más (lo que quede, sin lectura).
  */
 export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o: { latir?: () => Promise<void>; seguir?: () => boolean } = {}): Promise<Map<string, LecturaNp>> {
   const out = new Map<string, LecturaNp>()
@@ -848,12 +852,13 @@ export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o
   }
   const ilegibles = (lista: NpAControlar[], motivo: string) => lista.forEach((np) => out.set(np.id, { estado: "ilegible", motivo }))
   /** El listado de REBUCRET con ese número (o "ilegible" con el motivo). */
-  const leer = async (numero: string): Promise<{ filas: FilaPedido[] } | { motivo: string }> => {
+  const leer = async (numero: string, esDeLaBusqueda: (f: FilaPedido) => boolean): Promise<{ filas: FilaPedido[] } | { motivo: string }> => {
     await o.latir?.()
     await aRebucret(nav)
-    const l = await listado(nav, { bus_numero: numero }, SUCURSAL_REBUCRET)
+    const l = await listado(nav, { bus_numero: numero }, SUCURSAL_REBUCRET, true)
     if (l.sucursalPagina !== SUCURSAL_REBUCRET) return { motivo: "el listado de pedidos vino de otra sucursal" }
     if ((l.paginas ?? 1) > 1 || l.paginado) return { motivo: "el listado de pedidos tiene más de una página" }
+    if (l.filas.some((f) => !esDeLaBusqueda(f))) return { motivo: `la búsqueda por ${numero} trajo NP de otros números (el filtro no anduvo como se espera)` }
     return { filas: l.filas }
   }
   const lista = [...bloques.entries()]
@@ -861,7 +866,7 @@ export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o
     const [bloque, deBloque] = lista[i]
     if (o.seguir && !o.seguir()) break
     try {
-      const l = await leer(bloque)
+      const l = await leer(bloque, (f) => bloqueNp(f.numero) === bloque)
       if ("motivo" in l) {
         ilegibles(deBloque, l.motivo)
         continue
@@ -879,7 +884,12 @@ export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o
           continue
         }
         // Segunda mirada, por el número exacto
-        const exacta = await leer(numeroNormalizado(np.numero) || np.numero)
+        if (o.seguir && !o.seguir()) {
+          out.set(np.id, { estado: "ilegible", motivo: "sin tiempo para la segunda mirada" })
+          continue
+        }
+        const n = numeroNormalizado(np.numero) || np.numero
+        const exacta = await leer(n, (f) => numeroNormalizado(f.numero) === n)
         if ("motivo" in exacta) out.set(np.id, { estado: "ilegible", motivo: exacta.motivo })
         else out.set(np.id, exacta.filas.some((f) => esLaNp(f, np)) ? { estado: "esta" } : { estado: "no_esta" })
       }
