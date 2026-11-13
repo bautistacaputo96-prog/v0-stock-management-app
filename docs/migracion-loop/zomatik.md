@@ -1858,8 +1858,25 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 - El robot de Rebucret ahora acepta la OF nueva **PEN o FIN**: lo que asegura que es la nuestra es la marca.
 - Si la OF no diera stock, el remito queda "pendiente" (sin stock) y se reintenta cada 10 min, sin grabar nada.
 
+**Dato real del 13/11: la OF hay que "remitirla" (rama `feat/remitir-of`).**
+- Una OF nueva queda **PEN y sin stock** del hormigón hasta que se la remite. Sin stock el remito no sale: el robot frenaba en `continuar_remito` con "No hay stock … (0 m³)".
+- En el listado de OF, las PEN traen en la columna "Remitido" un lapicito: `<a href="remitir_ordenfabricacion.php?codigo=<código de la OF>"><img src="images/ic_editar.gif"></a>`. Las FIN ya no lo traen.
+- Un **GET** a `remitir_ordenfabricacion.php?codigo=8242` remitió la OF directo: sin confirmación, redirige al listado y la OF pasa a **FIN**.
+- **Paso nuevo del robot, "remitir la OF"** (`remitirOf` en `z1-robot.ts`): después de que la OF quedó `ok` (y de autorizar la NP), justo antes del remito.
+  1. Lee el listado de OF (depósito, desde el día del despacho o de la foto) y busca la OF por su número y su código.
+  2. Si ya está **FIN**, no hace nada (alguien la remitió a mano).
+  3. Si está **PEN** con el lapicito a **ese mismo código**: guarda el paso `remitir_of` (con `guardarSi`) y manda el GET.
+  4. Vuelve a leer el listado: **FIN** → `paso = 'of_remitida'` (y Actividad "OF remitida en Zomatik") y sigue con el remito.
+  5. Sigue PEN, no aparece, tiene otro código o el listado no se puede leer → la fila queda **pendiente** y se reintenta a los 10 min. Es idempotente: si ya quedó FIN, el GET no se repite.
+- **Lista cerrada:** `remitir_ordenfabricacion.php?codigo=N` es un GET del grupo de Z1, **atado al `of_codigo` de la fila**: el servidor pide un navegador aparte (`navegadorZ1(llave, of_codigo)`) para este paso, y con cualquier otro código la ruta se rechaza antes de salir. Ni la lectura, ni la NP, ni el ajuste la habilitan.
+- **Filas que ya estaban frenadas por "No hay stock":** las `pendiente` las toma la pasada de cada 10 min; las que quedaron en `revisar` (a la hora) se reintentan con "Remitir en Zomatik" (su paso `continuar_remito` es de antes de grabar). Las dos pasan por este paso.
+- Con un Grabar del remito cortado (`grabar_remito`, `verificar_remito`, `buscar_remito`) no se toca la OF: si se llegó a grabar, ya había stock.
+- Los despachos sin pedido (OF suelta, remito a mano) **no** pasan por este paso: remitir esa OF queda a mano, como su remito (a decidir si el robot también la remite).
+- El freno por falta de stock (`continuar_remito`) se queda: si después de remitir la OF sigue sin haber stock, frena como antes.
+
 ### 26.10 Pregunta que queda
 1. **¿La OF da stock al grabarla o hay que tocar "Generar" (`modificar_CV.php`)?** Se le preguntó a Bautista el 29/10. Hasta saberlo, `modificar_CV` no está en la lista cerrada.
+   - **13/11:** no da stock sola: hay que **remitirla** (`remitir_ordenfabricacion.php`, no `modificar_CV`). Ver "Dato real del 13/11" en 26.9.
 
 - Migración: sigue **sin aplicar y sin probar contra la base**. Cambios desde la primera versión:
   - `zomatik_remitos.tipo` ('pedido'/'suelto'); `np_id` y `comprobante` pueden quedar nulos en 'suelto';

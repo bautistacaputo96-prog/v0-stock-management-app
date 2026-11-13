@@ -136,10 +136,15 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   POST _autorizarpedido.php?orden=…&torden=              autorizar la NP antes del remito (solo autorizar=<entero>)
  *   GET  _comprobantes.php?ftarget=pedidos&ftargetid=N     LECTURA: los comprobantes de la NP (remitos y facturas), para
  *                                                          no repetir un remito que ya se hizo a mano (10/11)
+ *   GET  remitir_ordenfabricacion.php?codigo=N             "remitir" la OF (el lapicito de "Remitido" en el listado, REAL
+ *                                                          13/11: pasa de PEN a FIN y da el stock). SOLO con `ofARemitir` = N,
+ *                                                          el of_codigo de la fila; con cualquier otro código, no.
  * Nunca borrar, anular ni modificar uno existente.
  */
-export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST"): boolean {
+export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST", ofARemitir: number | null = null): boolean {
   const p = path.replace(/^\/+/, "")
+  if (/^remitir_ordenfabricacion\.php/i.test(p))
+    return metodo === "GET" && typeof ofARemitir === "number" && Number.isInteger(ofARemitir) && ofARemitir > 0 && p.toLowerCase() === `remitir_ordenfabricacion.php?codigo=${ofARemitir}`
   if (esRutaAutorizar(p, metodo)) return true
   if (Z1_PROHIBIDO.test(p)) return false
   if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p) || /^paginar_remitos\.php(\?rnd=\d+)?$/i.test(p)

@@ -86,6 +86,8 @@ type InitPedido = RequestInit & {
   escrituraNp?: boolean
   /** Z1: habilita el grupo de OF + remito (solo con la llave de remitir prendida, ver z1-servidor.ts). */
   escrituraZ1?: boolean
+  /** Z1: la OF que se puede "remitir" (remitir_ordenfabricacion.php?codigo=N): solo esa, el of_codigo de la fila. */
+  ofARemitir?: number | null
   /** Ajuste de la NP al finalizar: habilita su grupo, ATADO a esta NP (solo con la llave del ajuste, ver ajuste-servidor.ts). */
   escrituraAjuste?: number
 }
@@ -96,7 +98,7 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
   let cuerpo = init.body
   const seguir = init.redirect !== "manual" // el login lee la cookie de la respuesta, sin seguir
   for (let salto = 0; ; salto++) {
-    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo)) && !(typeof init.escrituraAjuste === "number" && rutaEscrituraAjuste(ruta, metodo, init.escrituraAjuste)))
+    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo, init.ofARemitir ?? null)) && !(typeof init.escrituraAjuste === "number" && rutaEscrituraAjuste(ruta, metodo, init.escrituraAjuste)))
       throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida: ${metodo} ${ruta.split("?")[0]}`)
     // Autorizar una NP: en el cuerpo solo "autorizar=<entero>" (nada más se puede mandar a esa ruta)
     if (ruta === RUTA_AUTORIZAR_NP) {
@@ -108,7 +110,7 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
     const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
     let r: Response
     try {
-      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ...resto } = init
+      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ofARemitir: _o, ...resto } = init
       r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
         ...resto,
         method: metodo,
@@ -502,8 +504,9 @@ export async function navegadorLectura(): Promise<NavegadorNp> {
 /**
  * Navegador del robot de OF + remito (Z1): igual al de la NP, con el grupo de Z1 habilitado. `llave` la arma
  * `z1-servidor.ts` después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida) en la base.
+ * `ofARemitir`: el of_codigo de la fila; solo con él se puede "remitir" esa OF (remitir_ordenfabricacion.php?codigo=N).
  */
-export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
+export async function navegadorZ1(llave: LlaveZ1, ofARemitir: number | null = null): Promise<NavegadorNp> {
   if (!llave || llave.remitir !== true) throw new ZomatikError("ruta_no_permitida", "La OF y el remito automáticos están apagados para esta planta")
   const s = await obtenerSesion()
   const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
@@ -515,10 +518,10 @@ export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
   }
   return {
     async get(ruta) {
-      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true }), ruta)
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true, ofARemitir }), ruta)
     },
     async post(ruta, cuerpo, contentType) {
-      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true }), ruta)
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true, ofARemitir }), ruta)
     },
     async sucursal(id) {
       return elegirSucursal(s.cookie, id)

@@ -233,6 +233,70 @@ export async function generarOf(nav: NavegadorNp, d: DatosOf, o: OpcionesZ1): Pr
 }
 
 // ---------------------------------------------------------------------------
+// Remitir la OF (REAL 13/11): una OF nueva queda PEN y SIN STOCK hasta que se la "remite"
+// ---------------------------------------------------------------------------
+
+export type DatosRemitirOf = {
+  /** of_codigo de la fila (el único que el navegador deja remitir) */
+  codigo: number | null
+  /** of_numero de la fila ("OF 0001-00003412") */
+  numero: string | null
+  deposito: number
+  /** Desde qué día se busca la OF en el listado (el del despacho o el de la foto, el más viejo), aaaa-mm-dd */
+  desde: string
+}
+
+/**
+ * En el listado de OF, las PEN traen en "Remitido" el lapicito `remitir_ordenfabricacion.php?codigo=N`. Un GET a ese
+ * link la remite sin confirmación (redirige al listado) y pasa a FIN; las FIN ya no lo traen (prueba real del 13/11,
+ * OF 8242). Sin eso no hay stock y el remito no sale.
+ *   1. Se busca la OF en el listado por su número (y su código). FIN: no se hace nada (alguien la remitió a mano).
+ *   2. PEN con el lapicito a ESE código: paso `remitir_of` (se guarda antes) y GET al link.
+ *   3. Se vuelve a leer el listado: FIN → ok (`of_remitida`). Sigue PEN, no aparece o no se puede leer → "pendiente" y se
+ *      reintenta: es idempotente, porque si ya quedó FIN no se repite el GET.
+ * `grabado` = se mandó el GET.
+ */
+export async function remitirOf(nav: NavegadorNp, d: DatosRemitirOf, o: OpcionesZ1): Promise<ResultadoZ1> {
+  const PASO = "remitir_of"
+  const numero = String(d.numero ?? "").match(/\d{4}-\d{8}/)?.[0] ?? null
+  const ofTexto = numero ? `OF ${numero}` : "OF"
+  const pendiente = (m: string, corte?: string, grabado = false): ResultadoZ1 => ({ estado: "pendiente", mensaje: `${m} Se reintenta.`, paso: PASO, reintentar: true, grabado, ...(corte ? { recorte: corte } : {}) })
+  return ejecutar(o, async (marcar, estado) => {
+    // Todo lo de este paso (también un corte de red antes del GET) se informa como "remitir_of"; se GUARDA recién antes del GET
+    estado.paso = PASO
+    if (typeof d.codigo !== "number" || !Number.isInteger(d.codigo) || d.codigo <= 0) throw dato("La OF no tiene código de Zomatik: no se puede remitir.")
+    if (!numero) throw dato(`No se entiende el número de la OF ("${d.numero ?? ""}"): no se puede remitir.`)
+    /** La fila de nuestra OF en el listado, o por qué no se pudo leer (nunca se sigue a ciegas). */
+    const leer = async (): Promise<{ fila: FilaOf } | { falla: string; recorte?: string }> => {
+      try {
+        const filas = (await listarOf(nav, d.deposito, d.desde < o.hoy ? d.desde : o.hoy, o.hoy)).filter((x) => x.numero === numero)
+        if (filas.length !== 1) return { falla: filas.length ? `La ${ofTexto} aparece ${filas.length} veces en el listado de OF de Zomatik.` : `La ${ofTexto} no aparece en el listado de OF de Zomatik.` }
+        if (filas[0].codigo !== d.codigo) return { falla: `La ${ofTexto} del listado de Zomatik tiene otro código (${filas[0].codigo ?? "sin link"}, el sistema tiene ${d.codigo}).` }
+        return { fila: filas[0] }
+      } catch (e) {
+        if (e instanceof Freno) return { falla: `No se pudo leer el listado de OF de Zomatik: ${e.message.replace(/\s*No se (mandó nada|sigue)\.\s*$/, "")}.`, recorte: e.recorte }
+        throw e
+      }
+    }
+    await aRebucret(nav)
+    const antes = await leer()
+    if ("falla" in antes) return pendiente(antes.falla, antes.recorte)
+    // Ya FIN (alguien la remitió a mano, o un intento anterior): no se hace nada
+    if (antes.fila.estado === "FIN") return { estado: "ok", mensaje: null, numero: ofTexto, codigo: d.codigo, paso: "of_remitida" }
+    if (antes.fila.remitir !== d.codigo)
+      return pendiente(`La ${ofTexto} está PEN en Zomatik pero ${antes.fila.remitir ? `el link para remitirla va a otro código (${antes.fila.remitir})` : "sin el link para remitirla"}.`)
+    await aRebucret(nav)
+    await marcar(PASO)
+    const g = await nav.get(`remitir_ordenfabricacion.php?codigo=${d.codigo}`)
+    const no = rechazo(g)
+    const despues = await leer()
+    if ("falla" in despues) return pendiente(`Se mandó remitir la ${ofTexto}, pero ${despues.falla.charAt(0).toLowerCase()}${despues.falla.slice(1)}`, despues.recorte ?? recorte(g.html), true)
+    if (despues.fila.estado === "FIN") return { estado: "ok", mensaje: null, numero: ofTexto, codigo: d.codigo, paso: "of_remitida", grabado: true }
+    return pendiente(`Se mandó remitir la ${ofTexto} y sigue PEN en Zomatik${no ? ` (Zomatik dijo: ${no})` : ""}.`, recorte(g.html), true)
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Remito (capturado el 29/10 en REBUCRET)
 // ---------------------------------------------------------------------------
 

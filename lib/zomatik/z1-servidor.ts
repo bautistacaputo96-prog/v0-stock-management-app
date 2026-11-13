@@ -27,7 +27,7 @@ import {
 } from "@/lib/zomatik/np-servidor"
 import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
-import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
+import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitirOf, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
   MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
   type DespachoZ1, type NpZ1, type RemitoNuestro,
@@ -207,17 +207,18 @@ export async function prepararOfSueltas(dias: string[], usuario: string, sb: SB 
 // ---------------------------------------------------------------------------
 
 export type DependenciasZ1 = {
-  navegador: (llave: LlaveZ1) => Promise<NavegadorNp>
+  /** `ofARemitir`: el of_codigo de la fila, la única OF que ese navegador deja remitir (sin él, ninguna) */
+  navegador: (llave: LlaveZ1, ofARemitir?: number | null) => Promise<NavegadorNp>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
-  robot: { generarOf: typeof generarOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
+  robot: { generarOf: typeof generarOf; remitirOf: typeof remitirOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
   /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción: los arma
    *  `procesarZ1` al correr (no acá, por el import circular con ajuste-servidor.ts). */
   ajuste?: Partial<DependenciasAjuste>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, generarRemito, elegirNumeroRemito, autorizarNp, remitoAManoEnNp }, avisarError: avisarErrorZomatik }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, remitirOf, generarRemito, elegirNumeroRemito, autorizarNp, remitoAManoEnNp }, avisarError: avisarErrorZomatik }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -568,9 +569,10 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           if (!(await guardarSi(sb, r.id, { of_estado: "ok", of_numero: of.numero, of_codigo: of.codigo, paso: "of_ok" }))) throw new Cambio(`El remito cambió mientras se generaba (la ${of.numero} quedó en Zomatik)`)
           r.of_estado = "ok"
           r.of_numero = of.numero ?? null
+          r.of_codigo = of.codigo ?? null
           await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `OF en Zomatik: ${of.numero}`, "m³": r.m3 } })
         }
-        // 2) El remito. Despacho sin pedido (sin NP): queda a mano
+        // 2) Despacho sin pedido (sin NP): el remito (y remitir la OF) queda a mano
         if (r.tipo === "suelto") {
           const m = "OF hecha. Despacho sin pedido: el remito se carga a mano."
           await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", en_curso_desde: null, mensaje: m, paso: "of_ok", ok_at: new Date().toISOString(), proximo_intento: null })
@@ -594,6 +596,21 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
             await terminar({ estado: "error", mensaje: a.mensaje, paso: "autorizar_np" }, "remito")
             continue
           }
+        }
+        // 3) Remitir la OF, justo antes del remito (REAL 13/11): una OF nueva queda PEN y sin stock hasta que se la
+        //    remite. Cada intento mira el listado: si ya está FIN no se hace nada (así también pasan las filas viejas
+        //    frenadas por "No hay stock"). Navegador aparte, atado al of_codigo de la fila: con cualquier otro código la
+        //    ruta se rechaza antes de salir. Con un Grabar del remito cortado no se toca (ya había stock) ni se pisa su paso.
+        if (!cortadoRemito) {
+          const navOf = await dep.navegador(llave, r.of_codigo)
+          const desdeOf = [String(r.fecha), r.of_foto_dia].filter((x): x is string => !!x).sort()[0]
+          const ro = await dep.robot.remitirOf(navOf, { codigo: r.of_codigo, numero: r.of_numero, deposito, desde: desdeOf }, { hoy: hoyAR(), alPaso })
+          if (ro.estado !== "ok") {
+            await terminar(ro, "remito")
+            continue
+          }
+          if (!(await guardarSi(sb, r.id, { paso: "of_remitida" }))) throw new Cambio("El remito cambió mientras se generaba")
+          if (ro.grabado) await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `OF remitida en Zomatik (pasó a FIN): ${r.of_numero || ""}`.trim(), "m³": r.m3 } })
         }
         // El número es una entrada aparte: el que ya se eligió (y se guardó) o el más alto del talonario + 1
         let numero = r.remito_numero ? r.remito_numero.replace(/^RM2?\s+/i, "") : null

@@ -231,7 +231,11 @@ export function fparamOf(lista: { codigo: string; cantidad: number | string }[])
   return lista.map((r) => `${r.codigo},${r.cantidad}|||`).join("")
 }
 
-export type FilaOf = { numero: string; codigo: number | null; estado: string; fechaAlta: string; deposito: string; fechaEntrega: string }
+export type FilaOf = {
+  numero: string; codigo: number | null; estado: string; fechaAlta: string; deposito: string; fechaEntrega: string
+  /** El código del lapicito de la columna "Remitido" (`remitir_ordenfabricacion.php?codigo=N`): solo las PEN lo traen (13/11) */
+  remitir: number | null
+}
 
 const textoCelda = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim()
 
@@ -239,6 +243,7 @@ const textoCelda = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi,
  * Listado de OF (listado_ordenfabricacion.php?enviado=1, exportar=0), relevado en Concretus el 22/10 y el 26/10:
  * "Fecha | OF 0001-… | Depósito | Fecha Entrega | PEN/FIN | …", con link modificar_ordenfabricacion.php?codigo=N. Las
  * celdas vacías intercaladas se ignoran. null si una fila con número de OF no tiene ese formato (falla cerrado).
+ * Las PEN traen en "Remitido" el lapicito `remitir_ordenfabricacion.php?codigo=N` (REAL 13/11): va en `remitir`.
  */
 export function listadoOf(html: string): FilaOf[] | null {
   const out: FilaOf[] = []
@@ -249,7 +254,8 @@ export function listadoOf(html: string): FilaOf[] | null {
     const ok = celdas.length >= 5 && /^\d{4}-\d{2}-\d{2}$/.test(celdas[0]) && num && /^\d{4}-\d{2}-\d{2}$/.test(celdas[3]) && /^(PEN|FIN)$/i.test(celdas[4])
     if (!ok) return null
     const cod = fila.match(/modificar_ordenfabricacion\.php\?codigo=(\d+)/i)?.[1]
-    out.push({ numero: num![1], codigo: cod ? Number(cod) : null, estado: celdas[4].toUpperCase(), fechaAlta: celdas[0], deposito: celdas[2].toUpperCase(), fechaEntrega: celdas[3] })
+    const rem = fila.match(/remitir_ordenfabricacion\.php\?codigo=(\d+)/i)?.[1]
+    out.push({ numero: num![1], codigo: cod ? Number(cod) : null, estado: celdas[4].toUpperCase(), fechaAlta: celdas[0], deposito: celdas[2].toUpperCase(), fechaEntrega: celdas[3], remitir: rem ? Number(rem) : null })
   }
   return out
 }
