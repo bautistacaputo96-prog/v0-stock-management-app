@@ -25,6 +25,7 @@ import {
   MIN_REINTENTO, PASOS_GRABADA, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
   pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
 } from "@/lib/zomatik/np"
+import { AJUSTE_EN_CURSO, MSJ_NP_AJUSTANDOSE, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -472,12 +473,28 @@ async function articuloDe(sb: SB, formulaIds: string[]): Promise<Map<string, num
   return new Map(((data as { id: string; zomatik_articulo_codigo: number | null }[]) || []).map((f) => [f.id, f.zomatik_articulo_codigo ?? null]))
 }
 
+/**
+ * NP con un ajuste a lo despachado en marcha (decisión 16, 13/11): pendiente, generando o revisar. Mientras tanto no van
+ * a "NP con saldo" y no se devuelven ni se reservan (el ajuste va a bajar su libre). La NP que quedó sin uso (15.5,
+ * `np_sin_uso`) no cuenta: el robot no la toca y la decide una persona desde "NP con saldo". Sin la migración: ninguna.
+ */
+export async function npsAjustandose(sb: SB, ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set()
+  const { data, error } = await sb.from("zomatik_np_ajustes").select("np_id, estado, paso").in("np_id", ids).in("estado", AJUSTE_EN_CURSO)
+  if (error) {
+    if (/zomatik_np_ajustes|does not exist|schema cache/i.test(String((error as { message?: string }).message || ""))) return new Set()
+    throw error
+  }
+  return new Set(((data as { np_id: string; paso: string | null }[]) || []).filter((x) => x.paso !== PASO_NP_SIN_USO).map((x) => x.np_id))
+}
+
 /** Una NP con saldo sirve para el pedido si está en Zomatik, es del mismo cliente y artículo y no se cerró ni se manda a devolver. */
 async function validarSaldo(sb: SB, ped: PedidoDB, npId: string): Promise<{ error: string } | { libre: number }> {
   const { data } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("id", npId).maybeSingle()
   const np = data as unknown as FilaNpDB | null
   if (!np || np.estado !== "ok") return { error: "Esa NP no está en Zomatik." }
   if (np.saldo_decision === "cerrada" || np.saldo_decision === "devolver") return { error: "Esa NP ya se cerró o se está devolviendo." }
+  if ((await npsAjustandose(sb, [np.id])).has(np.id)) return { error: MSJ_NP_AJUSTANDOSE }
   if (np.client_id !== ped.client_id) return { error: "Esa NP es de otro cliente." }
   const art = await articuloDe(sb, [np.formula_id || "", ped.formula_id])
   const a1 = art.get(np.formula_id || ""), a2 = art.get(ped.formula_id)
@@ -702,7 +719,11 @@ export async function npsConSaldo(o: { clientId?: string | null; formulaId?: str
   if (o.clientId) q = q.eq("client_id", o.clientId)
   const { data, error } = await q
   if (error) throw error
-  const nps = ((data as unknown as FilaNpDB[]) || []).filter((x) => x.saldo_decision !== "cerrada")
+  const vivas = ((data as unknown as FilaNpDB[]) || []).filter((x) => x.saldo_decision !== "cerrada")
+  // Con el ajuste a lo despachado en marcha no se muestran (decisión 16): su libre está por bajar. Las que ya están
+  // "para devolver" sí (el ajuste las deja en revisar y falta «Ya la devolví»)
+  const ajustandose = await npsAjustandose(sb, vivas.map((x) => x.id))
+  const nps = vivas.filter((x) => x.saldo_decision === "devolver" || !ajustandose.has(x.id))
   const saldos = await saldosDe(sb, nps)
   let elegidas = nps.filter((x) => {
     const sd = saldos.get(x.id)
@@ -758,6 +779,8 @@ export async function decidirSaldo(npId: string, decision: "devolver" | "cerrada
     if (!((hecho as unknown[]) || []).length) return { ok: false, error: "La NP cambió. Actualizá la pantalla." }
     mensaje = "Marcada como devuelta"
   } else {
+    // Con el ajuste a lo despachado en marcha, no (decisión 16): el ajuste va a bajar el libre
+    if ((await npsAjustandose(sb, [np.id])).has(np.id)) return { ok: false, error: MSJ_NP_AJUSTANDOSE }
     // En la base, con la NP bloqueada: no se pisa con una reprogramación al mismo tiempo
     const r = (await rpc(sb, "zomatik_np_devolver", { p_np: np.id, p_usuario: usuario })) as { error?: string; mensaje?: string; libre?: number } | null
     if (!r || r.error) return { ok: false, error: r?.error || "No se pudo." }

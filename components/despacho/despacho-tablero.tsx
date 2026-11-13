@@ -598,7 +598,7 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   function textoAjusteFinalizar(p: PedidoT | null): string | null {
     if (!p || !remitos.ajusteActivo[p.plant_id || planta]) return null
     const nps = (np.porPedido[p.id]?.nps || []).filter((x) => x.estado === "ok")
-    return textoFinalizar(nps.map((x) => ({ numero: x.numero, m3: Number(x.m3), m3_uso: Number(x.m3_uso) })), Number(p.dispatched_m3 || 0))
+    return textoFinalizar(nps.map((x) => ({ numero: x.numero, m3: Number(x.m3), m3_uso: Number(x.m3_uso), libre: Number(x.libre), saldo_decision: x.saldo_decision ?? null })), Number(p.dispatched_m3 || 0))
   }
   /** OF + remito en Zomatik de lo despachado ese día (con la llave apagada no hace nada ni avisa). */
   function remitirAhora(pedidoId: string) {
