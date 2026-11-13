@@ -478,34 +478,51 @@ despacharon **40 m³** (cinco camiones de 8) y se finalizó. Llave del ajuste pr
 
 ## 16. Decisión de Bautista (13/11/2026) — reemplaza a la 15.3 y a la cuenta de 3.1
 
-**Cuando un pedido termina, cada NP que usa baja también el saldo libre** (lo que no reserva ningún uso), si no hay otro
-uso activo que lo pueda tomar. Caso real: A.A. Arquitectura, NP2 0001-00002114 de 6 m³; el pedido se editó a 4 antes
-de despachar (uso 4) y se despacharon 4. Con la 15.3 la NP quedaba en 6 con 2 de saldo; ahora baja a 4.
+**Cuando un pedido termina, cada NP que usa baja también el saldo libre** (lo que no reserva ningún uso). El libre se
+baja igual aunque otro pedido activo use la NP: lo que ese pedido reserva no se toca. Caso real: A.A. Arquitectura,
+NP2 0001-00002114 de 6 m³; el pedido se editó a 4 antes de despachar (uso 4) y se despacharon 4. Con la 15.3 la NP
+quedaba en 6 con 2 de saldo; ahora baja a 4.
 
-- **La cuenta** (`planificarAjuste`, `ajuste.ts`): `obj_x = lo comprometido por los otros usos de x + lo despachado por
-  este pedido contra x`. Es la misma cuenta del saldo (`saldoNp` / `despachadoPorUso`) con el libre en 0: lo
-  despachado por todos los usos (también la foto de un uso desvinculado, del mismo pedido o de otro) más lo que todavía
-  reservan los pedidos activos (o lo que ya despacharon, si es más).
-  - **Ningún otro pedido activo usa la NP:** queda en lo despachado por todos. Después del ajuste no le queda libre ni
-    pedido activo: `zomatik_ajuste_aplicar` la deja `saldo_decision = 'cerrada'` y no aparece en "NP con saldo" (la
-    función SQL no cambia: ya lo hacía).
-  - **Otro pedido activo la usa:** no baja de lo que ese pedido reserva (el piso de antes); el libre igual se baja. La
-    NP queda abierta (tiene pedido activo) y se cierra con el ajuste del último pedido que la use.
-- **Control que queda de la 15.3:** si ni sacando solo lo que este pedido tomó y no usó (`m3 − uso + desp`) se llega a
-  ese piso, la NP está reservada de más: **revisar**, no se toca (el mismo mensaje de antes).
-- **NP con una decisión de "NP con saldo"** (`saldo_decision` = `devolver`, la DEVOL del saldo a mano en curso, o
-  `cerrada`): **no se toca**. El ajuste nace **revisar** ("La NP … tiene el saldo para devolver / ya está cerrada en
-  «NP con saldo». No se tocó: revisala.") y lo resuelve una persona con «Remitir sin ajustar la NP». Si la decisión se
-  toma entre que se arma el ajuste y pasa el robot, el robot vuelve a mirar el plan antes de abrir Zomatik y lo deja
-  en revisar igual. Una NP que se está vaciando (`vaciar` / `vaciando`) no está "ok": no se arma ajuste para ella (como
-  antes). Así nunca se baja dos veces el mismo saldo (la DEVOL a mano y el ajuste).
+- **La cuenta** (`planificarAjuste` y `comprometidoOtros`, `ajuste.ts`): `obj_x = lo comprometido por los otros usos de
+  x + lo despachado por este pedido contra x` (también la foto de un uso suyo que se desvinculó). Lo comprometido por
+  los otros usos es la cuenta del saldo con una diferencia:
+  - uso activo de un pedido activo: lo que reserva (o lo despachado, si es más);
+  - uso de un pedido **cerrado** (completo o cancelado): **lo despachado contra la NP**, aunque pase lo que reservó
+    (`saldoNp` toma el menor de los dos y la NP quedaría por debajo de lo despachado). Ej.: NP 70, el pedido B cerrado
+    reservó 20 y despachó 25, este reservó 40 y despachó 30 → **55**;
+  - uso desactivado o de un pedido borrado: su foto (`despachado_fijo`).
+- **Sin otro pedido activo:** queda en lo despachado por todos. `zomatik_ajuste_aplicar` la deja
+  `saldo_decision = 'cerrada'` (firma "Sistema") y no aparece en "NP con saldo" (la función SQL no cambia). **Con otro
+  pedido activo:** queda abierta y la cierra el ajuste del último pedido que la use.
+- **Agrandar** solo por lo que este pedido despachó de más sobre lo que reservó (3.3). Si la cuenta pide más que eso, la
+  NP está reservada de más o la tocaron: **revisar**, no se toca ("La NP … tiene X m³ despachados o reservados y es de
+  Y m³. No se tocó: revisala."). Ya no se controla contra "sacar solo lo de este pedido": el ajuste de otro pedido de
+  la misma NP pudo haber bajado ya el sobrante de este.
+- **NP con una decisión de "NP con saldo"** (`devolver`, la DEVOL del saldo a mano en curso, o `cerrada` por una
+  persona): **no se toca**. El ajuste nace **revisar** ("La NP … tiene el saldo para devolver / ya está cerrada en «NP
+  con saldo». No se tocó: revisala.") y lo resuelve una persona con «Remitir sin ajustar la NP». La NP que cerró el
+  ajuste de **otro** pedido de la misma NP (firma "Sistema") no frena: el ajuste sigue y da "nada" si ya está en lo
+  justo. Una NP que se está vaciando (`vaciar` / `vaciando`) no está "ok": no se arma ajuste para ella (como antes).
+- **Carrera con "NP con saldo"** (sin cambios en SQL), para no bajar dos veces el mismo saldo:
+  - una NP con un ajuste en `pendiente`, `generando` o `revisar` **no aparece** en «NP con saldo», salvo la que ya está
+    "para devolver" (falta «Ya la devolví») y la que quedó sin uso (15.5, `np_sin_uso`: la decide una persona desde ahí);
+  - "Devolver el saldo" y "Usar NP con saldo" (la reserva) se rechazan con "La NP se está ajustando a lo despachado:
+    esperá unos minutos.";
+  - el robot vuelve a leer `saldo_decision` antes de armar el plan, antes de `aplicar` y antes de reintentar después
+    de un corte; si cambió, el ajuste pasa a **revisar** ("Mientras se ajustaba la NP …, se pidió devolver su saldo / se
+    cerró en «NP con saldo». Revisá la NP en Zomatik antes de seguir.").
 - **Casos de 3.2 que cambian:** "Usar NP con saldo" (100 / 30 / 20, nadie más la usa) → **edita 100 → 20** y la NP
   queda cerrada (antes 90, con 70 en "NP con saldo"). Si el pedido cancelado había despachado 15 contra ella → 35.
   "NP compartida" con 10 libres (NP 70, este reservó 40 y despachó 30, otro activo reserva 20) → **50** (antes 60).
   Los demás casos de 3.2 dan lo mismo. Si la NP queda en 0 (un pedido que no despachó nada contra ella), sigue la 15.5.
 - **Finalizar** (`textoFinalizar`): mismo texto ("baja de 6 a 4 m³"), con la cuenta nueva a partir del libre que ya
   muestra la pantalla; con una decisión de "NP con saldo", el texto general.
-- **Base de datos:** sin cambios. Se lee `zomatik_np.saldo_decision` en el plan.
-- **Pruebas** (`lib/__tests__/zomatik-ajuste.test.mjs`): A.A. Arquitectura (plan, Finalizar y servidor: 6 → 4 y
-  cerrada), NP compartida con otro pedido activo (baja el libre, no se cierra), "Usar NP con saldo" (100 → 20) y NP con
-  decisión tomada (devolver / cerrada → revisar; y "Devolver el saldo" entre finalizar y el robot).
+- **Base de datos:** sin cambios. Se leen `zomatik_np.saldo_decision` / `saldo_decision_por` y `zomatik_np_ajustes`.
+  Queda una diferencia con la base: `zomatik_np_saldo` (SQL) cuenta el menor entre lo reservado y lo despachado de un
+  pedido cerrado. En el caso de B (reservó 20, despachó 25, sin ajuste propio), después del ajuste la base ve 5 m³
+  libres y la NP no se cierra sola. Arreglarlo es cambiar la función SQL (a decidir aparte).
+- **Pruebas** (`zomatik-ajuste.test.mjs` y `zomatik-np-servidor.test.mjs`): A.A. Arquitectura (plan, Finalizar y
+  servidor: 6 → 4 y cerrada), NP compartida con otro pedido activo (baja el libre, no se cierra), pedido cerrado que
+  despachó de más (55), "Usar NP con saldo" (100 → 20), NP con decisión tomada (revisar; la cerrada por "Sistema" no
+  frena), decisión con el ajuste en marcha (antes de aplicar y después de un corte) y «NP con saldo» con un ajuste en
+  marcha (oculta, no se devuelve ni se reserva).

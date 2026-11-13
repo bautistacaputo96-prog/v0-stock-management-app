@@ -4,15 +4,16 @@
  * Se prueban con `npm run test:zomatik-ajuste`.
  *
  *   - Qué cantidad tiene que quedar en cada NP del pedido (decisión 16, 13/11, reemplaza a la 15.3): lo despachado
- *     contra ella por todos los usos + lo que todavía comprometen los pedidos activos (`saldoNp`, la misma cuenta del
- *     saldo), con el libre en 0. Lo que reservan otros pedidos activos no se toca.
+ *     contra ella por todos los usos + lo que todavía comprometen los pedidos activos (`comprometidoOtros`, la cuenta
+ *     del saldo con lo despachado de los pedidos cerrados), con el libre en 0. Lo que reservan otros pedidos activos no
+ *     se toca.
  *   - "Tiene factura" (15.1): Zomatik no deja editar la NP. Se mira el detalle de la NP (señal C: sin el botón Grabar,
  *     REAL) y sus comprobantes (señal B, REAL). Lo que no se puede leer: "no se sabe".
  *   - El pendiente que tiene que traer el remito después del ajuste (4.4).
  * Cómo se ve una NP facturada es REAL (06/11); la respuesta del Grabar al editar sigue SUPUESTO hasta la captura 4
  * (lib/__fixtures__/zomatik-ajuste/README.md).
  */
-import { despachadoPorUso, saldoNp, type Renglon, type UsoSaldo } from "@/lib/zomatik/np"
+import { despachadoPorUso, type Renglon, type UsoSaldo } from "@/lib/zomatik/np"
 
 const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
 export const TOL_AJUSTE = 0.001
@@ -59,10 +60,47 @@ export type NpAjuste = {
   id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null
   /** "NP con saldo": devolver (una persona hace la DEVOL a mano) o cerrada. Con una de estas no se toca (decisión 16). */
   saldo_decision?: string | null
+  /** Quién la decidió: "Sistema" = la cerró el ajuste de otro pedido (`zomatik_ajuste_aplicar`), no una persona. */
+  saldo_decision_por?: string | null
 }
 
 /** Decisiones de "NP con saldo" con las que el ajuste no toca la NP (decisión 16): ya se decidió qué hacer con el saldo. */
 export const SALDO_DECIDIDO = ["devolver", "cerrada"]
+/** Quien firma la NP cerrada por `zomatik_ajuste_aplicar` (supabase/migrations/202611061200_zomatik_np_ajuste.sql). */
+export const DECIDE_SISTEMA = "Sistema"
+
+/**
+ * La decisión de "NP con saldo" que frena el ajuste (decisión 16), o null. La NP que cerró el ajuste de OTRO pedido de
+ * la misma NP (firma "Sistema", sin libre) no frena: el ajuste de este pedido sigue (y da "nada" si ya está en lo justo).
+ */
+export function saldoDecidido(np: { saldo_decision?: string | null; saldo_decision_por?: string | null }): "devolver" | "cerrada" | null {
+  if (np.saldo_decision === "devolver") return "devolver"
+  if (np.saldo_decision === "cerrada" && np.saldo_decision_por !== DECIDE_SISTEMA) return "cerrada"
+  return null
+}
+
+const pedidoActivo = (st: string | null | undefined) => !!st && st !== "cancelled" && st !== "completed"
+
+/**
+ * Lo que no puede salir de la NP por los usos de OTROS pedidos (decisión 16): un uso activo de un pedido activo, lo que
+ * reserva (o lo despachado, si es más); de un pedido cerrado (completo o cancelado), lo despachado contra la NP aunque
+ * pase lo que reservó; desactivado o de un pedido borrado, su foto. Es `saldoNp().comprometido` salvo los cerrados
+ * (ahí `saldoNp` toma el menor entre lo reservado y lo despachado, y la NP podría quedar por debajo de lo despachado).
+ */
+export function comprometidoOtros(npId: string, usos: UsoSaldo[]): number {
+  const porPedido = new Map<string, UsoSaldo[]>()
+  for (const u of usos) if (u.pedido) porPedido.set(u.pedido.id, [...(porPedido.get(u.pedido.id) || []), u])
+  let total = 0
+  for (const u of usos.filter((x) => x.np_id === npId)) {
+    if (!u.activo || !u.pedido) {
+      total += Number(u.despachado_fijo) || 0
+      continue
+    }
+    const desp = despachadoPorUso(porPedido.get(u.pedido.id) || [u], Number(u.pedido.dispatched_m3) || 0).get(u.id) || 0
+    total += pedidoActivo(u.pedido.status) ? Math.max(Number(u.m3) || 0, desp) : desp
+  }
+  return r3(total)
+}
 
 export type EntradaAjuste = {
   pedidoId: string
@@ -106,8 +144,8 @@ export type PlanAjuste = {
  * lo que todavía comprometen los otros pedidos activos (el piso). Si otro pedido activo la usa, no baja de lo que ese
  * pedido reserva y queda abierta; si no, queda sin libre y `zomatik_ajuste_aplicar` la cierra.
  * Revisar (sin tocar Zomatik) si: el pedido tiene despachos de antes de que remitiera el sistema; la NP ya tiene una
- * decisión de "NP con saldo" (devolver o cerrada); ni sacando solo lo que este pedido tomó y no usó (la regla del 06/11)
- * se llega al piso (la NP está reservada de más); lo remitido contra la NP no da lo despachado; o la NP queda en 0
+ * decisión de "NP con saldo" (devolver o cerrada por una persona); el piso pide agrandar la NP más de lo que este pedido
+ * despachó de más (la NP está reservada de más); lo remitido contra la NP no da lo despachado; o la NP queda en 0
  * (15.5: no se vacía sola, la decide una persona).
  */
 export function planificarAjuste(e: EntradaAjuste): PlanAjuste[] {
@@ -127,19 +165,21 @@ export function planificarAjuste(e: EntradaAjuste): PlanAjuste[] {
     const desp = r3(reparto.get(u.id) || 0)
     // Lo que todavía necesitan los otros pedidos de la NP (y lo que ya despacharon), más lo despachado por este pedido
     // contra ella (también por un uso suyo que se desvinculó y volvió a tomarla: su foto)
-    const otros = saldoNp({ id: x.id, m3: Number(x.m3) }, e.usosSaldo.filter((v) => v.pedido?.id !== e.pedidoId)).comprometido
+    const otros = comprometidoOtros(x.id, e.usosSaldo.filter((v) => v.pedido?.id !== e.pedidoId))
     const propio = e.usosDelPedido.filter((v) => v.np_id === x.id).reduce((s, v) => s + (reparto.get(v.id) || 0), 0)
     const piso = r3(otros + propio)
-    // Regla del 06/11 (15.3): solo lo que este pedido tomó y no usó. Queda como control: si ni así se llega al piso, la NP
-    // está reservada de más
-    const soloLoSuyo = r3(Number(x.m3) - Number(u.m3) + desp)
+    // Agrandar solo por lo que este pedido despachó de más sobre lo que reservó (3.3). Si hace falta más, la NP está
+    // reservada de más (o la tocaron): para una persona. No se compara con "sacar solo lo de este pedido" (la regla del
+    // 06/11): el ajuste de otro pedido de la NP ya pudo bajar el sobrante de este
+    const tope = r3(Number(x.m3) + Math.max(0, desp - Number(u.m3)))
     const obj = piso
     const base = { np_id: x.id, uso_id: u.id, numero: x.numero, m3_np: r3(x.m3), m3_uso: r3(u.m3), m3_despachado: desp, m3_objetivo: obj }
     const revisar = (mensaje: string): PlanAjuste => ({ ...base, tipo: null, estado: "revisar", mensaje })
     if (antesDeRemitir) return revisar(`El pedido tiene despachos que se remitieron a mano (de antes del remito automático): ajustá la ${nombre} a mano.`)
     // Ya se decidió qué hacer con el saldo en "NP con saldo" (o se está devolviendo a mano): no se toca
-    if (SALDO_DECIDIDO.includes(String(x.saldo_decision || ""))) return revisar(msjSaldoDecidido(nombre, String(x.saldo_decision)))
-    if (soloLoSuyo < piso - TOL_AJUSTE) return revisar(`La ${nombre} la usan otros pedidos (${m3Texto(r3(piso - desp))} m³): no puede quedar en ${m3Texto(soloLoSuyo)} m³. No se tocó: revisala.`)
+    const decidido = saldoDecidido(x)
+    if (decidido) return revisar(msjSaldoDecidido(nombre, decidido))
+    if (piso > tope + TOL_AJUSTE) return revisar(msjPisoNoDa(nombre, piso, Number(x.m3)))
     const esperadoRemitido = r3(desp - (ultimoActivo?.id === u.id ? Number(e.sinRemitir) || 0 : 0))
     const remitido = r3(e.remitidoPorNp[x.id] || 0)
     if (Math.abs(remitido - esperadoRemitido) > TOL_AJUSTE)
@@ -273,6 +313,16 @@ export const msjZomatikNoDejo = (texto: string) => `Zomatik no dejó cambiar la 
 /** La NP ya tiene una decisión de "NP con saldo" (decisión 16): el ajuste no la toca. */
 export const msjSaldoDecidido = (nombre: string, decision: string) =>
   `La ${nombre} ${decision === "devolver" ? "tiene el saldo para devolver" : "ya está cerrada"} en «NP con saldo». No se tocó: revisala.`
+/** La decisión llegó con el ajuste en marcha (antes de pasarlo a la base o al reintentar después de un corte). */
+export const msjSaldoDecididoEnMedio = (nombre: string, decision: string) =>
+  `Mientras se ajustaba la ${nombre}, ${decision === "devolver" ? "se pidió devolver su saldo" : "se cerró"} en «NP con saldo». Revisá la NP en Zomatik antes de seguir.`
+/** Lo despachado y lo reservado de la NP (de este pedido, sus usos desvinculados y los otros pedidos) no entra en ella. */
+export const msjPisoNoDa = (nombre: string, piso: number, m3: number) =>
+  `La ${nombre} tiene ${m3Texto(piso)} m³ despachados o reservados y es de ${m3Texto(m3)} m³. No se tocó: revisala.`
+/** "NP con saldo": la NP tiene un ajuste en marcha (decisión 16): no se devuelve ni se reserva hasta que termine. */
+export const MSJ_NP_AJUSTANDOSE = "La NP se está ajustando a lo despachado: esperá unos minutos."
+/** Ajustes que frenan "NP con saldo" (la NP no se muestra, no se devuelve ni se reserva). */
+export const AJUSTE_EN_CURSO: EstadoAjuste[] = ["pendiente", "generando", "revisar"]
 
 /**
  * Texto de Finalizar (solo con la llave): "Al remitir, la NP2 0001-00002090 baja de 60 a 40 m³." Con la cuenta de

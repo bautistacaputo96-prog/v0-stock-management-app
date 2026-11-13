@@ -25,7 +25,7 @@ import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zom
 import { hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
-  MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, pendienteEsperado, planificarAjuste, textoAjuste,
+  MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, msjSaldoDecididoEnMedio, pendienteEsperado, planificarAjuste, saldoDecidido, textoAjuste,
   type EstadoAjuste, type PlanAjuste,
 } from "@/lib/zomatik/ajuste"
 import { configZ1, prepararRemitos, type ConfigZ1 } from "@/lib/zomatik/z1-servidor"
@@ -57,7 +57,7 @@ const faltaMigracionAjuste = (e: unknown) => /zomatik_np_ajustes|zomatik_ajuste_
 // El plan de un pedido (con los datos de la base, sin Zomatik)
 // ---------------------------------------------------------------------------
 
-type NpDB = { id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null; marca: string; plant_id: string | null; formula_id: string | null; saldo_decision?: string | null }
+type NpDB = { id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null; marca: string; plant_id: string | null; formula_id: string | null; saldo_decision?: string | null; saldo_decision_por?: string | null }
 
 type PlanPedido =
   | { aplica: false; motivo: string }
@@ -89,7 +89,7 @@ export async function planDelPedido(sb: SB, pedidoId: string, cfgs?: Record<stri
     sb.from("zomatik_np_uso").select("id, np_id, scheduled_dispatch_id, m3, activo, created_at, despachado_fijo").eq("scheduled_dispatch_id", ped.id),
   )
   const npIds = [...new Set(usosPed.map((u) => u.np_id))]
-  const nps = npIds.length ? await lista<NpDB>(sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id, saldo_decision").in("id", npIds)) : []
+  const nps = npIds.length ? await lista<NpDB>(sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id, saldo_decision, saldo_decision_por").in("id", npIds)) : []
   // Lo que comprometen los otros pedidos de esas NP (la misma cuenta que el saldo)
   const deNps = npIds.length ? await lista<typeof usosPed[number]>(sb.from("zomatik_np_uso").select("id, np_id, scheduled_dispatch_id, m3, activo, created_at, despachado_fijo").in("np_id", npIds)) : []
   const otrosPed = [...new Set(deNps.map((u) => u.scheduled_dispatch_id).filter((x): x is string => !!x && x !== ped.id))]
@@ -112,7 +112,7 @@ export async function planDelPedido(sb: SB, pedidoId: string, cfgs?: Record<stri
     pedidoId: ped.id, status: ped.status,
     despachos: despachos.map((d) => ({ id: d.id, m3: Number(d.quantity_m3), created_at: d.created_at })),
     remitirDesde: cfg!.remitir_desde, usosDelPedido: usosPed.map((u) => ({ ...u, m3: Number(u.m3) })),
-    nps: nps.map((x) => ({ id: x.id, n: x.n, m3: Number(x.m3), estado: x.estado, numero: x.numero, zomatik_codigo: x.zomatik_codigo, saldo_decision: x.saldo_decision ?? null })),
+    nps: nps.map((x) => ({ id: x.id, n: x.n, m3: Number(x.m3), estado: x.estado, numero: x.numero, zomatik_codigo: x.zomatik_codigo, saldo_decision: x.saldo_decision ?? null, saldo_decision_por: x.saldo_decision_por ?? null })),
     usosSaldo, remitidoPorNp, sinRemitir,
   })
   return { aplica: true, pedido: ped, planes, nps: new Map(nps.map((x) => [x.id, x])) }
@@ -295,7 +295,7 @@ async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): 
 
 /** Lo que el robot necesita de la NP y del pedido. */
 async function datosAjuste(sb: SB, a: AjusteDB) {
-  const { data: np } = await sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id").eq("id", a.np_id).maybeSingle()
+  const { data: np } = await sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id, saldo_decision, saldo_decision_por").eq("id", a.np_id).maybeSingle()
   const x = np as NpDB | null
   const { data: f } = x?.formula_id ? await sb.from("formulas").select("id, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", x.formula_id).maybeSingle() : { data: null }
   const codArt = (f as { zomatik_articulo_codigo?: number | null } | null)?.zomatik_articulo_codigo ?? null
@@ -370,7 +370,18 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         await trabar("revisar", "La NP no está en Zomatik: no se puede ajustar.")
         continue
       }
+      const nombre = numero || `NP ${d.np.n}`
       const aplicar = async (objetivo: number, m3Antes: number) => {
+        // Decisión 16: si mientras tanto se decidió el saldo en "NP con saldo", no se pasa a la base (se relee ahora)
+        if (!a.aplicado_at) {
+          const { data: ahoraNp, error: en } = await sb.from("zomatik_np").select("id, saldo_decision, saldo_decision_por").eq("id", a.np_id).maybeSingle()
+          if (en) throw en
+          const decidido = ahoraNp ? saldoDecidido(ahoraNp as { saldo_decision: string | null; saldo_decision_por: string | null }) : null
+          if (decidido) {
+            await trabar("revisar", msjSaldoDecididoEnMedio(nombre, decidido), { paso: "aplicar" })
+            return
+          }
+        }
         const { data, error } = await sb.rpc("zomatik_ajuste_aplicar", { p_id: a.id })
         const r = data as { ok?: boolean; error?: string } | null
         if (error || !r?.ok) {
@@ -403,6 +414,12 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         continue
       }
       const cortado = PASOS_GRABAR_AJUSTE.includes(antes.paso || "")
+      // Reintento después de un corte (no se vuelve a armar el plan): si mientras tanto se decidió el saldo, revisar
+      const decididoAhora = saldoDecidido(d.np)
+      if (cortado && decididoAhora) {
+        await trabar("revisar", msjSaldoDecididoEnMedio(nombre, decididoAhora))
+        continue
+      }
       let objetivo = Number(a.m3_objetivo)
       let despachado = Number(a.m3_despachado)
       const m3Np = Number(d.np.m3)
