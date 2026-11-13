@@ -39,7 +39,8 @@ export type LlaveAjuste = { readonly ajustar: true; readonly plantId: string }
 export type RespuestaNav = { status: number; location: string | null; html: string }
 
 export type NavegadorNp = {
-  get(ruta: string): Promise<RespuestaNav>
+  /** `ofARemitir` (solo el navegador de Z1): la OF que ESTA llamada puede remitir (remitir_ordenfabricacion.php?codigo=N) */
+  get(ruta: string, opciones?: { ofARemitir?: number | null }): Promise<RespuestaNav>
   post(ruta: string, cuerpo: Uint8Array, contentType: string): Promise<RespuestaNav>
   /** Cambia la sucursal de la sesión. false si la sesión ya no sirve. */
   sucursal(id: string): Promise<boolean>

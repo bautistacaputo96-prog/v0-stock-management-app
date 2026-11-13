@@ -207,8 +207,7 @@ export async function prepararOfSueltas(dias: string[], usuario: string, sb: SB 
 // ---------------------------------------------------------------------------
 
 export type DependenciasZ1 = {
-  /** `ofARemitir`: el of_codigo de la fila, la única OF que ese navegador deja remitir (sin él, ninguna) */
-  navegador: (llave: LlaveZ1, ofARemitir?: number | null) => Promise<NavegadorNp>
+  navegador: (llave: LlaveZ1) => Promise<NavegadorNp>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
   robot: { generarOf: typeof generarOf; remitirOf: typeof remitirOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
@@ -321,8 +320,9 @@ async function remitosNuestros(sb: SB, npId: string, filaId: string): Promise<Re
   return [...((data as Fila[]) || []), ...((g as Fila[]) || [])].map((x) => ({ numero: x.remito_numero, codigo: x.remito_codigo, comprobante: x.comprobante }))
 }
 
-/** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir"). */
-const PASOS_ANTES_DE_GRABAR = ["elegir_numero", "formulario_remito", "continuar_remito", "numero_remito"]
+/** Pasos del remito anteriores a Grabar: un "revisar" en ellos no grabó nada (se puede reintentar con "Remitir").
+ *  "remitir_of": después de revisar la OF en Zomatik, el botón la vuelve a mirar (FIN → sigue; si no, frena otra vez). */
+const PASOS_ANTES_DE_GRABAR = ["remitir_of", "elegir_numero", "formulario_remito", "continuar_remito", "numero_remito"]
 
 /** Lo que necesita el robot de cada remito: NP, artículo, depósito y obra. */
 async function datos(sb: SB, r: RemitoDB) {
@@ -462,10 +462,16 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         if (!(await guardarSi(sb, r.id, cambios))) throw new Cambio("El remito cambió mientras se generaba")
       }
       const terminar = async (res0: ResultadoZ1, que: "OF" | "remito") => {
-        // Sin stock: se reintenta cada 10 min; a los MAX_SIN_STOCK (1 hora), "revisar" con aviso
+        // Sin stock (o la OF sin poder remitir: listado ilegible, red o sesión): se reintenta cada 10 min; a los
+        // MAX_SIN_STOCK (1 hora), "revisar" con aviso
+        const deRemitir = res0.paso === "remitir_of"
         const sinStock = res0.sinStock ? (Number(r.sin_stock) || 0) + 1 : 0
+        const base0 = (res0.mensaje || "").replace(/\s*Se reintenta\.\s*$/, "")
+        const laOf = r.of_numero || "OF"
         const res: ResultadoZ1 = res0.sinStock && sinStock >= MAX_SIN_STOCK
-          ? { ...res0, estado: "revisar", reintentar: false, aviso: "Zomatik no tiene stock: ¿la OF necesita 'Generar'?", mensaje: `${res0.mensaje} Después de ${sinStock} intentos (1 hora) sigue sin stock: ¿la ${r.of_numero || "OF"} necesita "Generar" en Zomatik?` }
+          ? deRemitir
+            ? { ...res0, estado: "revisar", reintentar: false, aviso: "No se pudo remitir la OF", mensaje: `${base0} Después de ${sinStock} intentos (1 hora) no se pudo remitir la ${laOf}: revisala en Zomatik.` }
+            : { ...res0, estado: "revisar", reintentar: false, aviso: "Ya se remitió la OF y sigue sin stock", mensaje: `${base0} Después de ${sinStock} intentos (1 hora): ya se remitió la ${laOf} y sigue sin stock. Revisá el depósito o la OF en Zomatik.` }
           : res0
         const est = res.estado === "pendiente" ? "pendiente" : res.estado
         const guardo = await guardarSi(sb, r.id, {
@@ -475,7 +481,21 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           ...(que === "OF" ? { of_estado: est === "pendiente" ? "pendiente" : est } : { remito_estado: est === "pendiente" ? "pendiente" : est }),
         })
         await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `${que} no salió en Zomatik`, Mensaje: res.mensaje, Paso: res.paso, Marca: r.marca, ...(res.recorte ? { "Respuesta de Zomatik (recorte)": res.recorte } : {}) } })
-        if (res.estado === "revisar") await dep.avisar(sb, res.aviso || `${que} para revisar`, [res.mensaje || "", `Marca: ${r.marca}`])
+        // Remitir la OF en "revisar": un mail a Bautista por episodio (no a gerenciales). Un reintento con el botón que
+        // vuelve a frenar en el mismo paso (la fila venía de "error" en remitir_of) no repite el mail.
+        if (res.estado === "revisar" && deRemitir) {
+          if (guardo && !(antes.estado === "error" && pasoAnt === "remitir_of")) {
+            const aviso = await avisarError(sb, `Zomatik: no se pudo remitir la OF · ${ref}`, [
+              `${ref} · ${r.m3} m³ · ${r.fecha}${r.patentes ? ` · ${r.patentes}` : ""}`,
+              `OF: ${laOf}`,
+              `Mensaje: ${res.mensaje || "(sin mensaje)"}`,
+              `Marca: ${r.marca}`,
+              "No se reintenta sola: revisá la OF en Zomatik (columna \"Remitido\" del listado de OF) y tocá \"Remitir en Zomatik\" en el pedido.",
+              ...(res.recorte ? [`Respuesta de Zomatik (recorte): ${res.recorte}`] : []),
+            ])
+            if (!aviso.enviado) console.error("[zomatik-z1] aviso de remitir la OF:", aviso.motivo)
+          }
+        } else if (res.estado === "revisar") await dep.avisar(sb, res.aviso || `${que} para revisar`, [res.mensaje || "", `Marca: ${r.marca}`])
         // "error": aviso a Bautista, un solo mail por episodio. No se repite si la fila ya estaba en "error" por esta
         // misma parte (reintento con el botón); sí, si antes había fallado la otra (falló la OF y ahora el remito).
         if (guardo && res.estado === "error" && (antes.estado !== "error" || (que === "OF" ? antes.of : antes.remito) !== "error")) {
@@ -491,8 +511,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           ])
           if (!aviso.enviado) console.error("[zomatik-z1] aviso de error:", aviso.motivo)
         }
-        // Pendiente por red o sesión (sin stock tiene su propio aviso a la hora; la NP sin autorizar, el suyo)
-        if (guardo && est === "pendiente" && !res0.sinStock && res.paso !== "autorizar_np") await pendienteLargo(res.mensaje)
+        // Pendiente por red o sesión (sin stock y remitir la OF tienen su tope a la hora; la NP sin autorizar, el suyo)
+        if (guardo && est === "pendiente" && !res0.sinStock && res.paso !== "autorizar_np" && res.paso !== "remitir_of") await pendienteLargo(res.mensaje)
         hechas.push({ id: r.id, estado: est, mensaje: res.mensaje })
       }
       try {
@@ -574,7 +594,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         }
         // 2) Despacho sin pedido (sin NP): el remito (y remitir la OF) queda a mano
         if (r.tipo === "suelto") {
-          const m = "OF hecha. Despacho sin pedido: el remito se carga a mano."
+          const m = "OF hecha. Despacho sin pedido: remití la OF (lapicito en el listado de OF) y cargá el remito a mano."
           await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", en_curso_desde: null, mensaje: m, paso: "of_ok", ok_at: new Date().toISOString(), proximo_intento: null })
           hechas.push({ id: r.id, estado: "ok", mensaje: m })
           continue
@@ -599,17 +619,18 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         }
         // 3) Remitir la OF, justo antes del remito (REAL 13/11): una OF nueva queda PEN y sin stock hasta que se la
         //    remite. Cada intento mira el listado: si ya está FIN no se hace nada (así también pasan las filas viejas
-        //    frenadas por "No hay stock"). Navegador aparte, atado al of_codigo de la fila: con cualquier otro código la
-        //    ruta se rechaza antes de salir. Con un Grabar del remito cortado no se toca (ya había stock) ni se pisa su paso.
+        //    frenadas por "No hay stock"). El GET va atado al of_codigo de la fila (`ofARemitir` en esa llamada): con
+        //    cualquier otro código la ruta se rechaza antes de salir. Con un Grabar del remito cortado no se toca (ya había
+        //    stock) ni se pisa su paso. Recién remitida, la cuenta del tope empieza de nuevo (sin_stock = 0).
         if (!cortadoRemito) {
-          const navOf = await dep.navegador(llave, r.of_codigo)
           const desdeOf = [String(r.fecha), r.of_foto_dia].filter((x): x is string => !!x).sort()[0]
-          const ro = await dep.robot.remitirOf(navOf, { codigo: r.of_codigo, numero: r.of_numero, deposito, desde: desdeOf }, { hoy: hoyAR(), alPaso })
+          const ro = await dep.robot.remitirOf(nav, { codigo: r.of_codigo, numero: r.of_numero, deposito, desde: desdeOf }, { hoy: hoyAR(), alPaso })
           if (ro.estado !== "ok") {
             await terminar(ro, "remito")
             continue
           }
-          if (!(await guardarSi(sb, r.id, { paso: "of_remitida" }))) throw new Cambio("El remito cambió mientras se generaba")
+          if (!(await guardarSi(sb, r.id, { paso: "of_remitida", ...(ro.grabado ? { sin_stock: 0 } : {}) }))) throw new Cambio("El remito cambió mientras se generaba")
+          if (ro.grabado) r.sin_stock = 0
           if (ro.grabado) await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `OF remitida en Zomatik (pasó a FIN): ${r.of_numero || ""}`.trim(), "m³": r.m3 } })
         }
         // El número es una entrada aparte: el que ya se eligió (y se guardó) o el más alto del talonario + 1

@@ -1867,12 +1867,16 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   2. Si ya está **FIN**, no hace nada (alguien la remitió a mano).
   3. Si está **PEN** con el lapicito a **ese mismo código**: guarda el paso `remitir_of` (con `guardarSi`) y manda el GET.
   4. Vuelve a leer el listado: **FIN** → `paso = 'of_remitida'` (y Actividad "OF remitida en Zomatik") y sigue con el remito.
-  5. Sigue PEN, no aparece, tiene otro código o el listado no se puede leer → la fila queda **pendiente** y se reintenta a los 10 min. Es idempotente: si ya quedó FIN, el GET no se repite.
-- **Lista cerrada:** `remitir_ordenfabricacion.php?codigo=N` es un GET del grupo de Z1, **atado al `of_codigo` de la fila**: el servidor pide un navegador aparte (`navegadorZ1(llave, of_codigo)`) para este paso, y con cualquier otro código la ruta se rechaza antes de salir. Ni la lectura, ni la NP, ni el ajuste la habilitan.
+  5. **Tope (revisión del 13/11), nunca reintentos infinitos:**
+     - **revisar** y un mail a Bautista (`avisarErrorZomatik`, uno por episodio; no a gerenciales): sigue PEN después del GET ("La OF X sigue PEN después de remitirla. Revisala en Zomatik."), o una anomalía: no aparece, figura repetida, tiene otro código, PEN sin el lapicito o con el lapicito a otro código.
+     - **pendiente** (cada 10 min) solo si el listado no se puede leer (formato, otra sucursal) o se corta la red o la sesión. Cuenta en `sin_stock`, con el mismo tope `MAX_SIN_STOCK` (6 = 1 hora): después, "revisar" y el mismo mail. No manda el mail de "pendiente hace más de 1 hora". Es idempotente: si ya quedó FIN, el GET no se repite.
+     - Recién remitida la OF, `sin_stock` vuelve a 0 (la cuenta de la falta de stock empieza de nuevo).
+     - "Remitir en Zomatik" reintenta un "revisar" en `remitir_of` (es de antes de grabar el remito): si ya está FIN, sigue con el remito; si frena igual, no repite el mail.
+- **Lista cerrada:** `remitir_ordenfabricacion.php?codigo=N` es un GET del grupo de Z1, **atado al `of_codigo` de la fila en la misma llamada**: el robot pide `get(ruta, { ofARemitir: of_codigo })`, y sin eso o con otro código en la ruta se rechaza antes de salir. Ni la lectura, ni la NP, ni el ajuste la habilitan.
 - **Filas que ya estaban frenadas por "No hay stock":** las `pendiente` las toma la pasada de cada 10 min; las que quedaron en `revisar` (a la hora) se reintentan con "Remitir en Zomatik" (su paso `continuar_remito` es de antes de grabar). Las dos pasan por este paso.
 - Con un Grabar del remito cortado (`grabar_remito`, `verificar_remito`, `buscar_remito`) no se toca la OF: si se llegó a grabar, ya había stock.
-- Los despachos sin pedido (OF suelta, remito a mano) **no** pasan por este paso: remitir esa OF queda a mano, como su remito (a decidir si el robot también la remite).
-- El freno por falta de stock (`continuar_remito`) se queda: si después de remitir la OF sigue sin haber stock, frena como antes.
+- Los despachos sin pedido (OF suelta, remito a mano) **no** pasan por este paso. La fila dice "OF hecha. Despacho sin pedido: remití la OF (lapicito en el listado de OF) y cargá el remito a mano."
+- El freno por falta de stock (`continuar_remito`) se queda. Si después de remitir la OF sigue sin stock, a la hora pasa a "revisar" con el aviso "Ya se remitió la OF y sigue sin stock" ("…revisá el depósito o la OF en Zomatik"): ya no pregunta por "Generar".
 
 ### 26.10 Pregunta que queda
 1. **¿La OF da stock al grabarla o hay que tocar "Generar" (`modificar_CV.php`)?** Se le preguntó a Bautista el 29/10. Hasta saberlo, `modificar_CV` no está en la lista cerrada.
@@ -1893,7 +1897,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
   - Con la OF ya en Zomatik y el remito no: "revisar", sin remito, y aviso a gerenciales.
   - Con la OF o el remito ya en Zomatik: la pasada de cada 10 min y la de la noche avisan a gerenciales, una vez por cambio (`cambio_avisado`).
 - **Últimos 3 días:** la pasada de la noche y las OF de los despachos sin pedido miran los últimos 3 días, no solo hoy.
-- **Sin stock:** a los 6 intentos (1 hora), "revisar" con el aviso "Zomatik no tiene stock: ¿la OF necesita 'Generar'?" (`sin_stock`). "Remitir en Zomatik" lo reintenta.
+- **Sin stock:** a los 6 intentos (1 hora), "revisar" con el aviso "Zomatik no tiene stock: ¿la OF necesita 'Generar'?" (`sin_stock`). "Remitir en Zomatik" lo reintenta. *(13/11: el aviso pasó a "Ya se remitió la OF y sigue sin stock", ver 26.9.)*
 - **`_validarnumeroremito`:** una respuesta vacía solo cuenta como libre si el código HTTP es 200.
 - **Migración (sin aplicar):** suma `of_foto_dia`, `sin_stock` y `cambio_avisado` a `zomatik_remitos`.
 - **Pasada final (29/10):**

@@ -45,7 +45,8 @@ export type ResultadoZ1 = {
   aviso?: string
   /** El número guardado no sirve (talonario terminado): el próximo intento elige otro */
   olvidarNumero?: boolean
-  /** Pendiente porque Zomatik no tiene stock del artículo (se cuentan: a los MAX_SIN_STOCK, "revisar") */
+  /** Pendiente que cuenta para el tope (a los MAX_SIN_STOCK, "revisar"): Zomatik no tiene stock del artículo, o no se pudo
+   *  remitir la OF (listado ilegible, red o sesión; paso "remitir_of") */
   sinStock?: boolean
   /** No se grabó: la NP ya tiene estos remitos hechos a mano (10/11). Quien llama cierra la fila como "a mano". */
   aMano?: string[]
@@ -251,49 +252,63 @@ export type DatosRemitirOf = {
  * link la remite sin confirmación (redirige al listado) y pasa a FIN; las FIN ya no lo traen (prueba real del 13/11,
  * OF 8242). Sin eso no hay stock y el remito no sale.
  *   1. Se busca la OF en el listado por su número (y su código). FIN: no se hace nada (alguien la remitió a mano).
- *   2. PEN con el lapicito a ESE código: paso `remitir_of` (se guarda antes) y GET al link.
- *   3. Se vuelve a leer el listado: FIN → ok (`of_remitida`). Sigue PEN, no aparece o no se puede leer → "pendiente" y se
- *      reintenta: es idempotente, porque si ya quedó FIN no se repite el GET.
+ *   2. PEN con el lapicito a ESE código: paso `remitir_of` (se guarda antes) y GET al link, con `ofARemitir` = ese código
+ *      en la misma llamada (el navegador de Z1 no deja otro).
+ *   3. Se vuelve a leer el listado: FIN → ok (`of_remitida`).
+ * Tope (revisión 13/11), nunca reintentos infinitos:
+ *   - "revisar" (quien llama avisa a Bautista, un mail por episodio): sigue PEN después del GET, o una anomalía (no
+ *     aparece, figura repetida, tiene otro código, PEN sin el lapicito o con el lapicito a otro código);
+ *   - "pendiente" con `sinStock` (cuenta para MAX_SIN_STOCK, como la falta de stock): el listado no se pudo leer (otra
+ *     sucursal, formato) o se cortó la red o la sesión. Es idempotente: si ya quedó FIN, el GET no se repite.
  * `grabado` = se mandó el GET.
  */
 export async function remitirOf(nav: NavegadorNp, d: DatosRemitirOf, o: OpcionesZ1): Promise<ResultadoZ1> {
   const PASO = "remitir_of"
   const numero = String(d.numero ?? "").match(/\d{4}-\d{8}/)?.[0] ?? null
   const ofTexto = numero ? `OF ${numero}` : "OF"
+  const revisar = (m: string, corte?: string, grabado = false): ResultadoZ1 => ({ estado: "revisar", mensaje: `${m} Revisala en Zomatik.`, paso: PASO, aviso: "No se pudo remitir la OF", grabado, ...(corte ? { recorte: corte } : {}) })
   const pendiente = (m: string, corte?: string, grabado = false): ResultadoZ1 => ({ estado: "pendiente", mensaje: `${m} Se reintenta.`, paso: PASO, reintentar: true, grabado, ...(corte ? { recorte: corte } : {}) })
-  return ejecutar(o, async (marcar, estado) => {
+  const res = await ejecutar(o, async (marcar, estado) => {
     // Todo lo de este paso (también un corte de red antes del GET) se informa como "remitir_of"; se GUARDA recién antes del GET
     estado.paso = PASO
     if (typeof d.codigo !== "number" || !Number.isInteger(d.codigo) || d.codigo <= 0) throw dato("La OF no tiene código de Zomatik: no se puede remitir.")
     if (!numero) throw dato(`No se entiende el número de la OF ("${d.numero ?? ""}"): no se puede remitir.`)
-    /** La fila de nuestra OF en el listado, o por qué no se pudo leer (nunca se sigue a ciegas). */
-    const leer = async (): Promise<{ fila: FilaOf } | { falla: string; recorte?: string }> => {
+    /** La fila de nuestra OF en el listado; una anomalía (→ revisar) o por qué no se pudo leer (→ pendiente). */
+    const leer = async (): Promise<{ fila: FilaOf } | { anomalia: string } | { ilegible: string; recorte?: string }> => {
+      let todas: FilaOf[]
       try {
-        const filas = (await listarOf(nav, d.deposito, d.desde < o.hoy ? d.desde : o.hoy, o.hoy)).filter((x) => x.numero === numero)
-        if (filas.length !== 1) return { falla: filas.length ? `La ${ofTexto} aparece ${filas.length} veces en el listado de OF de Zomatik.` : `La ${ofTexto} no aparece en el listado de OF de Zomatik.` }
-        if (filas[0].codigo !== d.codigo) return { falla: `La ${ofTexto} del listado de Zomatik tiene otro código (${filas[0].codigo ?? "sin link"}, el sistema tiene ${d.codigo}).` }
-        return { fila: filas[0] }
+        todas = await listarOf(nav, d.deposito, d.desde < o.hoy ? d.desde : o.hoy, o.hoy)
       } catch (e) {
-        if (e instanceof Freno) return { falla: `No se pudo leer el listado de OF de Zomatik: ${e.message.replace(/\s*No se (mandó nada|sigue)\.\s*$/, "")}.`, recorte: e.recorte }
+        if (e instanceof Freno) return { ilegible: `No se pudo leer el listado de OF de Zomatik: ${e.message.replace(/\s*No se (mandó nada|sigue)\.\s*$/, "")}.`, recorte: e.recorte }
         throw e
       }
+      const filas = todas.filter((x) => x.numero === numero)
+      if (!filas.length) return { anomalia: `La ${ofTexto} no aparece en el listado de OF de Zomatik (desde el ${d.desde}).` }
+      if (filas.length > 1) return { anomalia: `La ${ofTexto} figura ${filas.length} veces en el listado de OF de Zomatik.` }
+      if (filas[0].codigo !== d.codigo) return { anomalia: `La ${ofTexto} del listado de Zomatik tiene otro código (${filas[0].codigo ?? "sin link"}; el sistema tiene ${d.codigo}).` }
+      return { fila: filas[0] }
     }
     await aRebucret(nav)
     const antes = await leer()
-    if ("falla" in antes) return pendiente(antes.falla, antes.recorte)
+    if ("ilegible" in antes) return pendiente(antes.ilegible, antes.recorte)
+    if ("anomalia" in antes) return revisar(antes.anomalia)
     // Ya FIN (alguien la remitió a mano, o un intento anterior): no se hace nada
     if (antes.fila.estado === "FIN") return { estado: "ok", mensaje: null, numero: ofTexto, codigo: d.codigo, paso: "of_remitida" }
     if (antes.fila.remitir !== d.codigo)
-      return pendiente(`La ${ofTexto} está PEN en Zomatik pero ${antes.fila.remitir ? `el link para remitirla va a otro código (${antes.fila.remitir})` : "sin el link para remitirla"}.`)
+      return revisar(`La ${ofTexto} está PEN en Zomatik ${antes.fila.remitir ? `pero el link para remitirla va a otro código (${antes.fila.remitir})` : "pero sin el link para remitirla"}.`)
     await aRebucret(nav)
     await marcar(PASO)
-    const g = await nav.get(`remitir_ordenfabricacion.php?codigo=${d.codigo}`)
+    const g = await nav.get(`remitir_ordenfabricacion.php?codigo=${d.codigo}`, { ofARemitir: d.codigo })
     const no = rechazo(g)
     const despues = await leer()
-    if ("falla" in despues) return pendiente(`Se mandó remitir la ${ofTexto}, pero ${despues.falla.charAt(0).toLowerCase()}${despues.falla.slice(1)}`, despues.recorte ?? recorte(g.html), true)
+    const deCorte = (m: string) => `Se mandó remitir la ${ofTexto}, pero ${m.charAt(0).toLowerCase()}${m.slice(1)}`
+    if ("ilegible" in despues) return pendiente(deCorte(despues.ilegible), despues.recorte ?? recorte(g.html), true)
+    if ("anomalia" in despues) return revisar(deCorte(despues.anomalia), recorte(g.html), true)
     if (despues.fila.estado === "FIN") return { estado: "ok", mensaje: null, numero: ofTexto, codigo: d.codigo, paso: "of_remitida", grabado: true }
-    return pendiente(`Se mandó remitir la ${ofTexto} y sigue PEN en Zomatik${no ? ` (Zomatik dijo: ${no})` : ""}.`, recorte(g.html), true)
+    return revisar(`La ${ofTexto} sigue PEN después de remitirla${no ? ` (Zomatik dijo: ${no})` : ""}.`, recorte(g.html), true)
   })
+  // Todo "pendiente" de este paso (listado ilegible, red o sesión) cuenta para el tope, como la falta de stock
+  return res.estado === "pendiente" ? { ...res, sinStock: true } : res
 }
 
 // ---------------------------------------------------------------------------

@@ -86,7 +86,7 @@ type InitPedido = RequestInit & {
   escrituraNp?: boolean
   /** Z1: habilita el grupo de OF + remito (solo con la llave de remitir prendida, ver z1-servidor.ts). */
   escrituraZ1?: boolean
-  /** Z1: la OF que se puede "remitir" (remitir_ordenfabricacion.php?codigo=N): solo esa, el of_codigo de la fila. */
+  /** Z1: la OF que esta llamada puede "remitir" (remitir_ordenfabricacion.php?codigo=N): solo esa, el of_codigo de la fila. */
   ofARemitir?: number | null
   /** Ajuste de la NP al finalizar: habilita su grupo, ATADO a esta NP (solo con la llave del ajuste, ver ajuste-servidor.ts). */
   escrituraAjuste?: number
@@ -504,9 +504,10 @@ export async function navegadorLectura(): Promise<NavegadorNp> {
 /**
  * Navegador del robot de OF + remito (Z1): igual al de la NP, con el grupo de Z1 habilitado. `llave` la arma
  * `z1-servidor.ts` después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida) en la base.
- * `ofARemitir`: el of_codigo de la fila; solo con él se puede "remitir" esa OF (remitir_ordenfabricacion.php?codigo=N).
+ * "Remitir" una OF (remitir_ordenfabricacion.php?codigo=N) solo con `get(ruta, { ofARemitir: N })` en esa misma llamada:
+ * el robot pasa el of_codigo de la fila; sin él, o con otro código en la ruta, se rechaza antes de salir.
  */
-export async function navegadorZ1(llave: LlaveZ1, ofARemitir: number | null = null): Promise<NavegadorNp> {
+export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
   if (!llave || llave.remitir !== true) throw new ZomatikError("ruta_no_permitida", "La OF y el remito automáticos están apagados para esta planta")
   const s = await obtenerSesion()
   const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
@@ -517,11 +518,11 @@ export async function navegadorZ1(llave: LlaveZ1, ofARemitir: number | null = nu
     return { status: r.status, location: loc, html }
   }
   return {
-    async get(ruta) {
-      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true, ofARemitir }), ruta)
+    async get(ruta, opciones) {
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true, ofARemitir: opciones?.ofARemitir ?? null }), ruta)
     },
     async post(ruta, cuerpo, contentType) {
-      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true, ofARemitir }), ruta)
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true }), ruta)
     },
     async sucursal(id) {
       return elegirSucursal(s.cookie, id)
