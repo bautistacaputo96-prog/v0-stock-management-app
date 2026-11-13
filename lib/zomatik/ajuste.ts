@@ -3,8 +3,9 @@
  * Spec: docs/specs/2026-11-06-ajustar-np-al-finalizar.md (la sección 15, decisiones de Bautista del 06/11, manda).
  * Se prueban con `npm run test:zomatik-ajuste`.
  *
- *   - Qué cantidad tiene que quedar en cada NP del pedido (3.1): obj = cant − lo que reservó el pedido + lo que
- *     despachó contra ella (`despachadoPorUso`, la misma cuenta del saldo). Lo de otros pedidos no se toca.
+ *   - Qué cantidad tiene que quedar en cada NP del pedido (decisión 16, 13/11, reemplaza a la 15.3): lo despachado
+ *     contra ella por todos los usos + lo que todavía comprometen los pedidos activos (`saldoNp`, la misma cuenta del
+ *     saldo), con el libre en 0. Lo que reservan otros pedidos activos no se toca.
  *   - "Tiene factura" (15.1): Zomatik no deja editar la NP. Se mira el detalle de la NP (señal C: sin el botón Grabar,
  *     REAL) y sus comprobantes (señal B, REAL). Lo que no se puede leer: "no se sabe".
  *   - El pendiente que tiene que traer el remito después del ajuste (4.4).
@@ -54,7 +55,14 @@ export function marcaAjuste(pedidoId: string, np: { numero?: string | null; n?: 
 // ---------------------------------------------------------------------------
 
 export type UsoAjuste = { id: string; np_id: string; m3: number; activo: boolean; created_at: string; despachado_fijo?: number | null }
-export type NpAjuste = { id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null }
+export type NpAjuste = {
+  id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null
+  /** "NP con saldo": devolver (una persona hace la DEVOL a mano) o cerrada. Con una de estas no se toca (decisión 16). */
+  saldo_decision?: string | null
+}
+
+/** Decisiones de "NP con saldo" con las que el ajuste no toca la NP (decisión 16): ya se decidió qué hacer con el saldo. */
+export const SALDO_DECIDIDO = ["devolver", "cerrada"]
 
 export type EntradaAjuste = {
   pedidoId: string
@@ -93,9 +101,13 @@ export type PlanAjuste = {
 }
 
 /**
- * El ajuste de cada NP que usa un pedido completo (una fila por uso activo con la NP en Zomatik). Revisar (sin tocar
- * Zomatik) si: el pedido tiene despachos de antes de que remitiera el sistema; el objetivo baja de lo que necesitan los
- * otros pedidos de la NP más lo despachado (piso); lo remitido contra la NP no da lo despachado; o la NP queda en 0
+ * El ajuste de cada NP que usa un pedido completo (una fila por uso activo con la NP en Zomatik). La NP baja también el
+ * saldo libre (decisión 16, 13/11): queda en lo despachado contra ella por todos los usos (este pedido y los demás) más
+ * lo que todavía comprometen los otros pedidos activos (el piso). Si otro pedido activo la usa, no baja de lo que ese
+ * pedido reserva y queda abierta; si no, queda sin libre y `zomatik_ajuste_aplicar` la cierra.
+ * Revisar (sin tocar Zomatik) si: el pedido tiene despachos de antes de que remitiera el sistema; la NP ya tiene una
+ * decisión de "NP con saldo" (devolver o cerrada); ni sacando solo lo que este pedido tomó y no usó (la regla del 06/11)
+ * se llega al piso (la NP está reservada de más); lo remitido contra la NP no da lo despachado; o la NP queda en 0
  * (15.5: no se vacía sola, la decide una persona).
  */
 export function planificarAjuste(e: EntradaAjuste): PlanAjuste[] {
@@ -113,14 +125,21 @@ export function planificarAjuste(e: EntradaAjuste): PlanAjuste[] {
     const x = porNp.get(u.np_id)!
     const nombre = x.numero || `La NP ${x.n}`
     const desp = r3(reparto.get(u.id) || 0)
-    const obj = r3(Number(x.m3) - Number(u.m3) + desp)
+    // Lo que todavía necesitan los otros pedidos de la NP (y lo que ya despacharon), más lo despachado por este pedido
+    // contra ella (también por un uso suyo que se desvinculó y volvió a tomarla: su foto)
+    const otros = saldoNp({ id: x.id, m3: Number(x.m3) }, e.usosSaldo.filter((v) => v.pedido?.id !== e.pedidoId)).comprometido
+    const propio = e.usosDelPedido.filter((v) => v.np_id === x.id).reduce((s, v) => s + (reparto.get(v.id) || 0), 0)
+    const piso = r3(otros + propio)
+    // Regla del 06/11 (15.3): solo lo que este pedido tomó y no usó. Queda como control: si ni así se llega al piso, la NP
+    // está reservada de más
+    const soloLoSuyo = r3(Number(x.m3) - Number(u.m3) + desp)
+    const obj = piso
     const base = { np_id: x.id, uso_id: u.id, numero: x.numero, m3_np: r3(x.m3), m3_uso: r3(u.m3), m3_despachado: desp, m3_objetivo: obj }
     const revisar = (mensaje: string): PlanAjuste => ({ ...base, tipo: null, estado: "revisar", mensaje })
     if (antesDeRemitir) return revisar(`El pedido tiene despachos que se remitieron a mano (de antes del remito automático): ajustá la ${nombre} a mano.`)
-    // Lo que todavía necesitan los otros pedidos de la NP (y lo que ya despacharon)
-    const otros = saldoNp({ id: x.id, m3: Number(x.m3) }, e.usosSaldo.filter((v) => v.pedido?.id !== e.pedidoId)).comprometido
-    const piso = r3(otros + desp)
-    if (obj < piso - TOL_AJUSTE) return revisar(`La ${nombre} la usan otros pedidos (${m3Texto(otros)} m³): no puede quedar en ${m3Texto(obj)} m³. No se tocó: revisala.`)
+    // Ya se decidió qué hacer con el saldo en "NP con saldo" (o se está devolviendo a mano): no se toca
+    if (SALDO_DECIDIDO.includes(String(x.saldo_decision || ""))) return revisar(msjSaldoDecidido(nombre, String(x.saldo_decision)))
+    if (soloLoSuyo < piso - TOL_AJUSTE) return revisar(`La ${nombre} la usan otros pedidos (${m3Texto(r3(piso - desp))} m³): no puede quedar en ${m3Texto(soloLoSuyo)} m³. No se tocó: revisala.`)
     const esperadoRemitido = r3(desp - (ultimoActivo?.id === u.id ? Number(e.sinRemitir) || 0 : 0))
     const remitido = r3(e.remitidoPorNp[x.id] || 0)
     if (Math.abs(remitido - esperadoRemitido) > TOL_AJUSTE)
@@ -251,12 +270,22 @@ export const msjConFactura = (devolver: number, factura?: string | null) => `La 
 export const msjConFacturaExceso = (exceso: number, factura?: string | null) => `La NP tiene factura${conNumero(factura)} y se despacharon ${m3Texto(exceso)} m³ de más: hacé una NP adicional por ${m3Texto(exceso)} m³ a mano y tocá «Ya hice la NP adicional».`
 export const msjFacturaContradice = (factura: string) => `Zomatik lista la factura ${factura} pero la NP se puede editar. No se tocó: revisala.`
 export const msjZomatikNoDejo = (texto: string) => `Zomatik no dejó cambiar la NP: ${texto}.`
+/** La NP ya tiene una decisión de "NP con saldo" (decisión 16): el ajuste no la toca. */
+export const msjSaldoDecidido = (nombre: string, decision: string) =>
+  `La ${nombre} ${decision === "devolver" ? "tiene el saldo para devolver" : "ya está cerrada"} en «NP con saldo». No se tocó: revisala.`
 
-/** Texto de Finalizar (solo con la llave): "Al remitir, la NP2 0001-00002090 baja de 60 a 40 m³." */
-export function textoFinalizar(nps: { numero: string | null; m3: number; m3_uso: number }[], despachado: number): string {
-  if (nps.length === 1 && nps[0].numero) {
+/**
+ * Texto de Finalizar (solo con la llave): "Al remitir, la NP2 0001-00002090 baja de 60 a 40 m³." Con la cuenta de
+ * `planificarAjuste` (decisión 16): lo que comprometen los otros pedidos (m³ − libre − lo que compromete este pedido
+ * mientras está activo) más lo despachado. `libre` es el de la pantalla (nunca negativo). Con una decisión de "NP con
+ * saldo" el ajuste va a revisar: texto general.
+ */
+export function textoFinalizar(nps: { numero: string | null; m3: number; m3_uso: number; libre?: number | null; saldo_decision?: string | null }[], despachado: number): string {
+  if (nps.length === 1 && nps[0].numero && !SALDO_DECIDIDO.includes(String(nps[0].saldo_decision || ""))) {
     const x = nps[0]
-    const obj = r3(Number(x.m3) - Number(x.m3_uso) + Number(despachado || 0))
+    const desp = Number(despachado || 0)
+    const otros = Math.max(0, Number(x.m3) - Math.max(0, Number(x.libre) || 0) - Math.max(Number(x.m3_uso) || 0, desp))
+    const obj = r3(otros + desp)
     if (Math.abs(obj - Number(x.m3)) <= TOL_AJUSTE) return `Al remitir, la ${x.numero} queda en ${m3Texto(x.m3)} m³.`
     if (obj > TOL_AJUSTE) return `Al remitir, la ${x.numero} ${obj < Number(x.m3) ? "baja" : "sube"} de ${m3Texto(x.m3)} a ${m3Texto(obj)} m³.`
   }

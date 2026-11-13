@@ -12,6 +12,8 @@ export type NpFila = {
   mensaje: string | null; paso?: string | null; proyecto_codigo: number | null; es_adicional: boolean; disponible_m3: number | null; updated_at: string
   /** m³ que el pedido usa de esta NP y lo libre de la NP (una NP puede servir a varios pedidos). */
   m3_uso: number; libre: number; fecha: string; fecha_zomatik: string | null; saldo_mensaje: string | null
+  /** "NP con saldo": devolver o cerrada (con una de estas el ajuste al finalizar no la toca). */
+  saldo_decision?: string | null
 }
 export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
