@@ -28,7 +28,7 @@ export async function remitirPedido(pedidoId: string, fecha: string): Promise<{ 
     }
     if (j?.problemas?.length) return { titulo: "Remito en Zomatik: hay que revisar", texto: j.problemas.join(" "), mal: true }
     if (j?.creados) return { titulo: "Haciendo la OF y el remito en Zomatik…", texto: "En unos segundos aparece el número en el pedido." }
-    return { titulo: "Remito en Zomatik", texto: "No había despachos nuevos para remitir." }
+    return { titulo: "Remito en Zomatik", texto: "Se reintentan los remitos pendientes del pedido: en unos segundos aparece el número en el pedido." }
   } catch {
     return { titulo: "No se pudo remitir en Zomatik", texto: "Sin conexión", mal: true }
   }
