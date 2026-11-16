@@ -46,8 +46,8 @@ function Buscador<T extends { codigo: number }>({
   const [q, setQ] = useState("")
   const [res, setRes] = useState<T[]>([])
   const [buscando, setBuscando] = useState(false)
-  // null = no se actualizó; "ok" = la copia ya está al día (recién o hace menos de 2 min)
-  const [act, setAct] = useState<{ estado: "cargando" | "ok" | "error"; texto?: string } | null>(null)
+  // null = no se actualizó; "ok" = se trajo recién; "reciente" = ya se había traído hace menos de 2 min (no se fue a Zomatik)
+  const [act, setAct] = useState<{ estado: "cargando" | "ok" | "reciente" | "error"; texto?: string } | null>(null)
   const [vuelta, setVuelta] = useState(0)
   const ultimo = useRef(0)
   async function actualizarAhora() {
@@ -58,7 +58,7 @@ function Buscador<T extends { codigo: number }>({
       setAct({ estado: "error", texto: r.error })
       return
     }
-    setAct({ estado: "ok" })
+    setAct({ estado: r.reciente ? "reciente" : "ok" })
     setVuelta((v) => v + 1)
     actualizar.onActualizado?.()
   }
@@ -77,8 +77,13 @@ function Buscador<T extends { codigo: number }>({
     }, 250)
     return () => clearTimeout(t)
   }, [q, vuelta]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Búsqueda nueva: vuelve a ofrecer «Actualizar desde Zomatik» (salvo que esté actualizando)
+  useEffect(() => {
+    setAct((a) => (a?.estado === "cargando" ? a : null))
+  }, [q])
   const conTexto = q.trim().length >= 2
-  const actualizada = act?.estado === "ok"
+  const actualizada = act?.estado === "ok" || act?.estado === "reciente"
+  const sigue = act?.estado === "reciente" ? "Se actualizó hace un momento. Si lo acaban de dar de alta, probá en 2 minutos." : actualizar?.sigueSinAparecer
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -91,7 +96,7 @@ function Buscador<T extends { codigo: number }>({
         <Command shouldFilter={false}>
           <CommandInput placeholder={placeholder} value={q} onValueChange={setQ} />
           <CommandList className="max-h-[260px]">
-            {conTexto && !buscando && <CommandEmpty>{actualizada && actualizar ? <span className="text-amber-800">{actualizar.sigueSinAparecer}</span> : vacio}</CommandEmpty>}
+            {conTexto && !buscando && <CommandEmpty>{actualizada && actualizar ? <span className="text-amber-800">{sigue}</span> : vacio}</CommandEmpty>}
             {buscando && <div className="px-3 py-2 text-xs text-muted-foreground">Buscando…</div>}
             <CommandGroup>
               {res.map((x) => {
@@ -120,7 +125,7 @@ function Buscador<T extends { codigo: number }>({
             {act?.estado === "cargando" ? (
               <span className="text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Actualizando desde Zomatik… (puede tardar unos segundos)</span>
             ) : actualizada ? (
-              <span className="text-amber-800">¿Sigue sin aparecer? {actualizar.sigueSinAparecer}</span>
+              <span className="text-amber-800">¿Sigue sin aparecer? {sigue}</span>
             ) : (
               <>
                 {act?.estado === "error" && <span className="mr-1 text-red-700">{act.texto}</span>}
