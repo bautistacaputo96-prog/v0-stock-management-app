@@ -729,20 +729,23 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                   .sort((a, b) => (b.created_at || b.dispatch_date).localeCompare(a.created_at || a.dispatch_date))
                   .slice(0, 15)
                   .map(d => (
-                  <div key={d.id} className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/30 gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-xs text-muted-foreground w-14 shrink-0">{format(parseISO(d.dispatch_date), "HH:mm")}</span>
-                      <Badge variant="outline" className="text-xs shrink-0">{d.formulas?.code || "N/A"}</Badge>
-                      <span className="truncate">{d.clients?.name}</span>
+                  <div key={d.id} className="flex items-center justify-between text-xs sm:text-sm p-1.5 sm:p-2 rounded hover:bg-muted/30 gap-2">
+                    {/* Una sola fila: en pantallas angostas se achica la letra y se corta la fórmula/cliente con "…" (no se superpone) */}
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <span className="text-[11px] sm:text-xs text-muted-foreground w-9 sm:w-14 shrink-0">{format(parseISO(d.dispatch_date), "HH:mm")}</span>
+                      <Badge variant="outline" className="text-[10px] sm:text-xs min-w-0 max-w-[55%] shrink overflow-hidden" title={d.formulas?.code || "N/A"}>
+                        <span className="truncate">{d.formulas?.code || "N/A"}</span>
+                      </Badge>
+                      <span className="truncate min-w-0">{d.clients?.name}</span>
                       {!d.scheduled_dispatch_id && <Badge variant="secondary" className="text-[10px] shrink-0">manual</Badge>}
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5 sm:gap-3 shrink-0 whitespace-nowrap">
                       <span className="font-medium">{d.quantity_m3} m3</span>
-                      {d.remito && <span className="text-xs text-muted-foreground">R: {d.remito}</span>}
-                      {d.mixers?.license_plate && <span className="text-xs text-muted-foreground">{d.mixers.license_plate}</span>}
-                      {nombreChofer(d.chofer_id) && <span className="text-xs text-muted-foreground">· {nombreChofer(d.chofer_id)}</span>}
+                      {d.remito && <span className="text-[11px] sm:text-xs text-muted-foreground">R: {d.remito}</span>}
+                      {d.mixers?.license_plate && <span className="text-[11px] sm:text-xs text-muted-foreground">{d.mixers.license_plate}</span>}
+                      {nombreChofer(d.chofer_id) && <span className="text-[11px] sm:text-xs text-muted-foreground">· {nombreChofer(d.chofer_id)}</span>}
                       {!d.is_test_dispatch && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7" title="Ver remito" onClick={() => window.open(`/api/remito/${d.id}`, "_blank")}>
                           <Printer className="h-4 w-4" />
                         </Button>
                       )}
