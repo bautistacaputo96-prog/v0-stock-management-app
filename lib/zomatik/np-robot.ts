@@ -21,7 +21,7 @@ import {
   SUCURSAL_REBUCRET, SUCURSAL_RUTA25, alertasDe, camposFormulario, conCantidad, conValores, datosSecundarios,
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
-  autorizacionEnListado, tieneFormAutorizar, bloqueNp, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
+  autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
@@ -217,14 +217,18 @@ async function abrir(nav: NavegadorNp, codigo: number) {
 }
 
 /**
- * Busca la marca en una sucursal: todas las NP del depósito desde el día en que se creó la nuestra hasta hoy, sin
- * filtrar por nombre (la NP se graba con la razón social de Zomatik, no con nuestro nombre). Se abre cada una.
+ * Busca la marca en una sucursal: todas las NP del depósito con que se grabó la nuestra (`d.deposito`, el que va en el
+ * Grabar, no el que trae el formulario), desde el día en que se creó hasta hoy, sin filtrar por nombre (la NP se graba
+ * con la razón social de Zomatik, no con nuestro nombre). Si la fecha de entrega cae fuera de ese rango (una NP para
+ * mañana), el rango la incluye: así aparece filtre el listado por la fecha de la NP o por la de entrega. Se abre cada una.
  * No es concluyente si la página muestra otra sucursal, si el listado tiene más de una página, si hay demasiadas o si
  * alguna no se puede abrir.
  */
 async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string, latir: () => Promise<void>): Promise<Busqueda> {
-  const desde = d.creadaEl && d.creadaEl < hoy ? d.creadaEl : hoy
-  const l = await listado(nav, { bus_fechad: desde, bus_fechah: hoy, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
+  const dias = [hoy, ...(d.creadaEl && d.creadaEl < hoy ? [d.creadaEl] : []), ...(/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || "") ? [d.fecha] : [])].sort()
+  const desde = dias[0]
+  const hasta = dias[dias.length - 1]
+  const l = await listado(nav, { bus_fechad: desde, bus_fechah: hasta, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
   const nombre = sucursal === SUCURSAL_REBUCRET ? "REBUCRET" : "RUTA 25"
   if (l.sucursalPagina !== sucursal) return { estado: "dudosa", motivo: `el listado de ${nombre} vino de otra sucursal (otro sistema la cambió)` }
   if ((l.paginas ?? 1) > 1) return { estado: "dudosa", motivo: `el listado de ${nombre} tiene ${l.paginas} páginas` }
@@ -274,11 +278,14 @@ const CAMPO_DETALLE = /^(codigo|peso|hcosto|costo|apallet|palletcant|cantidad|co
 
 /**
  * Arma el multipart del Grabar: los campos del formulario + los del detalle de ahora (todos los de cada renglón y los
- * sueltos: credito, compraactual…) + fparam, como lo manda el navegador.
+ * sueltos: credito, compraactual…) + fparam, como lo manda el navegador. `sinMandar`: los campos `disabled` del
+ * formulario, que el navegador no manda (en el MATERIAL del proyecto, el comprobante bloqueado).
  */
-function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, detalle: Detalle | null, renglones: Renglon[], boundary: string) {
+function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, detalle: Detalle | null, renglones: Renglon[], boundary: string, sinMandar: readonly string[] = []) {
   const sueltos = detalle ? camposSueltosDetalle(detalle.html) : []
-  const base = conValores(orden.filter((c) => !CAMPO_DETALLE.test(c.nombre)), { ...valores, fparam: fparamDe(renglones) })
+  const fuera = new Set(sinMandar)
+  const vals = Object.fromEntries(Object.entries({ ...valores, fparam: fparamDe(renglones) }).filter(([k]) => !fuera.has(k)))
+  const base = conValores(orden.filter((c) => !CAMPO_DETALLE.test(c.nombre) && !fuera.has(c.nombre)), vals)
   return multipartLatin1([...base, ...renglones.flatMap((r) => r.campos), ...sueltos], boundary)
 }
 
@@ -287,6 +294,19 @@ function rechazo(r: RespuestaNav): string | null {
   if (r.status >= 300 && r.status < 400) return null
   const a = alertasDe(r.html)
   return a.length ? a.join(" · ") : null
+}
+
+/** Grabar "anduvo" como en el navegador: Zomatik redirige al listado de pedidos. */
+const fueAlListado = (r: RespuestaNav) => r.status >= 300 && r.status < 400 && /listado_pedidos/i.test(r.location || "")
+
+/**
+ * Lo que respondió Zomatik al Grabar, para Actividad (~2 KB): el estado HTTP, a dónde redirigió y TODOS los alert()
+ * (también los de adentro de una función, que `rechazo` no toma como rechazo), más el texto de la página.
+ */
+function respuestaGrabar(r: RespuestaNav): string {
+  const alertas = [...String(r.html ?? "").matchAll(/alert\(\s*(["'])((?:\\.|(?!\1).)*)\1\s*\)/g)].map((a) => a[2].replace(/\\n/g, " ").trim()).filter(Boolean)
+  const cab = [`HTTP ${r.status}`, r.location ? `va a ${r.location}` : "sin redirigir", ...(alertas.length ? [`alert: ${alertas.join(" · ")}`] : [])].join(" · ")
+  return recorte(`${cab} · ${r.html || "(vacía)"}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -406,8 +426,8 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   const otra = await dondeQuedo(nav, d, o.hoy, latir)
   if (otra.estado === "esta") return encontrada(otra, "verificar")
   if (otra.estado === "dudosa") return dudosa(otra, "verificar")
-  if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false }
-  return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true }
+  if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
+  return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true, recorte: respuestaGrabar(g) }
 }
 
 async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
@@ -424,7 +444,11 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   if (!d.vendedorId && (!f.campos.idvendedor || f.campos.idvendedor === "0")) throw dato(SIN_VENDEDOR)
 
   const obsProyecto = (f.campos.observaciones || "").trim()
+  // Como el MATERIAL del navegador (16/11, NP 0001-00001192): proyecto y tipo=1 (ocultos) y origen 3 (Proyecto). Se
+  // ponen igual por si la página los trae vacíos o marcados por JavaScript. El número y el comprobante quedan los del
+  // formulario (el número lo asigna Zomatik al grabar).
   const valores: Record<string, string> = {
+    proyecto: String(d.proyectoCodigo), tipo: "1", origen: "3",
     deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones_entrega: d.entrega,
     observaciones: obsProyecto ? `${obsProyecto} - ${d.marca}` : d.marca,
     ...(d.vendedorId ? { idvendedor: String(d.vendedorId), vendedor: d.vendedorNombre || "", vendedor_manual: "1" } : {}),
@@ -457,10 +481,15 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
   rs = [conCantidad(elegido[0], d.m3)]
 
+  // Lo que controla validar() del navegador: si no pasa, el navegador no grabaría (no se manda nada)
+  const noPasa = noPasaValidar(c)
+  if (noPasa.length) throw formato(`el MATERIAL no pasa la validación de Zomatik: ${noPasa.join(", ")}`, mat.html)
+
   await marcar("grabar")
   alGrabar()
   await aRebucret(nav)
-  const { cuerpo, tipo } = cuerpoGrabar(f.orden, valores, det, rs, boundary)
+  // Sin los campos disabled (el comprobante bloqueado): el navegador no los manda
+  const { cuerpo, tipo } = cuerpoGrabar(f.orden, valores, det, rs, boundary, f.deshabilitados)
   const g = await nav.post("grabar_pedidos.php?codigo=0", cuerpo, tipo)
   const no = rechazo(g)
 
@@ -469,8 +498,10 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   const x = await dondeQuedo(nav, d, o.hoy, latir)
   if (x.estado === "esta") return encontrada(x, "verificar", disponible)
   if (x.estado === "dudosa") return dudosa(x, "verificar", disponible)
-  if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false }
-  return { estado: "revisar", mensaje: "Zomatik grabó pero la NP del proyecto no aparece con la marca. Revisala en Zomatik.", paso: "verificar", disponible, grabado: true }
+  if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
+  // Zomatik no dijo que no, pero la NP no está: lo que respondió queda en Actividad para saber qué pasó
+  const como = fueAlListado(g) ? "" : ` Zomatik respondió HTTP ${g.status}${g.location ? ` (a ${g.location})` : ""} en vez de ir al listado; la respuesta quedó en Actividad.`
+  return { estado: "revisar", mensaje: `Se mandó Grabar pero la NP del proyecto no aparece con la marca.${como} Revisala en Zomatik.`, paso: "verificar", disponible, grabado: true, recorte: respuestaGrabar(g) }
 }
 
 // ---------------------------------------------------------------------------

@@ -1025,7 +1025,7 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
   } else if (r.estado === "revisar") {
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "revisar", numero: r.numero ?? null, zomatik_codigo: r.codigo ?? null, sucursal: r.sucursal ?? null, paso: r.paso, proximo_intento: null })
     if (guardo) {
-      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP para revisar", Mensaje: r.mensaje } })
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP para revisar", Mensaje: r.mensaje, Paso: r.paso, Marca: np.marca, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
       const aviso = await ctx.dep.avisar(sb, `NP para revisar${r.numero ? `: ${r.numero}` : ""}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)} · ${np.m3} m³ · ${np.fecha}`, `Marca en observaciones: ${np.marca}`])
       if (!aviso.enviado) console.error("[zomatik-np] aviso a gerenciales:", aviso.motivo)
     }
