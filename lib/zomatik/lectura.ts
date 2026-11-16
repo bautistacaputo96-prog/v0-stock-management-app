@@ -16,6 +16,9 @@
  *      Historia, tipos y fichas van de a poco y respetan un presupuesto de tiempo (Vercel corta a los 60 s).
  *   2. `guardarFoto`: graba las copias (filas armadas en lib/zomatik/foto.ts).
  *
+ * Las partes clientes y artículos (`leerClientes`/`leerArticulos` + `guardarClientes`/`guardarArticulos`) también
+ * las corre sueltas "Actualizar desde Zomatik" del cartel de vincular (lib/zomatik/actualizar-copia.ts).
+ *
  * Nunca se guarda un precio ni un monto.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -38,6 +41,8 @@ import {
   pactadoDeAcopio,
   parseFichaCliente,
   npPendientesDeListado,
+  type Articulo,
+  type ClienteListado,
 } from "@/lib/zomatik/parseo"
 import {
   hoyArgentina,
@@ -75,20 +80,13 @@ export function textoError(e: unknown): string {
   return typeof m === "string" && m ? m.slice(0, 300) : "Error inesperado"
 }
 
-/** Lee de Zomatik todo lo de Z0. No toca la base. `partes` y `errores` se completan por parte. */
-export async function leerFoto(
-  s: ZomatikSesion,
-  previo: Previo,
-  opts: { presupuestoMs?: number; partes: Record<string, unknown>; errores: string[] },
-): Promise<Foto> {
-  const t0 = Date.now()
-  const queda = () => (opts.presupuestoMs ?? PRESUPUESTO_MS) - (Date.now() - t0)
+/** Una foto sin nada leído (la lectura la va completando por partes). */
+export function fotoVacia(): Foto {
   const hoy = hoyArgentina()
-  const desde12 = sumarDias(hoy, -365)
-  const foto: Foto = {
+  return {
     inicio: new Date().toISOString(),
     hoy,
-    desde12,
+    desde12: sumarDias(hoy, -365),
     clientes: null,
     articulos: null,
     renglones12: null,
@@ -98,6 +96,35 @@ export async function leerFoto(
     fichas: [],
     npPendientes: null,
   }
+}
+
+/** Parte "clientes": el listado completo (export). También la usa "Actualizar desde Zomatik" del cartel de vincular. */
+export async function leerClientes(s: ZomatikSesion): Promise<ClienteListado[]> {
+  const f = await discoverForm(s, "listado_clientes.php")
+  const lista = clientesDeListado(await fetchExport(s, "listado_clientes.php", f))
+  if (lista.length === 0) throw new ZomatikError("formato", "El listado de clientes vino vacío (¿cambió el formato?)")
+  return lista
+}
+
+/** Parte "articulos": las líneas Hormigón, Hormigón (OBRAS) y Servicios (export). También la usa el cartel de vincular. */
+export async function leerArticulos(s: ZomatikSesion): Promise<Articulo[]> {
+  const f = await discoverForm(s, "listado_articulos.php")
+  const todos: Articulo[] = []
+  for (const linea of ["132", "136", "135"]) todos.push(...articulosDeListado(await fetchExport(s, "listado_articulos.php", f, { extra: { bus_linea: linea } })))
+  if (todos.length === 0) throw new ZomatikError("formato", "El listado de artículos vino vacío")
+  return todos
+}
+
+/** Lee de Zomatik todo lo de Z0. No toca la base. `partes` y `errores` se completan por parte. */
+export async function leerFoto(
+  s: ZomatikSesion,
+  previo: Previo,
+  opts: { presupuestoMs?: number; partes: Record<string, unknown>; errores: string[] },
+): Promise<Foto> {
+  const t0 = Date.now()
+  const queda = () => (opts.presupuestoMs ?? PRESUPUESTO_MS) - (Date.now() - t0)
+  const foto = fotoVacia()
+  const { hoy, desde12 } = foto
   const parte = async (nombre: string, fn: () => Promise<unknown>) => {
     try {
       opts.partes[nombre] = await fn()
@@ -109,20 +136,13 @@ export async function leerFoto(
   }
 
   await parte("clientes", async () => {
-    const f = await discoverForm(s, "listado_clientes.php")
-    const lista = clientesDeListado(await fetchExport(s, "listado_clientes.php", f))
-    if (lista.length === 0) throw new ZomatikError("formato", "El listado de clientes vino vacío (¿cambió el formato?)")
-    foto.clientes = lista
-    return lista.length
+    foto.clientes = await leerClientes(s)
+    return foto.clientes.length
   })
 
   await parte("articulos", async () => {
-    const f = await discoverForm(s, "listado_articulos.php")
-    const todos = []
-    for (const linea of ["132", "136", "135"]) todos.push(...articulosDeListado(await fetchExport(s, "listado_articulos.php", f, { extra: { bus_linea: linea } })))
-    if (todos.length === 0) throw new ZomatikError("formato", "El listado de artículos vino vacío")
-    foto.articulos = todos
-    return todos.length
+    foto.articulos = await leerArticulos(s)
+    return foto.articulos.length
   })
 
   let formRemitos: Awaited<ReturnType<typeof discoverForm>> | null = null
@@ -198,36 +218,51 @@ async function enLotes<T>(filas: T[], fn: (lote: T[]) => Promise<void>) {
   for (let i = 0; i < filas.length; i += LOTE) await fn(filas.slice(i, i + LOTE))
 }
 
+async function upsertLotes(sb: SupabaseClient, tabla: string, filas: Record<string, unknown>[], onConflict: string) {
+  await enLotes(filas, async (lote) => {
+    const { error } = await sb.from(tabla).upsert(lote, { onConflict })
+    if (error) throw error
+  })
+}
+
+/**
+ * Graba la copia de clientes con lo que trae la foto (listado y, si se leyeron los remitos, R/X del año). Sin los
+ * remitos (`renglones12` null) no toca remitos_r_12m / remitos_x_12m / ultimo_remito. Devuelve cuántos grabó.
+ */
+export async function guardarClientes(sb: SupabaseClient, foto: Foto): Promise<number> {
+  const cli = filasClientes(foto)
+  await upsertLotes(sb, "zomatik_clientes", cli, "codigo")
+  return cli.length
+}
+
+/** Graba la copia de artículos de la foto. Devuelve cuántos grabó. */
+export async function guardarArticulos(sb: SupabaseClient, foto: Foto): Promise<number> {
+  const arts = filasArticulos(foto)
+  try {
+    await upsertLotes(sb, "zomatik_articulos", arts, "codigo")
+  } catch (e) {
+    // Sin la migración de Z2 (202610222200) no existe codigo_sistema: se graba como antes
+    if (!/codigo_sistema/.test((e as { message?: string })?.message || "")) throw e
+    await upsertLotes(sb, "zomatik_articulos", arts.map(({ codigo_sistema: _c, ...a }) => a), "codigo")
+  }
+  return arts.length
+}
+
 /** Graba la foto en las copias. Devuelve conteos de lo grabado. */
 export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {}
-  const upsert = async (tabla: string, filas: Record<string, unknown>[], onConflict: string) => {
-    await enLotes(filas, async (lote) => {
-      const { error } = await sb.from(tabla).upsert(lote, { onConflict })
-      if (error) throw error
-    })
-  }
+  const upsert = (tabla: string, filas: Record<string, unknown>[], onConflict: string) => upsertLotes(sb, tabla, filas, onConflict)
 
   // Clientes (listado + R/X del año) y fichas
-  const cli = filasClientes(foto)
-  await upsert("zomatik_clientes", cli, "codigo")
+  out.clientes = await guardarClientes(sb, foto)
   for (const f of filasFichas(foto)) {
     const { error } = await sb.from("zomatik_clientes").update(f.valores).eq("codigo", f.codigo)
     if (error) throw error
   }
-  out.clientes = cli.length
   out.fichas = foto.fichas.length
 
   // Artículos
-  const arts = filasArticulos(foto)
-  try {
-    await upsert("zomatik_articulos", arts, "codigo")
-  } catch (e) {
-    // Sin la migración de Z2 (202610222200) no existe codigo_sistema: se graba como antes
-    if (!/codigo_sistema/.test((e as { message?: string })?.message || "")) throw e
-    await upsert("zomatik_articulos", arts.map(({ codigo_sistema: _c, ...a }) => a), "codigo")
-  }
-  out.articulos = arts.length
+  out.articulos = await guardarArticulos(sb, foto)
   let lineas = new Map<number, string>()
   if (foto.articulos) lineas = new Map(foto.articulos.map((a) => [a.codigo, a.linea]))
   else {

@@ -20,15 +20,18 @@ import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { normalizarLocalidad, FALTA_LOCALIDAD } from "@/lib/geo-direccion"
 import { interpretarNombre } from "@/lib/formulas-nombre"
-import { buscarParaVincular, estadoVinculos, generarNpAhora, vincularDesdePedido, type EstadoVinculosPedido } from "@/lib/zomatik/np-cliente"
+import { actualizarCopiaZomatik, buscarParaVincular, estadoVinculos, generarNpAhora, vincularDesdePedido, type EstadoVinculosPedido } from "@/lib/zomatik/np-cliente"
 import { otraPlantaDelArticulo } from "@/lib/zomatik/vinculos"
 import type { HitArticuloVincular, HitClienteVincular } from "@/lib/zomatik/vincular-servidor"
 
 const fechaCorta = (f: string | null | undefined) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : "")
 
-/** Buscador del cartel (como el "Elegir" de Vínculos), que consulta al servidor mientras se escribe. */
+/**
+ * Buscador del cartel (como el "Elegir" de Vínculos), que consulta al servidor mientras se escribe. Abajo, «¿No está?
+ * Actualizar desde Zomatik» trae a la copia lo dado de alta hoy (la copia se llena de noche) y vuelve a buscar.
+ */
 function Buscador<T extends { codigo: number }>({
-  placeholder, vacio, buscar, fila, onElegir, deshabilitado,
+  placeholder, vacio, buscar, fila, onElegir, deshabilitado, actualizar,
 }: {
   placeholder: string
   vacio: string
@@ -36,12 +39,29 @@ function Buscador<T extends { codigo: number }>({
   fila: (x: T) => { texto: string; nota?: string; bloqueado?: string | null }
   onElegir: (x: T) => void
   deshabilitado?: boolean
+  /** Qué copia se actualiza, qué decir si después sigue sin aparecer y qué hacer al terminar (recargar sugerencias). */
+  actualizar?: { tipo: "clientes" | "articulos"; sigueSinAparecer: string; onActualizado?: () => void }
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
   const [res, setRes] = useState<T[]>([])
   const [buscando, setBuscando] = useState(false)
+  // null = no se actualizó; "ok" = la copia ya está al día (recién o hace menos de 2 min)
+  const [act, setAct] = useState<{ estado: "cargando" | "ok" | "error"; texto?: string } | null>(null)
+  const [vuelta, setVuelta] = useState(0)
   const ultimo = useRef(0)
+  async function actualizarAhora() {
+    if (!actualizar || act?.estado === "cargando") return
+    setAct({ estado: "cargando" })
+    const r = await actualizarCopiaZomatik(actualizar.tipo)
+    if (!r.ok) {
+      setAct({ estado: "error", texto: r.error })
+      return
+    }
+    setAct({ estado: "ok" })
+    setVuelta((v) => v + 1)
+    actualizar.onActualizado?.()
+  }
   useEffect(() => {
     if (q.trim().length < 2) {
       setRes([])
@@ -56,7 +76,9 @@ function Buscador<T extends { codigo: number }>({
       setBuscando(false)
     }, 250)
     return () => clearTimeout(t)
-  }, [q]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q, vuelta]) // eslint-disable-line react-hooks/exhaustive-deps
+  const conTexto = q.trim().length >= 2
+  const actualizada = act?.estado === "ok"
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -69,7 +91,7 @@ function Buscador<T extends { codigo: number }>({
         <Command shouldFilter={false}>
           <CommandInput placeholder={placeholder} value={q} onValueChange={setQ} />
           <CommandList className="max-h-[260px]">
-            {q.trim().length >= 2 && !buscando && <CommandEmpty>{vacio}</CommandEmpty>}
+            {conTexto && !buscando && <CommandEmpty>{actualizada && actualizar ? <span className="text-amber-800">{actualizar.sigueSinAparecer}</span> : vacio}</CommandEmpty>}
             {buscando && <div className="px-3 py-2 text-xs text-muted-foreground">Buscando…</div>}
             <CommandGroup>
               {res.map((x) => {
@@ -93,6 +115,22 @@ function Buscador<T extends { codigo: number }>({
             </CommandGroup>
           </CommandList>
         </Command>
+        {actualizar && conTexto && !buscando && !(actualizada && res.length === 0) && (
+          <div className="border-t px-3 py-1.5 text-[11px]">
+            {act?.estado === "cargando" ? (
+              <span className="text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Actualizando desde Zomatik… (puede tardar unos segundos)</span>
+            ) : actualizada ? (
+              <span className="text-amber-800">¿Sigue sin aparecer? {actualizar.sigueSinAparecer}</span>
+            ) : (
+              <>
+                {act?.estado === "error" && <span className="mr-1 text-red-700">{act.texto}</span>}
+                <button type="button" className="text-primary underline underline-offset-2 hover:no-underline" onClick={actualizarAhora}>
+                  ¿No está? Actualizar desde Zomatik
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
@@ -161,6 +199,14 @@ export function VincularCartel({
       vivo = false
     }
   }, [open, clientId, formulaId, conVinculos]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Después de «Actualizar desde Zomatik»: vuelve a pedir las sugerencias (un cliente o artículo recién traído)
+  function recargarEstado() {
+    if (!conVinculos) return
+    estadoVinculos(clientId, formulaId).then((r) => {
+      if (!("error" in r)) setEstado(r)
+    })
+  }
 
   const faltaCliente = !!estado?.cliente?.falta && !hecho.cliente
   const faltaFormula = !!estado?.formula?.falta && !hecho.formula
@@ -300,7 +346,7 @@ export function VincularCartel({
                 {!c.sugerencias.length && <p className="text-xs text-muted-foreground">Sin sugerencias por CUIT o nombre.</p>}
                 <Buscador<HitClienteVincular>
                   placeholder="Buscar en Zomatik por nombre o CUIT"
-                  vacio="No aparece. Si es nuevo, hay que darlo de alta en Zomatik."
+                  vacio="No aparece en la copia de Zomatik."
                   deshabilitado={!!grabando}
                   buscar={async (q) => (await buscarParaVincular("cliente", q, { clientId: c.id })).clientes || []}
                   fila={(z) => ({
@@ -309,6 +355,11 @@ export function VincularCartel({
                     bloqueado: z.vinculado_a ? `ya es «${z.vinculado_a.name}» acá` : z.cuit_coincide === "distinto" ? "CUIT distinto" : null,
                   })}
                   onElegir={(z) => elegir("cliente", z.codigo, z.razon_social)}
+                  actualizar={{
+                    tipo: "clientes",
+                    sigueSinAparecer: "No está en Zomatik (o está en otra sucursal). Pedile a administración que lo dé de alta en REBUCRET.",
+                    onActualizado: recargarEstado,
+                  }}
                 />
               </>
             )}
@@ -358,6 +409,11 @@ export function VincularCartel({
                   buscar={async (q) => (await buscarParaVincular("articulo", q, { formulaId: f.id })).articulos || []}
                   fila={(a) => ({ texto: `${a.nombre} · ${a.codigo}`, bloqueado: a.otra_planta ? `es de ${otraPlantaDelArticulo(a.nombre, f.planta) || "otra planta"}` : a.sin_codigo_sistema ? "no se puede usar en la NP" : null })}
                   onElegir={(a) => elegir("formula", a.codigo, a.nombre)}
+                  actualizar={{
+                    tipo: "articulos",
+                    sigueSinAparecer: "Ese artículo no existe en Zomatik. Hay que crearlo (con su composición) o vincular la fórmula a uno equivalente.",
+                    onActualizado: recargarEstado,
+                  }}
                 />
               </>
             )}

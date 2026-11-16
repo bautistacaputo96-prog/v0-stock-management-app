@@ -14,7 +14,7 @@
     "test:armado": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs",
     "test:carga": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/carga.test.mjs",
     "test:formulas": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/formulas-tabla.test.mjs lib/__tests__/formulas-nombre.test.mjs lib/__tests__/buscar-texto.test.mjs",
-    "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs",
+    "test:zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik.test.mjs lib/__tests__/zomatik-copia.test.mjs",
     "test:control-stock": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-stock.test.mjs",
     "test:control-ingresos": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-ingresos.test.mjs",
     "test:ingresos-zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/ingresos-zomatik.test.mjs",

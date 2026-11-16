@@ -130,6 +130,20 @@ export async function buscarParaVincular(
   }
 }
 
+/**
+ * "¿No está? Actualizar desde Zomatik": trae a la copia los clientes o los artículos de Zomatik (como mucho una vez
+ * cada 2 min por tipo; si se hizo hace poco, `reciente` y se busca en lo que hay). Después hay que volver a buscar.
+ */
+export async function actualizarCopiaZomatik(tipo: "clientes" | "articulos"): Promise<{ ok: boolean; reciente?: boolean; error?: string }> {
+  try {
+    const r = await fetch("/api/zomatik/actualizar-copia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo }) })
+    const j = await json(r)
+    return r.ok && j?.ok ? { ok: true, reciente: !!j.reciente } : { ok: false, error: j?.error || `Error ${r.status}` }
+  } catch {
+    return { ok: false, error: "Sin conexión" }
+  }
+}
+
 export type ItemVincular = { tipo: "cliente" | "formula"; id: string; codigo: number }
 
 /** Vincula desde el pedido (solo lo que falta). `pedidoId` = el pedido guardado; sin él, "pedido nuevo". */
