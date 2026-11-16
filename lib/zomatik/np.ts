@@ -186,23 +186,17 @@ function atributo(tag: string, nombre: string): string | null {
 
 export type CampoForm = { nombre: string; valor: string }
 
-/** ¿El tag tiene el atributo `disabled`? (suelto o `disabled="disabled"`; no `this.disabled` dentro de un onclick) */
-const deshabilitado = (tag: string) => /\sdisabled(?=[\s=>\/])/i.test(tag)
-
 /**
  * Valores CRUDOS de un formulario (lo que mandaría el navegador): inputs (value; radios y checkboxes solo si están
- * tildados), selects (el value de la opción elegida, o la primera) y textareas. Devuelve también el `action` y los
- * campos `disabled` (`deshabilitados`): el JavaScript de la página los lee (`campos` los trae), pero el navegador NO los
- * manda al grabar.
+ * tildados), selects (el value de la opción elegida, o la primera) y textareas. Devuelve también el `action`.
  */
-export function camposFormulario(html: string, nombreForm: RegExp): { action: string | null; campos: Record<string, string>; orden: CampoForm[]; deshabilitados: string[] } | null {
+export function camposFormulario(html: string, nombreForm: RegExp): { action: string | null; campos: Record<string, string>; orden: CampoForm[] } | null {
   const limpio = sinComentarios(html)
   const forms = limpio.match(/<form\b[\s\S]*?<\/form>/gi) || []
   const form = forms.find((f) => nombreForm.test((f.match(/<form[^>]*>/i) || [""])[0]))
   if (!form) return null
   const cab = (form.match(/<form[^>]*>/i) || [""])[0]
   const orden: CampoForm[] = []
-  const deshabilitados: string[] = []
   const re = /<input\b[^>]*>|<select\b[^>]*>[\s\S]*?<\/select>|<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi
   for (const m of form.matchAll(re)) {
     const t = m[0]
@@ -212,27 +206,22 @@ export function camposFormulario(html: string, nombreForm: RegExp): { action: st
       const tipo = (atributo(t, "type") || "text").toLowerCase()
       if (["submit", "button", "image", "file", "reset"].includes(tipo)) continue
       if ((tipo === "radio" || tipo === "checkbox") && !/\bchecked\b/i.test(t)) continue
-      if (deshabilitado(t)) deshabilitados.push(nombre)
       orden.push({ nombre, valor: decodificar(atributo(t, "value") ?? "") })
     } else if (/^<select/i.test(t)) {
-      const cab = (t.match(/<select[^>]*>/i) || [""])[0]
-      const nombre = atributo(cab, "name")
+      const nombre = atributo((t.match(/<select[^>]*>/i) || [""])[0], "name")
       if (!nombre) continue
-      if (deshabilitado(cab)) deshabilitados.push(nombre)
       const ops = [...t.matchAll(/<option\b([^>]*)>/gi)]
       const elegida = ops.find((o) => /\bselected\b/i.test(o[1])) || ops[0]
       orden.push({ nombre, valor: elegida ? decodificar(atributo(`<option ${elegida[1]}>`, "value") ?? "") : "" })
     } else {
-      const cabArea = (t.match(/<textarea[^>]*>/i) || [""])[0]
-      const nombre = atributo(cabArea, "name")
+      const nombre = atributo((t.match(/<textarea[^>]*>/i) || [""])[0], "name")
       if (!nombre) continue
-      if (deshabilitado(cabArea)) deshabilitados.push(nombre)
       orden.push({ nombre, valor: decodificar(t.replace(/^<textarea[^>]*>/i, "").replace(/<\/textarea>$/i, "")) })
     }
   }
   const campos: Record<string, string> = {}
   for (const c of orden) if (!(c.nombre in campos)) campos[c.nombre] = c.valor
-  return { action: atributo(cab, "action"), campos, orden, deshabilitados }
+  return { action: atributo(cab, "action"), campos, orden }
 }
 
 /** Campos que el robot necesita en el formulario de la NP. Si falta uno, Zomatik cambió el formulario: no se manda nada (spec 12). */

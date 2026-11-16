@@ -10,7 +10,8 @@
  * NP nueva (23.1):  sucursal 18 → alta vacía → datos del cliente → lista activa → Continuar → artículo → cantidad →
  *                   sucursal 18 → número (serie de REBUCRET) → sucursal 18 → Grabar → listado por número → marca.
  * NP de proyecto (23.2): sucursal 18 → MATERIAL → depósito → Continuar (trae lo disponible) → cantidad del día →
- *                   sucursal 18 → Grabar → buscar por marca entre las NP de hoy del cliente (el número lo pone Zomatik).
+ *                   sucursal 18 → número (el del comprobante del MATERIAL, serie de REBUCRET; el campo trae el del
+ *                   proyecto) → sucursal 18 → Grabar → buscar por marca entre las NP del depósito.
  * Vaciar (23.4):    abrir la NP → controlar la marca → borrar cada renglón → Grabar → abrir de nuevo: sin renglones.
  * Ajustar (al finalizar el pedido, docs/specs/2026-11-06-ajustar-np-al-finalizar.md): el mismo esqueleto que vaciar,
  *                   pero con la cantidad en vez del tacho: abrir → marca → un renglón → ¿factura? → cantidad → Grabar →
@@ -278,14 +279,11 @@ const CAMPO_DETALLE = /^(codigo|peso|hcosto|costo|apallet|palletcant|cantidad|co
 
 /**
  * Arma el multipart del Grabar: los campos del formulario + los del detalle de ahora (todos los de cada renglón y los
- * sueltos: credito, compraactual…) + fparam, como lo manda el navegador. `sinMandar`: los campos `disabled` del
- * formulario, que el navegador no manda (en el MATERIAL del proyecto, el comprobante bloqueado).
+ * sueltos: credito, compraactual…) + fparam, como lo manda el navegador.
  */
-function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, detalle: Detalle | null, renglones: Renglon[], boundary: string, sinMandar: readonly string[] = []) {
+function cuerpoGrabar(orden: CampoForm[], valores: Record<string, string>, detalle: Detalle | null, renglones: Renglon[], boundary: string) {
   const sueltos = detalle ? camposSueltosDetalle(detalle.html) : []
-  const fuera = new Set(sinMandar)
-  const vals = Object.fromEntries(Object.entries({ ...valores, fparam: fparamDe(renglones) }).filter(([k]) => !fuera.has(k)))
-  const base = conValores(orden.filter((c) => !CAMPO_DETALLE.test(c.nombre) && !fuera.has(c.nombre)), vals)
+  const base = conValores(orden.filter((c) => !CAMPO_DETALLE.test(c.nombre)), { ...valores, fparam: fparamDe(renglones) })
   return multipartLatin1([...base, ...renglones.flatMap((r) => r.campos), ...sueltos], boundary)
 }
 
@@ -307,6 +305,21 @@ function respuestaGrabar(r: RespuestaNav): string {
   const alertas = [...String(r.html ?? "").matchAll(/alert\(\s*(["'])((?:\\.|(?!\1).)*)\1\s*\)/g)].map((a) => a[2].replace(/\\n/g, " ").trim()).filter(Boolean)
   const cab = [`HTTP ${r.status}`, r.location ? `va a ${r.location}` : "sin redirigir", ...(alertas.length ? [`alert: ${alertas.join(" · ")}`] : [])].join(" · ")
   return recorte(`${cab} · ${r.html || "(vacía)"}`)
+}
+
+/**
+ * El número de la NP, como GetNumeroFactura() del formulario: `_getnumerofactura.php?fcomprobante=15|16`, con la
+ * sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b). Si viene de otra serie se pide una vez más.
+ */
+async function numeroRebucret(nav: NavegadorNp, comp: "15" | "16", azar: () => number): Promise<string> {
+  for (let intento = 0; intento < 2; intento++) {
+    await aRebucret(nav)
+    const n = numeroNormalizado((await nav.get(`_getnumerofactura.php?fcomprobante=${comp}&rnd=${azar()}`)).html)
+    if (n && esSerieRebucret(n)) return n
+    if (!n) throw new Corte("pendiente", "Zomatik no dio el número de la NP (¿no quedan comprobantes?). Se reintenta en 10 min.", true)
+    if (intento === 1) throw new Corte("pendiente", `El número vino de otra sucursal (${n}): otro sistema cambió la sucursal. No se grabó; se reintenta en 10 min.`, true)
+  }
+  throw new Corte("pendiente", "Zomatik no dio el número de la NP. Se reintenta en 10 min.", true)
 }
 
 // ---------------------------------------------------------------------------
@@ -398,36 +411,29 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
   await marcar("numero")
-  let numero: string | null = null
-  for (let intento = 0; intento < 2 && !numero; intento++) {
-    await aRebucret(nav)
-    const n = numeroNormalizado((await nav.get(`_getnumerofactura.php?fcomprobante=${comp}&rnd=${azar()}`)).html)
-    if (n && esSerieRebucret(n)) numero = n
-    else if (!n) throw new Corte("pendiente", "Zomatik no dio el número de la NP (¿no quedan comprobantes?). Se reintenta en 10 min.", true)
-    else if (intento === 1) throw new Corte("pendiente", `El número vino de otra sucursal (${n}): otro sistema cambió la sucursal. No se grabó; se reintenta en 10 min.`, true)
-  }
+  const numero = await numeroRebucret(nav, comp, azar)
 
   // Grabar: sucursal REBUCRET de nuevo, con lo mínimo entre medio
   await marcar("grabar")
   alGrabar()
   await aRebucret(nav)
-  const { cuerpo, tipo } = cuerpoGrabar(f.orden, { ...valores, numero: numero!, pedidos_unico: c.pedidos_unico, pedidos: c.pedidos || "0" }, det, rs, boundary)
+  const { cuerpo, tipo } = cuerpoGrabar(f.orden, { ...valores, numero, pedidos_unico: c.pedidos_unico, pedidos: c.pedidos || "0" }, det, rs, boundary)
   const g = await nav.post("grabar_pedidos.php?codigo=0", cuerpo, tipo)
   const no = rechazo(g)
 
   // Confirmar en el listado de REBUCRET por número y la marca (23.3 c)
   await marcar("verificar")
   await aRebucret(nav)
-  const x = await porNumero(nav, numero!)
+  const x = await porNumero(nav, numero)
   if (x) {
     const a = await abrir(nav, x.codigo)
-    if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero!), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true }
+    if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true }
   }
   const otra = await dondeQuedo(nav, d, o.hoy, latir)
   if (otra.estado === "esta") return encontrada(otra, "verificar")
   if (otra.estado === "dudosa") return dudosa(otra, "verificar")
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
-  return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero!)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true, recorte: respuestaGrabar(g) }
+  return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true, recorte: respuestaGrabar(g) }
 }
 
 async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () => number, boundary: string, marcar: (p: string) => Promise<void>, alGrabar: () => void, latir: () => Promise<void>): Promise<ResultadoNp> {
@@ -445,8 +451,8 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
 
   const obsProyecto = (f.campos.observaciones || "").trim()
   // Como el MATERIAL del navegador (16/11, NP 0001-00001192): proyecto y tipo=1 (ocultos) y origen 3 (Proyecto). Se
-  // ponen igual por si la página los trae vacíos o marcados por JavaScript. El número y el comprobante quedan los del
-  // formulario (el número lo asigna Zomatik al grabar).
+  // ponen igual por si la página los trae vacíos o marcados por JavaScript. El comprobante queda el del formulario; el
+  // número NO (trae el del proyecto): se pide antes de grabar, como GetNumeroFactura() al cargar la página.
   const valores: Record<string, string> = {
     proyecto: String(d.proyectoCodigo), tipo: "1", origen: "3",
     deposito: String(d.deposito), fecha_entrega: d.fecha, observaciones_entrega: d.entrega,
@@ -481,15 +487,22 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
   rs = [conCantidad(elegido[0], d.m3)]
 
+  // El número: el campo trae el del PROYECTO (0001-00000030); el navegador lo pisa al cargar la página con
+  // GetNumeroFactura() (_getnumerofactura.php con el comprobante del formulario). Grabado con el del proyecto, Zomatik
+  // lo descartaba sin avisar (12 al 16/11, proyecto 576). Igual que en la NP nueva: REBUCRET justo antes y de su serie.
+  const comp = c.comprobante
+  if (comp !== "15" && comp !== "16") throw formato(`el MATERIAL trae el comprobante "${comp ?? ""}"`, mat.html)
+  await marcar("numero")
+  const numero = await numeroRebucret(nav, comp, azar)
+
   // Lo que controla validar() del navegador: si no pasa, el navegador no grabaría (no se manda nada)
-  const noPasa = noPasaValidar(c)
+  const noPasa = noPasaValidar({ ...c, numero })
   if (noPasa.length) throw formato(`el MATERIAL no pasa la validación de Zomatik: ${noPasa.join(", ")}`, mat.html)
 
   await marcar("grabar")
   alGrabar()
   await aRebucret(nav)
-  // Sin los campos disabled (el comprobante bloqueado): el navegador no los manda
-  const { cuerpo, tipo } = cuerpoGrabar(f.orden, valores, det, rs, boundary, f.deshabilitados)
+  const { cuerpo, tipo } = cuerpoGrabar(f.orden, { ...valores, numero }, det, rs, boundary)
   const g = await nav.post("grabar_pedidos.php?codigo=0", cuerpo, tipo)
   const no = rechazo(g)
 

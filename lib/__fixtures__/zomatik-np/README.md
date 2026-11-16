@@ -16,7 +16,8 @@ Respuestas de Zomatik para `lib/__tests__/zomatik-np.test.mjs` (Z2, nota de pedi
   `modificar_pedidos.php?codigo=N` no trae renglones: los pide con `pedidos=N` y su `pedidos_unico`.
 - `material-576.html`: el MATERIAL del proyecto 576 (`modificar_pedidos.php?proyecto=576&tipo=1`) con los campos REALES,
   en su orden, como los capturó Bautista el 16/11 al hacer a mano la NP 0001-00001192 (cliente 22812, depósito por
-  defecto PILAR 104, comprobante 15, número del proyecto 0001-00000030, origen 3, vendedor 101). El nombre y la dirección
-  del cliente son de relleno. El comprobante va `disabled` (bloqueado, como se relevó el 22/10: un select solo se bloquea
-  así), por eso el navegador no lo manda al grabar. `detalle-proyecto-576.html` es el Continuar con un renglón (506,9 m³).
-- `material.html`: el número es `0001-00000014` (sin prefijo), como lo muestra el MATERIAL real.
+  defecto PILAR 104, comprobante 15, origen 3, vendedor 101). El nombre y la dirección del cliente son de relleno. Ningún
+  campo es `disabled`; `fecha_entrega` y `numero` son readonly. El `numero` trae el del PROYECTO (0001-00000030): al cargar
+  la página, `GetNumeroFactura()` lo pisa con el próximo de NP (`_getnumerofactura.php?fcomprobante=15`).
+  `detalle-proyecto-576.html` es el Continuar con un renglón (506,9 m³).
+- `material.html`: el número es `0001-00000014` (sin prefijo) y el comprobante no está bloqueado, como en el MATERIAL real.

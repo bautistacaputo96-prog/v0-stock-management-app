@@ -18,9 +18,9 @@ function verificar(fcodigo){ respuesta = confirm('¿Está seguro que desea elimi
 <select name="condicion_pago"><option value="">--</option><option value="1" selected>Cuenta Corriente</option><option value="2">Contado</option></select>
 <input type="hidden" name="idobra" value="0"><input type="text" name="obra" value=""><input type="TEXT" name="entregaren" value="">
 <select name="deposito" id="deposito"><option value="">--</option><option value="104" selected>PILAR</option><option value="113">REBUCRET</option><option value="116">Canning</option></select>
-<input name="fecha_entrega" id="fecha_entrega" value="">
+<input name="fecha_entrega" id="fecha_entrega" value="" readonly>
 <textarea name="observaciones_entrega"></textarea><textarea name="observaciones">PAVIMENTO LA TERCERA</textarea>
-<select name="comprobante" id="comprobante" disabled><option value="">--</option><option value="15" selected>Nota de Pedido</option><option value="16">Nota de Pedido 2</option></select>
+<select name="comprobante" id="comprobante" onchange="GetNumeroFactura()"><option value="">--</option><option value="15" selected>Nota de Pedido</option><option value="16">Nota de Pedido 2</option></select>
 <input type="TEXT" name="numero" id="numero" value="0001-00000030" readonly>
 <input type="radio" name="origen" value="1"><input type="radio" name="origen" value="2"><input type="radio" name="origen" value="3" checked>
 <input type="hidden" name="idlista" id="idlista" value="0"><input type="text" name="lista" value="">
