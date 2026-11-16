@@ -188,7 +188,7 @@ export type CampoForm = { nombre: string; valor: string }
 
 /**
  * Valores CRUDOS de un formulario (lo que mandaría el navegador): inputs (value; radios y checkboxes solo si están
- * tildados), selects (el value de la opción elegida, o la primera) y textareas. Devuelve también el `action`.
+ * tildados), selects (el value de la opción elegida —la última con selected, como el navegador— o la primera) y textareas. Devuelve también el `action`.
  */
 export function camposFormulario(html: string, nombreForm: RegExp): { action: string | null; campos: Record<string, string>; orden: CampoForm[] } | null {
   const limpio = sinComentarios(html)
@@ -211,7 +211,9 @@ export function camposFormulario(html: string, nombreForm: RegExp): { action: st
       const nombre = atributo((t.match(/<select[^>]*>/i) || [""])[0], "name")
       if (!nombre) continue
       const ops = [...t.matchAll(/<option\b([^>]*)>/gi)]
-      const elegida = ops.find((o) => /\bselected\b/i.test(o[1])) || ops[0]
+      // Como el navegador: si varias opciones dicen "selected", vale la ÚLTIMA (el MATERIAL del proyecto trae
+      // "--Comprobantes--" y "Nota de Pedido" las dos con selected; 16/11, el robot tomaba la vacía).
+      const elegida = [...ops].reverse().find((o) => /\bselected\b/i.test(o[1])) || ops[0]
       orden.push({ nombre, valor: elegida ? decodificar(atributo(`<option ${elegida[1]}>`, "value") ?? "") : "" })
     } else {
       const nombre = atributo((t.match(/<textarea[^>]*>/i) || [""])[0], "name")
