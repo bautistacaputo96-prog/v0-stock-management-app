@@ -136,18 +136,21 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
     const despachos = porDia.get(dia)!
     const plan = planificarRemitos(despachos, nps, yaRemitidos, remitidoPorNp)
     problemas.push(...plan.problemas.map((x) => `${dia}: ${x}`))
-    for (const r of plan.remitos) {
+    const filas = plan.remitos.map((r) => {
       let marca = marcaZ1(ped.id, dia, r.np_n)
       for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, k)
       marcas.add(marca)
-      const { data: id, error } = await sb.rpc("zomatik_remito_crear", {
+      return {
+        r,
         p: {
           tipo: "pedido", scheduled_dispatch_id: ped.id, np_id: r.np_id, fecha: dia, plant_id: ped.plant_id, marca, comprobante: r.comprobante, m3: r.m3,
           formula_id: despachos.find((d) => d.id === r.despachos[0].id)?.formula_id ?? "", patente: r.patente, patentes: r.patentes, remitos_papel: r.remitos_papel,
           despachos: r.despachos, created_by: usuario,
         },
-      })
-      if (error) throw error
+      }
+    })
+    /** Después de cada remito (`id` null: ya existía la marca o algún despacho ya estaba en otro remito: no se creó). */
+    const despues = async (r: (typeof filas)[number]["r"], id: string | null) => {
       // Lo de este día cuenta para el lugar que le queda a la NP en el día siguiente
       remitidoPorNp.set(r.np_id, (remitidoPorNp.get(r.np_id) || 0) + r.m3)
       if (id) {
@@ -155,6 +158,25 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
         await actividadNp(sb, { usuario, action: "crear", pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": `OF + remito pendientes por ${r.m3} m³ (despachado el ${dia})`, Despachos: r.remitos_papel || r.despachos.length } })
       }
     }
+    if (!plan.partidos.length) {
+      for (const f of filas) {
+        const { data: id, error } = await sb.rpc("zomatik_remito_crear", { p: f.p })
+        if (error) throw error
+        await despues(f.r, (id as string | null) ?? null)
+      }
+      continue
+    }
+    // Un despacho partido entre NP (16/11): los remitos del día se crean juntos (todos o ninguno), así nunca queda una
+    // parte sola. Sin la migración 202611161200 (no existe la función) no se arma nada de ese día y queda el problema.
+    const { data, error } = await sb.rpc("zomatik_remitos_crear_juntos", { p: { remitos: filas.map((f) => f.p) } })
+    if (error && (error as { code?: string }).code === "PGRST202") {
+      const papel = despachos.filter((d) => plan.partidos.includes(d.id)).map((d) => d.remito || d.id.slice(0, 8)).join(", ")
+      problemas.push(`${dia}: El despacho ${papel} hay que partirlo entre dos NP y falta la migración de la base para hacerlo: no se armó ningún remito de ese día.`)
+      continue
+    }
+    if (error) throw error
+    const creadas = Array.isArray(data) ? (data as string[]) : []
+    for (const [i, f] of filas.entries()) await despues(f.r, creadas[i] ?? null)
   }
   if (problemas.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": "No se puede remitir todo", Aviso: problemas.join(" · ") } })
   return { activo: true, creados, problemas }
@@ -229,14 +251,26 @@ class Cambio extends Error {
   name = "Cambio"
 }
 
-/** Los despachos del remito, como están hoy (anular_despacho los borra; editar_despacho cambia los m³). */
+/**
+ * Los despachos del remito, como están hoy (anular_despacho los borra; editar_despacho cambia los m³). `enOtros(id)`: lo
+ * que tienen esos despachos en OTROS remitos (16/11: un despacho partido entre dos NP está en dos remitos).
+ */
 async function despachosActuales(sb: SB, ids: string[]) {
+  type Link = { remito_id: string; dispatch_id: string; m3: number }
   const { data: links, error } = await sb.from("zomatik_remito_despachos").select("remito_id, dispatch_id, m3").in("remito_id", ids)
   if (error) throw error
-  const ls = (links as { remito_id: string; dispatch_id: string; m3: number }[]) || []
-  const { data: ds, error: e2 } = ls.length ? await sb.from("dispatches").select("id, quantity_m3, formula_id, remito, mixers(license_plate)").in("id", ls.map((x) => x.dispatch_id)) : { data: [], error: null }
+  const ls = (links as Link[]) || []
+  const dids = [...new Set(ls.map((x) => x.dispatch_id))]
+  const { data: ds, error: e2 } = ls.length ? await sb.from("dispatches").select("id, quantity_m3, formula_id, remito, mixers(license_plate)").in("id", dids) : { data: [], error: null }
   if (e2) throw e2
-  return { links: ls, actuales: (ds as { id: string; quantity_m3: number | null; formula_id: string | null; remito: string | null; mixers?: { license_plate?: string | null } | null }[]) || [] }
+  const { data: todos, error: e3 } = ls.length ? await sb.from("zomatik_remito_despachos").select("remito_id, dispatch_id, m3").in("dispatch_id", dids) : { data: [], error: null }
+  if (e3) throw e3
+  const enOtros = (remitoId: string) => {
+    const m = new Map<string, number>()
+    for (const x of (todos as Link[]) || []) if (x.remito_id !== remitoId) m.set(x.dispatch_id, (m.get(x.dispatch_id) || 0) + Number(x.m3))
+    return m
+  }
+  return { links: ls, actuales: (ds as { id: string; quantity_m3: number | null; formula_id: string | null; remito: string | null; mixers?: { license_plate?: string | null } | null }[]) || [], enOtros }
 }
 
 /**
@@ -247,16 +281,18 @@ async function despachosActuales(sb: SB, ids: string[]) {
  * Devuelve el remito actualizado, o null si no hay que seguir.
  */
 async function alDiaConDespachos(sb: SB, r: RemitoDB, o: { usuario: string; avisar: DependenciasZ1["avisar"]; ref: string }): Promise<RemitoDB | null> {
-  const { links, actuales } = await despachosActuales(sb, [r.id])
-  const c = cambiosDespachos(links, actuales, r.formula_id)
+  const { links, actuales, enOtros } = await despachosActuales(sb, [r.id])
+  const c = cambiosDespachos(links, actuales, r.formula_id, enOtros(r.id))
   if (!c.firma) return r
   const que = textoCambio(c)
   // Cortado en grabar_of / verificar_of / buscar_of: la OF pudo quedar grabada. Se trata como OF hecha (no se ajusta)
   const ofPudoGrabarse = r.of_estado === "ok" || /^(grabar_of|verificar_of|buscar_of)$/.test(r.paso || "")
   if (!ofPudoGrabarse) {
-    if (c.anulados.length) await sb.from("zomatik_remito_despachos").delete().eq("remito_id", r.id).in("dispatch_id", c.anulados)
-    for (const e of c.editados) await sb.from("zomatik_remito_despachos").update({ m3: e.ahora } as never).eq("remito_id", r.id).eq("dispatch_id", e.id)
-    const vivos = actuales.filter((d) => links.some((l) => l.dispatch_id === d.id))
+    // Un despacho partido (16/11) que se achicó tanto que a este remito ya no le toca nada sale como un anulado
+    const sinParte = c.editados.filter((e) => e.parte !== undefined && e.parte <= 0.001).map((e) => e.id)
+    if (c.anulados.length || sinParte.length) await sb.from("zomatik_remito_despachos").delete().eq("remito_id", r.id).in("dispatch_id", [...c.anulados, ...sinParte])
+    for (const e of c.editados) if (!sinParte.includes(e.id)) await sb.from("zomatik_remito_despachos").update({ m3: e.parte ?? e.ahora } as never).eq("remito_id", r.id).eq("dispatch_id", e.id)
+    const vivos = actuales.filter((d) => links.some((l) => l.dispatch_id === d.id) && !sinParte.includes(d.id))
     const patentes = [...new Set(vivos.map((d) => (d.mixers?.license_plate || "").trim()).filter(Boolean))]
     const cambios = c.m3 > 0
       ? { m3: c.m3, patente: patentes[0] || null, patentes: patentes.join(", "), remitos_papel: vivos.map((d) => d.remito).filter(Boolean).join(", ") }
@@ -287,10 +323,10 @@ export async function controlarCambiosZ1(usuario: string, o: { dias?: string[]; 
   if (error) throw error
   const rs = (data as unknown as RemitoDB[]) || []
   if (!rs.length) return 0
-  const { links, actuales } = await despachosActuales(sb, rs.map((r) => r.id))
+  const { links, actuales, enOtros } = await despachosActuales(sb, rs.map((r) => r.id))
   let avisos = 0
   for (const r of rs) {
-    const c = cambiosDespachos(links.filter((l) => l.remito_id === r.id), actuales, r.formula_id)
+    const c = cambiosDespachos(links.filter((l) => l.remito_id === r.id), actuales, r.formula_id, enOtros(r.id))
     if (!c.firma || c.firma === r.cambio_avisado) continue
     const { data: ok } = await sb.from("zomatik_remitos").update({ cambio_avisado: c.firma, updated_at: new Date().toISOString() } as never).eq("id", r.id).neq("estado", "generando").select("id")
     if (!((ok as unknown[]) || []).length) continue

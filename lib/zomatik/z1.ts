@@ -94,63 +94,93 @@ export type RemitoPlan = {
   np_n: number
   comprobante: "7" | "19"
   m3: number
+  /** m³ de cada despacho en ESTE remito: todo el despacho o, si se partió entre NP, su parte */
   despachos: { id: string; m3: number }[]
   patente: string | null
   patentes: string
   remitos_papel: string
 }
 
-export type PlanZ1 = { remitos: RemitoPlan[]; problemas: string[] }
+export type PlanZ1 = {
+  remitos: RemitoPlan[]
+  problemas: string[]
+  /** Despachos partidos entre dos o más NP (16/11): sus remitos se crean juntos, en una sola transacción. */
+  partidos: string[]
+}
 
 /**
  * Los remitos de un pedido en un día (17.1, 26.2): uno por NP usada, con los despachos de ese día que todavía no están
- * en un remito. Cada despacho va entero a una NP (la primera, en el orden de los usos, en la que entra; si no entra en
- * ninguna, problema). Se frena (problema, sin remito) si: la NP no está en Zomatik, el despacho es de otra fórmula o
- * planta que la NP, o su R/X no coincide con la NP (R ↔ NP, X ↔ NP2).
+ * en un remito. Cada despacho va entero a una NP (la primera, en el orden de los usos, en la que entra). Si no entra
+ * entero en ninguna (16/11, A.A. Arquitectura: NP 35 + adicional 3 y el último camión de 8), se parte: llena cada NP
+ * apta, en el orden de los usos, con lo que le queda, y el resto va a la siguiente; su número de papel y su patente van
+ * en los remitos de todas sus partes. Si ni partido entra (no alcanza lo que les queda a las aptas), problema y no se
+ * arma nada de ese despacho. Se frena (problema, sin remito) si: la NP no está en Zomatik, el despacho es de otra
+ * fórmula o planta que la NP, o su R/X no coincide con la NP (R ↔ NP, X ↔ NP2). Nunca se parte hacia una NP no apta.
  */
 export function planificarRemitos(despachos: DespachoZ1[], nps: NpZ1[], yaRemitidos: Set<string>, remitidoPorNp: Map<string, number> = new Map()): PlanZ1 {
   const problemas: string[] = []
+  const partidos: string[] = []
   const pendientes = [...despachos].filter((d) => !yaRemitidos.has(d.id) && Number(d.m3) > TOL).sort((a, b) => a.created_at.localeCompare(b.created_at))
-  if (!pendientes.length) return { remitos: [], problemas }
+  if (!pendientes.length) return { remitos: [], problemas, partidos }
   const usables = nps.filter((x) => x.estado === "ok" && comprobanteRemito(x.numero) && x.zomatik_codigo)
-  if (!usables.length) return { remitos: [], problemas: ["El pedido no tiene una NP en Zomatik: no se puede remitir."] }
+  if (!usables.length) return { remitos: [], problemas: ["El pedido no tiene una NP en Zomatik: no se puede remitir."], partidos }
   // Lo que le queda a cada NP para este pedido: lo que reserva menos lo ya remitido contra ella (otros días o antes)
   const lugar = new Map(usables.map((x) => [x.np_id, r3((Number(x.m3_uso) || 0) - (remitidoPorNp.get(x.np_id) || 0))]))
-  const porNp = new Map<string, DespachoZ1[]>()
+  /** Lo que va a cada NP: el despacho y los m³ que le tocan (todo el despacho, o su parte si se partió). */
+  const porNp = new Map<string, { d: DespachoZ1; m3: number }[]>()
+  const poner = (npId: string, d: DespachoZ1, m3: number) => {
+    lugar.set(npId, r3((lugar.get(npId) || 0) - m3))
+    porNp.set(npId, [...(porNp.get(npId) || []), { d, m3: r3(m3) }])
+  }
   for (const d of pendientes) {
+    const m3 = r3(d.m3)
     const aptas = usables.filter((x) => {
       const comp = comprobanteRemito(x.numero)!
       return (!d.remito_tipo || TIPO_DE_COMPROBANTE[comp] === d.remito_tipo) && (!x.formula_id || !d.formula_id || x.formula_id === d.formula_id) && (!x.plant_id || !d.plant_id || x.plant_id === d.plant_id)
     })
     if (!aptas.length) {
-      problemas.push(`El despacho ${d.remito || d.id.slice(0, 8)} (${r3(d.m3)} m³) no coincide con ninguna NP del pedido (R/X, fórmula o planta): revisalo.`)
+      problemas.push(`El despacho ${d.remito || d.id.slice(0, 8)} (${m3} m³) no coincide con ninguna NP del pedido (R/X, fórmula o planta): revisalo.`)
       continue
     }
-    const np = aptas.find((x) => (lugar.get(x.np_id) || 0) + TOL >= d.m3)
-    if (!np) {
-      problemas.push(`El despacho ${d.remito || d.id.slice(0, 8)} (${r3(d.m3)} m³) supera lo que le queda a la NP: generá una NP adicional antes de remitir.`)
+    const np = aptas.find((x) => (lugar.get(x.np_id) || 0) + TOL >= m3)
+    if (np) {
+      poner(np.np_id, d, m3)
       continue
     }
-    lugar.set(np.np_id, r3((lugar.get(np.np_id) || 0) - d.m3))
-    porNp.set(np.np_id, [...(porNp.get(np.np_id) || []), d])
+    // No entra entero en ninguna: se parte entre las aptas que tienen lugar, en el orden de los usos
+    const conLugar = aptas.filter((x) => (lugar.get(x.np_id) || 0) > TOL)
+    const total = r3(conLugar.reduce((s, x) => s + (lugar.get(x.np_id) || 0), 0))
+    if (total + TOL < m3) {
+      problemas.push(`El despacho ${d.remito || d.id.slice(0, 8)} (${m3} m³) supera lo que le queda a la NP: generá una NP adicional antes de remitir.`)
+      continue
+    }
+    let resto = m3
+    for (const x of conLugar) {
+      if (resto <= TOL) break
+      const l = lugar.get(x.np_id) || 0
+      const toma = resto - l <= TOL ? resto : l
+      poner(x.np_id, d, toma)
+      resto = r3(resto - toma)
+    }
+    partidos.push(d.id)
   }
   const remitos: RemitoPlan[] = []
   for (const x of usables) {
     const ds = porNp.get(x.np_id)
     if (!ds?.length) continue
-    const patentes = [...new Set(ds.map((d) => (d.patente || "").trim()).filter(Boolean))]
+    const patentes = [...new Set(ds.map(({ d }) => (d.patente || "").trim()).filter(Boolean))]
     remitos.push({
       np_id: x.np_id,
       np_n: x.n,
       comprobante: comprobanteRemito(x.numero)!,
-      m3: r3(ds.reduce((s, d) => s + Number(d.m3), 0)),
-      despachos: ds.map((d) => ({ id: d.id, m3: r3(d.m3) })),
+      m3: r3(ds.reduce((s, p) => s + p.m3, 0)),
+      despachos: ds.map((p) => ({ id: p.d.id, m3: p.m3 })),
       patente: patentes[0] || null,
       patentes: patentes.join(", "),
-      remitos_papel: ds.map((d) => d.remito).filter(Boolean).join(", "),
+      remitos_papel: ds.map(({ d }) => d.remito).filter(Boolean).join(", "),
     })
   }
-  return { remitos, problemas }
+  return { remitos, problemas, partidos }
 }
 
 /**
@@ -447,9 +477,12 @@ export function numeroRemitoLibre(respuesta: string, status = 200): { libre: tru
 export type CambioDespachos = {
   /** Despachos del remito que ya no existen (anular_despacho los borra) */
   anulados: string[]
-  /** Despachos con otros m³ (o de otra fórmula) que los del remito */
-  editados: { id: string; antes: number; ahora: number }[]
-  /** m³ de los despachos que siguen */
+  /**
+   * Despachos con otros m³ (o de otra fórmula) que los del remito. `parte`: solo en un despacho partido entre NP (16/11),
+   * lo que le toca a ESTE remito con los m³ de hoy (lo de hoy menos lo que tienen sus otras partes; 0 = ya no le toca nada)
+   */
+  editados: { id: string; antes: number; ahora: number; parte?: number }[]
+  /** m³ de los despachos que siguen (de un despacho partido, su parte en este remito) */
   m3: number
   /** Firma del cambio (para avisar una sola vez); null si no cambió nada */
   firma: string | null
@@ -458,11 +491,14 @@ export type CambioDespachos = {
 /**
  * Compara los despachos del remito (`zomatik_remito_despachos`: lo que se mandó o se va a mandar a Zomatik) con los que
  * existen hoy. Un despacho que no está se anuló; uno con otros m³ o de otra fórmula, se editó.
+ * `enOtros`: lo que tiene cada despacho en OTROS remitos (16/11: un despacho partido entre dos NP está en dos remitos).
+ * Un despacho partido se compara por la suma de sus partes contra lo de hoy, no por la parte de este remito.
  */
 export function cambiosDespachos(
   enRemito: { dispatch_id: string; m3: number }[],
   actuales: { id: string; quantity_m3: number | null; formula_id?: string | null }[],
   formulaRemito: string | null = null,
+  enOtros: Map<string, number> = new Map(),
 ): CambioDespachos {
   const por = new Map(actuales.map((d) => [d.id, d]))
   const anulados: string[] = []
@@ -475,8 +511,19 @@ export function cambiosDespachos(
       continue
     }
     const ahora = r3(Number(d.quantity_m3) || 0)
+    const otros = r3(enOtros.get(x.dispatch_id) || 0)
+    const otraFormula = !!formulaRemito && !!d.formula_id && d.formula_id !== formulaRemito
+    if (otros > TOL) {
+      // Partido: la suma de sus partes contra lo de hoy; si cambió, este remito se queda con lo que no tienen las otras
+      const antes = r3(Number(x.m3) + otros)
+      const cambio = Math.abs(ahora - antes) > TOL
+      const parte = cambio ? r3(Math.max(0, ahora - otros)) : r3(x.m3)
+      m3 += parte
+      if (cambio || otraFormula) editados.push({ id: x.dispatch_id, antes, ahora, parte })
+      continue
+    }
     m3 += ahora
-    if (Math.abs(ahora - r3(x.m3)) > TOL || (formulaRemito && d.formula_id && d.formula_id !== formulaRemito)) editados.push({ id: x.dispatch_id, antes: r3(x.m3), ahora })
+    if (Math.abs(ahora - r3(x.m3)) > TOL || otraFormula) editados.push({ id: x.dispatch_id, antes: r3(x.m3), ahora })
   }
   anulados.sort()
   editados.sort((a, b) => a.id.localeCompare(b.id))
