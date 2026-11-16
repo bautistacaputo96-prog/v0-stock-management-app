@@ -43,6 +43,7 @@ import { ColumnaViajes, FantasmaViaje } from "./columna-viajes"
 import { ColumnaCamiones, type FiltroCamion } from "./columna-camiones"
 import { ColumnaPedidos } from "./columna-pedidos"
 import { TablaEntregas } from "./tabla-entregas"
+import { ResumenDia } from "./resumen-dia"
 import { EntregaDialog, type EntregaAbierta, type ResultadoDespacho } from "./entrega-dialog"
 import { ReabrirDialog, SuspenderDialog } from "./suspender-dialog"
 import { CancelarDialog, FinalizarDialog } from "./finalizar-dialog"
@@ -776,6 +777,8 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
           plantaNombre={plantaObj.name} filtroPedido={filtroPedido} onQuitarFiltro={() => setFiltroPedido(null)} nueva={nueva}
         />
       </div>
+
+      <ResumenDia despachos={despachosPlanta} />
 
       {fantasmaViaje && arrastre.fantasma && (
         <FantasmaViaje x={arrastre.fantasma.x} y={arrastre.fantasma.y}
