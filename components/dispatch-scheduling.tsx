@@ -1793,6 +1793,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 precio={npPrecio}
                 onPrecio={setNpPrecio}
                 remito={form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo || null}
+                onRemito={(r) => setForm((f) => ({ ...f, remito_tipo: r }))}
                 pedidoId={editingDispatch?.id || null}
                 plantId={form.plant_id}
               />

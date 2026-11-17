@@ -49,7 +49,7 @@ type EstadoBusqueda = { color: "gris" | "ambar" | "verde"; texto: string; avisos
 
 export function NpBloque({
   planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
-  precio, onPrecio, remito, pedidoId, plantId,
+  precio, onPrecio, remito, onRemito, pedidoId, plantId,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -81,6 +81,8 @@ export function NpBloque({
   onPrecio?: (p: PrecioNpForm) => void
   /** R o X del formulario (define NP o NP2, y así la lista). */
   remito?: string | null
+  /** Traer NP de Zomatik: si el pedido no tiene R/X, se pone el de la NP traída (NP → R, NP2 → X). */
+  onRemito?: (r: "R" | "X") => void
   /** Al editar, el pedido (para saber si la NP ya salió). */
   pedidoId?: string | null
   plantId?: string
@@ -204,6 +206,8 @@ export function NpBloque({
       return
     }
     onCambio({ tipo: "saldo", proyecto_codigo: null, tope_m3: null, np_id: r.np.id })
+    // Sin R/X en el pedido, el de la NP (con R/X, el servidor ya controló que coincida: otro_remito)
+    if (!remito && onRemito) onRemito(r.remito)
     setBusqueda({ color: "verde", texto: (r.yaEstaba ? MSJ_TRAER.ya_estaba : MSJ_TRAER.ok)(r.np.numero || numero, r.np.libre), avisos: r.avisos })
     setVueltaSaldos((v) => v + 1)
   }
