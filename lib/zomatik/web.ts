@@ -199,3 +199,39 @@ export function rutaEscrituraAjuste(path: string, metodo: "GET" | "POST", codigo
   }
   return false
 }
+
+// ---------------------------------------------------------------------------
+// 5. Traer una NP de Zomatik (docs/specs/2026-11-17-traer-np-de-zomatik.md, 7.1): SOLO LECTURA y ATADO A UNA NP
+//    (codigoNp). Es el grupo del ajuste sin el Grabar. Lo pide `traerNp` con el turno del robot.
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que este grupo nunca pide, aunque lo encuentre en la página: links de ACCIÓN que ejecutan con un GET (REAL 17/11:
+ * entrega aprobada, borrar, CAMBSUC, remitir la OF, autorizar) y cualquier grabar o devolución.
+ */
+const LECTURA_NP_PROHIBIDO = /(^|\/)(set_|borrar_|generar_|remitir_|grabar_|_autorizar|listado_pedidosdevolucion|eliminar|anular)/i
+/** Parámetros de `manage_pedidos.php` que agregan, borran o autorizan: nunca en lectura. */
+const LECTURA_NP_MANAGE_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|farticulo|borrar)=/i
+
+/**
+ * Rutas para leer una NP que se trae de Zomatik, atadas a la NP `codigoNp` (cualquier otro código se rechaza antes de
+ * salir). Solo GET:
+ *   GET  modificar_pedidos.php?codigo=N                 abrir la NP (cliente, depósito, comprobante, estado, fecha)
+ *   GET  manage_pedidos.php?…pedidos=N&pedidos_unico=…  el detalle grabado, como lo carga la página (sin agregar ni borrar)
+ *   GET  _comprobantes.php?ftarget=pedidos&ftargetid=N   los comprobantes de la NP (remitos y facturas)
+ * El listado de pedidos (buscar por número) ya está en la lectura de siempre (`rutaPermitida`).
+ */
+export function rutaLecturaNp(path: string, metodo: "GET" | "POST", codigoNp: number): boolean {
+  if (!Number.isInteger(codigoNp) || codigoNp <= 0) return false
+  if (metodo !== "GET") return false
+  const p = path.replace(/^\/+/, "")
+  if (LECTURA_NP_PROHIBIDO.test(p)) return false
+  if (p.toLowerCase() === `modificar_pedidos.php?codigo=${codigoNp}`) return true
+  if (new RegExp(`^_comprobantes\\.php\\?ftarget=pedidos&ftargetid=${codigoNp}(&rnd=\\d+)?$`, "i").test(p)) return true
+  if (/^manage_pedidos\.php\?/i.test(p)) {
+    if (LECTURA_NP_MANAGE_PROHIBIDO.test(p)) return false
+    const q = new URLSearchParams(p.slice(p.indexOf("?") + 1))
+    return q.getAll("pedidos").length === 1 && q.get("pedidos") === String(codigoNp) && /^\d+$/.test(q.get("pedidos_unico") || "") && !q.has("codigo")
+  }
+  return false
+}
