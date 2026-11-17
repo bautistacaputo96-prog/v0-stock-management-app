@@ -62,11 +62,12 @@ async function json(r: Response) {
 
 /**
  * Después de guardar, cancelar o cambiar los m³: el servidor decide qué NP crear o vaciar (con la llave apagada, nada).
- * `precio`: el precio por m³ de la NP (null = el de la lista); `undefined` = no se toca (no va en el pedido).
+ * `precio`: el precio por m³ de la NP (null = el de la lista); `undefined` = no se toca (no va en el pedido). `remito`:
+ * el R/X con que la línea del precio calculó la lista (el servidor usa el mismo).
  */
-export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null, moverFecha?: boolean | null, precio?: number | null): Promise<{ activo?: boolean; creadas?: number; usadas?: number; avisos?: string[]; error?: string }> {
+export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null, moverFecha?: boolean | null, precio?: number | null, remito?: string | null): Promise<{ activo?: boolean; creadas?: number; usadas?: number; avisos?: string[]; error?: string }> {
   try {
-    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined, mover_fecha: moverFecha ?? undefined, ...(precio !== undefined ? { precio_m3: precio } : {}) }) })
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined, mover_fecha: moverFecha ?? undefined, ...(precio !== undefined ? { precio_m3: precio, remito: remito || undefined } : {}) }) })
     const j = await json(r)
     return r.ok ? j : { error: j?.error || `Error ${r.status}` }
   } catch {
@@ -86,6 +87,7 @@ export type PrecioNp = {
   bloqueado?: boolean
   numero_np?: string | null
   proyecto_precio_m3?: number | null
+  aviso?: string | null
 }
 
 /** El precio por m³ de la NP para la línea del formulario. null si no respondió (o no hay permiso): la línea no aparece. */

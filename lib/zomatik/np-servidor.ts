@@ -26,9 +26,9 @@ import {
   pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
 } from "@/lib/zomatik/np"
 import { AJUSTE_EN_CURSO, MSJ_NP_AJUSTANDOSE, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
-import { MSJ_PRECIO_BLOQUEADO, precioValido, textoPrecio } from "@/lib/zomatik/np"
+import { MSJ_PRECIO_BLOQUEADO, precioBloqueado, precioValido, textoPrecio } from "@/lib/zomatik/np"
 import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
-import { congelarPrecio, faltaMigracionPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp } from "@/lib/zomatik/precio-servidor"
+import { congelarPrecio, faltaMigracionPrecio, filaPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp } from "@/lib/zomatik/precio-servidor"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -527,7 +527,7 @@ const vacio = (nps: FilaNpDB[], extra: Partial<Extract<ResultadoSync, { activo: 
  * (= el de la lista); ausente = no se toca. Solo cuenta si `opciones.usuario` tiene precios_np.editar y puede ajustar
  * el pedido; si no, se ignora (el pedido se sincroniza igual). Se guarda ANTES de planificar y crear NP.
  */
-export async function sincronizarPedido(pedidoId: string, usuario: string, eleccion?: Eleccion | null, sb: SB = sbServicio(), opciones: { mover_fecha?: boolean | null; usuarioId?: string | null; precio?: number | null; usuario?: UsuarioPermisos } = {}): Promise<ResultadoSync> {
+export async function sincronizarPedido(pedidoId: string, usuario: string, eleccion?: Eleccion | null, sb: SB = sbServicio(), opciones: { mover_fecha?: boolean | null; usuarioId?: string | null; precio?: number | null; usuario?: UsuarioPermisos; remito?: "R" | "X" | null } = {}): Promise<ResultadoSync> {
   const { data: p, error } = await sb.from("scheduled_dispatches").select(COLUMNAS_PEDIDO).eq("id", pedidoId).maybeSingle()
   if (error) throw error
   if (!p) return { activo: false, motivo: "El pedido no existe" }
@@ -581,7 +581,7 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   }
 
   // Precio por m³ de la NP nueva (zomatik_np_precio, solo servidor): antes de planificar, así el robot ya lo encuentra
-  const avisosPrecio = await precioAlSincronizar(sb, ped, el, usuario, opciones)
+  const avisosPrecio = await precioAlSincronizar(sb, ped, el, propias, usuario, opciones)
 
   // Lo que usa el pedido, con lo libre de cada NP
   const npsUso = await npsPorId(sb, usos.map((u) => u.np_id))
@@ -700,17 +700,26 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
  * si vino un precio y la persona puede (precios_np.editar y ajustar el pedido) y la NP es nueva (o el resto de un
  * proyecto con tope), se guarda. Devuelve los avisos (sin montos). Sin la migración, nada.
  */
-async function precioAlSincronizar(sb: SB, ped: PedidoDB, el: EleccionDB, usuario: string, o: { precio?: number | null; usuario?: UsuarioPermisos }): Promise<string[]> {
+async function precioAlSincronizar(sb: SB, ped: PedidoDB, el: EleccionDB, propias: FilaNpDB[], usuario: string, o: { precio?: number | null; usuario?: UsuarioPermisos; remito?: "R" | "X" | null }): Promise<string[]> {
   const ref = `Pedido ${ped.id.slice(0, 8)}`
   const log = (detalle: Record<string, unknown>) => actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: ref, detalle })
+  // R/X: el mismo que usó la línea del precio en pantalla (viene con el precio); si no vino, el del pedido (como el robot)
+  const remito = async () => o.remito || ((await sb.rpc("remito_tipo_para", { p_pedido_id: ped.id })).data as { tipo?: string } | null)?.tipo || null
   try {
     if (ped.formula_id && (await limpiarPrecioOtraFormula(sb, ped.id, ped.formula_id))) await log({ "Qué pasó": "El pedido cambió de fórmula: el precio vuelve a la lista" })
-    if (o.precio === undefined || !ped.formula_id) return []
+    if (!ped.formula_id) return []
+    if (!(el.tipo === "nueva" || (el.tipo === "proyecto" && el.tope_m3 !== null))) {
+      // "Usar NP con saldo" o proyecto sin tope (punto 9): el precio puesto a mano se borra, así el resto que vaya en una
+      // NP nueva sale con la lista. Pase quien pase (como el cambio de fórmula); si la NP ya salió, no se toca.
+      const f = await filaPrecio(sb, ped.id)
+      if (f?.origen === "manual" && f.formula_id === ped.formula_id && !precioBloqueado(propias, ped.formula_id))
+        await guardarPrecio(sb, { pedidoId: ped.id, precio: null, formulaId: ped.formula_id, remito: await remito(), usuario }, log)
+      return []
+    }
+    if (o.precio === undefined) return []
     if (!puedeVerPrecioNp(o.usuario, ped)) return []
-    if (!(el.tipo === "nueva" || (el.tipo === "proyecto" && el.tope_m3 !== null))) return []
     if (o.precio !== null && !precioValido(o.precio)) return []
-    const { data: rt } = await sb.rpc("remito_tipo_para", { p_pedido_id: ped.id })
-    const g = await guardarPrecio(sb, { pedidoId: ped.id, precio: o.precio, formulaId: ped.formula_id, remito: (rt as { tipo?: string } | null)?.tipo || null, usuario }, log)
+    const g = await guardarPrecio(sb, { pedidoId: ped.id, precio: o.precio, formulaId: ped.formula_id, remito: await remito(), usuario }, log)
     return g.bloqueado ? [MSJ_PRECIO_BLOQUEADO] : []
   } catch (e) {
     if (faltaMigracionPrecio(e)) return []

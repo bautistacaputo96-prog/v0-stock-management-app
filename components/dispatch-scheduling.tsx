@@ -875,7 +875,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       // Zomatik Z2: la NP del pedido (solo con la llave de la planta prendida)
       if (pedidoId && np.plantas[plantToUse]?.activo) {
         // Al editar, la elección solo se manda si ya se había leído la guardada (si no, el servidor deja la que tenía)
-        const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor)
+        const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor, remitoTipo)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
         else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
         else if (rnp.usadas) toast({ title: "El pedido usa la NP con saldo", description: "No se generó otra NP." })

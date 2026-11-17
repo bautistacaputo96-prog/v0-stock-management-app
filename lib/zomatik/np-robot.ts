@@ -359,7 +359,11 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
       const x = await dondeQuedo(nav, d, o.hoy, latir)
       if (x.estado === "esta") {
         const r = encontrada(x, paso)
-        return d.tipo === "nueva" && precioValido(d.precioM3) && r.estado === "ok" && r.codigo ? await controlarPrecio(nav, { ...r, precio: d.precioM3 }, d, azar) : r
+        if (d.tipo !== "nueva" || r.estado !== "ok" || !r.codigo) return r
+        // Con precio: se controla. Sin precio: se lee el costo grabado (para congelarlo y para Actividad)
+        if (precioValido(d.precioM3)) return await controlarPrecio(nav, { ...r, precio: d.precioM3 }, d, azar)
+        const c = await costoGrabado(nav, r.codigo, d, azar)
+        return { ...r, precio: c.leido && precioValido(c.costo) ? c.costo : null }
       }
       if (x.estado === "dudosa") return dudosa(x, paso)
     }
@@ -545,19 +549,25 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
  */
 async function controlarPrecio(nav: NavegadorNp, r: ResultadoNp, d: DatosNp, azar: () => number): Promise<ResultadoNp> {
   const precio = d.precioM3 as number
+  const c = await costoGrabado(nav, r.codigo as number, d, azar)
+  if (!c.leido) return { ...r, mensaje: MSJ_PRECIO_SIN_CONTROL, precioControl: "sin_control", precioGrabado: null }
+  if (c.costo !== null && Math.abs(c.costo - precio) < 0.005) return { ...r, precioControl: "ok", precioGrabado: c.costo }
+  return { ...r, mensaje: MSJ_PRECIO_DISTINTO, precioControl: "distinto", precioGrabado: c.costo }
+}
+
+/** El costo del renglón del artículo en la NP grabada (abrir + `detalleGrabado`). `leido` false si no se pudo. Nunca tira. */
+async function costoGrabado(nav: NavegadorNp, codigo: number, d: DatosNp, azar: () => number): Promise<{ leido: boolean; costo: number | null }> {
   try {
-    const a = await abrir(nav, r.codigo as number)
-    if (!a.form) return { ...r, mensaje: MSJ_PRECIO_SIN_CONTROL, precioControl: "sin_control", precioGrabado: null }
+    const a = await abrir(nav, codigo)
+    if (!a.form) return { leido: false, costo: null }
     const c = a.form.campos
     const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
     const leido = await detalleGrabado(nav, a, base, null, azar)
     const mios = leido.renglones.filter((x) => esRenglonDe(x, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
-    if (!leido.valido || mios.length !== 1) return { ...r, mensaje: MSJ_PRECIO_SIN_CONTROL, precioControl: "sin_control", precioGrabado: null }
-    const grabado = numeroZomatik(mios[0].costo)
-    if (grabado !== null && Math.abs(grabado - precio) < 0.005) return { ...r, precioControl: "ok", precioGrabado: grabado }
-    return { ...r, mensaje: MSJ_PRECIO_DISTINTO, precioControl: "distinto", precioGrabado: grabado }
+    if (!leido.valido || mios.length !== 1) return { leido: false, costo: null }
+    return { leido: true, costo: numeroZomatik(mios[0].costo) }
   } catch {
-    return { ...r, mensaje: MSJ_PRECIO_SIN_CONTROL, precioControl: "sin_control", precioGrabado: null }
+    return { leido: false, costo: null }
   }
 }
 

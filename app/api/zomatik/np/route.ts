@@ -134,11 +134,11 @@ export async function POST(req: Request) {
     // Precio por m³ de la NP: sin el permiso se ignora (el pedido se sincroniza igual); con el permiso, se valida
     const pc = accion === "sincronizar" ? precioDelCuerpo(body, puedeCon(u, "precios_np", "editar")) : {}
     if ("error" in pc) return NextResponse.json({ error: pc.error }, { status: 400 })
-    const precio = pc.precio
+    const precio = "precio" in pc ? pc.precio : undefined
     let sync
     try {
       // El vendedor de las NP nuevas: el de quien guarda ahora (sesión del servidor)
-      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha, usuarioId: u.id, ...(precio !== undefined ? { precio, usuario: u } : {}) })
+      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha, usuarioId: u.id, ...(precio !== undefined ? { precio, usuario: u, remito: "remito" in pc ? pc.remito : null } : {}) })
     } catch (err) {
       if (faltaMigracion(err)) return NextResponse.json({ activo: false, motivo: "NP: se carga a mano en Zomatik", sinMigracion: true })
       throw err

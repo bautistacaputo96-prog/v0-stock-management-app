@@ -20,7 +20,7 @@ import { actualizarCopiaZomatik, cargarNpSaldos, leerPrecioNp, type EleccionNp, 
 import { NpChip } from "@/components/zomatik/np-chip"
 import { usePermisos } from "@/lib/current-user"
 import { puedeCon, puedeVincularDesdePedido } from "@/lib/permisos"
-import { MSJ_PRECIO_INVALIDO, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
+import { MSJ_LISTA_SIN_REMITO, MSJ_PRECIO_INVALIDO, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -94,6 +94,8 @@ export function NpBloque({
   const [infoPrecio, setInfoPrecio] = useState<PrecioNp | null>(null)
   const [vueltaPrecio, setVueltaPrecio] = useState(0)
   const [actualizando, setActualizando] = useState(false)
+  // Lo que pasó con el último "Actualizar" (falló o se había hecho hace poco)
+  const [avisoActualizar, setAvisoActualizar] = useState<string | null>(null)
   const formulaAntes = useRef(formulaId)
 
   useEffect(() => {
@@ -142,6 +144,12 @@ export function NpBloque({
     }
   }, [activo, lista, puedePrecio, formulaId, plantId, remito, pedidoId, vueltaPrecio])
 
+  // Otro pedido (o uno nuevo): no se muestra lo del anterior mientras llega lo de este
+  useEffect(() => {
+    setInfoPrecio(null)
+    setAvisoActualizar(null)
+  }, [pedidoId])
+
   // Cambió la fórmula: el precio vuelve a la lista (lo tipeado era para la otra)
   useEffect(() => {
     if (formulaAntes.current === formulaId) return
@@ -163,8 +171,10 @@ export function NpBloque({
 
   async function actualizarLista() {
     setActualizando(true)
-    await actualizarCopiaZomatik("precios")
+    setAvisoActualizar(null)
+    const r = await actualizarCopiaZomatik("precios")
     setActualizando(false)
+    setAvisoActualizar(!r.ok ? r.error || "No se pudo actualizar desde Zomatik." : r.reciente ? "Se actualizó hace menos de 2 minutos: es lo último de Zomatik." : null)
     setVueltaPrecio((v) => v + 1)
   }
 
@@ -292,7 +302,7 @@ export function NpBloque({
         </div>
       )}
 
-      {puedePrecio && usable && <LineaPrecio info={infoPrecio!} valor={valor} precio={precio!} onPrecio={onPrecio!} editable={editable} lista={precioLista} actualizando={actualizando} onActualizar={actualizarLista} />}
+      {puedePrecio && usable && <LineaPrecio info={infoPrecio!} valor={valor} precio={precio!} onPrecio={onPrecio!} editable={editable} lista={precioLista} actualizando={actualizando} onActualizar={actualizarLista} aviso={avisoActualizar} />}
 
       <p className="text-[11px] text-muted-foreground">Crear proyecto: por ahora los proyectos se cargan en Zomatik.</p>
       {yaTiene.length > 0 && (
@@ -311,7 +321,7 @@ const leidaEl = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }).replace(",", "") : ""
 
 /** Una sola línea, input de ancho fijo: el precio por m³ (neto, sin IVA) que va a la NP de Zomatik. */
-function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualizando, onActualizar }: {
+function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualizando, onActualizar, aviso }: {
   info: PrecioNp
   valor: EleccionNp
   precio: PrecioNpForm
@@ -319,13 +329,18 @@ function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualiza
   editable: boolean
   lista: number | null
   actualizando: boolean
+  /** Resultado del último "Actualizar" (falló o fue reciente). */
+  aviso: string | null
   onActualizar: () => void
 }) {
   const gris = "flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
   const actualizar = (
-    <button type="button" disabled={actualizando} className="rounded border px-2 py-0.5 text-xs text-foreground hover:bg-muted/50" onClick={onActualizar}>
-      {actualizando ? "Actualizando…" : "Actualizar"}
-    </button>
+    <>
+      <button type="button" disabled={actualizando} className="rounded border px-2 py-0.5 text-xs text-foreground hover:bg-muted/50" onClick={onActualizar}>
+        {actualizando ? "Actualizando…" : "Actualizar"}
+      </button>
+      {aviso && <span className="text-amber-700">{aviso}</span>}
+    </>
   )
   if (valor.tipo === "saldo") return <p className={gris}>Precio por m³: el de la NP con saldo</p>
   if (valor.tipo === "proyecto" && (valor.tope_m3 === null || valor.tope_m3 === undefined))
@@ -336,8 +351,8 @@ function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualiza
   if (info.estado === "sin_lista" || !editable)
     return (
       <div className={gris}>
-        <span className="text-amber-700">No se pudo saber la lista: revisá las listas en Zomatik</span>
-        {actualizar}
+        <span className="text-amber-700">{info.aviso === MSJ_LISTA_SIN_REMITO ? MSJ_LISTA_SIN_REMITO : "No se pudo saber la lista: revisá las listas en Zomatik"}</span>
+        {info.aviso !== MSJ_LISTA_SIN_REMITO && actualizar}
       </div>
     )
   const tipeado = precio.texto.trim() ? precioDeTexto(precio.texto) : null

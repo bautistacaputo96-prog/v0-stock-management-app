@@ -12,7 +12,7 @@
  * Sin imports de np-servidor.ts (la Actividad la deja quien llama, con `log`).
  */
 import { sbServicio } from "@/lib/auth/servidor"
-import { comprobanteDe, listaActiva, precioBloqueado, precioValido, textoPrecio, type Lista } from "@/lib/zomatik/np"
+import { MSJ_LISTA_SIN_REMITO, comprobanteDe, listaActiva, precioBloqueado, precioValido, textoPrecio, type Lista } from "@/lib/zomatik/np"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -61,7 +61,7 @@ export async function listaDeLaCopia(sb: SB, remito: string | null | undefined):
   const mal = elegidas.find((x) => "error" in x)
   if (mal && "error" in mal) return { error: mal.error }
   const codigos = [...new Set(elegidas.map((x) => ("lista" in x ? x.lista.codigo : 0)))]
-  if (codigos.length !== 1) return { error: "Elegí R o X para saber la lista." }
+  if (codigos.length !== 1) return { error: MSJ_LISTA_SIN_REMITO }
   const f = filas.find((x) => Number(x.codigo) === codigos[0])!
   return { lista: { codigo: Number(f.codigo), nombre: f.nombre, leida_at: f.leida_at ?? null } }
 }
@@ -101,6 +101,8 @@ export type PrecioPedido = {
   numero_np: string | null
   /** NP de proyecto: el costo que trajo el MATERIAL cuando salió la NP. */
   proyecto_precio_m3: number | null
+  /** Por qué no se sabe la lista (sin montos): p. ej. "Elegí R o X para saber la lista." */
+  aviso?: string | null
 }
 
 /** Lo que muestra la línea "Precio por m³" del formulario del pedido. */
@@ -119,6 +121,7 @@ export async function precioParaPedido(o: { formulaId: string; remito: string | 
   const art = await articuloDeFormula(sb, o.formulaId)
   const l = await listaDeLaCopia(sb, o.remito)
   if ("lista" in l) out.lista = l.lista
+  else out.aviso = l.error
   if (!art) return { ...out, estado: "sin_vinculo" }
   if (!out.lista) return { ...out, estado: "sin_lista" }
   out.precio_lista = await precioDeLista(sb, out.lista.codigo, art)

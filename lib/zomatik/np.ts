@@ -526,13 +526,16 @@ export function precioParaEnviar(p: PrecioNpForm): { valor: number | null | unde
 
 /**
  * `precio_m3` del cuerpo de "sincronizar": sin el permiso o sin el campo, no se toca (`precio` ausente); null = el de
- * la lista; un número válido; cualquier otra cosa (0, negativo, texto, ≥ 100.000.000) es error (400).
+ * la lista; un número válido; cualquier otra cosa (0, negativo, texto, ≥ 100.000.000) es error (400). Con el precio
+ * viene `remito` (R/X de la pantalla).
  */
-export function precioDelCuerpo(body: unknown, conPermiso: boolean): { precio?: number | null } | { error: string } {
+export function precioDelCuerpo(body: unknown, conPermiso: boolean): { precio?: number | null; remito?: "R" | "X" | null } | { error: string } {
   if (!conPermiso || !body || typeof body !== "object" || !("precio_m3" in body)) return {}
-  const v = (body as { precio_m3?: unknown }).precio_m3
-  if (v === null) return { precio: null }
-  if (typeof v === "number" && precioValido(v)) return { precio: v }
+  const b = body as { precio_m3?: unknown; remito?: unknown }
+  // El R/X con que la pantalla calculó la lista (así el servidor usa el mismo)
+  const remito = b.remito === "R" || b.remito === "X" ? b.remito : null
+  if (b.precio_m3 === null) return { precio: null, remito }
+  if (typeof b.precio_m3 === "number" && precioValido(b.precio_m3)) return { precio: b.precio_m3, remito }
   return { error: MSJ_PRECIO_INVALIDO }
 }
 
@@ -541,6 +544,8 @@ export const MSJ_PRECIO_BLOQUEADO = "El precio ya está en la NP: no se cambió.
 export const MSJ_PRECIO_DISTINTO = "La NP quedó con otro precio en Zomatik: revisala."
 export const MSJ_PRECIO_SIN_CONTROL = "No se pudo controlar el precio de la NP en Zomatik: revisala."
 export const MSJ_PRECIO_INVALIDO = "El precio tiene que ser mayor a 0"
+/** Sin R/X elegido y con una lista distinta para la NP y la NP2: no se sabe cuál. */
+export const MSJ_LISTA_SIN_REMITO = "Elegí R o X para saber la lista."
 
 /** "823,4" / "823.4" / "1.234,5" → número. */
 export function numeroZomatik(s: unknown): number | null {
