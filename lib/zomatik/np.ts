@@ -524,6 +524,18 @@ export function precioParaEnviar(p: PrecioNpForm): { valor: number | null | unde
   return { valor: n }
 }
 
+/**
+ * `precio_m3` del cuerpo de "sincronizar": sin el permiso o sin el campo, no se toca (`precio` ausente); null = el de
+ * la lista; un número válido; cualquier otra cosa (0, negativo, texto, ≥ 100.000.000) es error (400).
+ */
+export function precioDelCuerpo(body: unknown, conPermiso: boolean): { precio?: number | null } | { error: string } {
+  if (!conPermiso || !body || typeof body !== "object" || !("precio_m3" in body)) return {}
+  const v = (body as { precio_m3?: unknown }).precio_m3
+  if (v === null) return { precio: null }
+  if (typeof v === "number" && precioValido(v)) return { precio: v }
+  return { error: MSJ_PRECIO_INVALIDO }
+}
+
 /** Sin montos: estos textos los ve todo Programación y Despacho (zomatik_np.mensaje). */
 export const MSJ_PRECIO_BLOQUEADO = "El precio ya está en la NP: no se cambió. Si hace falta, cambialo en Zomatik."
 export const MSJ_PRECIO_DISTINTO = "La NP quedó con otro precio en Zomatik: revisala."

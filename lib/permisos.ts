@@ -364,3 +364,12 @@ export function cambiosDePermisos(antes: unknown, despues: unknown, tipoAntes?: 
 export function seccionesCon(usuario: UsuarioPermisos, accion: Accion): string[] {
   return SECCIONES.filter((s) => s.clave !== "usuarios" && existeAccion(s.clave, accion) && puedeCon(usuario, s.clave, accion)).map((s) => s.nombre)
 }
+
+/**
+ * Precio por m³ de la NP (16/11/2026): verlo y cambiarlo al programar. Hace falta precios_np.editar y ver Programación;
+ * con un pedido, además poder ajustarlo (como cualquier cambio del pedido). Titan y David no la tienen.
+ */
+export function puedeVerPrecioNp(usuario: UsuarioPermisos, pedido?: { created_by?: string | null } | null): boolean {
+  if (!puedeCon(usuario, "precios_np", "editar") || !puedeCon(usuario, "programacion", "ver")) return false
+  return pedido ? puedeAjustarPedido(usuario, pedido) : true
+}

@@ -27,7 +27,7 @@ import {
 } from "@/lib/zomatik/np"
 import { AJUSTE_EN_CURSO, MSJ_NP_AJUSTANDOSE, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
 import { MSJ_PRECIO_BLOQUEADO, precioValido, textoPrecio } from "@/lib/zomatik/np"
-import { puedeAjustarPedido, puedeCon, type UsuarioPermisos } from "@/lib/permisos"
+import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
 import { congelarPrecio, faltaMigracionPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp } from "@/lib/zomatik/precio-servidor"
 
 type SB = ReturnType<typeof sbServicio>
@@ -706,7 +706,7 @@ async function precioAlSincronizar(sb: SB, ped: PedidoDB, el: EleccionDB, usuari
   try {
     if (ped.formula_id && (await limpiarPrecioOtraFormula(sb, ped.id, ped.formula_id))) await log({ "Qué pasó": "El pedido cambió de fórmula: el precio vuelve a la lista" })
     if (o.precio === undefined || !ped.formula_id) return []
-    if (!puedeCon(o.usuario, "precios_np", "editar") || !puedeAjustarPedido(o.usuario, ped)) return []
+    if (!puedeVerPrecioNp(o.usuario, ped)) return []
     if (!(el.tipo === "nueva" || (el.tipo === "proyecto" && el.tope_m3 !== null))) return []
     if (o.precio !== null && !precioValido(o.precio)) return []
     const { data: rt } = await sb.rpc("remito_tipo_para", { p_pedido_id: ped.id })

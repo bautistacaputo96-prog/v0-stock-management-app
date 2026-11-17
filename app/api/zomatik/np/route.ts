@@ -16,7 +16,7 @@
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, puedeVincularDesdePedido, tipoDe } from "@/lib/permisos"
-import { MSJ_PRECIO_INVALIDO, precioValido } from "@/lib/zomatik/np"
+import { precioDelCuerpo } from "@/lib/zomatik/np"
 import { avisarFallaInesperada, esDeZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
@@ -132,13 +132,9 @@ export async function POST(req: Request) {
         : null
     const moverFecha = body?.mover_fecha === true ? true : body?.mover_fecha === false ? false : null
     // Precio por m³ de la NP: sin el permiso se ignora (el pedido se sincroniza igual); con el permiso, se valida
-    let precio: number | null | undefined = undefined
-    if (accion === "sincronizar" && body && typeof body === "object" && "precio_m3" in body && puedeCon(u, "precios_np", "editar")) {
-      const v = body.precio_m3
-      if (v === null) precio = null
-      else if (typeof v === "number" && precioValido(v)) precio = v
-      else return NextResponse.json({ error: MSJ_PRECIO_INVALIDO }, { status: 400 })
-    }
+    const pc = accion === "sincronizar" ? precioDelCuerpo(body, puedeCon(u, "precios_np", "editar")) : {}
+    if ("error" in pc) return NextResponse.json({ error: pc.error }, { status: 400 })
+    const precio = pc.precio
     let sync
     try {
       // El vendedor de las NP nuevas: el de quien guarda ahora (sesión del servidor)

@@ -9,7 +9,7 @@
  */
 import { NextResponse } from "next/server"
 import { exigirSesion, respuestaError, sbServicio } from "@/lib/auth/servidor"
-import { puedeAjustarPedido, puedeCon } from "@/lib/permisos"
+import { puedeVerPrecioNp } from "@/lib/permisos"
 import { plantasNp } from "@/lib/zomatik/np-servidor"
 import { faltaMigracionPrecio, precioParaPedido } from "@/lib/zomatik/precio-servidor"
 
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
     const u = r.sesion.usuario
-    if (!puedeCon(u, "precios_np", "editar") || !puedeCon(u, "programacion", "ver")) return json({ error: "No tenés permiso para ver precios." }, 403)
+    if (!puedeVerPrecioNp(u)) return json({ error: "No tenés permiso para ver precios." }, 403)
     const q = new URL(req.url).searchParams
     const formulaId = uuid(q.get("formula_id"))
     const plantId = uuid(q.get("plant_id"))
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
     if (pedidoId) {
       const { data: ped } = await sb.from("scheduled_dispatches").select("id, created_by").eq("id", pedidoId).maybeSingle()
       if (!ped) return json({ error: "El pedido no existe" }, 404)
-      if (!puedeAjustarPedido(u, ped as { created_by: string | null })) return json({ error: "No podés cambiar este pedido." }, 403)
+      if (!puedeVerPrecioNp(u, ped as { created_by: string | null })) return json({ error: "No podés cambiar este pedido." }, 403)
     }
     try {
       if (!(await plantasNp(sb))[plantId]?.zomatik_np_activo) return json({ activo: false })
