@@ -17,8 +17,11 @@ import { comprobanteDe, listaActiva, precioBloqueado, precioValido, textoPrecio,
 type SB = ReturnType<typeof sbServicio>
 
 /** ¿Falta la migración 202611161600? (la línea no aparece y la NP sale como antes). */
-export const faltaMigracionPrecio = (e: unknown) =>
-  /\b(zomatik_np_precio(_guardar|_congelar)?|zomatik_listas|zomatik_lista_precios)\b/i.test(String((e as { message?: string })?.message || ""))
+export const faltaMigracionPrecio = (e: unknown) => {
+  const m = String((e as { message?: string })?.message || "")
+  const code = String((e as { code?: string })?.code || "")
+  return /\b(zomatik_np_precio(_guardar|_congelar)?|zomatik_listas|zomatik_lista_precios)\b/i.test(m) && (["42P01", "42883", "PGRST202", "PGRST205"].includes(code) || /does not exist|schema cache|could not find/i.test(m))
+}
 
 export type FilaPrecio = {
   scheduled_dispatch_id: string

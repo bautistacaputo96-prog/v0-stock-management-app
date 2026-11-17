@@ -120,7 +120,9 @@ export async function actualizarCopia(tipo: TipoCopia, deps: DepsCopia = {}): Pr
       cantidad = await guardarArticulos(sb, foto)
     } else {
       const l = await (deps.leerListas ?? leerListas)(s)
-      cantidad = (await guardarListas(sb, l, foto.inicio)).precios
+      const g = await guardarListas(sb, l, foto.inicio)
+      if (g.avisos.length) return { ok: false, error: g.avisos.join(" ") }
+      cantidad = g.precios
     }
     return { ok: true, reciente: false, cantidad }
   } catch (e) {
