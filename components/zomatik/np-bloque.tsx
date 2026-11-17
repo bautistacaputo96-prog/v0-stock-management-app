@@ -159,7 +159,7 @@ export function NpBloque({
     if (!precio || !onPrecio) return
     const texto = precio.tocado ? precio.texto : inicial
     if (precio.editable !== editable || precio.lista !== precioLista || precio.texto !== texto) onPrecio({ ...precio, texto, editable, lista: precioLista })
-  }, [editable, precioLista, inicial, precio?.tocado]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editable, precioLista, inicial, precio?.tocado, precio?.editable, precio?.lista, precio?.texto]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function actualizarLista() {
     setActualizando(true)
