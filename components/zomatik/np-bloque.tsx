@@ -4,8 +4,9 @@
  *   - NP nueva: NP o NP2 según el remito (R/X), con la lista activa (el robot la elige; no se muestra).
  *   - NP de un proyecto: un proyecto abierto del cliente, como el botón MATERIAL. Muestra lo disponible en m³
  *     (≈ de la copia y lo que trajo "Continuar" la última vez) y avisa si el pedido no entra (20.4).
- *   - Usar NP con saldo: una NP del sistema del mismo cliente y artículo que tiene m³ sin usar (Reprogramar). El pedido
- *     toma lo que necesita de esa NP (no genera otra); si no alcanza, el resto en una NP nueva.
+ *   - Traer NP de Zomatik (17/11, docs/specs/2026-11-17-traer-np-de-zomatik.md): el número de una NP que ya está en
+ *     Zomatik (cargada a mano) con "Buscar", y abajo las NP con saldo del mismo cliente, artículo y planta (Reprogramar).
+ *     El pedido toma lo que necesita de esa NP (no genera otra); si no alcanza, el resto en una NP nueva.
  * Al editar, el bloque se habilita recién cuando llegó la elección guardada (así no se pisa). Si el pedido cambió de
  * fecha y ya tiene NP, pregunta si se mueve la NP.
  * Con la llave de la planta apagada: "NP: se carga a mano en Zomatik", como hoy.
@@ -16,11 +17,11 @@
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
-import { actualizarCopiaZomatik, cargarNpSaldos, leerPrecioNp, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen, type PrecioNp } from "@/lib/zomatik/np-cliente"
+import { actualizarCopiaZomatik, cargarNpSaldos, leerPrecioNp, traerNpDeZomatik, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen, type PrecioNp } from "@/lib/zomatik/np-cliente"
 import { NpChip } from "@/components/zomatik/np-chip"
 import { usePermisos } from "@/lib/current-user"
 import { puedeCon, puedeVincularDesdePedido } from "@/lib/permisos"
-import { MSJ_LISTA_SIN_REMITO, MSJ_PRECIO_INVALIDO, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
+import { MSJ_LISTA_SIN_REMITO, MSJ_PRECIO_INVALIDO, MSJ_TRAER, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -40,12 +41,15 @@ export function disponibleProyecto(p: Proyecto | undefined | null): { m3: number
 const OPCIONES = [
   ["nueva", "NP nueva", "NP o NP2 según el remito"],
   ["proyecto", "NP de un proyecto", "Contra un proyecto abierto"],
-  ["saldo", "Usar NP con saldo", "Una NP que quedó con m³"],
+  ["saldo", "Traer NP de Zomatik", "Por número, o una con saldo"],
 ] as const
+
+/** Lo que pasó con el último "Buscar" (una línea): gris informativo, ámbar no se pudo, verde listo. Sin montos. */
+type EstadoBusqueda = { color: "gris" | "ambar" | "verde"; texto: string; avisos?: string[]; motivo?: string }
 
 export function NpBloque({
   planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
-  precio, onPrecio, remito, pedidoId, plantId,
+  precio, onPrecio, remito, onRemito, pedidoId, plantId,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -77,6 +81,8 @@ export function NpBloque({
   onPrecio?: (p: PrecioNpForm) => void
   /** R o X del formulario (define NP o NP2, y así la lista). */
   remito?: string | null
+  /** Traer NP de Zomatik: si el pedido no tiene R/X, se pone el de la NP traída (NP → R, NP2 → X). */
+  onRemito?: (r: "R" | "X") => void
   /** Al editar, el pedido (para saber si la NP ya salió). */
   pedidoId?: string | null
   plantId?: string
@@ -97,6 +103,11 @@ export function NpBloque({
   // Lo que pasó con el último "Actualizar" (falló o se había hecho hace poco)
   const [avisoActualizar, setAvisoActualizar] = useState<string | null>(null)
   const formulaAntes = useRef(formulaId)
+  // Traer NP de Zomatik: el número tipeado y lo que pasó con la búsqueda
+  const [numeroNp, setNumeroNp] = useState("")
+  const [buscando, setBuscando] = useState(false)
+  const [busqueda, setBusqueda] = useState<EstadoBusqueda | null>(null)
+  const [vueltaSaldos, setVueltaSaldos] = useState(0)
 
   useEffect(() => {
     if (!activo || !clientId || !lista) {
@@ -119,18 +130,23 @@ export function NpBloque({
     }
   }, [activo, clientId, siteId, lista]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // NP con saldo del mismo cliente y artículo (para "Usar NP con saldo")
+  // NP con saldo del mismo cliente, artículo y planta (para "Traer NP de Zomatik")
   useEffect(() => {
     if (!activo || !clientId || !formulaId || !lista) {
       setSaldos(null)
       return
     }
     let vivo = true
-    cargarNpSaldos({ clientId, formulaId }).then((x) => vivo && setSaldos(x))
+    cargarNpSaldos({ clientId, formulaId, plantId: plantId || undefined }).then((x) => vivo && setSaldos(x))
     return () => {
       vivo = false
     }
-  }, [activo, clientId, formulaId, lista])
+  }, [activo, clientId, formulaId, plantId, lista, vueltaSaldos])
+
+  // Otro cliente, fórmula o planta: lo de la búsqueda anterior ya no vale
+  useEffect(() => {
+    setBusqueda(null)
+  }, [clientId, formulaId, plantId])
 
   useEffect(() => {
     if (!activo || !lista || !puedePrecio || !formulaId || !plantId) {
@@ -176,6 +192,24 @@ export function NpBloque({
     setActualizando(false)
     setAvisoActualizar(!r.ok ? r.error || "No se pudo actualizar desde Zomatik." : r.reciente ? "Se actualizó hace menos de 2 minutos: es lo último de Zomatik." : null)
     setVueltaPrecio((v) => v + 1)
+  }
+
+  async function buscarNp() {
+    const numero = numeroNp.trim()
+    if (!numero || !plantId || buscando || soloLectura) return
+    setBuscando(true)
+    setBusqueda({ color: "gris", texto: MSJ_TRAER.buscando })
+    const r = await traerNpDeZomatik({ numero, plantId, clientId, formulaId, remito: remito || null })
+    setBuscando(false)
+    if (!r.ok) {
+      setBusqueda({ color: "ambar", texto: r.error, motivo: r.motivo })
+      return
+    }
+    onCambio({ tipo: "saldo", proyecto_codigo: null, tope_m3: null, np_id: r.np.id })
+    // Sin R/X en el pedido, el de la NP (con R/X, el servidor ya controló que coincida: otro_remito)
+    if (!remito && onRemito) onRemito(r.remito)
+    setBusqueda({ color: "verde", texto: (r.yaEstaba ? MSJ_TRAER.ya_estaba : MSJ_TRAER.ok)(r.np.numero || numero, r.np.libre), avisos: r.avisos })
+    setVueltaSaldos((v) => v + 1)
   }
 
   if (!activo) return <p className="text-xs text-muted-foreground">NP: se carga a mano en Zomatik.</p>
@@ -273,8 +307,37 @@ export function NpBloque({
 
       {valor.tipo === "saldo" && (
         <div className="space-y-1">
-          {saldos === null && <p className="text-xs text-muted-foreground">{formulaId ? "Buscando NP con saldo…" : "Elegí la fórmula para ver las NP con saldo."}</p>}
-          {saldos && !saldos.length && <p className="text-xs text-amber-700">El cliente no tiene NP con saldo de esta fórmula.</p>}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium">N.º de NP</span>
+            <Input
+              className="h-7 w-44 px-2 text-xs"
+              placeholder="Ej.: 1195 o NP2 2086"
+              value={numeroNp}
+              disabled={deshabilitado || !clientId || !formulaId}
+              onChange={(e) => setNumeroNp(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  buscarNp()
+                }
+              }}
+            />
+            <button type="button" disabled={deshabilitado || !clientId || !formulaId || !numeroNp.trim() || buscando} className="rounded border px-2 py-0.5 text-xs hover:bg-muted/50 disabled:opacity-50" onClick={buscarNp}>
+              {buscando ? "Buscando…" : "Buscar"}
+            </button>
+            <span className="cursor-help text-muted-foreground" title="El número de la NP en Zomatik: 1195, 0001-00001195 o NP2 2086. Tiene que ser del mismo cliente y hormigón del pedido.">(?)</span>
+          </div>
+          {(!clientId || !formulaId) && <p className="text-xs text-muted-foreground">Elegí el cliente y la fórmula para buscar.</p>}
+          {busqueda && (
+            <p className="flex flex-wrap items-center gap-x-2 text-xs">
+              <span className={busqueda.color === "verde" ? "text-green-700" : busqueda.color === "ambar" ? "text-amber-700" : "text-muted-foreground"}>{busqueda.texto}</span>
+              {busqueda.avisos?.length ? <span className="text-muted-foreground">{busqueda.avisos.join(" · ")}</span> : null}
+              {(busqueda.motivo === "cliente_sin_vinculo" || busqueda.motivo === "formula_sin_vinculo") && botonVincular}
+            </p>
+          )}
+          {clientId && formulaId && saldos === null && <p className="text-xs text-muted-foreground">Buscando NP con saldo…</p>}
+          {saldos && !saldos.length && <p className="text-xs text-muted-foreground">No hay NP con saldo de este cliente y hormigón.</p>}
+          {saldos && saldos.length > 0 && <p className="text-xs text-muted-foreground">Con saldo de este cliente:</p>}
           {saldos?.map((x) => (
             <button
               key={x.id}
@@ -284,7 +347,7 @@ export function NpBloque({
               className={cn("flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left text-xs", valor.np_id === x.id ? "border-primary bg-primary/5" : "hover:bg-muted/50")}
             >
               <span className="font-medium tabular-nums">{x.numero || "NP"}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{x.formula || ""}{x.obra ? ` · ${x.obra}` : ""} · del {fechaCorta(x.fecha)}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{x.formula || ""}{x.traida ? " · de Zomatik" : x.obra ? ` · ${x.obra}` : ""} · del {fechaCorta(x.fecha)}</span>
               <span className="shrink-0 tabular-nums">{m3t(x.libre)} m³ libres</span>
             </button>
           ))}
@@ -342,7 +405,7 @@ function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualiza
       {aviso && <span className="text-amber-700">{aviso}</span>}
     </>
   )
-  if (valor.tipo === "saldo") return <p className={gris}>Precio por m³: el de la NP con saldo</p>
+  if (valor.tipo === "saldo") return <p className={gris}>Precio por m³: el de la NP elegida</p>
   if (valor.tipo === "proyecto" && (valor.tope_m3 === null || valor.tope_m3 === undefined))
     return <p className={gris}>Precio por m³: {precioValido(info.proyecto_precio_m3) ? `$ ${textoPrecio(info.proyecto_precio_m3!)}, del proyecto` : "el del proyecto"}</p>
   if (info.estado === "sin_vinculo") return <p className={gris}>Precio: vinculá la fórmula con Zomatik</p>

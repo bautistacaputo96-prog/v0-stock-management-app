@@ -69,7 +69,7 @@ export function NpSaldos({ visible, puedeCargar, plantId, onReprogramar, recarga
         {lista.map((x) => (
           <div key={x.id} className="flex flex-wrap items-center gap-2 py-1">
             <span className={cn("rounded px-1", x.saldo_decision === "devolver" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>{x.saldo_decision === "devolver" ? "Devolver" : "Pendiente"}</span>
-            <span className="font-medium tabular-nums">{x.numero || "NP"}</span>
+            <span className="font-medium tabular-nums">{x.numero || "NP"}{x.traida && <span className="font-normal text-muted-foreground"> · de Zomatik</span>}</span>
             <span className="min-w-0 flex-1 truncate">
               {x.cliente || ""}{x.obra ? ` · ${x.obra}` : ""} · {x.formula || ""} · <b className="tabular-nums">{m3t(x.libre)} m³</b> de {m3t(x.m3)} · desde el {dia(x.pendiente_desde)} ({hace(x.pendiente_desde)})
               {(msg[x.id] || x.saldo_mensaje) && <span className="block text-muted-foreground">{msg[x.id] || x.saldo_mensaje}</span>}

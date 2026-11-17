@@ -1048,3 +1048,193 @@ export function hoyAR(ahora: number = Date.now()): string {
 export function diaAR(iso: string): string {
   return hoyAR(new Date(iso).getTime())
 }
+
+// ---------------------------------------------------------------------------
+// Traer NP de Zomatik (docs/specs/2026-11-17-traer-np-de-zomatik.md, sección 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que tipea quien programa como número de NP → `{ numero: "0001-00001195", comprobante }` (o null si no se entiende).
+ * Sin importar mayúsculas ni espacios: "1195", "0001-00001195", "1-1195", "NP 0001-00001195", "NP1195", "np2 2086",
+ * "NP2-2086", "NP2 0001-00002086". Sin guion: 1 a 8 dígitos, punto 0001. Prefijo NP → 15, NP2 → 16 (NP2 con un espacio
+ * o un guion después: "NP2086" es la NP 2086), sin prefijo → null. Nunca el punto 0000.
+ */
+export function numeroNpTipeado(s: unknown): { numero: string; comprobante: "15" | "16" | null } | null {
+  let t = String(s ?? "").trim().toUpperCase()
+  let comprobante: "15" | "16" | null = null
+  const p2 = t.match(/^NP2[\s-]+/)
+  if (p2) {
+    comprobante = "16"
+    t = t.slice(p2[0].length)
+  } else if (t.startsWith("NP")) {
+    comprobante = "15"
+    t = t.slice(2).replace(/^[\s-]+/, "")
+  }
+  let numero: string | null = null
+  if (/^\d{1,8}$/.test(t)) numero = `0001-${t.padStart(8, "0")}`
+  else if (/^\d{1,4}\s*-\s*\d{1,8}$/.test(t)) numero = numeroNormalizado(t)
+  if (!numero || numero.startsWith("0000-")) return null
+  return { numero, comprobante }
+}
+
+/** Marcas de las NP que no generó el sistema y se usan igual: las traídas de Zomatik y la de MERVA del 17/11. */
+export const PREFIJOS_TRAIDA = ["Traida de Zomatik - ", "A mano - "] as const
+
+/** "Traida de Zomatik - NP 0001-00001195" (ASCII, como las otras marcas). */
+export function marcaTraida(comprobante: "15" | "16", numero: string): string {
+  return `${PREFIJOS_TRAIDA[0]}${numeroCompleto(comprobante, numero)}`
+}
+
+/** ¿La NP la trajo alguien de Zomatik (o es la de MERVA del 17/11)? El sistema no la generó: no la vacía ni la autoriza. */
+export function esNpTraida(marca: string | null | undefined): boolean {
+  const m = String(marca ?? "")
+  return PREFIJOS_TRAIDA.some((p) => m.startsWith(p))
+}
+
+export type MotivoTraer =
+  | "ok" | "ya_estaba" | "del_sistema" | "formato" | "otra_serie" | "no_existe" | "ambigua" | "otro_cliente" | "cliente_sin_vinculo" | "cliente_no_esta"
+  | "formula_sin_vinculo" | "otro_articulo" | "sin_formula" | "elegir_formula" | "renglon_doble" | "anulada" | "inactiva" | "sin_autorizar"
+  | "otro_deposito" | "otro_remito" | "con_remitos" | "sin_m3" | "usada" | "otra_planta" | "cerrada" | "revisar" | "anulada_sistema"
+  | "ajustandose" | "ocupado" | "zomatik" | "no_se_entiende" | "comprobantes_ilegibles" | "apagada" | "sin_conexion"
+
+const m3Txt = (n: number) => String(Math.round(Number(n) * 1000) / 1000).replace(".", ",")
+
+/** Textos de la búsqueda (3.3). Ninguno lleva montos. Las plantillas con datos son funciones. */
+export const MSJ_TRAER = {
+  buscando: "Buscando en Zomatik…",
+  ok: (numero: string, libre: number) => `Lista: ${numero}, ${m3Txt(libre)} m³ libres.`,
+  ya_estaba: (numero: string, libre: number) => `Ya estaba en el sistema: ${numero}, ${m3Txt(libre)} m³ libres.`,
+  formato: "Escribí el número de la NP. Ej.: 1195 o NP2 2086.",
+  otra_serie: "Ese número no es de Rebucret (van del 1000 al 5999).",
+  no_existe: "No está en Zomatik (Rebucret). Revisá el número.",
+  ambigua: "Hay una NP y una NP2 con ese número: escribí NP o NP2 adelante.",
+  otro_cliente: (razonSocial: string) => `Es de otro cliente: ${razonSocial.replace(/\.\s*$/, "")}.`,
+  cliente_sin_vinculo: "El cliente no está vinculado con Zomatik.",
+  cliente_no_esta: (razonSocial: string) => `El cliente de la NP (${razonSocial}) no está en el sistema. Agregalo con «Traer de Zomatik».`,
+  formula_sin_vinculo: "La fórmula no está vinculada con un artículo de Zomatik.",
+  otro_articulo: (articulo: string) => `Es de otro hormigón: ${articulo}.`,
+  sin_formula: (planta: string, articulo: string) => `Ninguna fórmula de ${planta} está vinculada con ${articulo}.`,
+  elegir_formula: "¿Qué fórmula?",
+  renglon_doble: (articulo: string) => `Tiene dos renglones de ${articulo}: no se puede traer.`,
+  anulada: "Está anulada en Zomatik.",
+  inactiva: "No está activa en Zomatik.",
+  sin_autorizar: "Está sin autorizar en Zomatik: que la autorice un gerencial y buscala de nuevo.",
+  otro_deposito: (deposito: string, planta: string) => `Es del depósito ${deposito} y el pedido es de ${planta}: corregilo en Zomatik.`,
+  otro_remito: (deLaNp: "R" | "X") => (deLaNp === "X" ? "Es NP2 (remito X) y el pedido dice R." : "Es NP (remito R) y el pedido dice X."),
+  con_remitos: (remitos: string[]) => `Ya tiene remitos en Zomatik (${remitos.join(", ")}): por ahora no se puede traer.`,
+  sin_m3: "No le quedan m³ en Zomatik.",
+  usada: "Ya la usa otro pedido y no le quedan m³ libres.",
+  otra_planta: "Es de otra planta.",
+  cerrada: "En el sistema ya está cerrada o se está devolviendo.",
+  revisar: "En el sistema está para revisar: avisale a un gerencial.",
+  /** La NP está en `zomatik_np` (por su código de Zomatik o su número) y no quedó "ok": un corte del robot o un error. */
+  revisar_sistema: "Esa NP es del sistema y está a revisar: avisale a un gerencial.",
+  del_sistema: "Esa NP la generó el sistema (tiene su marca): no se trae. Elegila de la lista con saldo o avisale a un gerencial.",
+  anulada_sistema: "En el sistema figura anulada o vaciada: avisale a Bautista.",
+  // El mismo texto que MSJ_NP_AJUSTANDOSE (ajuste.ts, que importa este archivo: acá no se puede importar); lo controla una prueba
+  ajustandose: "La NP se está ajustando a lo despachado: esperá unos minutos.",
+  ocupado: "Zomatik está ocupado con otra tarea. Probá en un minuto.",
+  zomatik: "Zomatik no responde ahora. Probá en unos minutos.",
+  no_se_entiende: "Zomatik mostró la NP de una forma que no se entiende. Avisale a Bautista.",
+  comprobantes_ilegibles: "No se pudo saber si tiene remitos. Probá en un rato.",
+  apagada: "NP: se carga a mano en Zomatik.",
+  sin_conexion: "Sin conexión.",
+} as const
+
+/** ¿Las observaciones de la NP traen la marca de una NP del sistema ("Sistema Rebucret - pedido …", también la vieja
+ *  con "·")? Esa NP no se trae: es del sistema. */
+export function tieneMarcaDelSistema(texto: unknown): boolean {
+  return ` ${plano(texto)} `.includes(" sistema rebucret pedido ")
+}
+
+/** "Devolver el saldo" de una NP traída: el sistema no la vacía (no tiene su marca). */
+export const MSJ_TRAIDA_DEVOLVER = "La NP la cargaron a mano en Zomatik: el sistema no la vacía. Devolvé o anulá el saldo en Zomatik y tocá «Ya la devolví»."
+
+/** Lo leído de una NP para traerla (fila del listado + `leerNpParaTraer`), sin montos. */
+export type NpLeidaTraer = {
+  fila: { codigo: number; numero: string; cliente: string; estado: string; autorizacion: { porAutorizar: boolean; conRemito: boolean } | null }
+  campos: { idcliente: string; numero: string; comprobante: string; deposito: string; depositoNombre: string; fecha_entrega: string; estado: string; proyecto: number; marcaSistema: boolean }
+  renglones: { codigoArticulo: string; nombreArticulo: string; cantidad: number | null }[]
+  /** null = no se pudo leer (`comprobantesDeNp`) */
+  comprobantes: { remitos: { numero: string }[]; facturas: { numero: string }[] } | null
+}
+
+export type PedidoTraer = {
+  /** null = no se controla (alta: el cliente sale de la NP) */
+  clienteCodigo: number | null
+  /** null = no se controla todavía (alta: la fórmula sale del renglón) */
+  articulo: { codigo: number | null; nombre: string | null } | null
+  depositoPlanta: number | null
+  nombrePlanta: string
+  remito: "R" | "X" | null
+}
+
+export type EvaluacionTraida =
+  | { ok: true; m3: number | null; avisos: string[]; remito: "R" | "X"; proyecto: number | null }
+  | { ok: false; motivo: MotivoTraer; error: string }
+
+const esRenglonTraida = (r: { codigoArticulo: string; nombreArticulo: string }, art: { codigo: number | null; nombre: string | null }) =>
+  esRenglonDe({ codigoArticulo: r.codigoArticulo, nombreArticulo: r.nombreArticulo } as Renglon, art)
+
+/**
+ * Los controles de una NP leída en Zomatik antes de registrarla (8.3), en este orden: con la marca del sistema → anulada → inactiva (el SELECT
+ * `estado`: 1 = Activo, REAL 17/11) → sin autorizar → cliente → artículo → renglón doble → depósito → NP/NP2 contra el
+ * R/X del pedido (si vino) → comprobantes ilegibles → con remitos → sin m³. Sin montos.
+ */
+export function evaluarNpTraida(e: NpLeidaTraer & { pedido: PedidoTraer }): EvaluacionTraida {
+  const no = (motivo: MotivoTraer, error: string): EvaluacionTraida => ({ ok: false, motivo, error })
+  const { fila, campos, renglones, comprobantes, pedido } = e
+  if (campos.marcaSistema) return no("del_sistema", MSJ_TRAER.del_sistema)
+  if (/^(ANU|ANULADA)$/i.test(fila.estado || "")) return no("anulada", MSJ_TRAER.anulada)
+  if (String(campos.estado ?? "").trim() !== "1") return no("inactiva", MSJ_TRAER.inactiva)
+  if (!fila.autorizacion || fila.autorizacion.porAutorizar || !fila.autorizacion.conRemito) return no("sin_autorizar", MSJ_TRAER.sin_autorizar)
+  if (pedido.clienteCodigo !== null && String(campos.idcliente ?? "").trim() !== String(pedido.clienteCodigo)) return no("otro_cliente", MSJ_TRAER.otro_cliente(fila.cliente || `código ${campos.idcliente}`))
+  let m3: number | null = null
+  const otros = pedido.articulo ? renglones.filter((r) => !esRenglonTraida(r, pedido.articulo!)) : []
+  if (pedido.articulo) {
+    const mios = renglones.filter((r) => esRenglonTraida(r, pedido.articulo!))
+    if (!mios.length) return no("otro_articulo", MSJ_TRAER.otro_articulo(renglones.map((r) => r.nombreArticulo || r.codigoArticulo).join(", ") || "sin renglones"))
+    if (mios.length > 1) return no("renglon_doble", MSJ_TRAER.renglon_doble(mios[0].nombreArticulo || pedido.articulo.nombre || String(pedido.articulo.codigo)))
+    m3 = mios[0].cantidad
+  }
+  if (pedido.depositoPlanta === null || String(campos.deposito ?? "").trim() !== String(pedido.depositoPlanta))
+    return no("otro_deposito", MSJ_TRAER.otro_deposito(campos.depositoNombre || campos.deposito || "sin depósito", pedido.nombrePlanta))
+  const comp = campos.comprobante === "15" || campos.comprobante === "16" ? campos.comprobante : null
+  if (!comp) return no("no_se_entiende", MSJ_TRAER.no_se_entiende)
+  const remito: "R" | "X" = comp === "16" ? "X" : "R"
+  if (pedido.remito && pedido.remito !== remito) return no("otro_remito", MSJ_TRAER.otro_remito(remito))
+  if (!comprobantes) return no("comprobantes_ilegibles", MSJ_TRAER.comprobantes_ilegibles)
+  if (comprobantes.remitos.length) return no("con_remitos", MSJ_TRAER.con_remitos(comprobantes.remitos.map((r) => r.numero)))
+  if (pedido.articulo) {
+    if (m3 === null) return no("no_se_entiende", MSJ_TRAER.no_se_entiende)
+    if (!(m3 > 0.001)) return no("sin_m3", MSJ_TRAER.sin_m3)
+  }
+  const proyecto = Number(campos.proyecto) > 0 ? Number(campos.proyecto) : null
+  const avisos = [
+    ...(proyecto ? ["Es de un proyecto."] : []),
+    ...(comprobantes.facturas.length ? ["Tiene factura: al terminar, el ajuste lo hace Juan a mano."] : []),
+    ...(otros.length ? ["Tiene otros renglones: al terminar, el ajuste lo revisa una persona."] : []),
+  ]
+  return { ok: true, m3, avisos, remito, proyecto }
+}
+
+/**
+ * ¿La NP abierta en Zomatik es la NP traída? Para el ajuste al finalizar, que no tiene la marca del sistema: mismo número,
+ * mismo cliente de Zomatik y, si el formulario trae el comprobante, el mismo (NP / NP2).
+ */
+export function esLaNpTraida(campos: Record<string, string | undefined>, t: { clienteCodigo: number; numero: string; comprobante: "15" | "16" }): boolean {
+  const n = numeroNormalizado(campos.numero)
+  if (!n || n !== numeroNormalizado(t.numero)) return false
+  if (String(campos.idcliente ?? "").trim() !== String(t.clienteCodigo)) return false
+  const comp = String(campos.comprobante ?? "").trim()
+  return !comp || comp === t.comprobante
+}
+
+/** Texto de la opción elegida de un SELECT de un formulario ("113" → "REBUCRET"), o "" si no está. */
+export function textoOpcionElegida(html: string, nombre: string): string {
+  const sel = sinComentarios(html).match(new RegExp(`<select\\b[^>]*name\\s*=\\s*["']?${nombre}["'\\s>][^>]*>([\\s\\S]*?)<\\/select>`, "i"))
+  if (!sel) return ""
+  const ops = [...sel[1].matchAll(/<option\b([^>]*)>([\s\S]*?)(?=<option\b|$)/gi)]
+  const elegida = [...ops].reverse().find((o) => /\bselected\b/i.test(o[1])) || ops[0]
+  return elegida ? texto(elegida[2].replace(/<\/option>[\s\S]*$/i, "")) : ""
+}

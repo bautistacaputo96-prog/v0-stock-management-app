@@ -1,0 +1,18 @@
+<html><body>
+<form method="post" action="" name="frm_selsuc"><select name="selsuc"><option value="18" selected>REBUCRET</option></select></form>
+<form enctype="multipart/form-data" action="grabar_pedidos.php?codigo=157919" method="POST" name="frm_pedido" id="frm_pedido" onsubmit="return validar(true);">
+<input type="hidden" name="pedidos_unico" value="1731850000123456789"><input type="hidden" name="pedidos" value="157919"><input type="hidden" name="fparam" value="">
+<input type="hidden" name="proyecto" value="0"><input type="hidden" name="tipo" value="0">
+<input type="hidden" name="selsuc" value="18">
+<input type="hidden" name="idcliente" value="24644"><input type="text" name="cliente" value="MERVA S.A."><input type="TEXT" name="razon_social" value="MERVA S.A.">
+<input type="TEXT" name="cuit" value="30700000000">
+<select name="deposito"><option value="104">PILAR</option><option value="113" selected>REBUCRET</option><option value="116">Canning</option></select><input name="fecha_entrega" value="2026-11-19 00:00:00">
+<textarea name="observaciones_entrega">Obra: Las Lomas</textarea><textarea name="observaciones">Para facturar</textarea>
+<select name="comprobante" disabled><option value="">--Comprobantes--</option><option value="15" selected>Nota de Pedido</option><option value="16">Nota de Pedido 2</option></select><input type="TEXT" name="numero" value="0001-00001195">
+<input type="radio" name="origen" value="1" checked><input type="radio" name="origen" value="2"><input type="radio" name="origen" value="3">
+<input type="hidden" name="idlista" value="10251"><input type="hidden" name="idvendedor" value="101"><input type="text" name="vendedor" value="OREGUY JUAN">
+<select name="estado"><option value="0">Invisible</option><option value="1" selected>Activo</option></select>
+<div id="listaprecios"></div>
+</form>
+<script>function validar(){ document.getElementById("botgrabar").disabled = true }</script>
+</body></html>

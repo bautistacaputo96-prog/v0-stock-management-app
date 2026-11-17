@@ -23,7 +23,7 @@ import {
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
-  conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL,
+  conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL, esLaNpTraida, textoOpcionElegida, tieneMarcaDelSistema, type NpLeidaTraer,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
@@ -744,6 +744,8 @@ export type DatosAjuste = {
   objetivo: number
   /** Hubo un Grabar que pudo llegar (corte en grabar_np / verificar_np): primero se relee la NP */
   cortado: boolean
+  /** NP traída de Zomatik (sin nuestra marca): se reconoce por su número y su cliente (esLaNpTraida) */
+  traida?: { clienteCodigo: number; numero: string; comprobante: "15" | "16" }
 }
 
 export type ResultadoAjusteNp = {
@@ -791,14 +793,15 @@ async function filaNp(nav: NavegadorNp, d: { codigo: number; numero: string | nu
  * detalle se carga como la página (manage_pedidos.php con pedidos=N y su pedidos_unico). Lo que no se reconoce: "revisar"
  * (o "error" si la página cambió de forma), sin grabar nada.
  */
-export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "codigo" | "numero" | "marca" | "articuloCodigo" | "articuloNombre">, o: { azar?: () => number } = {}): Promise<LecturaAjuste> {
+export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "codigo" | "numero" | "marca" | "articuloCodigo" | "articuloNombre" | "traida">, o: { azar?: () => number } = {}): Promise<LecturaAjuste> {
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   if (!Number.isInteger(d.codigo) || d.codigo <= 0) throw new Corte("revisar", "No se sabe el código de la NP en Zomatik: ajustala a mano.")
   if (!d.numero) throw new Corte("revisar", "No se sabe el número de la NP: ajustala a mano.")
   await aRebucret(nav)
   const a = await abrir(nav, d.codigo)
   if (!a.form) throw formato("no se abrió la NP", a.html)
-  if (!tieneMarca(a.form.campos.observaciones, d.marca)) throw new Corte("revisar", "La NP no tiene la marca del sistema: no se toca. Revisala en Zomatik.")
+  // La NP traída de Zomatik no tiene nuestra marca: se reconoce por su número y su cliente (traer NP, 7.2)
+  if (!tieneMarca(a.form.campos.observaciones, d.marca) && !(d.traida && esLaNpTraida(a.form.campos, d.traida))) throw new Corte("revisar", "La NP no tiene la marca del sistema: no se toca. Revisala en Zomatik.")
   const accion = a.form.action || ""
   if (accion.toLowerCase() !== `grabar_pedidos.php?codigo=${d.codigo}`) throw formato("la NP graba en otro lado", a.html)
   const c = a.form.campos
@@ -1003,4 +1006,90 @@ export async function buscarNpEnZomatik(nav: NavegadorNp, nps: NpAControlar[], o
     }
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Traer una NP de Zomatik (docs/specs/2026-11-17-traer-np-de-zomatik.md, 7.2): SOLO LECTURA
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que Zomatik mostró y no se entiende (lo clasifica `traerNp` como "no_se_entiende"). Solo lleva el paso y el largo de
+ * la respuesta: nunca un recorte del HTML (la NP y el listado tienen montos).
+ */
+function noSeEntiende(paso: string, m: string, html?: string | null): Error {
+  return Object.assign(new Error(`Zomatik mostró la NP de una forma que no se entiende (${m}).`), { codigo: "formato", paso, ...(typeof html === "string" ? { largo: html.length } : {}) })
+}
+
+/** Una fila del listado de pedidos para traer la NP. Sin el total (no se leen montos). */
+export type FilaTraer = { codigo: number; numero: string; cliente: string; estado: string; autorizacion: { porAutorizar: boolean; conRemito: boolean } | null }
+
+/**
+ * Busca la NP por su número en el listado de pedidos de REBUCRET (navegador de solo lectura). Todos los `bus_*` en blanco
+ * salvo el número y la sucursal. El listado tiene que venir de la 18 y en una sola página. Devuelve las filas con ese
+ * número (y ese comprobante, si vino): ninguna, una, o dos (NP y NP2). No devuelve el total.
+ */
+export async function buscarNpPorNumero(nav: NavegadorNp, d: { numero: string; comprobante: "15" | "16" | null }): Promise<{ filas: FilaTraer[] }> {
+  await aRebucret(nav)
+  let l: Awaited<ReturnType<typeof listado>>
+  try {
+    l = await listado(nav, { bus_numero: d.numero }, SUCURSAL_REBUCRET, true)
+  } catch (e) {
+    // Sin el buscador (Zomatik cambió la página): no se entiende, no es una falla nuestra
+    if (e instanceof Corte) throw noSeEntiende("listado", "no se encontró el buscador de pedidos")
+    throw e
+  }
+  if (l.sucursalPagina !== SUCURSAL_REBUCRET) throw noSeEntiende("listado", "el listado vino de otra sucursal", l.html)
+  if ((l.paginas ?? 1) > 1 || l.paginado) throw noSeEntiende("listado", "el listado tiene más de una página", l.html)
+  const filas = l.filas.filter((f) => numeroNormalizado(f.numero) === d.numero && (!d.comprobante || comprobanteDeNumero(f.numero) === d.comprobante))
+  return {
+    filas: filas.map((f) => {
+      const a = autorizacionEnListado(l.html, f.codigo)
+      return { codigo: f.codigo, numero: f.numero, cliente: f.cliente, estado: f.estado, autorizacion: a ? { porAutorizar: a.porAutorizar || a.otroAutorizar, conRemito: a.conRemito } : null }
+    }),
+  }
+}
+
+/**
+ * Lee la NP abierta para traerla (navegador de solo lectura atado a esta NP, `navegadorLecturaNp`): el formulario
+ * (cliente, depósito, comprobante, estado, fecha de entrega, proyecto), el detalle como lo carga la página
+ * (`manage_pedidos.php` con pedidos=N y su pedidos_unico) y los comprobantes. No sigue ningún link de acción, no
+ * escribe nada y no cambia de sucursal salvo a la 18. Sin costo ni total. Lo que no se entiende tira "formato".
+ */
+export async function leerNpParaTraer(nav: NavegadorNp, d: { codigo: number; numero: string; comprobante: "15" | "16" | null }, o: { azar?: () => number } = {}): Promise<Omit<NpLeidaTraer, "fila">> {
+  const azar = o.azar || (() => Math.floor(Math.random() * 345343))
+  if (!Number.isInteger(d.codigo) || d.codigo <= 0) throw noSeEntiende("listado", "la fila no trae el código de la NP")
+  await aRebucret(nav)
+  const a = await abrir(nav, d.codigo)
+  if (!a.form) throw noSeEntiende("abrir_np", "no se abrió la NP", a.html)
+  const c = a.form.campos
+  if (String(c.pedidos || "") !== String(d.codigo)) throw noSeEntiende("abrir_np", "la página abierta no es de esta NP", a.html)
+  if (numeroNormalizado(c.numero) !== numeroNormalizado(d.numero)) throw noSeEntiende("abrir_np", "la NP abierta tiene otro número", a.html)
+  const proyecto = Number(c.proyecto || 0) || null
+  const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
+  let det: Detalle
+  try {
+    det = await manage(nav, c, [...base, ["flista", c.idlista || "0"]], proyecto, azar)
+  } catch (e) {
+    if (e instanceof Corte) throw noSeEntiende("detalle", "el detalle no respondió")
+    throw e
+  }
+  if (!esDetalle(det.html)) throw noSeEntiende("detalle", "no se pudo leer el detalle", det.html)
+  const comprobantes = await comprobantesNp(nav, d.codigo, azar)
+  const fecha = String(c.fecha_entrega || "").trim().slice(0, 10)
+  return {
+    campos: {
+      idcliente: String(c.idcliente || "").trim(),
+      numero: numeroNormalizado(c.numero) || String(c.numero || ""),
+      comprobante: String(c.comprobante || "").trim(),
+      deposito: String(c.deposito || "").trim(),
+      depositoNombre: textoOpcionElegida(a.html, "deposito"),
+      fecha_entrega: /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : "",
+      estado: String(c.estado ?? "").trim(),
+      proyecto: proyecto ?? 0,
+      // Una NP del sistema (con su marca en las observaciones) no se trae
+      marcaSistema: tieneMarcaDelSistema(c.observaciones),
+    },
+    renglones: det.renglones.map((r) => ({ codigoArticulo: r.codigoArticulo, nombreArticulo: r.nombreArticulo, cantidad: numeroZomatik(r.cantidad) })),
+    comprobantes: comprobantes ? { remitos: comprobantes.remitos.map((x) => ({ numero: x.numero })), facturas: comprobantes.facturas.map((x) => ({ numero: x.numero })) } : null,
+  }
 }
