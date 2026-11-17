@@ -507,6 +507,23 @@ export function precioBloqueado(nps: { tipo: string; formula_id?: string | null;
   return nps.some((n) => n.tipo === "nueva" && (n.formula_id ?? null) === (formulaId ?? null) && (!["pendiente", "error", "anulada"].includes(n.estado) || PASOS_GRABADA.includes(n.paso || "")))
 }
 
+/** La línea "Precio por m³" del formulario: lo tipeado, si se tocó, si se puede editar ahora y el precio de la lista. */
+export type PrecioNpForm = { texto: string; tocado: boolean; editable: boolean; lista: number | null }
+export const PRECIO_NP_VACIO: PrecioNpForm = { texto: "", tocado: false, editable: false, lista: null }
+
+/**
+ * Qué se manda al guardar el pedido: nada (`undefined`) si no se tocó o no se puede editar; null si quedó vacío o es
+ * exactamente el de la lista ("el de la lista", no queda "puesto a mano"); el número si no. 0, negativo o ilegible: error.
+ */
+export function precioParaEnviar(p: PrecioNpForm): { valor: number | null | undefined } | { error: string } {
+  if (!p.tocado || !p.editable) return { valor: undefined }
+  if (!p.texto.trim()) return { valor: null }
+  const n = precioDeTexto(p.texto)
+  if (!precioValido(n)) return { error: MSJ_PRECIO_INVALIDO }
+  if (precioValido(p.lista) && Math.abs(n - p.lista) < 0.005) return { valor: null }
+  return { valor: n }
+}
+
 /** Sin montos: estos textos los ve todo Programación y Despacho (zomatik_np.mensaje). */
 export const MSJ_PRECIO_BLOQUEADO = "El precio ya está en la NP: no se cambió. Si hace falta, cambialo en Zomatik."
 export const MSJ_PRECIO_DISTINTO = "La NP quedó con otro precio en Zomatik: revisala."

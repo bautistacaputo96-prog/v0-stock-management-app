@@ -48,7 +48,7 @@ import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
 import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
 import { VincularCartel } from "@/components/zomatik/vincular-cartel"
-import { esFaltaDeVinculo } from "@/lib/zomatik/np"
+import { PRECIO_NP_VACIO, esFaltaDeVinculo, precioParaEnviar, type PrecioNpForm } from "@/lib/zomatik/np"
 import { puedeVincularDesdePedido } from "@/lib/permisos"
 import { normalizarLocalidad } from "@/lib/geo-direccion"
 
@@ -275,6 +275,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [npPreguntada, setNpPreguntada] = useState(false)
   // El pedido con NP cambió de fecha: ¿se mueve la NP? (sección 25)
   const [npMoverFecha, setNpMoverFecha] = useState<boolean | null>(null)
+  // Precio por m³ de la NP (solo con precios_np.editar): se manda al guardar solo si se tocó (16/11/2026)
+  const [npPrecio, setNpPrecio] = useState<PrecioNpForm>(PRECIO_NP_VACIO)
   // Cartel "Falta vincular con Zomatik" (04/11): desde el formulario o desde el menú ⋯ de un pedido con la NP en error
   // También pide la localidad de la obra si no la tiene (10/11/2026); `conVinculos: false` = solo la localidad
   const [vincular, setVincular] = useState<null | { modo: "form"; conVinculos?: boolean } | { modo: "menu"; pedido: ScheduledDispatch }>(null)
@@ -571,6 +573,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setNpEleccion(NP_NUEVA)
     setNpEleccionLista(true)
     setNpMoverFecha(null)
+    setNpPrecio(PRECIO_NP_VACIO)
     setNpDialogo(null)
     setNpLectura("ok")
     setNpPreguntada(false)
@@ -617,6 +620,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // la NP de ESTE pedido aparte (no depende de la lista de la semana) con 5 s como mucho.
     pedidoAbierto.current = dispatch.id
     setNpMoverFecha(null)
+    setNpPrecio(PRECIO_NP_VACIO)
     setNpSinVincular(false)
     setNpVinculoHecho(false)
     const deLaSemana = np.porPedido[dispatch.id] || null
@@ -671,6 +675,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // Zomatik (04/11): falta vincular el cliente o la fórmula y la NP sale sola → el cartel, antes de grabar nada.
     // Solo con lo que está en memoria (no frena Guardar). La obra sin localidad (10/11/2026) también abre el cartel
     // y esa no se saltea: Zomatik la exige en el remito.
+    // Precio por m³ de la NP: 0 o negativo no deja guardar
+    const precioNp = precioParaEnviar(npPrecio)
+    if ("error" in precioNp) {
+      toast({ title: "Revisá el precio por m³", description: precioNp.error, variant: "destructive" })
+      return
+    }
     const faltaVincular = debeVincularAntes() && !opciones.sinVincular
     if (faltaVincular || obraSinLocalidad) {
       setVincular({ modo: "form", conVinculos: faltaVincular })
@@ -865,7 +875,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       // Zomatik Z2: la NP del pedido (solo con la llave de la planta prendida)
       if (pedidoId && np.plantas[plantToUse]?.activo) {
         // Al editar, la elección solo se manda si ya se había leído la guardada (si no, el servidor deja la que tenía)
-        const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null)
+        const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
         else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
         else if (rnp.usadas) toast({ title: "El pedido usa la NP con saldo", description: "No se generó otra NP." })
@@ -1763,6 +1773,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 proponer={!editingDispatch ? !npPreguntada : npEleccionLista && npLectura === "ok" && !npDialogo?.eleccion}
                 faltan={npFaltan}
                 onVincular={puedeVincular ? () => setVincular({ modo: "form" }) : undefined}
+                precio={npPrecio}
+                onPrecio={setNpPrecio}
+                remito={form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo || null}
+                pedidoId={editingDispatch?.id || null}
+                plantId={form.plant_id}
               />
             </SeccionPedido>
 

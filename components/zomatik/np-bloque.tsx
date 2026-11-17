@@ -10,14 +10,17 @@
  * fecha y ya tiene NP, pregunta si se mueve la NP.
  * Con la llave de la planta apagada: "NP: se carga a mano en Zomatik", como hoy.
  * Si al cliente o a la fórmula les falta el vínculo con Zomatik, avisa y ofrece "Vincular" (04/11, quien programa).
+ * Precio por m³ (16/11, docs/specs/2026-11-16-precio-en-programacion.md): una línea, SOLO con precios_np.editar (si no,
+ * no existe ni se pide nada). Se puede cambiar hasta que sale la NP; vacío = el de la lista. Precio neto (sin IVA).
  */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { cargarNpSaldos, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen } from "@/lib/zomatik/np-cliente"
+import { Input } from "@/components/ui/input"
+import { actualizarCopiaZomatik, cargarNpSaldos, leerPrecioNp, type EleccionNp, type EstadoPedidoNp, type NpSaldo, type PlantaNpResumen, type PrecioNp } from "@/lib/zomatik/np-cliente"
 import { NpChip } from "@/components/zomatik/np-chip"
 import { usePermisos } from "@/lib/current-user"
-import { puedeVincularDesdePedido } from "@/lib/permisos"
-import { esFaltaDeVinculo } from "@/lib/zomatik/np"
+import { puedeCon, puedeVincularDesdePedido } from "@/lib/permisos"
+import { MSJ_PRECIO_INVALIDO, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -42,6 +45,7 @@ const OPCIONES = [
 
 export function NpBloque({
   planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
+  precio, onPrecio, remito, pedidoId, plantId,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -68,6 +72,14 @@ export function NpBloque({
   faltan?: { cliente: string | null; formula: string | null }
   /** Abre el cartel "Falta vincular con Zomatik" (solo si puede vincular desde el pedido). */
   onVincular?: () => void
+  /** Precio por m³ de la NP (lo guarda quien llama y lo manda al guardar, solo si se tocó). */
+  precio?: PrecioNpForm
+  onPrecio?: (p: PrecioNpForm) => void
+  /** R o X del formulario (define NP o NP2, y así la lista). */
+  remito?: string | null
+  /** Al editar, el pedido (para saber si la NP ya salió). */
+  pedidoId?: string | null
+  plantId?: string
 }) {
   const { usuario } = usePermisos()
   const puedeVincular = puedeVincularDesdePedido(usuario) && !!onVincular
@@ -77,6 +89,12 @@ export function NpBloque({
   const [igual, setIgual] = useState(false)
   const activo = !!planta?.activo
   const deshabilitado = !!soloLectura || !lista
+  // Precio por m³: solo con el permiso (si no, ni se pide al servidor) y en un pedido que se puede cambiar
+  const puedePrecio = puedeCon(usuario, "precios_np", "editar") && !soloLectura && !!precio && !!onPrecio
+  const [infoPrecio, setInfoPrecio] = useState<PrecioNp | null>(null)
+  const [vueltaPrecio, setVueltaPrecio] = useState(0)
+  const [actualizando, setActualizando] = useState(false)
+  const formulaAntes = useRef(formulaId)
 
   useEffect(() => {
     if (!activo || !clientId || !lista) {
@@ -111,6 +129,44 @@ export function NpBloque({
       vivo = false
     }
   }, [activo, clientId, formulaId, lista])
+
+  useEffect(() => {
+    if (!activo || !lista || !puedePrecio || !formulaId || !plantId) {
+      setInfoPrecio(null)
+      return
+    }
+    let vivo = true
+    leerPrecioNp({ formulaId, plantId, remito: remito || null, pedidoId: pedidoId || null }).then((x) => vivo && setInfoPrecio(x))
+    return () => {
+      vivo = false
+    }
+  }, [activo, lista, puedePrecio, formulaId, plantId, remito, pedidoId, vueltaPrecio])
+
+  // Cambió la fórmula: el precio vuelve a la lista (lo tipeado era para la otra)
+  useEffect(() => {
+    if (formulaAntes.current === formulaId) return
+    formulaAntes.current = formulaId
+    if (precio && onPrecio && precio.tocado) onPrecio({ ...precio, texto: "", tocado: false })
+  }, [formulaId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lo que puede cambiar quien llama: si se edita ahora, el precio de lista y (sin tocar) el puesto en el pedido
+  const usable = !!infoPrecio && !infoPrecio.sinMigracion && infoPrecio.activo !== false
+  const paraNueva = valor.tipo === "nueva" || (valor.tipo === "proyecto" && valor.tope_m3 !== null && valor.tope_m3 !== undefined)
+  const editable = usable && paraNueva && !infoPrecio!.bloqueado && (infoPrecio!.estado === "ok" || infoPrecio!.estado === "no_en_lista")
+  const precioLista = usable && precioValido(infoPrecio!.precio_lista) ? infoPrecio!.precio_lista! : null
+  const inicial = usable && infoPrecio!.origen === "manual" && precioValido(infoPrecio!.precio_m3) ? textoPrecio(infoPrecio!.precio_m3!) : ""
+  useEffect(() => {
+    if (!precio || !onPrecio) return
+    const texto = precio.tocado ? precio.texto : inicial
+    if (precio.editable !== editable || precio.lista !== precioLista || precio.texto !== texto) onPrecio({ ...precio, texto, editable, lista: precioLista })
+  }, [editable, precioLista, inicial, precio?.tocado]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function actualizarLista() {
+    setActualizando(true)
+    await actualizarCopiaZomatik("precios")
+    setActualizando(false)
+    setVueltaPrecio((v) => v + 1)
+  }
 
   if (!activo) return <p className="text-xs text-muted-foreground">NP: se carga a mano en Zomatik.</p>
   if (!lista) return <p className="text-xs text-muted-foreground">{fallo ? "NP: no se pudo leer, se mantiene la elección (podés guardar igual)." : "Leyendo la NP del pedido…"}</p>
@@ -236,6 +292,8 @@ export function NpBloque({
         </div>
       )}
 
+      {puedePrecio && usable && <LineaPrecio info={infoPrecio!} valor={valor} precio={precio!} onPrecio={onPrecio!} editable={editable} lista={precioLista} actualizando={actualizando} onActualizar={actualizarLista} />}
+
       <p className="text-[11px] text-muted-foreground">Crear proyecto: por ahora los proyectos se cargan en Zomatik.</p>
       {yaTiene.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 text-xs">
@@ -245,6 +303,64 @@ export function NpBloque({
           {errorPorVinculo && !avisoVinculo && botonVincular}
         </div>
       )}
+    </div>
+  )
+}
+
+const leidaEl = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }).replace(",", "") : ""
+
+/** Una sola línea, input de ancho fijo: el precio por m³ (neto, sin IVA) que va a la NP de Zomatik. */
+function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualizando, onActualizar }: {
+  info: PrecioNp
+  valor: EleccionNp
+  precio: PrecioNpForm
+  onPrecio: (p: PrecioNpForm) => void
+  editable: boolean
+  lista: number | null
+  actualizando: boolean
+  onActualizar: () => void
+}) {
+  const gris = "flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+  const actualizar = (
+    <button type="button" disabled={actualizando} className="rounded border px-2 py-0.5 text-xs text-foreground hover:bg-muted/50" onClick={onActualizar}>
+      {actualizando ? "Actualizando…" : "Actualizar"}
+    </button>
+  )
+  if (valor.tipo === "saldo") return <p className={gris}>Precio por m³: el de la NP con saldo</p>
+  if (valor.tipo === "proyecto" && (valor.tope_m3 === null || valor.tope_m3 === undefined))
+    return <p className={gris}>Precio por m³: {precioValido(info.proyecto_precio_m3) ? `$ ${textoPrecio(info.proyecto_precio_m3!)}, del proyecto` : "el del proyecto"}</p>
+  if (info.estado === "sin_vinculo") return <p className={gris}>Precio: vinculá la fórmula con Zomatik</p>
+  if (info.bloqueado)
+    return <p className={gris}>Precio por m³: {precioValido(info.precio_m3) ? `$ ${textoPrecio(info.precio_m3!)} · ` : ""}ya está en la NP (para cambiarlo, en Zomatik)</p>
+  if (info.estado === "sin_lista" || !editable)
+    return (
+      <div className={gris}>
+        <span className="text-amber-700">No se pudo saber la lista: revisá las listas en Zomatik</span>
+        {actualizar}
+      </div>
+    )
+  const tipeado = precio.texto.trim() ? precioDeTexto(precio.texto) : null
+  const malo = !!precio.texto.trim() && !precioValido(tipeado)
+  const dif = !malo ? diferenciaConLista(tipeado, lista) : null
+  const ayuda = `Es el precio que va a la NP de Zomatik, sin IVA. Vacío = el de la lista. Se puede cambiar hasta que sale la NP.${info.lista ? ` Lista ${info.lista.nombre.replace(/^0\s*-\s*Lista\s*/i, "")}, leída el ${leidaEl(info.lista.leida_at)}.` : ""}`
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-medium">{valor.tipo === "proyecto" ? "Precio del resto (NP nueva, sin IVA)" : "Precio por m³ (sin IVA)"}</span>
+      <span className="flex items-center gap-1">
+        $
+        <Input
+          inputMode="decimal"
+          className="h-7 w-28 px-2 text-xs tabular-nums"
+          placeholder={lista !== null ? textoPrecio(lista) : ""}
+          value={precio.texto}
+          onChange={(e) => onPrecio({ ...precio, texto: e.target.value, tocado: true })}
+        />
+      </span>
+      {lista !== null ? <span className="text-muted-foreground tabular-nums">Lista: $ {textoPrecio(lista)}</span> : <span className="text-amber-700">No está en la lista de Zomatik</span>}
+      <span className="cursor-help text-muted-foreground" title={ayuda}>(?)</span>
+      {malo ? <span className="text-red-700">{MSJ_PRECIO_INVALIDO}</span> : dif ? <span className="text-amber-700">{dif}</span> : null}
+      {lista === null && actualizar}
     </div>
   )
 }
