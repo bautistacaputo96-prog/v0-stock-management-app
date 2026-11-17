@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS public.zomatik_np_precio (
   proyecto_precio_m3     numeric(14,3),           -- NP de proyecto: el costo que trajo el MATERIAL (solo para mostrar)
   updated_by             text,
   updated_at             timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT zomatik_np_precio_origen_check CHECK ((precio_m3 IS NULL) = (origen IS NULL))
+  CONSTRAINT zomatik_np_precio_con_origen_check CHECK ((precio_m3 IS NULL) = (origen IS NULL))
 );
 COMMENT ON TABLE public.zomatik_np_precio IS 'Zomatik: precio neto por m³ de la NP nueva del pedido (nulo = lista). Solo servidor: el navegador no lo puede leer.';
 
