@@ -2008,7 +2008,8 @@ Spec: `docs/specs/2026-11-16-precio-en-programacion.md` (la sección 15, "Captur
 - **Precio neto (sin IVA):** el `costo` del renglón y el precio de la lista son netos. Con la NP (15, R) Zomatik suma el
   IVA en el total; con la NP2 (16, X), no.
 - **Lista:** copia de `listado_listas.php` (`zomatik_listas`) y del export `exportar_lista.php?lista=N` de cada lista
-  activa (`zomatik_lista_precios`), en la lectura de la noche (parte `listas`) y con "Actualizar" de la línea del precio.
+  activa (`zomatik_lista_precios`), en la lectura de la noche (parte `listas`, al final) y con "Actualizar" de la línea
+  del precio. Si una lista no cruza ningún nombre, quedan sus precios de antes y la lectura lo avisa.
   El export no trae códigos: se cruza por **nombre** con `zomatik_articulos` (exacto, sin mayúsculas ni espacios de más;
   si no cruza o cruza con dos, "no está en la lista"). La pantalla usa `listaActiva` (la misma del robot) con el
   comprobante del remito del formulario.
@@ -2019,11 +2020,12 @@ Spec: `docs/specs/2026-11-16-precio-en-programacion.md` (la sección 15, "Captur
   `zomatik_np` y `scheduled_dispatches` no lo llevan; los mensajes de `zomatik_np` y los avisos no llevan montos.
   "sincronizar" acepta `precio_m3` (sin el permiso se ignora). Se guarda en `zomatik_np_precio` con
   `zomatik_np_precio_guardar` (bloqueado si la NP nueva de esa fórmula ya salió o pudo salir). Si el pedido cambia de
-  fórmula, vuelve a la lista. Actividad con montos (es de gerenciales).
+  fórmula, o se elige "NP con saldo" o un proyecto sin tope, vuelve a la lista. El R/X para la lista es el mismo que usó
+  la pantalla (sin R/X y con listas distintas para NP y NP2: "Elegí R o X…"). Actividad con montos (es de gerenciales).
 - **Robot:** en la NP nueva cambia `costo<id>` y el `fparam` (`conCosto`), **no** `hcosto<id>` (captura de
   `GrabarDatosDetalle` del 16/11). Sin precio, el Grabar es el de siempre. Después de grabar se controla el costo
   grabado: si es otro o no se puede leer, la NP queda "ok" con un mensaje sin montos, Actividad con los dos montos y
-  aviso a Bautista. La primera NP nueva "ok" **congela** su precio: las adicionales salen con el mismo aunque cambie la
+  aviso a Bautista. Una NP reanudada tras un corte se lee para saber su costo. La primera NP nueva "ok" **congela** su precio: las adicionales salen con el mismo aunque cambie la
   lista. La NP de proyecto no se toca (solo se anota el costo del MATERIAL para mostrarlo). Ajuste al finalizar y Z1, sin
   cambios.
 - **Pedidos de antes:** sin fila de precio salen como hoy (la lista). Si un pedido con NP de antes se agranda, la
