@@ -437,6 +437,30 @@ export async function fetchAcopioXls(s: ZomatikSesion, acopio: number): Promise<
   return parseHtmlTable(html).rows
 }
 
+/** Listado de listas de precios (HTML, solo lectura) en la sucursal REBUCRET. */
+export async function fetchListasHtml(s: ZomatikSesion): Promise<string> {
+  await reafirmarRebucret(s)
+  return fetchText(s, "listado_listas.php")
+}
+
+/**
+ * Export de una lista de precios (XLSX o, si Zomatik devuelve la página, su tabla) como matriz de filas × celdas: el
+ * export no tiene una fila de encabezados (título arriba y una cabecera "Rubro | Precio" por rubro).
+ */
+export async function fetchListaXls(s: ZomatikSesion, lista: number): Promise<(string | number)[][]> {
+  if (!Number.isInteger(lista) || lista <= 0) throw new ZomatikError("formato", "Código de lista inválido")
+  await reafirmarRebucret(s)
+  const buf = await fetchRaw(s, `exportar_lista.php?lista=${lista}`)
+  if (esXlsx(buf)) {
+    const wb = XLSX.read(buf, { type: "buffer" })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    return ws ? XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, raw: true, defval: "" }) : []
+  }
+  const html = buf.toString("latin1")
+  if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  return matrizDeTablaHtml(html)
+}
+
 /** Mensaje para la pantalla (en castellano, sin datos de la sesión). */
 export function mensajeZomatik(e: unknown): string {
   if (e instanceof ZomatikError) return e.message

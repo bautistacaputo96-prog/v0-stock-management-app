@@ -23,6 +23,7 @@ export type SeccionClave =
   | "historial"
   | "materia_prima"
   | "recuentos"
+  | "precios_np"
   | "laboratorio"
   | "mantenimiento"
   | "clientes"
@@ -121,6 +122,15 @@ export const SECCIONES: Seccion[] = [
     acciones: ["cargar"],
     rutas: [],
     descripcion: { cargar: "Hacer un recuento o ajuste de stock (\"Ajustar\")" },
+  },
+  {
+    // Precio por m³ al programar (16/11/2026): sin pantalla propia, como recuentos. Gerenciales sí (lo que falta vale
+    // true); operarios y consulta no (su plantilla es solo "ver" y esta sección no tiene "ver"): se tilda por persona.
+    clave: "precios_np",
+    nombre: "Precio en la NP",
+    acciones: ["editar"],
+    rutas: [],
+    descripcion: { editar: "Ver y cambiar el precio por m³ al programar (va a la NP de Zomatik)" },
   },
   {
     clave: "laboratorio",

@@ -7,6 +7,8 @@
  *      se caiga la sesión o Zomatik rechace el usuario:
  *        clientes      listado_clientes.php (export, ~467)
  *        artículos     listado_articulos.php por línea (Hormigón, Hormigón (OBRAS), Servicios)
+ *        listas        listado_listas.php y exportar_lista.php de cada lista ACTIVA (precio neto por artículo, para el
+ *                      precio por m³ al programar). Si falla, quedan las de antes (con su leida_at)
  *        remitos       reporte_remitosventa.php del último año (export): R/X por cliente y renglones de proyectos
  *        proyectos     listado_proyectos.php (HTML, trae el código interno de cada proyecto)
  *        historia      los años anteriores de los proyectos abiertos viejos (una sola vez por proyecto)
@@ -19,7 +21,8 @@
  * Las partes clientes y artículos (`leerClientes`/`leerArticulos` + `guardarClientes`/`guardarArticulos`) también
  * las corre sueltas "Actualizar desde Zomatik" del cartel de vincular (lib/zomatik/actualizar-copia.ts).
  *
- * Nunca se guarda un precio ni un monto.
+ * El único precio que se guarda es el de las listas (zomatik_listas / zomatik_lista_precios, tablas que solo lee el
+ * servidor): el precio por m³ al programar (docs/specs/2026-11-16-precio-en-programacion.md). Ningún otro monto.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { sbAdmin } from "@/lib/wialon"
@@ -30,6 +33,8 @@ import {
   fetchHtml,
   fetchFichaCliente,
   fetchAcopioXls,
+  fetchListasHtml,
+  fetchListaXls,
   ZomatikError,
   type ZomatikSesion,
 } from "@/lib/zomatik/cliente"
@@ -41,6 +46,8 @@ import {
   pactadoDeAcopio,
   parseFichaCliente,
   npPendientesDeListado,
+  preciosDeLista,
+  cruzarPreciosLista,
   type Articulo,
   type ClienteListado,
 } from "@/lib/zomatik/parseo"
@@ -60,8 +67,10 @@ import {
   puedeBorrarViejos,
   filasRemitosDia,
   type Foto,
+  type LecturaListas,
   type Previo,
 } from "@/lib/zomatik/foto"
+import { listasDeListado } from "@/lib/zomatik/np"
 
 export type ResultadoLectura = { ok: boolean; partes: Record<string, unknown>; errores: string[]; ms: number }
 
@@ -115,6 +124,54 @@ export async function leerArticulos(s: ZomatikSesion): Promise<Articulo[]> {
   return todos
 }
 
+/**
+ * Parte "listas": el listado de listas de precios y el export de cada lista ACTIVA (precio neto por nombre de artículo).
+ * También la usa "Actualizar" del precio en Programación (actualizar-copia.ts, tipo "precios"). No toca la base.
+ */
+export async function leerListas(s: ZomatikSesion): Promise<LecturaListas> {
+  const listas = listasDeListado(await fetchListasHtml(s))
+  if (listas.length === 0) throw new ZomatikError("formato", "El listado de listas de precios vino vacío (¿cambió el formato?)")
+  const precios: LecturaListas["precios"] = []
+  for (const l of listas.filter((x) => /^activ/i.test(x.estado))) {
+    const filas = preciosDeLista(await fetchListaXls(s, l.codigo))
+    if (filas.length === 0) throw new ZomatikError("formato", `La lista ${l.codigo} vino sin precios (¿cambió el export?)`)
+    precios.push({ lista: l.codigo, filas })
+  }
+  return { listas, precios }
+}
+
+/**
+ * Graba las listas: todas en zomatik_listas (las que ya no están en Zomatik se borran) y, por cada activa, reemplaza sus
+ * precios en zomatik_lista_precios cruzando por nombre con los artículos (`articulos` de la misma lectura o la copia).
+ * Borra los precios de las listas que ya no están activas. `inicio` = cuándo empezó la lectura (leida_at).
+ */
+export async function guardarListas(sb: SupabaseClient, l: LecturaListas, inicio: string, articulos?: { codigo: number; nombre: string }[] | null): Promise<{ listas: number; activas: number; precios: number; sin_cruzar: number }> {
+  let arts = articulos && articulos.length ? articulos : null
+  if (!arts) {
+    const { data, error } = await sb.from("zomatik_articulos").select("codigo, nombre").limit(5000)
+    if (error) throw error
+    arts = ((data as { codigo: number; nombre: string }[]) || []).map((a) => ({ codigo: Number(a.codigo), nombre: a.nombre }))
+  }
+  await upsertLotes(sb, "zomatik_listas", l.listas.map((x) => ({ codigo: x.codigo, nombre: x.nombre, desde: x.desde, estado: x.estado, leida_at: inicio })), "codigo")
+  const { error: eL } = await sb.from("zomatik_listas").delete().lt("leida_at", inicio)
+  if (eL) throw eL
+  let precios = 0
+  let sinCruzar = 0
+  for (const p of l.precios) {
+    const filas = cruzarPreciosLista(p.filas, arts)
+    sinCruzar += p.filas.length - filas.length
+    await upsertLotes(sb, "zomatik_lista_precios", filas.map((f) => ({ lista_codigo: p.lista, ...f, leida_at: inicio })), "lista_codigo,articulo_codigo")
+    const { error } = await sb.from("zomatik_lista_precios").delete().eq("lista_codigo", p.lista).lt("leida_at", inicio)
+    if (error) throw error
+    precios += filas.length
+  }
+  const activas = l.precios.map((p) => p.lista)
+  const q = sb.from("zomatik_lista_precios").delete()
+  const { error: eV } = activas.length ? await q.not("lista_codigo", "in", `(${activas.join(",")})`) : await q.gte("lista_codigo", 0)
+  if (eV) throw eV
+  return { listas: l.listas.length, activas: activas.length, precios, sin_cruzar: sinCruzar }
+}
+
 /** Lee de Zomatik todo lo de Z0. No toca la base. `partes` y `errores` se completan por parte. */
 export async function leerFoto(
   s: ZomatikSesion,
@@ -143,6 +200,11 @@ export async function leerFoto(
   await parte("articulos", async () => {
     foto.articulos = await leerArticulos(s)
     return foto.articulos.length
+  })
+
+  await parte("listas", async () => {
+    foto.listas = await leerListas(s)
+    return { listas: foto.listas.listas.length, activas: foto.listas.precios.length }
   })
 
   let formRemitos: Awaited<ReturnType<typeof discoverForm>> | null = null
@@ -268,6 +330,15 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
   else {
     const { data } = await sb.from("zomatik_articulos").select("codigo, linea").limit(5000)
     lineas = new Map(((data as any[]) || []).map((a) => [a.codigo, a.linea]))
+  }
+
+  // Listas de precios (si falla, quedan las de antes y sigue el resto). Sin su migración, no corta nada.
+  if (foto.listas) {
+    try {
+      out.listas = await guardarListas(sb, foto.listas, foto.inicio, foto.articulos)
+    } catch (e: any) {
+      out.listas = /zomatik_lista/.test(e?.message || "") ? "falta la migración 202611161200" : `error: ${String(e?.message || e).slice(0, 120)}`
+    }
   }
 
   // Proyectos: los de la lectura quedan abiertos; los que ya no aparecen, cerrados (solo si la lectura anduvo)

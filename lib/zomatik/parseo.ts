@@ -663,3 +663,62 @@ export function npPendientesDeListado(filas: Fila[]): NpPendiente[] {
   }
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Lista de precios (exportar_lista.php): precio NETO (sin IVA) por artículo (spec 2026-11-16, 15.A)
+// ---------------------------------------------------------------------------
+
+export type PrecioLista = { articulo_nombre: string; precio: number }
+
+/**
+ * Filas del export de una lista (matriz, sin encabezado de columnas): arriba el título ("Lista de precios N: 0  Fecha:
+ * …  Lista OCTUBRE 2026" y "T.C: …"); después, por rubro, una cabecera `Rubro | Precio` y debajo `Nombre | Precio`. Se
+ * toman solo las filas que están debajo de una cabecera "Precio", con nombre y un precio mayor a 0. El export no trae
+ * códigos: el cruce con los artículos es por nombre (`cruzarPreciosLista`).
+ */
+export function preciosDeLista(filas: (string | number)[][]): PrecioLista[] {
+  const out: PrecioLista[] = []
+  let enRubro = false
+  for (const f of filas || []) {
+    const a = String(f?.[0] ?? "").replace(/\s+/g, " ").trim()
+    const b = f?.[1]
+    if (/^precio$/i.test(String(b ?? "").trim())) {
+      enRubro = true // cabecera de un rubro ("Hormigon | Precio")
+      continue
+    }
+    if (!enRubro || !a) continue
+    const precio = parseNumero(b)
+    if (precio === null || !(precio > 0)) continue
+    out.push({ articulo_nombre: a, precio: Math.round(precio * 1000) / 1000 })
+  }
+  return out
+}
+
+/** Nombre para cruzar la lista con los artículos: exacto, sin importar mayúsculas ni espacios de más. */
+export const nombreArticuloLista = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").trim().toUpperCase()
+
+/**
+ * Cruza los precios de la lista con la copia de artículos por nombre. Un nombre que no cruza, o que cruza con más de un
+ * artículo, o que aparece con dos precios distintos en la lista, no se usa (queda "no está en la lista").
+ */
+export function cruzarPreciosLista(precios: PrecioLista[], articulos: { codigo: number; nombre: string }[]): { articulo_codigo: number; articulo_nombre: string; precio: number }[] {
+  const porNombre = new Map<string, number[]>()
+  for (const a of articulos || []) {
+    const k = nombreArticuloLista(a.nombre)
+    if (!k) continue
+    porNombre.set(k, [...(porNombre.get(k) || []), Number(a.codigo)])
+  }
+  const enLista = new Map<string, PrecioLista[]>()
+  for (const p of precios || []) {
+    const k = nombreArticuloLista(p.articulo_nombre)
+    enLista.set(k, [...(enLista.get(k) || []), p])
+  }
+  const out: { articulo_codigo: number; articulo_nombre: string; precio: number }[] = []
+  for (const [k, ps] of enLista) {
+    const cods = [...new Set(porNombre.get(k) || [])]
+    if (cods.length !== 1) continue
+    if (new Set(ps.map((p) => p.precio)).size !== 1) continue
+    out.push({ articulo_codigo: cods[0], articulo_nombre: ps[0].articulo_nombre, precio: ps[0].precio })
+  }
+  return out
+}

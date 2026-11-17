@@ -6,6 +6,9 @@
  * `clientes` o `articulos` de la lectura (el mismo export, solo lectura; lib/zomatik/lectura.ts) y graba la copia con
  * el mismo upsert. No escribe nada en Zomatik.
  *
+ * Tipo "precios" (16/11/2026): el "Actualizar" del precio por m³ en Programación. Lee las listas de precios (parte
+ * `listas`) y graba zomatik_listas / zomatik_lista_precios. La ruta lo exige con el permiso precios_np.editar.
+ *
  * Freno: como mucho una vez cada 2 min por tipo, con un candado en `integraciones` (`zomatik_copia_clientes` /
  * `zomatik_copia_articulos`, `actualizado` = la última vez). Si se tocó hace poco no se va a Zomatik: se devuelve
  * `reciente` y el cartel vuelve a buscar en lo que hay. Además pide el mismo turno que la lectura y el robot de las NP
@@ -14,11 +17,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { sbAdmin } from "@/lib/wialon"
 import { obtenerSesion, type ZomatikSesion } from "@/lib/zomatik/cliente"
-import { fotoVacia, guardarArticulos, guardarClientes, leerArticulos, leerClientes, textoError } from "@/lib/zomatik/lectura"
+import { fotoVacia, guardarArticulos, guardarClientes, guardarListas, leerArticulos, leerClientes, leerListas, textoError } from "@/lib/zomatik/lectura"
 import { olvidarClientes } from "@/lib/clientes-datos"
 import type { Articulo, ClienteListado } from "@/lib/zomatik/parseo"
+import type { LecturaListas } from "@/lib/zomatik/foto"
 
-export type TipoCopia = "clientes" | "articulos"
+export type TipoCopia = "clientes" | "articulos" | "precios"
 export type ResultadoCopia =
   | { ok: true; reciente: false; cantidad: number }
   /** Se actualizó hace menos de 2 min: no se fue a Zomatik (`desde` = la última vez). */
@@ -32,7 +36,7 @@ const ESPERA_TURNO_MS = 15_000
 export const claveCopia = (tipo: TipoCopia) => `zomatik_copia_${tipo}`
 
 export function tipoDeCopia(x: unknown): TipoCopia | null {
-  return x === "clientes" || x === "articulos" ? x : null
+  return x === "clientes" || x === "articulos" || x === "precios" ? x : null
 }
 
 /**
@@ -72,6 +76,7 @@ export type DepsCopia = {
   sesion?: () => Promise<ZomatikSesion>
   leerClientes?: (s: ZomatikSesion) => Promise<ClienteListado[]>
   leerArticulos?: (s: ZomatikSesion) => Promise<Articulo[]>
+  leerListas?: (s: ZomatikSesion) => Promise<LecturaListas>
   ahora?: () => number
   esperar?: (ms: number) => Promise<void>
 }
@@ -110,9 +115,12 @@ export async function actualizarCopia(tipo: TipoCopia, deps: DepsCopia = {}): Pr
       foto.clientes = await (deps.leerClientes ?? leerClientes)(s)
       cantidad = await guardarClientes(sb, foto)
       olvidarClientes()
-    } else {
+    } else if (tipo === "articulos") {
       foto.articulos = await (deps.leerArticulos ?? leerArticulos)(s)
       cantidad = await guardarArticulos(sb, foto)
+    } else {
+      const l = await (deps.leerListas ?? leerListas)(s)
+      cantidad = (await guardarListas(sb, l, foto.inicio)).precios
     }
     return { ok: true, reciente: false, cantidad }
   } catch (e) {
