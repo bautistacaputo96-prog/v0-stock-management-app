@@ -531,3 +531,32 @@ Spec: `docs/specs/2026-11-17-traer-np-de-zomatik.md`. Motivo: Juan cargó a mano
    persona.
 5. **Captura real de la NP 1195** (solo lectura, 12.3), sobre todo el valor del campo "estado". **Hace falta antes de
    publicar.**
+
+## 17. Decisiones tomadas y captura real (17/11, orquestador) — mandan sobre la sección 16
+
+**Decisiones (se toman las recomendaciones de la 16):**
+1. NP con remitos previos: fase 1 la rechaza con mensaje claro (sin migración). La fase 2 queda para el primer caso real.
+2. NP sin autorizar: no se trae; que la autorice un gerencial en Zomatik y se busca de nuevo.
+3. NP de otro depósito: no se trae.
+4. NP con otros renglones (bomba, etc.): se trae con aviso. Solo cuenta el renglón del artículo de la fórmula.
+
+**Captura real de la NP 0001-00001195 (código 157919, MERVA), solo lectura:**
+- Formulario `modificar_pedidos.php?codigo=157919`:
+  - `estado` es un SELECT con opciones `0=Invisible` y `1=Activo`; la NP activa trae `1` seleccionado.
+  - `comprobante` = `15` ("Nota de Pedido"). NP2 es `16`.
+  - `deposito` = `113` (REBUCRET), que es el depósito de Hudson en `zomatik_np_config` (Canning = 116).
+  - `selsuc` = `18`, `idcliente` = `24644`, `numero` = `0001-00001195`, `fecha_entrega` = `2026-11-19 00:00:00`.
+  - Hay un solo renglón: `codigo5349824` / `hcosto5349824=187500.000` / `costo5349824=225000.000` / `cantidad5349824=25.000`. En la tabla de renglones, la fila dice "10090014 H30-620-10 C (HUD) 0 - Lista OCTUBRE 2026".
+- Fila del listado `listado_pedidos.php?enviado=1` (celdas sin anidar; las vacías intercalan):
+  - Encabezado: `Fecha · Codigo · Cliente · Obra · Total · Entrega Aprobada · Colocacion · Fecha Entrega · Acciones`.
+  - Los links son `modificar_pedidos.php?codigo=157919`. Entrega Aprobada es un link `set_pedidos_entregaaprobada.php?codigo=157919` con " No ". Colocación dice " No ".
+  - Acciones: `FC / REMITO / FC / DEVOL / CAMBSUC / RECIBO` y después una celda `<b>PEN</b>`; en el listado por defecto solo aparecen `PEN` y `REM`.
+  - Esta NP autorizada NO tiene `Autorizar(` en la fila. En las 299 filas del listado por defecto no hay ninguna anulada ni sin autorizar: para esos casos, usar los fixtures armados.
+- **Links de ACCIÓN que nunca se piden** (un GET ejecuta):
+  - `set_pedidos_entregaaprobada.php`;
+  - `borrar_pedidos.php` (va dentro de `BorrarConPregunta`);
+  - `generar_pedido.php` (CAMBSUC);
+  - `remitir_ordenfabricacion.php`;
+  - `_autorizarpedido…`.
+
+  Agregarlos a la lista negra de `rutaLecturaNp` y testear que se rechazan.
