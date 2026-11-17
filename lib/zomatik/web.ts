@@ -2,7 +2,8 @@
  * Zomatik · dirección y LISTA CERRADA de rutas (sin imports: la usan el navegador, el servidor y las pruebas).
  *
  * Dos grupos:
- *   1. Solo lectura (Z0): login, sucursal, los buscadores de 7 listados, la ficha del cliente y el XLS del acopio.
+ *   1. Solo lectura (Z0): login, sucursal, los buscadores de 7 listados, la ficha del cliente, el XLS del acopio y las
+ *      listas de precios (listado_listas.php y el export de una lista, para el precio por m³ al programar).
  *      El 6.º es ESTAD R.COMPRA (remitos de compra de materia prima), para el control de ingresos (docs/control-ingresos-mp.md).
  *      El 7.º es INVENTARIO › MOVIMIENTOS STOCK, para el control de stock de MP (docs/control-stock-mp.md).
  *      Cualquier otra ruta (manage_*, grabar_*, generar_*, set_*, _get*…) se rechaza ANTES de salir.
@@ -37,9 +38,12 @@ export function rutaPermitida(path: string, metodo: "GET" | "POST"): boolean {
   if (listados.includes(p.toLowerCase())) return true
   if (/^modificar_clientes\.php\?codigo=\d+$/i.test(p)) return true
   if (/^exportar_acopio\.php\?acopio=\d+$/i.test(p)) return true
+  // Listas de precios (precio por m³ al programar, 16/11): el listado y el export de una lista, solo GET
+  if (/^listado_listas\.php$/i.test(p)) return true
+  if (/^exportar_lista\.php\?lista=\d+$/i.test(p)) return true
   // Los export redirigen al archivo generado (output/<listado>.xlsx): solo el de los listados de arriba
   const salida = p.match(/^output\/([a-z_]+)\.xlsx$/i)
-  if (salida) return [...listados, "exportar_acopio.php"].includes(`${salida[1].toLowerCase()}.php`)
+  if (salida) return [...listados, "exportar_acopio.php", "exportar_lista.php"].includes(`${salida[1].toLowerCase()}.php`)
   return false
 }
 

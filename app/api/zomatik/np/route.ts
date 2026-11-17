@@ -9,10 +9,14 @@
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
  *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
  *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
+ *   "sincronizar" acepta `precio_m3` (número o null = el de la lista; ausente = no se toca): solo con precios_np.editar y
+ *   pudiendo ajustar el pedido (si no, se ignora). 0, negativo o no numérico: 400. El GET nunca trae precios (ver
+ *   /api/zomatik/np/precio).
  */
 import { NextResponse, after } from "next/server"
 import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 import { puedeCon, puedeVincularDesdePedido, tipoDe } from "@/lib/permisos"
+import { precioDelCuerpo } from "@/lib/zomatik/np"
 import { avisarFallaInesperada, esDeZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
 
 export const dynamic = "force-dynamic"
@@ -127,10 +131,14 @@ export async function POST(req: Request) {
         ? { tipo: e.tipo, proyecto_codigo: Number(e.proyecto_codigo) || null, tope_m3: e.tope_m3 === null || e.tope_m3 === undefined || e.tope_m3 === "" ? null : Number(e.tope_m3), np_id: uuid(e.np_id) }
         : null
     const moverFecha = body?.mover_fecha === true ? true : body?.mover_fecha === false ? false : null
+    // Precio por m³ de la NP: sin el permiso se ignora (el pedido se sincroniza igual); con el permiso, se valida
+    const pc = accion === "sincronizar" ? precioDelCuerpo(body, puedeCon(u, "precios_np", "editar")) : {}
+    if ("error" in pc) return NextResponse.json({ error: pc.error }, { status: 400 })
+    const precio = "precio" in pc ? pc.precio : undefined
     let sync
     try {
       // El vendedor de las NP nuevas: el de quien guarda ahora (sesión del servidor)
-      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha, usuarioId: u.id })
+      sync = await sincronizarPedido(pedidoId, u.name, eleccion, undefined, { mover_fecha: moverFecha, usuarioId: u.id, ...(precio !== undefined ? { precio, usuario: u, remito: "remito" in pc ? pc.remito : null } : {}) })
     } catch (err) {
       if (faltaMigracion(err)) return NextResponse.json({ activo: false, motivo: "NP: se carga a mano en Zomatik", sinMigracion: true })
       throw err

@@ -1,7 +1,8 @@
 /**
  * Zomatik Z0 · "Foto" de una lectura y las filas que se graban en las copias zomatik_*. Funciones puras (sin
  * red ni base): la lectura (lib/zomatik/lectura.ts) junta la foto en Zomatik y acá se arma qué se graba.
- * Nunca lleva precios ni montos.
+ * Nunca lleva montos, salvo las listas de precios (`listas`, precio por m³ al programar, 16/11/2026), que se graban
+ * en tablas que solo lee el servidor (lib/zomatik/lectura.ts, `guardarListas`).
  */
 import {
   movimientosDeProyectos,
@@ -11,10 +12,12 @@ import {
   type FichaCliente,
   type Movimiento,
   type NpPendiente,
+  type PrecioLista,
   type ProyectoListado,
   type RenglonRemito,
 } from "@/lib/zomatik/parseo"
 import { remitosPorDia } from "@/lib/zomatik/cruce"
+import type { Lista } from "@/lib/zomatik/np"
 
 /** Lo que ya hay en la base antes de leer (para saber qué falta leer de a poco). */
 export type Previo = {
@@ -35,7 +38,12 @@ export type Foto = {
   tipos: { codigo: number; tipo: "monto" | "cantidades"; m3: number | null }[]
   fichas: { codigo: number; ficha: FichaCliente; leida_at: string }[]
   npPendientes: NpPendiente[] | null
+  /** Listas de precios (listado y precios de las activas). Sin leer: null o ausente (quedan las de antes). */
+  listas?: LecturaListas | null
 }
+
+/** Lo que se lee de las listas de precios: el listado y, por cada lista activa, sus precios (por nombre). */
+export type LecturaListas = { listas: Lista[]; precios: { lista: number; filas: PrecioLista[] }[] }
 
 export const VENCE_FICHA_DIAS = 30
 

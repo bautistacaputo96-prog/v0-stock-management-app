@@ -23,6 +23,7 @@ import {
   esSerieRebucret, faltanCampos, fparamDe, listaActiva, listasDeListado, multipartLatin1, numeroCompleto, numeroNormalizado,
   numeroZomatik, hayPaginado, paginasDeListado, camposSueltosDetalle, esDetalle, esRenglonDe, recorte, totalDetalle, pedidosDeListado, queryLatin1, renglonesDetalle, respuestaInvalida, tieneMarca, cantidadTexto,
   autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
+  conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL,
 } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
@@ -73,6 +74,9 @@ export type DatosNp = {
   /** Vendedor de Zomatik de quien programó el pedido (respuesta 4 del 23/10). Sin él, el del cliente (o del proyecto). */
   vendedorId?: number | null
   vendedorNombre?: string | null
+  /** Precio NETO por m³ para el renglón de la NP nueva (puesto a mano o el congelado de la primera NP). Sin él, el de
+   *  la lista (el Grabar es el de siempre). En la NP de proyecto no se usa nunca. */
+  precioM3?: number | null
 }
 
 /** Sin vendedor de quien programa ni del cliente/proyecto: no se genera. */
@@ -95,6 +99,15 @@ export type ResultadoNp = {
   grabado?: boolean
   /** Recorte de la respuesta de Zomatik que no se entendió (~2 KB), para Actividad. */
   recorte?: string
+  /** NP nueva: el costo por m³ que se mandó en el renglón (el de la lista si no había precio). */
+  precio?: number | null
+  /** NP nueva: la lista con que se grabó. */
+  lista?: { codigo: number; nombre: string } | null
+  /** Control del precio después de grabar (solo si se mandó uno): ok, distinto (con lo que quedó) o sin_control. */
+  precioControl?: "ok" | "distinto" | "sin_control"
+  precioGrabado?: number | null
+  /** NP de proyecto: el costo que trajo el renglón del MATERIAL (solo para mostrar). */
+  precioProyecto?: number | null
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
@@ -344,7 +357,14 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.buscarAntes) {
       await marcar("buscar_marca")
       const x = await dondeQuedo(nav, d, o.hoy, latir)
-      if (x.estado === "esta") return encontrada(x, paso)
+      if (x.estado === "esta") {
+        const r = encontrada(x, paso)
+        if (d.tipo !== "nueva" || r.estado !== "ok" || !r.codigo) return r
+        // Con precio: se controla. Sin precio: se lee el costo grabado (para congelarlo y para Actividad)
+        if (precioValido(d.precioM3)) return await controlarPrecio(nav, { ...r, precio: d.precioM3 }, d, azar)
+        const c = await costoGrabado(nav, r.codigo, d, azar)
+        return { ...r, precio: c.leido && precioValido(c.costo) ? c.costo : null }
+      }
       if (x.estado === "dudosa") return dudosa(x, paso)
     }
     // Controles antes de tocar Zomatik
@@ -355,7 +375,8 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (d.tipo === "nueva" && !d.comprobante) throw dato("Falta el tipo de remito (R o X): define si es NP o NP2.")
     if (d.tipo === "proyecto" && !d.proyectoCodigo) throw dato("Falta elegir el proyecto.")
 
-    return d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
+    const r = d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
+    return d.tipo === "nueva" && precioValido(d.precioM3) && r.estado === "ok" && r.codigo ? await controlarPrecio(nav, r, d, azar) : r
   } catch (e) {
     if (e instanceof Corte) return { estado: e.estado, mensaje: e.message, paso, reintentar: e.reintentar, grabado, recorte: e.recorte }
     // Red o sesión. Antes de Grabar: se reintenta en 10 min. Durante o después: queda para buscar la marca primero.
@@ -407,7 +428,9 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   // El renglón del artículo se reconoce por el código visible (o el nombre), no por codigo<id> (id del renglón)
   const art = det.renglones.filter((r) => esRenglonDe(r, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
   if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
-  const rs = [conCantidad(art[0], d.m3)]
+  // Con precio (puesto a mano o el de la primera NP): el renglón con ese costo. Sin precio: el Grabar de siempre
+  const rs = [precioValido(d.precioM3) ? conCosto(conCantidad(art[0], d.m3), d.precioM3) : conCantidad(art[0], d.m3)]
+  const extra = { precio: numeroZomatik(rs[0].costo), lista: { codigo: ll.lista.codigo, nombre: ll.lista.nombre } }
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
   await marcar("numero")
@@ -427,10 +450,10 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   const x = await porNumero(nav, numero)
   if (x) {
     const a = await abrir(nav, x.codigo)
-    if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true }
+    if (a.form && tieneMarca(a.form.campos.observaciones, d.marca)) return { estado: "ok", mensaje: null, numero: numeroCompleto(comp, numero), codigo: x.codigo, sucursal: SUCURSAL_REBUCRET, paso: "verificar", grabado: true, ...extra }
   }
   const otra = await dondeQuedo(nav, d, o.hoy, latir)
-  if (otra.estado === "esta") return encontrada(otra, "verificar")
+  if (otra.estado === "esta") return { ...encontrada(otra, "verificar"), ...extra }
   if (otra.estado === "dudosa") return dudosa(otra, "verificar")
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
   return { estado: "revisar", mensaje: `Zomatik grabó pero la NP ${numeroCompleto(comp, numero)} no aparece con la marca. Revisala en Zomatik.`, paso: "verificar", grabado: true, recorte: respuestaGrabar(g) }
@@ -485,7 +508,9 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   }
   const elegido = rs.filter((r) => esRenglonDe(r, delPedido))
   if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
+  // El precio lo pone el proyecto: el renglón no se toca (solo se anota para mostrarlo)
   rs = [conCantidad(elegido[0], d.m3)]
+  const precioProyecto = numeroZomatik(elegido[0].costo)
 
   // El número: el campo trae el del PROYECTO (0001-00000030); el navegador lo pisa al cargar la página con
   // GetNumeroFactura() (_getnumerofactura.php con el comprobante del formulario). Grabado con el del proyecto, Zomatik
@@ -509,12 +534,41 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   // El número lo asigna Zomatik al grabar: se busca por la marca entre las NP de hoy del cliente
   await marcar("verificar")
   const x = await dondeQuedo(nav, d, o.hoy, latir)
-  if (x.estado === "esta") return encontrada(x, "verificar", disponible)
+  if (x.estado === "esta") return { ...encontrada(x, "verificar", disponible), precioProyecto }
   if (x.estado === "dudosa") return dudosa(x, "verificar", disponible)
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
   // Zomatik no dijo que no, pero la NP no está: lo que respondió queda en Actividad para saber qué pasó
   const como = fueAlListado(g) ? "" : ` Zomatik respondió HTTP ${g.status}${g.location ? ` (a ${g.location})` : ""} en vez de ir al listado; la respuesta quedó en Actividad.`
   return { estado: "revisar", mensaje: `Se mandó Grabar pero la NP del proyecto no aparece con la marca.${como} Revisala en Zomatik.`, paso: "verificar", disponible, grabado: true, recorte: respuestaGrabar(g) }
+}
+
+/**
+ * Después de una NP nueva "ok" con precio: se abre la NP y se mira el costo del renglón grabado (como `vaciarNp`, con
+ * `detalleGrabado`). Si no es el que se mandó, o no se puede leer, la NP queda "ok" igual (está en Zomatik y se
+ * autoriza) con un mensaje SIN montos; los montos van en `precioGrabado` (para Actividad y el aviso a Bautista).
+ */
+async function controlarPrecio(nav: NavegadorNp, r: ResultadoNp, d: DatosNp, azar: () => number): Promise<ResultadoNp> {
+  const precio = d.precioM3 as number
+  const c = await costoGrabado(nav, r.codigo as number, d, azar)
+  if (!c.leido) return { ...r, mensaje: MSJ_PRECIO_SIN_CONTROL, precioControl: "sin_control", precioGrabado: null }
+  if (c.costo !== null && Math.abs(c.costo - precio) < 0.005) return { ...r, precioControl: "ok", precioGrabado: c.costo }
+  return { ...r, mensaje: MSJ_PRECIO_DISTINTO, precioControl: "distinto", precioGrabado: c.costo }
+}
+
+/** El costo del renglón del artículo en la NP grabada (abrir + `detalleGrabado`). `leido` false si no se pudo. Nunca tira. */
+async function costoGrabado(nav: NavegadorNp, codigo: number, d: DatosNp, azar: () => number): Promise<{ leido: boolean; costo: number | null }> {
+  try {
+    const a = await abrir(nav, codigo)
+    if (!a.form) return { leido: false, costo: null }
+    const c = a.form.campos
+    const base: [string, string][] = [["fcliente", c.idcliente || "0"], ["facopio", c.acopio ?? ""], ["forigen", (c.origen as string) || "1"]]
+    const leido = await detalleGrabado(nav, a, base, null, azar)
+    const mios = leido.renglones.filter((x) => esRenglonDe(x, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
+    if (!leido.valido || mios.length !== 1) return { leido: false, costo: null }
+    return { leido: true, costo: numeroZomatik(mios[0].costo) }
+  } catch {
+    return { leido: false, costo: null }
+  }
 }
 
 // ---------------------------------------------------------------------------

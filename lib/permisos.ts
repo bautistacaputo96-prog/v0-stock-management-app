@@ -23,6 +23,7 @@ export type SeccionClave =
   | "historial"
   | "materia_prima"
   | "recuentos"
+  | "precios_np"
   | "laboratorio"
   | "mantenimiento"
   | "clientes"
@@ -121,6 +122,15 @@ export const SECCIONES: Seccion[] = [
     acciones: ["cargar"],
     rutas: [],
     descripcion: { cargar: "Hacer un recuento o ajuste de stock (\"Ajustar\")" },
+  },
+  {
+    // Precio por m³ al programar (16/11/2026): sin pantalla propia, como recuentos. Gerenciales sí (lo que falta vale
+    // true); operarios y consulta no (su plantilla es solo "ver" y esta sección no tiene "ver"): se tilda por persona.
+    clave: "precios_np",
+    nombre: "Precio en la NP",
+    acciones: ["editar"],
+    rutas: [],
+    descripcion: { editar: "Ver y cambiar el precio por m³ al programar (va a la NP de Zomatik)" },
   },
   {
     clave: "laboratorio",
@@ -353,4 +363,13 @@ export function cambiosDePermisos(antes: unknown, despues: unknown, tipoAntes?: 
 /** "Carga en: …" para la lista de Usuarios. */
 export function seccionesCon(usuario: UsuarioPermisos, accion: Accion): string[] {
   return SECCIONES.filter((s) => s.clave !== "usuarios" && existeAccion(s.clave, accion) && puedeCon(usuario, s.clave, accion)).map((s) => s.nombre)
+}
+
+/**
+ * Precio por m³ de la NP (16/11/2026): verlo y cambiarlo al programar. Hace falta precios_np.editar y ver Programación;
+ * con un pedido, además poder ajustarlo (como cualquier cambio del pedido). Titan y David no la tienen.
+ */
+export function puedeVerPrecioNp(usuario: UsuarioPermisos, pedido?: { created_by?: string | null } | null): boolean {
+  if (!puedeCon(usuario, "precios_np", "editar") || !puedeCon(usuario, "programacion", "ver")) return false
+  return pedido ? puedeAjustarPedido(usuario, pedido) : true
 }

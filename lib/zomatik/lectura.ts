@@ -13,13 +13,16 @@
  *        tipos         exportar_acopio.php de los proyectos sin revisar (por monto o por cantidades)
  *        fichas        modificar_clientes.php?codigo=N (GET) de los clientes con remitos en el año
  *        NP pendientes listado_pedidos.php "Pendientes" (export)
+ *        listas        AL FINAL: listado_listas.php y exportar_lista.php de cada lista ACTIVA (precio neto por artículo,
+ *                      para el precio por m³ al programar). Si falla o no queda tiempo, quedan las de antes
  *      Historia, tipos y fichas van de a poco y respetan un presupuesto de tiempo (Vercel corta a los 60 s).
  *   2. `guardarFoto`: graba las copias (filas armadas en lib/zomatik/foto.ts).
  *
  * Las partes clientes y artículos (`leerClientes`/`leerArticulos` + `guardarClientes`/`guardarArticulos`) también
  * las corre sueltas "Actualizar desde Zomatik" del cartel de vincular (lib/zomatik/actualizar-copia.ts).
  *
- * Nunca se guarda un precio ni un monto.
+ * El único precio que se guarda es el de las listas (zomatik_listas / zomatik_lista_precios, tablas que solo lee el
+ * servidor): el precio por m³ al programar (docs/specs/2026-11-16-precio-en-programacion.md). Ningún otro monto.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { sbAdmin } from "@/lib/wialon"
@@ -30,6 +33,8 @@ import {
   fetchHtml,
   fetchFichaCliente,
   fetchAcopioXls,
+  fetchListasHtml,
+  fetchListaXls,
   ZomatikError,
   type ZomatikSesion,
 } from "@/lib/zomatik/cliente"
@@ -41,6 +46,8 @@ import {
   pactadoDeAcopio,
   parseFichaCliente,
   npPendientesDeListado,
+  preciosDeLista,
+  cruzarPreciosLista,
   type Articulo,
   type ClienteListado,
 } from "@/lib/zomatik/parseo"
@@ -60,8 +67,10 @@ import {
   puedeBorrarViejos,
   filasRemitosDia,
   type Foto,
+  type LecturaListas,
   type Previo,
 } from "@/lib/zomatik/foto"
+import { listasDeListado } from "@/lib/zomatik/np"
 
 export type ResultadoLectura = { ok: boolean; partes: Record<string, unknown>; errores: string[]; ms: number }
 
@@ -72,6 +81,13 @@ const LOTE = 200
 
 function fallaGrave(e: unknown) {
   return e instanceof ZomatikError && ["sin_credenciales", "login_rechazado", "login_bloqueado", "sesion_caida"].includes(e.codigo)
+}
+
+/** ¿El error es de una tabla o función que no existe (falta la migración), y no otro error de la base? */
+export function esFaltaDeTabla(e: unknown, nombre: RegExp): boolean {
+  const m = String((e as { message?: string })?.message || "")
+  const code = String((e as { code?: string })?.code || "")
+  return nombre.test(m) && (["42P01", "42883", "PGRST202", "PGRST205"].includes(code) || /does not exist|schema cache|could not find/i.test(m))
 }
 
 export function textoError(e: unknown): string {
@@ -113,6 +129,61 @@ export async function leerArticulos(s: ZomatikSesion): Promise<Articulo[]> {
   for (const linea of ["132", "136", "135"]) todos.push(...articulosDeListado(await fetchExport(s, "listado_articulos.php", f, { extra: { bus_linea: linea } })))
   if (todos.length === 0) throw new ZomatikError("formato", "El listado de artículos vino vacío")
   return todos
+}
+
+/**
+ * Parte "listas": el listado de listas de precios y el export de cada lista ACTIVA (precio neto por nombre de artículo).
+ * También la usa "Actualizar" del precio en Programación (actualizar-copia.ts, tipo "precios"). No toca la base.
+ */
+export async function leerListas(s: ZomatikSesion): Promise<LecturaListas> {
+  const listas = listasDeListado(await fetchListasHtml(s))
+  if (listas.length === 0) throw new ZomatikError("formato", "El listado de listas de precios vino vacío (¿cambió el formato?)")
+  const precios: LecturaListas["precios"] = []
+  for (const l of listas.filter((x) => /^activ/i.test(x.estado))) {
+    const filas = preciosDeLista(await fetchListaXls(s, l.codigo))
+    if (filas.length === 0) throw new ZomatikError("formato", `La lista ${l.codigo} vino sin precios (¿cambió el export?)`)
+    precios.push({ lista: l.codigo, filas })
+  }
+  return { listas, precios }
+}
+
+/**
+ * Graba las listas: todas en zomatik_listas (las que ya no están en Zomatik se borran) y, por cada activa, reemplaza sus
+ * precios en zomatik_lista_precios cruzando por nombre con los artículos (`articulos` de la misma lectura o la copia).
+ * Borra los precios de las listas que ya no están activas. `inicio` = cuándo empezó la lectura (leida_at).
+ * Si una lista activa no cruza NINGÚN nombre (¿cambiaron los nombres o la copia de artículos vino vacía?), no se borran
+ * sus precios de antes: quedan y se avisa en `avisos`.
+ */
+export async function guardarListas(sb: SupabaseClient, l: LecturaListas, inicio: string, articulos?: { codigo: number; nombre: string }[] | null): Promise<{ listas: number; activas: number; precios: number; sin_cruzar: number; avisos: string[] }> {
+  let arts = articulos && articulos.length ? articulos : null
+  if (!arts) {
+    const { data, error } = await sb.from("zomatik_articulos").select("codigo, nombre").limit(5000)
+    if (error) throw error
+    arts = ((data as { codigo: number; nombre: string }[]) || []).map((a) => ({ codigo: Number(a.codigo), nombre: a.nombre }))
+  }
+  await upsertLotes(sb, "zomatik_listas", l.listas.map((x) => ({ codigo: x.codigo, nombre: x.nombre, desde: x.desde, estado: x.estado, leida_at: inicio })), "codigo")
+  const { error: eL } = await sb.from("zomatik_listas").delete().lt("leida_at", inicio)
+  if (eL) throw eL
+  let precios = 0
+  let sinCruzar = 0
+  const avisos: string[] = []
+  for (const p of l.precios) {
+    const filas = cruzarPreciosLista(p.filas, arts)
+    sinCruzar += p.filas.length - filas.length
+    if (!filas.length) {
+      avisos.push(`La lista ${p.lista} no cruzó ningún artículo por nombre: quedan sus precios de antes.`)
+      continue
+    }
+    await upsertLotes(sb, "zomatik_lista_precios", filas.map((f) => ({ lista_codigo: p.lista, ...f, leida_at: inicio })), "lista_codigo,articulo_codigo")
+    const { error } = await sb.from("zomatik_lista_precios").delete().eq("lista_codigo", p.lista).lt("leida_at", inicio)
+    if (error) throw error
+    precios += filas.length
+  }
+  const activas = l.precios.map((p) => p.lista)
+  const q = sb.from("zomatik_lista_precios").delete()
+  const { error: eV } = activas.length ? await q.not("lista_codigo", "in", `(${activas.join(",")})`) : await q.gte("lista_codigo", 0)
+  if (eV) throw eV
+  return { listas: l.listas.length, activas: activas.length, precios, sin_cruzar: sinCruzar, avisos }
 }
 
 /** Lee de Zomatik todo lo de Z0. No toca la base. `partes` y `errores` se completan por parte. */
@@ -199,6 +270,13 @@ export async function leerFoto(
     const f = await discoverForm(s, "listado_pedidos.php")
     foto.npPendientes = npPendientesDeListado(await fetchExport(s, "listado_pedidos.php", f, { extra: { bus_pendrem: "1" } }))
     return foto.npPendientes.length
+  })
+
+  // Al final: lo nuevo no le quita tiempo a lo de siempre. Sin tiempo, quedan las de antes
+  await parte("listas", async () => {
+    if (queda() < 4_000) return "sin tiempo"
+    foto.listas = await leerListas(s)
+    return { listas: foto.listas.listas.length, activas: foto.listas.precios.length }
   })
 
   return foto
@@ -360,6 +438,15 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
     if (error) throw error
     out.np_pendientes = foto.npPendientes.length
   }
+
+  // Listas de precios, al final (si falla, quedan las de antes). Sin su migración, no corta nada.
+  if (foto.listas) {
+    try {
+      out.listas = await guardarListas(sb, foto.listas, foto.inicio, foto.articulos)
+    } catch (e: any) {
+      out.listas = esFaltaDeTabla(e, /zomatik_lista/) ? "falta la migración 202611161600" : `error: ${String(e?.message || e).slice(0, 120)}`
+    }
+  }
   return out
 }
 
@@ -404,6 +491,10 @@ export async function leerZomatik(opts: { presupuestoMs?: number } = {}): Promis
       // Falla grave (sesión o usuario): ya quedó en `errores`. No se graba nada a medias.
     }
     if (foto) partes.grabado = await guardarFoto(sb, foto, previo)
+    // Una lista que no cruzó ningún artículo (quedaron sus precios de antes) se avisa como un error de la lectura
+    const gl = (partes.grabado as { listas?: { avisos?: string[] } | string } | undefined)?.listas
+    if (gl && typeof gl === "object") errores.push(...(gl.avisos || []).map((a) => `listas: ${a}`))
+    else if (typeof gl === "string" && gl.startsWith("error")) errores.push(`listas: ${gl}`)
   } catch (e) {
     errores.push(textoError(e))
   } finally {

@@ -60,14 +60,47 @@ async function json(r: Response) {
   return r.json().catch(() => ({}))
 }
 
-/** Después de guardar, cancelar o cambiar los m³: el servidor decide qué NP crear o vaciar (con la llave apagada, nada). */
-export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null, moverFecha?: boolean | null): Promise<{ activo?: boolean; creadas?: number; usadas?: number; avisos?: string[]; error?: string }> {
+/**
+ * Después de guardar, cancelar o cambiar los m³: el servidor decide qué NP crear o vaciar (con la llave apagada, nada).
+ * `precio`: el precio por m³ de la NP (null = el de la lista); `undefined` = no se toca (no va en el pedido). `remito`:
+ * el R/X con que la línea del precio calculó la lista (el servidor usa el mismo).
+ */
+export async function avisarNp(pedidoId: string, eleccion?: EleccionNp | null, moverFecha?: boolean | null, precio?: number | null, remito?: string | null): Promise<{ activo?: boolean; creadas?: number; usadas?: number; avisos?: string[]; error?: string }> {
   try {
-    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined, mover_fecha: moverFecha ?? undefined }) })
+    const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", pedido_id: pedidoId, eleccion: eleccion || undefined, mover_fecha: moverFecha ?? undefined, ...(precio !== undefined ? { precio_m3: precio, remito: remito || undefined } : {}) }) })
     const j = await json(r)
     return r.ok ? j : { error: j?.error || `Error ${r.status}` }
   } catch {
     return { error: "Sin conexión" }
+  }
+}
+
+/** Lo que devuelve /api/zomatik/np/precio (solo con precios_np.editar). Precios NETOS (sin IVA). */
+export type PrecioNp = {
+  activo?: boolean
+  sinMigracion?: boolean
+  estado?: "ok" | "sin_vinculo" | "no_en_lista" | "sin_lista"
+  lista?: { codigo: number; nombre: string; leida_at: string | null } | null
+  precio_lista?: number | null
+  precio_m3?: number | null
+  origen?: "manual" | "np" | null
+  bloqueado?: boolean
+  numero_np?: string | null
+  proyecto_precio_m3?: number | null
+  aviso?: string | null
+}
+
+/** El precio por m³ de la NP para la línea del formulario. null si no respondió (o no hay permiso): la línea no aparece. */
+export async function leerPrecioNp(o: { formulaId: string; plantId: string; remito: string | null; pedidoId?: string | null }): Promise<PrecioNp | null> {
+  try {
+    const q = new URLSearchParams({ formula_id: o.formulaId, plant_id: o.plantId })
+    if (o.remito) q.set("remito", o.remito)
+    if (o.pedidoId) q.set("pedido_id", o.pedidoId)
+    const r = await fetch(`/api/zomatik/np/precio?${q}`, { cache: "no-store" })
+    if (!r.ok) return null
+    return (await json(r)) as PrecioNp
+  } catch {
+    return null
   }
 }
 
@@ -134,7 +167,7 @@ export async function buscarParaVincular(
  * "¿No está? Actualizar desde Zomatik": trae a la copia los clientes o los artículos de Zomatik (como mucho una vez
  * cada 2 min por tipo; si se hizo hace poco, `reciente` y se busca en lo que hay). Después hay que volver a buscar.
  */
-export async function actualizarCopiaZomatik(tipo: "clientes" | "articulos"): Promise<{ ok: boolean; reciente?: boolean; error?: string }> {
+export async function actualizarCopiaZomatik(tipo: "clientes" | "articulos" | "precios"): Promise<{ ok: boolean; reciente?: boolean; error?: string }> {
   try {
     const r = await fetch("/api/zomatik/actualizar-copia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo }) })
     const j = await json(r)
