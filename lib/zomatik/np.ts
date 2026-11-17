@@ -460,6 +460,59 @@ export function conCantidad(r: Renglon, m3: number): Renglon {
   return { ...r, cantidad: c, campos: r.campos.map((x) => (x.nombre.toLowerCase().startsWith("cantidad") ? { ...x, valor: c } : x)) }
 }
 
+// ── Precio por m³ de la NP (docs/specs/2026-11-16-precio-en-programacion.md) ──
+// El precio de la lista y el `costo` del renglón son NETOS (sin IVA): con la NP (15) Zomatik suma el IVA en el total.
+
+/** Tope del precio por m³ (el mismo CHECK de la base). */
+export const PRECIO_MAXIMO = 100_000_000
+
+/** ¿Es un precio por m³ que se puede mandar? Mayor a 0 y menor a 100.000.000. */
+export function precioValido(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0 && n < PRECIO_MAXIMO
+}
+
+/** Lo que se tipea en la pantalla: "170000", "170.000" o "170000,50" → número (null si no se entiende). */
+export function precioDeTexto(s: unknown): number | null {
+  const t = String(s ?? "").trim()
+  if (!t) return null
+  return montoListado(t)
+}
+
+/** 170000 → "170.000" · 170000.5 → "170.000,5" (sin decimales salvo que los tenga). */
+export function textoPrecio(n: number): string {
+  return Number(n).toLocaleString("es-AR", { maximumFractionDigits: 3 })
+}
+
+/** "−3,7 % de la lista" (null si son iguales o falta uno). */
+export function diferenciaConLista(precio: number | null, lista: number | null): string | null {
+  if (!precioValido(precio) || !precioValido(lista) || Math.abs(precio - lista) < 0.005) return null
+  const pct = ((precio - lista) / lista) * 100
+  return `${pct < 0 ? "−" : "+"}${Math.abs(pct).toLocaleString("es-AR", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} % de la lista`
+}
+
+/**
+ * Cambia el precio de un renglón como cuando una persona escribe en el campo Costo: `costo<id>` (TEXT) y `r.costo` (lo
+ * que va en `fparam`). `hcosto<id>` (hidden) NO se toca: GrabarDatosDetalle arma fparam con `costo…` (captura del 16/11).
+ */
+export function conCosto(r: Renglon, precio: number): Renglon {
+  const c = cantidadTexto(precio)
+  return { ...r, costo: c, campos: r.campos.map((x) => (/^costo\d+$/i.test(x.nombre) ? { ...x, valor: c } : x)) }
+}
+
+/**
+ * ¿El precio del pedido ya no se puede cambiar? Hay una NP nueva del pedido, de esa fórmula, que ya salió o pudo salir
+ * (no pendiente/error/anulada, o cortada en Grabar). La misma regla que `zomatik_np_precio_guardar` en la base.
+ */
+export function precioBloqueado(nps: { tipo: string; formula_id?: string | null; estado: string; paso?: string | null }[], formulaId: string | null): boolean {
+  return nps.some((n) => n.tipo === "nueva" && (n.formula_id ?? null) === (formulaId ?? null) && (!["pendiente", "error", "anulada"].includes(n.estado) || PASOS_GRABADA.includes(n.paso || "")))
+}
+
+/** Sin montos: estos textos los ve todo Programación y Despacho (zomatik_np.mensaje). */
+export const MSJ_PRECIO_BLOQUEADO = "El precio ya está en la NP: no se cambió. Si hace falta, cambialo en Zomatik."
+export const MSJ_PRECIO_DISTINTO = "La NP quedó con otro precio en Zomatik: revisala."
+export const MSJ_PRECIO_SIN_CONTROL = "No se pudo controlar el precio de la NP en Zomatik: revisala."
+export const MSJ_PRECIO_INVALIDO = "El precio tiene que ser mayor a 0"
+
 /** "823,4" / "823.4" / "1.234,5" → número. */
 export function numeroZomatik(s: unknown): number | null {
   let t = String(s ?? "").replace(/[^\d.,-]/g, "")
