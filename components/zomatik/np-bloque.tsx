@@ -351,7 +351,7 @@ function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualiza
   if (info.estado === "sin_lista" || !editable)
     return (
       <div className={gris}>
-        <span className="text-amber-700">{info.aviso === MSJ_LISTA_SIN_REMITO ? MSJ_LISTA_SIN_REMITO : "No se pudo saber la lista: revisá las listas en Zomatik"}</span>
+        <span className="text-amber-700">{info.aviso === MSJ_LISTA_SIN_REMITO ? MSJ_LISTA_SIN_REMITO : info.aviso || "No se pudo saber la lista: revisá las listas en Zomatik"}</span>
         {info.aviso !== MSJ_LISTA_SIN_REMITO && actualizar}
       </div>
     )
