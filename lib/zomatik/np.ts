@@ -1056,19 +1056,19 @@ export function diaAR(iso: string): string {
 /**
  * Lo que tipea quien programa como número de NP → `{ numero: "0001-00001195", comprobante }` (o null si no se entiende).
  * Sin importar mayúsculas ni espacios: "1195", "0001-00001195", "1-1195", "NP 0001-00001195", "NP1195", "np2 2086",
- * "NP2 0001-00002086". Sin guion: 1 a 8 dígitos, punto 0001. Prefijo NP → 15, NP2 → 16 (NP2 con un espacio después:
- * "NP2086" es la NP 2086), sin prefijo → null. Nunca el punto 0000.
+ * "NP2-2086", "NP2 0001-00002086". Sin guion: 1 a 8 dígitos, punto 0001. Prefijo NP → 15, NP2 → 16 (NP2 con un espacio
+ * o un guion después: "NP2086" es la NP 2086), sin prefijo → null. Nunca el punto 0000.
  */
 export function numeroNpTipeado(s: unknown): { numero: string; comprobante: "15" | "16" | null } | null {
   let t = String(s ?? "").trim().toUpperCase()
   let comprobante: "15" | "16" | null = null
-  const p2 = t.match(/^NP2\s+/)
+  const p2 = t.match(/^NP2[\s-]+/)
   if (p2) {
     comprobante = "16"
     t = t.slice(p2[0].length)
   } else if (t.startsWith("NP")) {
     comprobante = "15"
-    t = t.slice(2).trim()
+    t = t.slice(2).replace(/^[\s-]+/, "")
   }
   let numero: string | null = null
   if (/^\d{1,8}$/.test(t)) numero = `0001-${t.padStart(8, "0")}`
@@ -1092,7 +1092,7 @@ export function esNpTraida(marca: string | null | undefined): boolean {
 }
 
 export type MotivoTraer =
-  | "ok" | "ya_estaba" | "formato" | "otra_serie" | "no_existe" | "ambigua" | "otro_cliente" | "cliente_sin_vinculo" | "cliente_no_esta"
+  | "ok" | "ya_estaba" | "del_sistema" | "formato" | "otra_serie" | "no_existe" | "ambigua" | "otro_cliente" | "cliente_sin_vinculo" | "cliente_no_esta"
   | "formula_sin_vinculo" | "otro_articulo" | "sin_formula" | "elegir_formula" | "renglon_doble" | "anulada" | "inactiva" | "sin_autorizar"
   | "otro_deposito" | "otro_remito" | "con_remitos" | "sin_m3" | "usada" | "otra_planta" | "cerrada" | "revisar" | "anulada_sistema"
   | "ajustandose" | "ocupado" | "zomatik" | "no_se_entiende" | "comprobantes_ilegibles" | "apagada" | "sin_conexion"
@@ -1127,6 +1127,9 @@ export const MSJ_TRAER = {
   otra_planta: "Es de otra planta.",
   cerrada: "En el sistema ya está cerrada o se está devolviendo.",
   revisar: "En el sistema está para revisar: avisale a un gerencial.",
+  /** La NP está en `zomatik_np` (por su código de Zomatik o su número) y no quedó "ok": un corte del robot o un error. */
+  revisar_sistema: "Esa NP es del sistema y está a revisar: avisale a un gerencial.",
+  del_sistema: "Esa NP la generó el sistema (tiene su marca): no se trae. Elegila de la lista con saldo o avisale a un gerencial.",
   anulada_sistema: "En el sistema figura anulada o vaciada: avisale a Bautista.",
   // El mismo texto que MSJ_NP_AJUSTANDOSE (ajuste.ts, que importa este archivo: acá no se puede importar); lo controla una prueba
   ajustandose: "La NP se está ajustando a lo despachado: esperá unos minutos.",
@@ -1138,13 +1141,19 @@ export const MSJ_TRAER = {
   sin_conexion: "Sin conexión.",
 } as const
 
+/** ¿Las observaciones de la NP traen la marca de una NP del sistema ("Sistema Rebucret - pedido …", también la vieja
+ *  con "·")? Esa NP no se trae: es del sistema. */
+export function tieneMarcaDelSistema(texto: unknown): boolean {
+  return ` ${plano(texto)} `.includes(" sistema rebucret pedido ")
+}
+
 /** "Devolver el saldo" de una NP traída: el sistema no la vacía (no tiene su marca). */
 export const MSJ_TRAIDA_DEVOLVER = "La NP la cargaron a mano en Zomatik: el sistema no la vacía. Devolvé o anulá el saldo en Zomatik y tocá «Ya la devolví»."
 
 /** Lo leído de una NP para traerla (fila del listado + `leerNpParaTraer`), sin montos. */
 export type NpLeidaTraer = {
   fila: { codigo: number; numero: string; cliente: string; estado: string; autorizacion: { porAutorizar: boolean; conRemito: boolean } | null }
-  campos: { idcliente: string; numero: string; comprobante: string; deposito: string; depositoNombre: string; fecha_entrega: string; estado: string; proyecto: number }
+  campos: { idcliente: string; numero: string; comprobante: string; deposito: string; depositoNombre: string; fecha_entrega: string; estado: string; proyecto: number; marcaSistema: boolean }
   renglones: { codigoArticulo: string; nombreArticulo: string; cantidad: number | null }[]
   /** null = no se pudo leer (`comprobantesDeNp`) */
   comprobantes: { remitos: { numero: string }[]; facturas: { numero: string }[] } | null
@@ -1168,13 +1177,14 @@ const esRenglonTraida = (r: { codigoArticulo: string; nombreArticulo: string }, 
   esRenglonDe({ codigoArticulo: r.codigoArticulo, nombreArticulo: r.nombreArticulo } as Renglon, art)
 
 /**
- * Los controles de una NP leída en Zomatik antes de registrarla (8.3), en este orden: anulada → inactiva (el SELECT
+ * Los controles de una NP leída en Zomatik antes de registrarla (8.3), en este orden: con la marca del sistema → anulada → inactiva (el SELECT
  * `estado`: 1 = Activo, REAL 17/11) → sin autorizar → cliente → artículo → renglón doble → depósito → NP/NP2 contra el
  * R/X del pedido (si vino) → comprobantes ilegibles → con remitos → sin m³. Sin montos.
  */
 export function evaluarNpTraida(e: NpLeidaTraer & { pedido: PedidoTraer }): EvaluacionTraida {
   const no = (motivo: MotivoTraer, error: string): EvaluacionTraida => ({ ok: false, motivo, error })
   const { fila, campos, renglones, comprobantes, pedido } = e
+  if (campos.marcaSistema) return no("del_sistema", MSJ_TRAER.del_sistema)
   if (/^(ANU|ANULADA)$/i.test(fila.estado || "")) return no("anulada", MSJ_TRAER.anulada)
   if (String(campos.estado ?? "").trim() !== "1") return no("inactiva", MSJ_TRAER.inactiva)
   if (!fila.autorizacion || fila.autorizacion.porAutorizar || !fila.autorizacion.conRemito) return no("sin_autorizar", MSJ_TRAER.sin_autorizar)

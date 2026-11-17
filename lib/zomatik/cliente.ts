@@ -92,6 +92,8 @@ type InitPedido = RequestInit & {
   escrituraAjuste?: number
   /** Traer una NP de Zomatik: habilita su grupo de SOLO LECTURA, ATADO a esta NP (web.ts, `rutaLecturaNp`). */
   lecturaNp?: number
+  /** Tiempo máximo de ESTE request (por defecto 25 s). Traer NP usa menos, para no pasar el minuto de Vercel. */
+  timeoutMs?: number
 }
 
 async function pedir(cookie: string | null, path: string, init: InitPedido = {}): Promise<Response> {
@@ -109,10 +111,10 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
     }
     await pausa()
     const ctrl = new AbortController()
-    const corte = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+    const corte = setTimeout(() => ctrl.abort(), init.timeoutMs && init.timeoutMs > 0 ? Math.min(init.timeoutMs, TIMEOUT_MS) : TIMEOUT_MS)
     let r: Response
     try {
-      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ofARemitir: _o, lecturaNp: _l, ...resto } = init
+      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ofARemitir: _o, lecturaNp: _l, timeoutMs: _t, ...resto } = init
       r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
         ...resto,
         method: metodo,
@@ -199,7 +201,7 @@ async function borrarIntegracion(clave: string) {
  * Login + sucursal REBUCRET. Ante CUALQUIER falla queda un bloqueo en `integraciones` para todos los procesos:
  * 30 min si Zomatik rechazó el usuario, 10 min si fue otra cosa (sin cookie, red, sesión caída).
  */
-async function login(): Promise<string> {
+async function login(timeoutMs?: number): Promise<string> {
   const user = process.env.ZOMATIK_USER
   const pass = process.env.ZOMATIK_PASS
   if (!user || !pass) throw new ZomatikError("sin_credenciales", "Faltan ZOMATIK_USER y ZOMATIK_PASS en Vercel (proyecto Rebucret)")
@@ -213,6 +215,7 @@ async function login(): Promise<string> {
   ultimoIntentoLogin = Date.now()
   try {
     const r = await pedir(null, "index.php?a=1", {
+      timeoutMs,
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ usuario: user, clave: pass, aceptar: "Aceptar" }).toString(),
@@ -222,13 +225,13 @@ async function login(): Promise<string> {
     if (!cookie) throw new ZomatikError("sin_respuesta", "Zomatik no devolvió la sesión al entrar")
     let home = ""
     try {
-      home = Buffer.from(await (await pedir(cookie, "home.php")).arrayBuffer()).toString("latin1")
+      home = Buffer.from(await (await pedir(cookie, "home.php", { timeoutMs })).arrayBuffer()).toString("latin1")
     } catch (e) {
       if (!(e instanceof ZomatikError && e.codigo === "sesion_caida")) throw e
       home = 'name="usuario" name="clave"' // redirigió al login: usuario o clave rechazados
     }
     if (sesionCaida(home)) throw new ZomatikError("login_rechazado", "Zomatik rechazó el usuario: actualizar la clave en Vercel (ZOMATIK_USER / ZOMATIK_PASS)")
-    if (!(await elegirSucursal(cookie, SUCURSAL_REBUCRET))) throw new ZomatikError("sesion_caida", "Zomatik cerró la sesión recién abierta")
+    if (!(await elegirSucursal(cookie, SUCURSAL_REBUCRET, timeoutMs))) throw new ZomatikError("sesion_caida", "Zomatik cerró la sesión recién abierta")
     await borrarIntegracion(CLAVE_BLOQUEO)
     await guardarIntegracion(CLAVE_SESION, cookie)
     return cookie
@@ -240,8 +243,9 @@ async function login(): Promise<string> {
 }
 
 /** Cambia la sucursal activa de la sesión. Devuelve false si la sesión ya no sirve. */
-async function elegirSucursal(cookie: string, sucursal: string): Promise<boolean> {
+async function elegirSucursal(cookie: string, sucursal: string, timeoutMs?: number): Promise<boolean> {
   const r = await pedir(cookie, "home.php", {
+    timeoutMs,
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: `selsuc=${encodeURIComponent(sucursal)}`,
@@ -253,19 +257,19 @@ async function elegirSucursal(cookie: string, sucursal: string): Promise<boolean
 /**
  * Sesión lista en la sucursal REBUCRET. Reutiliza la del proceso o la guardada; si no sirve, hace UN login.
  */
-export async function obtenerSesion(): Promise<ZomatikSesion> {
+export async function obtenerSesion(o: { timeoutMs?: number } = {}): Promise<ZomatikSesion> {
   if (sesionProceso && Date.now() - sesionProceso.desde < VIDA_COOKIE_MS) {
-    if (await elegirSucursal(sesionProceso.cookie, SUCURSAL_REBUCRET)) return { cookie: sesionProceso.cookie }
+    if (await elegirSucursal(sesionProceso.cookie, SUCURSAL_REBUCRET, o.timeoutMs)) return { cookie: sesionProceso.cookie }
     sesionProceso = null
   }
   const guardada = await leerIntegracion(CLAVE_SESION)
   if (guardada?.valor && guardada.actualizado && Date.now() - Date.parse(guardada.actualizado) < VIDA_COOKIE_MS) {
-    if (await elegirSucursal(guardada.valor, SUCURSAL_REBUCRET)) {
+    if (await elegirSucursal(guardada.valor, SUCURSAL_REBUCRET, o.timeoutMs)) {
       sesionProceso = { cookie: guardada.valor, desde: Date.parse(guardada.actualizado) }
       return { cookie: guardada.valor }
     }
   }
-  const cookie = await login() // ya deja la sesión en la sucursal REBUCRET
+  const cookie = await login(o.timeoutMs) // ya deja la sesión en la sucursal REBUCRET
   sesionProceso = { cookie, desde: Date.now() }
   return { cookie }
 }
@@ -505,8 +509,8 @@ export async function navegadorNp(llave: LlaveNp): Promise<NavegadorNp> {
  * Navegador de SOLO LECTURA con la forma del de la NP (para el control de NP eliminadas, `buscarNpEnZomatik`): no
  * habilita ningún grupo de escritura, así que solo pasa lo de la lista cerrada de lectura (sucursal y buscadores).
  */
-export async function navegadorLectura(): Promise<NavegadorNp> {
-  const s = await obtenerSesion()
+export async function navegadorLectura(o: { timeoutMs?: number } = {}): Promise<NavegadorNp> {
+  const s = await obtenerSesion(o)
   const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
     const html = Buffer.from(await r.arrayBuffer()).toString("latin1")
     const loc = r.status >= 300 && r.status < 400 ? rutaDeLocation(r.headers.get("location") || "", ruta) : null
@@ -516,13 +520,13 @@ export async function navegadorLectura(): Promise<NavegadorNp> {
   }
   return {
     async get(ruta) {
-      return leer(await pedir(s.cookie, ruta, { redirect: "manual" }), ruta)
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", timeoutMs: o.timeoutMs }), ruta)
     },
     async post(ruta, cuerpo, contentType) {
-      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual" }), ruta)
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", timeoutMs: o.timeoutMs }), ruta)
     },
     async sucursal(id) {
-      return elegirSucursal(s.cookie, id)
+      return elegirSucursal(s.cookie, id, o.timeoutMs)
     },
   }
 }
@@ -591,9 +595,9 @@ export async function navegadorAjuste(llave: LlaveAjuste, codigoNp: number): Pro
  * escribe: el control de la llave de la planta lo hace `traerNp`. Cualquier otro código o ruta de acción se rechaza
  * antes de salir.
  */
-export async function navegadorLecturaNp(codigoNp: number): Promise<NavegadorNp> {
+export async function navegadorLecturaNp(codigoNp: number, o: { timeoutMs?: number } = {}): Promise<NavegadorNp> {
   if (!Number.isInteger(codigoNp) || codigoNp <= 0) throw new ZomatikError("ruta_no_permitida", "Traer la NP: falta el código de la NP")
-  const s = await obtenerSesion()
+  const s = await obtenerSesion(o)
   const leer = async (r: Response, ruta: string): Promise<RespuestaNav> => {
     const html = Buffer.from(await r.arrayBuffer()).toString("latin1")
     const loc = r.status >= 300 && r.status < 400 ? rutaDeLocation(r.headers.get("location") || "", ruta) : null
@@ -603,13 +607,13 @@ export async function navegadorLecturaNp(codigoNp: number): Promise<NavegadorNp>
   }
   return {
     async get(ruta) {
-      return leer(await pedir(s.cookie, ruta, { redirect: "manual", lecturaNp: codigoNp }), ruta)
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", lecturaNp: codigoNp, timeoutMs: o.timeoutMs }), ruta)
     },
     async post(ruta, cuerpo, contentType) {
-      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", lecturaNp: codigoNp }), ruta)
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", lecturaNp: codigoNp, timeoutMs: o.timeoutMs }), ruta)
     },
     async sucursal(id) {
-      return elegirSucursal(s.cookie, id)
+      return elegirSucursal(s.cookie, id, o.timeoutMs)
     },
   }
 }

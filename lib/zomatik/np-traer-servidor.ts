@@ -10,11 +10,16 @@
  *   3. El cliente y la fórmula del pedido, si vinieron (vinculados con Zomatik; la fórmula, de la planta).
  *   4. ¿Ya está en el sistema? Se usa esa, sin leer Zomatik.
  *   5. El turno del robot (una sola sesión en Zomatik a la vez): hasta 15 s; si no, "ocupado".
- *   6. Leer en Zomatik, SOLO LECTURA: el listado por número y la NP abierta (`rutaLecturaNp`, atado a esa NP).
+ *   6. Leer en Zomatik, SOLO LECTURA: el listado por número y la NP abierta (`rutaLecturaNp`, atado a esa NP). Con el
+ *      código leído se vuelve a mirar la base: si la NP ya está (una del sistema, por su código o su número), se usa esa.
  *   7. Los controles (`evaluarNpTraida`). En el alta, el cliente y la fórmula salen de la NP.
  *   8. Registrar: un insert en `zomatik_np` (marca "Traida de Zomatik - NP …", estado ok, paso autorizada).
  *
- * Sin montos en ningún lado: ni en la respuesta, ni en la base, ni en Actividad. El robot no escribe nada en Zomatik.
+ * Sin montos en ningún lado: ni en la respuesta, ni en la base, ni en Actividad (tampoco recortes del HTML). El robot no
+ * escribe nada en Zomatik.
+ *
+ * Tiempo: todo dentro de ~50 s (la función de Vercel tiene 60): cada request a Zomatik corta a los 12 s, no se empieza uno
+ * si quedan menos de 15 s y la lectura entera tiene un tope. Así el turno siempre se suelta.
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorLectura, navegadorLecturaNp } from "@/lib/zomatik/cliente"
@@ -40,7 +45,46 @@ export type DependenciasTraer = {
   esperar?: (ms: number) => Promise<void>
 }
 
-export const DEPENDENCIAS_TRAER: DependenciasTraer = { navegadorLectura, navegadorLecturaNp, robot: { buscarNpPorNumero, leerNpParaTraer } }
+/** Tiempo total de "Buscar" (la función tiene 60 s), lo mínimo que tiene que quedar para empezar un request y el corte de
+ *  cada request a Zomatik en este flujo. */
+export const PRESUPUESTO_TRAER_MS = 50_000
+export const MARGEN_REQUEST_MS = 15_000
+export const TIMEOUT_REQUEST_TRAER_MS = 12_000
+
+export const DEPENDENCIAS_TRAER: DependenciasTraer = {
+  navegadorLectura: () => navegadorLectura({ timeoutMs: TIMEOUT_REQUEST_TRAER_MS }),
+  navegadorLecturaNp: (codigo) => navegadorLecturaNp(codigo, { timeoutMs: TIMEOUT_REQUEST_TRAER_MS }),
+  robot: { buscarNpPorNumero, leerNpParaTraer },
+}
+
+/** Sin tiempo para seguir leyendo Zomatik: cuenta como "Zomatik no responde" (no se registra nada). */
+const sinTiempo = () => Object.assign(new Error("Zomatik tardó demasiado: no queda tiempo para seguir leyendo"), { codigo: "sin_respuesta" })
+
+/** El navegador, pero sin empezar un request si quedan menos de 15 s del presupuesto. */
+function conPresupuesto(nav: NavegadorNp, quedan: () => number): NavegadorNp {
+  const antes = () => {
+    if (quedan() < MARGEN_REQUEST_MS) throw sinTiempo()
+  }
+  return {
+    get: async (ruta, op) => (antes(), nav.get(ruta, op)),
+    post: async (ruta, cuerpo, tipo) => (antes(), nav.post(ruta, cuerpo, tipo)),
+    sucursal: async (id) => (antes(), nav.sucursal(id)),
+  }
+}
+
+/** Tope duro: si la lectura no terminó a tiempo, se sigue sin ella (lo que llegue después se descarta). */
+export async function conLimite<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined
+  const corte = new Promise<never>((_, rechazar) => {
+    t = setTimeout(() => rechazar(sinTiempo()), Math.max(0, ms))
+  })
+  p.catch(() => {})
+  try {
+    return await Promise.race([p, corte])
+  } finally {
+    if (t) clearTimeout(t)
+  }
+}
 
 export type ResultadoTraer =
   | { ok: true; yaEstaba: boolean; np: NpSaldo; remito: "R" | "X"; avisos: string[] }
@@ -71,6 +115,7 @@ export async function traerNp(o: {
   const dep = o.dep ?? DEPENDENCIAS_TRAER
   const ahora = dep.ahora ?? Date.now
   const esperar = dep.esperar ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const limite = ahora() + PRESUPUESTO_TRAER_MS
 
   // 1. El número (sin red)
   const t = numeroNpTipeado(o.numero)
@@ -127,50 +172,85 @@ export async function traerNp(o: {
   }, RENOVAR_MS)
   ;(latido as { unref?: () => void }).unref?.()
   try {
-    return await leerYRegistrar(sb, dep, { ...o, t, planta: { id: planta.id, name: planta.name, deposito: planta.zomatik_deposito ?? null }, cliente, formula })
+    return await leerYRegistrar(sb, dep, { ...o, t, planta: { id: planta.id, name: planta.name, deposito: planta.zomatik_deposito ?? null }, cliente, formula, quedan: () => limite - ahora() })
   } finally {
     clearInterval(latido)
     await sb.rpc("zomatik_robot_soltar", { p_quien: quien }).then(() => {}, () => {})
   }
 }
 
-/** Una falla al leer Zomatik: de entrada o red → "zomatik"; lo que no se entiende → "no_se_entiende" (con el recorte en
- *  Actividad). Lo demás (por ejemplo, una ruta fuera de la lista cerrada) es nuestro: se tira (500). */
+/** Una falla al leer Zomatik: de entrada, red o sin tiempo → "zomatik"; lo que no se entiende → "no_se_entiende" (en
+ *  Actividad, solo el paso y el largo de la respuesta: nunca el HTML, que tiene montos). Lo demás (por ejemplo, una ruta
+ *  fuera de la lista cerrada) es nuestro: se tira (500). */
 async function fallaZomatik(sb: SB, e: unknown, o: { usuario: string; plantId: string; ref: string }): Promise<ResultadoTraer> {
-  const codigo = String((e as { codigo?: unknown } | null)?.codigo ?? "")
-  if (esFallaDeAcceso(e) || (e as Error)?.name === "AbortError") return no("zomatik", MSJ_TRAER.zomatik)
-  if (codigo === "formato") {
-    const recorte = (e as { recorte?: string }).recorte
-    await actividadNp(sb, { usuario: o.usuario, pedidoId: null, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": "Traer NP de Zomatik: no se entendió la NP", Mensaje: (e as Error).message, ...(recorte ? { "Respuesta de Zomatik (recorte)": recorte } : {}) } })
+  const x = (e ?? {}) as { codigo?: unknown; paso?: unknown; largo?: unknown; message?: string; name?: string }
+  if (esFallaDeAcceso(e) || x.name === "AbortError") return no("zomatik", MSJ_TRAER.zomatik)
+  if (x.codigo === "formato") {
+    await actividadNp(sb, {
+      usuario: o.usuario, pedidoId: null, plantId: o.plantId, referencia: o.ref,
+      detalle: { "Qué pasó": "Traer NP de Zomatik: no se entendió la NP", Paso: typeof x.paso === "string" ? x.paso : "?", Mensaje: x.message || "", ...(typeof x.largo === "number" ? { "Largo de la respuesta": x.largo } : {}) },
+    })
     return no("no_se_entiende", MSJ_TRAER.no_se_entiende)
   }
   throw e
 }
 
+const formatoEn = (paso: string, m: string) => Object.assign(new Error(m), { codigo: "formato", paso })
+
 async function leerYRegistrar(
   sb: SB,
   dep: DependenciasTraer,
-  o: { usuario: string; plantId: string; remito?: "R" | "X" | null; t: { numero: string; comprobante: "15" | "16" | null }; planta: { id: string; name: string; deposito: number | null }; cliente: ClienteDB | null; formula: FormulaDB | null },
+  o: {
+    usuario: string; plantId: string; remito?: "R" | "X" | null; t: { numero: string; comprobante: "15" | "16" | null }; planta: { id: string; name: string; deposito: number | null }
+    cliente: ClienteDB | null; formula: FormulaDB | null
+    /** ms que quedan del presupuesto */
+    quedan: () => number
+  },
 ): Promise<ResultadoTraer> {
   const ref = `NP ${o.t.numero}`
-  // 6. Leer en Zomatik (solo lectura)
-  let filaZ: FilaTraer
-  let leida: Omit<NpLeidaTraer, "fila">
-  try {
-    const filas = (await dep.robot.buscarNpPorNumero(await dep.navegadorLectura(), o.t)).filas
+  // 6. Leer en Zomatik (solo lectura), dentro del presupuesto
+  const antes = () => {
+    if (o.quedan() < MARGEN_REQUEST_MS) throw sinTiempo()
+  }
+  const leer = async (): Promise<ResultadoTraer | { filaZ: FilaTraer; leida: Omit<NpLeidaTraer, "fila"> }> => {
+    antes()
+    const filas = (await dep.robot.buscarNpPorNumero(conPresupuesto(await dep.navegadorLectura(), o.quedan), o.t)).filas
     if (!filas.length) return no("no_existe", MSJ_TRAER.no_existe)
     if (filas.length > 1) {
       if (new Set(filas.map((f) => comprobanteDeNumero(f.numero))).size > 1) return no("ambigua", MSJ_TRAER.ambigua)
-      throw Object.assign(new Error(`el listado trae ${filas.length} NP con el número ${o.t.numero}`), { codigo: "formato" })
+      throw formatoEn("listado", `el listado trae ${filas.length} NP con el número ${o.t.numero}`)
     }
-    filaZ = filas[0]
-    const comp = comprobanteDeNumero(filaZ.numero)
-    leida = await dep.robot.leerNpParaTraer(await dep.navegadorLecturaNp(filaZ.codigo), { codigo: filaZ.codigo, numero: filaZ.numero, comprobante: comp })
+    const filaZ = filas[0]
+    antes()
+    const leida = await dep.robot.leerNpParaTraer(conPresupuesto(await dep.navegadorLecturaNp(filaZ.codigo), o.quedan), { codigo: filaZ.codigo, numero: filaZ.numero, comprobante: comprobanteDeNumero(filaZ.numero) })
+    return { filaZ, leida }
+  }
+  let filaZ: FilaTraer
+  let leida: Omit<NpLeidaTraer, "fila">
+  try {
+    const r = await conLimite(leer(), o.quedan() - 2_000)
+    if ("ok" in r) return r
+    ;({ filaZ, leida } = r)
   } catch (e) {
     return fallaZomatik(sb, e, { usuario: o.usuario, plantId: o.plantId, ref })
   }
   const comprobante = comprobanteDeNumero(filaZ.numero)
-  if (!comprobante) return fallaZomatik(sb, Object.assign(new Error("la fila del listado no dice NP ni NP2"), { codigo: "formato" }), { usuario: o.usuario, plantId: o.plantId, ref })
+  if (!comprobante) return fallaZomatik(sb, formatoEn("listado", "la fila del listado no dice NP ni NP2"), { usuario: o.usuario, plantId: o.plantId, ref })
+
+  // ¿Ya está en el sistema, por su código de Zomatik o por su número? (una NP del sistema, o una traída en el medio)
+  const numeroNp = numeroCompleto(comprobante, o.t.numero)
+  const [porCodigo, porNumero] = await Promise.all([
+    sb.from("zomatik_np").select(COLUMNAS_NP).eq("zomatik_codigo", filaZ.codigo),
+    sb.from("zomatik_np").select(COLUMNAS_NP).eq("numero", numeroNp),
+  ])
+  if (porCodigo.error) throw porCodigo.error
+  if (porNumero.error) throw porNumero.error
+  const yaEstan = [...new Map([...((porCodigo.data as unknown as FilaNpDB[] | null) || []), ...((porNumero.data as unknown as FilaNpDB[] | null) || [])].map((x) => [x.id, x])).values()]
+  if (yaEstan.length) {
+    const fila = yaEstan.find((x) => x.estado === "ok") || yaEstan[0]
+    if (fila.estado !== "ok" && !["anulada", "vaciada", "vaciar", "vaciando"].includes(fila.estado)) return no("revisar", MSJ_TRAER.revisar_sistema)
+    return usarExistente(sb, fila, { cliente: o.cliente, formula: o.formula, plantId: o.plantId, remito: o.remito ?? null })
+  }
 
   // 7. Los controles. En el alta (sin cliente o sin fórmula) se controla primero lo que no depende de ellos
   const articuloDe = async (f: FormulaDB) => {
@@ -202,10 +282,10 @@ async function leerYRegistrar(
   if (!ev.ok) return no(ev.motivo, ev.error)
   const m3 = ev.m3
   const fecha = leida.campos.fecha_entrega
-  if (m3 === null || !fecha) return fallaZomatik(sb, Object.assign(new Error(m3 === null ? "no se leyó la cantidad" : "no se leyó la fecha de entrega"), { codigo: "formato" }), { usuario: o.usuario, plantId: o.plantId, ref })
+  if (m3 === null || !fecha) return fallaZomatik(sb, formatoEn(m3 === null ? "detalle" : "abrir_np", m3 === null ? "no se leyó la cantidad" : "no se leyó la fecha de entrega"), { usuario: o.usuario, plantId: o.plantId, ref })
 
   // 8. Registrar: una sola fila (atómico). Si otro la trajo en el mismo momento, choca con la marca y se usa esa
-  const numero = numeroCompleto(comprobante, o.t.numero)
+  const numero = numeroNp
   const marca = marcaTraida(comprobante, o.t.numero)
   const ahora = new Date().toISOString()
   const fila = {
