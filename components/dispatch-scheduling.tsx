@@ -220,6 +220,13 @@ function SeccionPedido({ titulo, children }: { titulo: string; children: React.R
   )
 }
 
+/** Lo mismo que frena el DELETE en la base (202610231000_zomatik_np_saldo.sql): una NP no anulada que ya llegó (o pudo
+ * llegar) a Zomatik. Con eso el pedido no se borra: se cancela. */
+const PASOS_EN_ZOMATIK = ["grabar", "verificar", "grabar_cortado", "buscar_marca"]
+function tieneNpQueFrenaBorrar(nps: NpFila[] | undefined | null): boolean {
+  return (nps || []).some((x) => x.estado !== "anulada" && !((x.estado === "pendiente" || x.estado === "error") && !PASOS_EN_ZOMATIK.includes(x.paso || "")))
+}
+
 export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [selectedPlant, setSelectedPlant] = useState("all") // "all" para todas las plantas
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }))
@@ -1012,12 +1019,20 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
               Vincular con Zomatik
             </DropdownMenuItem>
           )}
-          {puede("programacion", "borrar") && (
+          {/* Con NP en Zomatik la base no deja borrarlo (hay que cancelarlo: el robot vacía la NP): se ofrece Cancelar */}
+          {puede("programacion", "borrar") && (tieneNpQueFrenaBorrar(np.porPedido[d.id]?.nps) ? (
+            !["cancelled", "completed"].includes(d.status) && (
+              <DropdownMenuItem onClick={() => setCancelar(d)} className="text-destructive">
+                <Trash2 className="h-4 w-4 mr-2" />
+                Cancelar pedido
+              </DropdownMenuItem>
+            )
+          ) : (
             <DropdownMenuItem onClick={() => setDeleteDispatch(d)} className="text-destructive">
               <Trash2 className="h-4 w-4 mr-2" />
               Eliminar
             </DropdownMenuItem>
-          )}
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     )
