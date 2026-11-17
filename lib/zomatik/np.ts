@@ -1108,7 +1108,7 @@ export const MSJ_TRAER = {
   otra_serie: "Ese número no es de Rebucret (van del 1000 al 5999).",
   no_existe: "No está en Zomatik (Rebucret). Revisá el número.",
   ambigua: "Hay una NP y una NP2 con ese número: escribí NP o NP2 adelante.",
-  otro_cliente: (razonSocial: string) => `Es de otro cliente: ${razonSocial}.`,
+  otro_cliente: (razonSocial: string) => `Es de otro cliente: ${razonSocial.replace(/\.\s*$/, "")}.`,
   cliente_sin_vinculo: "El cliente no está vinculado con Zomatik.",
   cliente_no_esta: (razonSocial: string) => `El cliente de la NP (${razonSocial}) no está en el sistema. Agregalo con «Traer de Zomatik».`,
   formula_sin_vinculo: "La fórmula no está vinculada con un artículo de Zomatik.",
