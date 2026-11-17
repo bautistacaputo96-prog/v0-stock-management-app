@@ -2030,3 +2030,25 @@ Spec: `docs/specs/2026-11-16-precio-en-programacion.md` (la sección 15, "Captur
   cambios.
 - **Pedidos de antes:** sin fila de precio salen como hoy (la lista). Si un pedido con NP de antes se agranda, la
   adicional sale con la lista.
+
+## 28. Traer NP de Zomatik (17/11/2026) — cambia 25.2 y 25.10
+
+Spec: `docs/specs/2026-11-17-traer-np-de-zomatik.md`. Motivo: Juan cargó a mano la NP 0001-00001195 de MERVA S.A.
+(25 m³ H30-620-10 C (HUD)) para facturarla y había que programarla sin que el robot hiciera otra.
+
+- **La tercera opción** de "¿Qué NP?" y del bloque del pedido pasa a ser **"Traer NP de Zomatik"**: un campo para el
+  número (1195, 0001-00001195, NP 0001-00001195 o NP2 2086) y, abajo, las NP con saldo de siempre. Un solo botón.
+- **Buscar** (`POST /api/zomatik/np/traer`, `programacion.cargar`): si la NP ya está en `zomatik_np`, se usa esa, sin
+  leer Zomatik. Si no, con el turno del robot y solo lectura (listado de pedidos por número en la 18, la NP abierta, su
+  detalle y sus comprobantes; grupo `rutaLecturaNp`, atado a esa NP), se controla: activa, autorizada, cliente,
+  artículo, depósito de la planta, NP/NP2 contra el R/X del pedido, sin remitos y con m³. Si pasa, se registra en
+  `zomatik_np` sin pedido (marca "Traida de Zomatik - NP …", `estado ok`, `paso autorizada`, sucursal 18).
+- **Se usa** como "Usar NP con saldo": `sincronizar` → `validarSaldo` → `zomatik_np_reservar`. Lo que no entra va en
+  una NP nueva. Al reservarla toma la fecha del pedido (solo en el sistema).
+- **Ajuste al finalizar:** reconoce la NP traída por número y cliente en vez de la marca. Con factura avisa a Juan
+  (lo de siempre).
+- **Nunca se vacía sola:** "Devolver el saldo" pide la devolución a mano y al cancelar no se ofrece "Sí, cancelarla".
+- **De paso:** una NP con saldo de otra planta ya no se ofrece ni se acepta.
+- Sin montos en ningún lado. Sin cambios de base. La fila de MERVA del 17/11 ("A mano - NP …") se trata como traída.
+- **Pendiente (fase 2, necesita migración):** traer NP con remitos previos (libre = cantidad − remitido). Hoy se
+  rechazan.
