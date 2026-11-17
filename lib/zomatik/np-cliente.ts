@@ -4,7 +4,7 @@
  * Nunca habla con Zomatik: todo pasa por /api/zomatik/np (servidor, con la llave de la planta).
  */
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { ControlDespacho, EstadoNp, ModoNp, TipoNp } from "@/lib/zomatik/np"
+import { MSJ_TRAER, type ControlDespacho, type EstadoNp, type ModoNp, type MotivoTraer, type TipoNp } from "@/lib/zomatik/np"
 import type { EstadoCliente, EstadoFormula, HitArticuloVincular, HitClienteVincular } from "@/lib/zomatik/vincular-servidor"
 
 export type NpFila = {
@@ -14,6 +14,8 @@ export type NpFila = {
   m3_uso: number; libre: number; fecha: string; fecha_zomatik: string | null; saldo_mensaje: string | null
   /** "NP con saldo": devolver o cerrada (con una de estas el ajuste al finalizar no la toca). */
   saldo_decision?: string | null
+  /** Traída de Zomatik (no la generó el sistema): al cancelar el pedido no se ofrece vaciarla. */
+  traida?: boolean
 }
 export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
@@ -27,16 +29,26 @@ export type EstadoPedidoNp = {
 export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
 export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }
 
-/** Una NP del sistema con saldo (lista de Programación y opción "Usar NP con saldo"). */
+/** Una NP del sistema con saldo (lista de Programación y opción "Traer NP de Zomatik"). */
 export type NpSaldo = {
   id: string; numero: string | null; zomatik_codigo: number | null; m3: number; libre: number; comprometido: number; fecha: string; fecha_zomatik: string | null
   saldo_decision: string | null; saldo_mensaje: string | null; pendiente_desde: string | null; plant_id: string | null; client_id: string | null; cliente: string | null
   formula_id: string | null; formula: string | null; construction_site_id: string | null; obra: string | null; con_pedido_activo: boolean
+  /** Traída de Zomatik (no la generó el sistema). */
+  traida?: boolean
+  /** R si es NP, X si es NP2. */
+  remito?: "R" | "X" | null
 }
 
-export async function cargarNpSaldos(filtro: { clientId?: string; formulaId?: string } = {}): Promise<NpSaldo[]> {
+export async function cargarNpSaldos(filtro: { clientId?: string; formulaId?: string; plantId?: string } = {}): Promise<NpSaldo[]> {
   try {
-    const q = filtro.clientId ? `?client_id=${filtro.clientId}${filtro.formulaId ? `&formula_id=${filtro.formulaId}` : ""}` : ""
+    const p = new URLSearchParams()
+    if (filtro.clientId) {
+      p.set("client_id", filtro.clientId)
+      if (filtro.formulaId) p.set("formula_id", filtro.formulaId)
+    }
+    if (filtro.plantId) p.set("plant_id", filtro.plantId)
+    const q = p.toString() ? `?${p}` : ""
     const r = await fetch(`/api/zomatik/np/saldos${q}`, { cache: "no-store" })
     if (!r.ok) return []
     return ((await json(r))?.nps as NpSaldo[]) || []
@@ -58,6 +70,32 @@ export async function decidirSaldoNp(npId: string, decision: "devolver" | "cerra
 
 async function json(r: Response) {
   return r.json().catch(() => ({}))
+}
+
+/** Lo que contesta "Buscar" de Traer NP de Zomatik (sin montos). `motivo` = el código de 3.3 (o "sin_conexion"). */
+export type RespuestaTraer =
+  | { ok: true; yaEstaba: boolean; np: NpSaldo; remito: "R" | "X"; avisos: string[] }
+  | { ok: false; motivo: MotivoTraer | "datos"; error: string; elegirFormula?: { id: string; code: string }[] }
+
+/** "Buscar" la NP por su número en Zomatik (60 s como mucho). Lo que no responde: "Sin conexión". */
+export async function traerNpDeZomatik(o: { numero: string; plantId: string; clientId?: string | null; formulaId?: string | null; remito?: string | null }): Promise<RespuestaTraer> {
+  const ctrl = new AbortController()
+  const corte = setTimeout(() => ctrl.abort(), 60_000)
+  try {
+    const r = await fetch("/api/zomatik/np/traer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ numero: o.numero, plant_id: o.plantId, client_id: o.clientId || null, formula_id: o.formulaId || null, remito: o.remito === "R" || o.remito === "X" ? o.remito : null }),
+      signal: ctrl.signal,
+    })
+    const j = await json(r)
+    if (r.ok && j?.ok) return j as RespuestaTraer
+    return { ok: false, motivo: (j?.motivo as MotivoTraer) || "datos", error: j?.error || `Error ${r.status}`, ...(j?.elegirFormula ? { elegirFormula: j.elegirFormula } : {}) }
+  } catch {
+    return { ok: false, motivo: "sin_conexion", error: MSJ_TRAER.sin_conexion }
+  } finally {
+    clearTimeout(corte)
+  }
 }
 
 /**

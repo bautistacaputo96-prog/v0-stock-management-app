@@ -3,8 +3,9 @@
  *
  *   GET /api/zomatik/np/saldos                          lista "NP con saldo: pendiente" de Programación: NP del sistema en
  *                                                       Zomatik con saldo y sin pedido activo, con desde cuándo (sin vencer)
- *   GET /api/zomatik/np/saldos?client_id=…&formula_id=… las que sirven para "Usar NP con saldo" en el pedido (mismo cliente
- *                                                       y artículo, con algo libre)
+ *   GET /api/zomatik/np/saldos?client_id=…&formula_id=… las que sirven para "Traer NP de Zomatik" en el pedido (mismo
+ *                                                       cliente y artículo, con algo libre)
+ *   …&plant_id=…                                        solo las de esa planta (o sin planta)
  */
 import { NextResponse } from "next/server"
 import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
@@ -23,8 +24,9 @@ export async function GET(req: Request) {
     const q = new URL(req.url).searchParams
     const clientId = uuid(q.get("client_id"))
     const formulaId = uuid(q.get("formula_id"))
+    const plantId = uuid(q.get("plant_id"))
     try {
-      const res = NextResponse.json({ nps: await npsConSaldo({ clientId, formulaId }) })
+      const res = NextResponse.json({ nps: await npsConSaldo({ clientId, formulaId, plantId }) })
       res.headers.set("Cache-Control", "no-store")
       return res
     } catch (e) {

@@ -23,7 +23,7 @@ import { autorizarNp, buscarNpEnZomatik, generarNp, vaciarNp, type DatosNp, type
 import { SUCURSAL_REBUCRET, esFaltaDeVinculo, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, PASOS_GRABADA, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
-  pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
+  pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, esNpTraida, MSJ_TRAIDA_DEVOLVER, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
 } from "@/lib/zomatik/np"
 import { AJUSTE_EN_CURSO, MSJ_NP_AJUSTANDOSE, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
 import { MSJ_PRECIO_BLOQUEADO, precioBloqueado, precioValido, textoPrecio } from "@/lib/zomatik/np"
@@ -491,19 +491,31 @@ export async function npsAjustandose(sb: SB, ids: string[]): Promise<Set<string>
   return new Set(((data as { np_id: string; paso: string | null }[]) || []).filter((x) => x.paso !== PASO_NP_SIN_USO).map((x) => x.np_id))
 }
 
-/** Una NP con saldo sirve para el pedido si está en Zomatik, es del mismo cliente y artículo y no se cerró ni se manda a devolver. */
+/**
+ * ¿Una NP con saldo sirve para este pedido? (también la usa "Traer NP de Zomatik"): está en Zomatik ("ok"), no se cerró
+ * ni se manda a devolver, no se está ajustando, es del mismo cliente, de la misma fórmula o el mismo artículo y, si la NP
+ * tiene planta, de la misma planta. Devuelve el error (con su motivo) o el saldo.
+ */
+export async function npUsable(sb: SB, np: FilaNpDB, ped: { client_id: string; formula_id: string; plant_id: string }): Promise<{ error: string; motivo: string } | { libre: number; comprometido: number; conPedidoActivo: boolean }> {
+  if (np.estado !== "ok") return { error: "Esa NP no está en Zomatik.", motivo: "revisar" }
+  if (np.saldo_decision === "cerrada" || np.saldo_decision === "devolver") return { error: "Esa NP ya se cerró o se está devolviendo.", motivo: "cerrada" }
+  if ((await npsAjustandose(sb, [np.id])).has(np.id)) return { error: MSJ_NP_AJUSTANDOSE, motivo: "ajustandose" }
+  if (np.client_id !== ped.client_id) return { error: "Esa NP es de otro cliente.", motivo: "otro_cliente" }
+  const art = await articuloDe(sb, [np.formula_id || "", ped.formula_id])
+  const a1 = art.get(np.formula_id || ""), a2 = art.get(ped.formula_id)
+  if (np.formula_id !== ped.formula_id && (!a1 || a1 !== a2)) return { error: "Esa NP es de otro artículo (fórmula).", motivo: "otro_articulo" }
+  if (np.plant_id && np.plant_id !== ped.plant_id) return { error: "Esa NP es de otra planta.", motivo: "otra_planta" }
+  const s = (await saldosDe(sb, [np])).get(np.id)
+  return { libre: s?.libre ?? 0, comprometido: s?.comprometido ?? 0, conPedidoActivo: s?.conPedidoActivo ?? false }
+}
+
+/** Una NP con saldo sirve para el pedido si `npUsable` (mismo cliente, artículo y planta; sin cerrar ni devolver). */
 async function validarSaldo(sb: SB, ped: PedidoDB, npId: string): Promise<{ error: string } | { libre: number }> {
   const { data } = await sb.from("zomatik_np").select(COLUMNAS_NP).eq("id", npId).maybeSingle()
   const np = data as unknown as FilaNpDB | null
-  if (!np || np.estado !== "ok") return { error: "Esa NP no está en Zomatik." }
-  if (np.saldo_decision === "cerrada" || np.saldo_decision === "devolver") return { error: "Esa NP ya se cerró o se está devolviendo." }
-  if ((await npsAjustandose(sb, [np.id])).has(np.id)) return { error: MSJ_NP_AJUSTANDOSE }
-  if (np.client_id !== ped.client_id) return { error: "Esa NP es de otro cliente." }
-  const art = await articuloDe(sb, [np.formula_id || "", ped.formula_id])
-  const a1 = art.get(np.formula_id || ""), a2 = art.get(ped.formula_id)
-  if (np.formula_id !== ped.formula_id && (!a1 || a1 !== a2)) return { error: "Esa NP es de otro artículo (fórmula)." }
-  const s = (await saldosDe(sb, [np])).get(np.id)
-  return { libre: s?.libre ?? 0 }
+  if (!np) return { error: "Esa NP no está en Zomatik." }
+  const u = await npUsable(sb, np, ped)
+  return "error" in u ? { error: u.error } : { libre: u.libre }
 }
 
 export async function npsDePedidos(sb: SB, ids: string[]): Promise<FilaNpDB[]> {
@@ -658,7 +670,14 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
       falta += Math.max(0, u.m3 - dado)
       if (dado > 0) {
         usadas++
-        await log({ "Qué pasó": `El pedido usa ${dado} m³ de una NP con saldo (reprogramado)`, NP: npsUso.find((x) => x.id === u.np_id)?.numero || u.np_id }, "crear")
+        const [usada] = await npsPorId(sb, [u.np_id])
+        const traida = !!usada && esNpTraida(usada.marca)
+        // NP traída de Zomatik: toma la fecha del pedido (solo en el sistema, como "mover la NP" de 25.5), si nadie más la usa
+        if (traida && String(usada.fecha) !== fecha) {
+          const otros = (await usosDe(sb, "np_id", [usada.id])).filter((x) => x.activo && x.scheduled_dispatch_id !== ped.id)
+          if (!otros.length) await sb.from("zomatik_np").update({ fecha, updated_at: ahora } as never).eq("id", usada.id)
+        }
+        await log({ "Qué pasó": traida ? `El pedido usa ${dado} m³ de la NP traída de Zomatik` : `El pedido usa ${dado} m³ de una NP con saldo (reprogramado)`, NP: usada?.numero || npsUso.find((x) => x.id === u.np_id)?.numero || u.np_id }, "crear")
       }
     }
   }
@@ -750,16 +769,22 @@ export type NpSaldo = {
   id: string; numero: string | null; zomatik_codigo: number | null; m3: number; libre: number; comprometido: number; fecha: string; fecha_zomatik: string | null
   saldo_decision: string | null; saldo_mensaje: string | null; pendiente_desde: string | null; plant_id: string | null; client_id: string | null; cliente: string | null
   formula_id: string | null; formula: string | null; construction_site_id: string | null; obra: string | null; con_pedido_activo: boolean
+  /** Traída de Zomatik (no la generó el sistema): no se vacía sola. */
+  traida: boolean
+  /** R si es NP, X si es NP2 (null si no se sabe). */
+  remito: "R" | "X" | null
 }
 
 /**
  * NP del sistema en Zomatik con saldo. `lista`: las que van a "NP con saldo" (sin pedido activo, sin cerrar).
- * Con `clientId` y `formulaId`: las que sirven para "Usar NP con saldo" (mismo cliente y artículo, con algo libre).
+ * Con `clientId` y `formulaId`: las que sirven para "Traer NP de Zomatik" (mismo cliente y artículo, con algo libre).
+ * Con `plantId`: solo las de esa planta (o sin planta).
  */
-export async function npsConSaldo(o: { clientId?: string | null; formulaId?: string | null; sb?: SB } = {}): Promise<NpSaldo[]> {
+export async function npsConSaldo(o: { clientId?: string | null; formulaId?: string | null; plantId?: string | null; sb?: SB } = {}): Promise<NpSaldo[]> {
   const sb = o.sb ?? sbServicio()
   let q = sb.from("zomatik_np").select(COLUMNAS_NP).eq("estado", "ok").order("fecha", { ascending: false }).limit(300)
   if (o.clientId) q = q.eq("client_id", o.clientId)
+  if (o.plantId) q = q.or(`plant_id.is.null,plant_id.eq.${o.plantId}`)
   const { data, error } = await q
   if (error) throw error
   const vivas = ((data as unknown as FilaNpDB[]) || []).filter((x) => x.saldo_decision !== "cerrada")
@@ -796,6 +821,8 @@ export async function npsConSaldo(o: { clientId?: string | null; formulaId?: str
       saldo_decision: x.saldo_decision ?? null, saldo_mensaje: x.saldo_mensaje ?? null, pendiente_desde: x.saldo_desde ?? x.updated_at ?? null, plant_id: x.plant_id ?? null, client_id: x.client_id ?? null, cliente: nombre.get(x.client_id || "") || null,
       formula_id: x.formula_id ?? null, formula: codigo.get(x.formula_id || "") || null, construction_site_id: o2?.construction_site_id ?? null, obra: o2?.construction_sites?.name ?? null,
       con_pedido_activo: sd.conPedidoActivo,
+      traida: esNpTraida(x.marca),
+      remito: comprobanteDeNumero(x.numero) === "16" ? "X" : comprobanteDeNumero(x.numero) === "15" ? "R" : null,
     }
   })
 }
@@ -805,7 +832,8 @@ export async function npsConSaldo(o: { clientId?: string | null; formulaId?: str
  * Devolver; Reprogramar es abrir un pedido nuevo con "Usar NP con saldo"):
  *   devolver  "Devolver el saldo": si no tuvo despachos, se vacía (23.4, el robot controla que no tenga remitos). Si tuvo,
  *             hace falta una devolución de pedido (DEVOL) por el saldo: TODAVÍA NO la hace el sistema (falta probarla
- *             con Bautista, 20.6.1): queda "devolver" con el aviso de hacerla a mano.
+ *             con Bautista, 20.6.1): queda "devolver" con el aviso de hacerla a mano. Una NP traída de Zomatik nunca se
+ *             vacía: queda "devolver" con el aviso de hacerlo a mano (traer NP, 9.4).
  *   cerrada   "Ya la devolví": se hizo a mano en Zomatik.
  */
 export async function decidirSaldo(npId: string, decision: "devolver" | "cerrada", usuario: string, sb: SB = sbServicio(), motivo?: string | null): Promise<{ ok: boolean; error?: string; mensaje?: string }> {
@@ -824,13 +852,48 @@ export async function decidirSaldo(npId: string, decision: "devolver" | "cerrada
   } else {
     // Con el ajuste a lo despachado en marcha, no (decisión 16): el ajuste va a bajar el libre
     if ((await npsAjustandose(sb, [np.id])).has(np.id)) return { ok: false, error: MSJ_NP_AJUSTANDOSE }
-    // En la base, con la NP bloqueada: no se pisa con una reprogramación al mismo tiempo
-    const r = (await rpc(sb, "zomatik_np_devolver", { p_np: np.id, p_usuario: usuario })) as { error?: string; mensaje?: string; libre?: number } | null
-    if (!r || r.error) return { ok: false, error: r?.error || "No se pudo." }
-    mensaje = r.mensaje || "Listo"
+    if (esNpTraida(np.marca)) {
+      // NP traída de Zomatik: el sistema no la vacía nunca (no tiene su marca). Queda "Devolver" con el aviso de hacerlo a mano
+      const t = await devolverTraida(sb, np, usuario, ahora)
+      if ("error" in t) return { ok: false, error: t.error }
+      mensaje = t.mensaje
+    } else {
+      // En la base, con la NP bloqueada: no se pisa con una reprogramación al mismo tiempo
+      const r = (await rpc(sb, "zomatik_np_devolver", { p_np: np.id, p_usuario: usuario })) as { error?: string; mensaje?: string; libre?: number } | null
+      if (!r || r.error) return { ok: false, error: r?.error || "No se pudo." }
+      mensaje = r.mensaje || "Listo"
+    }
   }
   await actividadNp(sb, { usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": decision === "cerrada" ? "NP con saldo: ya devuelta a mano (DEVOL)" : "NP con saldo: devolver el saldo", Mensaje: mensaje, ...(motivo ? { Motivo: motivo } : {}) } })
   return { ok: true, mensaje }
+}
+
+/** El saldo de una NP como lo calcula la base (`zomatik_np_saldo`). */
+async function saldoEnBase(sb: SB, npId: string): Promise<{ libre: number; comprometido: number; con_pedido_activo: boolean } | null> {
+  const d = (await rpc(sb, "zomatik_np_saldo", { p_np: npId })) as { libre: number; comprometido: number; con_pedido_activo: boolean }[] | { libre: number; comprometido: number; con_pedido_activo: boolean } | null
+  const x = Array.isArray(d) ? d[0] : d
+  return x ? { libre: Number(x.libre) || 0, comprometido: Number(x.comprometido) || 0, con_pedido_activo: !!x.con_pedido_activo } : null
+}
+
+/**
+ * "Devolver el saldo" de una NP traída (9.4): nunca `zomatik_np_devolver` (que la mandaría a vaciar). Sin pedido activo
+ * y con saldo, queda `devolver` con el aviso de hacerlo a mano en Zomatik. Si un pedido la tomó en el medio, se deshace.
+ */
+async function devolverTraida(sb: SB, np: FilaNpDB, usuario: string, ahora: string): Promise<{ error: string } | { mensaje: string }> {
+  if (np.estado !== "ok") return { error: "La NP ya no está en Zomatik o se está trabajando. Actualizá la pantalla." }
+  const s = await saldoEnBase(sb, np.id)
+  if (!s) return { error: "La NP no existe." }
+  if (s.con_pedido_activo) return { error: "La NP la está usando un pedido activo." }
+  if (s.libre <= 0.001) return { error: "La NP no tiene saldo." }
+  const { data: hecho, error } = await sb.from("zomatik_np").update({ saldo_decision: "devolver", saldo_decision_por: usuario, saldo_decision_at: ahora, saldo_mensaje: MSJ_TRAIDA_DEVOLVER, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok").is("saldo_decision", null).select("id")
+  if (error) throw error
+  if (!((hecho as unknown[]) || []).length) return { error: "La NP cambió. Actualizá la pantalla." }
+  const despues = await saldoEnBase(sb, np.id)
+  if (despues?.con_pedido_activo) {
+    await sb.from("zomatik_np").update({ saldo_decision: null, saldo_mensaje: null, updated_at: new Date().toISOString() } as never).eq("id", np.id).eq("saldo_decision", "devolver")
+    return { error: "Un pedido la tomó recién. Actualizá la pantalla." }
+  }
+  return { mensaje: MSJ_TRAIDA_DEVOLVER }
 }
 
 /** Vendedor de Zomatik de quien programó el pedido (respuesta 4); null si no tiene. */
@@ -1628,8 +1691,8 @@ export type EstadoPedidoNp = {
   modo: ModoNp
   /** El pedido entra en la NP automática (cargado después de prender la llave). */
   entra: boolean
-  /** Las NP que usa el pedido (con los m³ que reserva de cada una y lo libre de la NP). */
-  nps: (FilaNpDB & { m3_uso: number; libre: number })[]
+  /** Las NP que usa el pedido (con los m³ que reserva de cada una, lo libre de la NP y si es traída de Zomatik). */
+  nps: (FilaNpDB & { m3_uso: number; libre: number; traida: boolean })[]
   /** El pedido está cancelado o completo: sus NP con saldo van a "NP con saldo". */
   cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
@@ -1662,9 +1725,9 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
       .filter((u) => u.scheduled_dispatch_id === p.id)
       .map((u) => {
         const x = nps.find((n) => n.id === u.np_id)
-        return x ? { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0) } : null
+        return x ? { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca) } : null
       })
-      .filter(Boolean) as (FilaNpDB & { m3_uso: number; libre: number })[]
+      .filter(Boolean) as (FilaNpDB & { m3_uso: number; libre: number; traida: boolean })[]
     const entra = pedidoConNp(planta, p.created_at) || suyas.length > 0
     const e = ((exc as { scheduled_dispatch_id: string; autorizado_por: string; motivo_tipo: string; motivo: string | null }[]) || []).find((x) => x.scheduled_dispatch_id === p.id) || null
     porPedido[p.id] = {

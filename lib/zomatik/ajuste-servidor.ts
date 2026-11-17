@@ -22,7 +22,7 @@ import {
   type AvisarFn,
 } from "@/lib/zomatik/np-servidor"
 import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
-import { hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
+import { comprobanteDeNumero, esNpTraida, hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
   MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, msjSaldoDecididoEnMedio, pendienteEsperado, planificarAjuste, saldoDecidido, textoAjuste,
@@ -57,7 +57,7 @@ const faltaMigracionAjuste = (e: unknown) => /zomatik_np_ajustes|zomatik_ajuste_
 // El plan de un pedido (con los datos de la base, sin Zomatik)
 // ---------------------------------------------------------------------------
 
-type NpDB = { id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null; marca: string; plant_id: string | null; formula_id: string | null; saldo_decision?: string | null; saldo_decision_por?: string | null }
+type NpDB = { id: string; n: number; m3: number; estado: string; numero: string | null; zomatik_codigo: number | null; marca: string; plant_id: string | null; formula_id: string | null; saldo_decision?: string | null; saldo_decision_por?: string | null; client_id?: string | null }
 
 type PlanPedido =
   | { aplica: false; motivo: string }
@@ -295,8 +295,17 @@ async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): 
 
 /** Lo que el robot necesita de la NP y del pedido. */
 async function datosAjuste(sb: SB, a: AjusteDB) {
-  const { data: np } = await sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id, saldo_decision, saldo_decision_por").eq("id", a.np_id).maybeSingle()
+  const { data: np } = await sb.from("zomatik_np").select("id, n, m3, estado, numero, zomatik_codigo, marca, plant_id, formula_id, saldo_decision, saldo_decision_por, client_id").eq("id", a.np_id).maybeSingle()
   const x = np as NpDB | null
+  // NP traída de Zomatik (sin nuestra marca): el robot la reconoce por su número y su cliente. Si falta alguno, no se pasa
+  // y el ajuste queda "revisar" como cualquier NP sin marca
+  let traida: { clienteCodigo: number; numero: string; comprobante: "15" | "16" } | null = null
+  if (x && esNpTraida(x.marca) && x.numero && x.client_id) {
+    const { data: cli } = await sb.from("clients").select("zomatik_codigo").eq("id", x.client_id).maybeSingle()
+    const codigo = Number((cli as { zomatik_codigo?: number | null } | null)?.zomatik_codigo) || 0
+    const comprobante = comprobanteDeNumero(x.numero)
+    if (codigo > 0 && comprobante) traida = { clienteCodigo: codigo, numero: x.numero, comprobante }
+  }
   const { data: f } = x?.formula_id ? await sb.from("formulas").select("id, zomatik_articulo_codigo, zomatik_articulo_nombre").eq("id", x.formula_id).maybeSingle() : { data: null }
   const codArt = (f as { zomatik_articulo_codigo?: number | null } | null)?.zomatik_articulo_codigo ?? null
   const { data: art } = codArt ? await sb.from("zomatik_articulos").select("codigo, nombre").eq("codigo", codArt).maybeSingle() : { data: null }
@@ -309,6 +318,7 @@ async function datosAjuste(sb: SB, a: AjusteDB) {
     status: pd?.status ?? null,
     cliente: pd?.clients?.name ?? null,
     obra: pd?.construction_sites?.name ?? null,
+    traida,
   }
 }
 
@@ -452,7 +462,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       }
       const res = await o.dep.robot.ajustarCantidadNp(nav, {
         codigo: d.np.zomatik_codigo, numero: d.np.numero, marca: d.np.marca, articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre,
-        m3Np, objetivo, cortado,
+        m3Np, objetivo, cortado, ...(d.traida ? { traida: d.traida } : {}),
       }, {
         hoy: hoyAR(),
         alPaso: async (paso) => {
