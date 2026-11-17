@@ -16,7 +16,7 @@ import { comprobanteDe, listaActiva, precioBloqueado, precioValido, textoPrecio,
 
 type SB = ReturnType<typeof sbServicio>
 
-/** ¿Falta la migración 202611161200? (la línea no aparece y la NP sale como antes). */
+/** ¿Falta la migración 202611161600? (la línea no aparece y la NP sale como antes). */
 export const faltaMigracionPrecio = (e: unknown) =>
   /\b(zomatik_np_precio(_guardar|_congelar)?|zomatik_listas|zomatik_lista_precios)\b/i.test(String((e as { message?: string })?.message || ""))
 

@@ -1999,7 +1999,7 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 ## 27. Precio por m³ al programar (16/11/2026) — cambia 20.1.1 y 20.2
 
 Spec: `docs/specs/2026-11-16-precio-en-programacion.md` (la sección 15, "Capturas hechas", manda). Migración
-`supabase/migrations/202611161200_zomatik_precio_np.sql`.
+`supabase/migrations/202611161600_zomatik_precio_np.sql`.
 
 - **Qué cambia de 20.1.1 y 20.2:** el precio por m³ de la NP se **muestra y se edita en Programación**, solo para quien
   tiene el permiso nuevo **"Precio en la NP" (`precios_np.editar`)**, y se guarda solo en tablas que el navegador no puede

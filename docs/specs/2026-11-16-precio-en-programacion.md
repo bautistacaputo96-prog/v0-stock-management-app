@@ -96,7 +96,7 @@ que se guardan en `zomatik_np.mensaje` o vuelven en `hechas` **no** llevan monto
 
 ## 5. Base de datos
 
-Migración nueva `supabase/migrations/202611161200_zomatik_precio_np.sql`, **sin aplicar** (la aplica Bautista), probada
+Migración nueva `supabase/migrations/202611161600_zomatik_precio_np.sql`, **sin aplicar** (la aplica Bautista), probada
 en `BEGIN … ROLLBACK`. Solo tablas nuevas: no pide candados sobre tablas en uso.
 
 | Objeto | Detalle |
@@ -216,7 +216,7 @@ Por `actividadNp` (servidor, entidad `zomatik_np`), nunca desde el navegador:
 
 | Archivo | Qué | Patrón |
 |---|---|---|
-| `supabase/migrations/202611161200_zomatik_precio_np.sql` (nueva) | Sección 5 | `202610222200_zomatik_np.sql` (tablas solo servidor), `zomatik_np_reservar` (FOR UPDATE) |
+| `supabase/migrations/202611161600_zomatik_precio_np.sql` (nueva) | Sección 5 | `202610222200_zomatik_np.sql` (tablas solo servidor), `zomatik_np_reservar` (FOR UPDATE) |
 | `lib/permisos.ts` | Sección `precios_np` | `recuentos` |
 | `lib/zomatik/web.ts`, `cliente.ts`, `parseo.ts` | Sección 6 | `exportar_acopio` / `fetchAcopioXls` / `pactadoDeAcopio` |
 | `lib/zomatik/lectura.ts`, `actualizar-copia.ts`, `app/api/zomatik/actualizar-copia/route.ts` | Parte `listas`, tipo `precios` | `articulos` |

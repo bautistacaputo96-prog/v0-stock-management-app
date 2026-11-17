@@ -337,7 +337,7 @@ export async function guardarFoto(sb: SupabaseClient, foto: Foto, previo: Previo
     try {
       out.listas = await guardarListas(sb, foto.listas, foto.inicio, foto.articulos)
     } catch (e: any) {
-      out.listas = /zomatik_lista/.test(e?.message || "") ? "falta la migración 202611161200" : `error: ${String(e?.message || e).slice(0, 120)}`
+      out.listas = /zomatik_lista/.test(e?.message || "") ? "falta la migración 202611161600" : `error: ${String(e?.message || e).slice(0, 120)}`
     }
   }
 
