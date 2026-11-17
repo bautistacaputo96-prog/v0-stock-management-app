@@ -1168,7 +1168,7 @@ Cada una es independiente; Bautista puede elegir cuáles van (pregunta 19.5.1).
 Si algo de los puntos 1 a 19 contradice esta sección, vale esta sección.
 
 ### 20.1 Decisiones
-1. **"Por ahora no hablamos de precios."**
+1. **"Por ahora no hablamos de precios."** (Cambiado el 16/11/2026 para el precio por m³ de la NP: ver sección 27.)
    - No hay precios, listas, precio pactado ni montos en $ en ninguna pantalla nuestra.
    - Los acopios se siguen **solo en m³**.
    - En la spec se sacaron las menciones de precios de las secciones de diseño. Quedan solo los nombres técnicos de campos de Zomatik que el robot tiene que conocer.
@@ -1178,6 +1178,7 @@ Si algo de los puntos 1 a 19 contradice esta sección, vale esta sección.
 5. **Pedido que se agranda: NP adicional** por la diferencia. Cierra 18.8.5.
 
 ### 20.2 La NP sale con lo que Zomatik pone por defecto
+- (Cambiado el 16/11/2026: el precio por m³ de la NP nueva se puede cambiar al programar; ver sección 27.)
 - El robot **no muestra ni deja elegir** lista ni precio.
 - Zomatik exige una lista cuando el origen es "Lista", así que el robot manda la que corresponde, sin preguntar:
   - **NP común:** la lista activa más nueva del comprobante, "en 1" para la NP y "en 2" para la NP2 (5.3);
@@ -1994,3 +1995,36 @@ Con eso se reemplazan los fixtures `lib/__fixtures__/zomatik-z1/` (hoy marcados 
 - **El robot que corre después de responder** (`after()` de "sincronizar" y de remitir): si se cae con una excepción, el mismo aviso. Si es de entrada a Zomatik, va el aviso único de arriba.
 - **Reintentos:** "pendiente" se reintenta en la próxima pasada (cada 10 minutos). Desde el 04/11 a las 14:10 la pasada la corre la base: pg_cron, job `zomatik-np-pasada`, llama a `/api/zomatik/np/procesar` con el Bearer de `CRON_SECRET`. Los mails lo dicen así. "error" no lo toma la pasada: solo el botón.
 - Sin cambios de base.
+
+## 27. Precio por m³ al programar (16/11/2026) — cambia 20.1.1 y 20.2
+
+Spec: `docs/specs/2026-11-16-precio-en-programacion.md` (la sección 15, "Capturas hechas", manda). Migración
+`supabase/migrations/202611161200_zomatik_precio_np.sql`.
+
+- **Qué cambia de 20.1.1 y 20.2:** el precio por m³ de la NP se **muestra y se edita en Programación**, solo para quien
+  tiene el permiso nuevo **"Precio en la NP" (`precios_np.editar`)**, y se guarda solo en tablas que el navegador no puede
+  leer. El resto de 20.1 sigue (acopios en m³, sin montos de acopio). Gerenciales lo tienen solos; a un operario se le
+  tilda en Usuarios (Felipe). Titan y David no lo ven en ningún lado.
+- **Precio neto (sin IVA):** el `costo` del renglón y el precio de la lista son netos. Con la NP (15, R) Zomatik suma el
+  IVA en el total; con la NP2 (16, X), no.
+- **Lista:** copia de `listado_listas.php` (`zomatik_listas`) y del export `exportar_lista.php?lista=N` de cada lista
+  activa (`zomatik_lista_precios`), en la lectura de la noche (parte `listas`) y con "Actualizar" de la línea del precio.
+  El export no trae códigos: se cruza por **nombre** con `zomatik_articulos` (exacto, sin mayúsculas ni espacios de más;
+  si no cruza o cruza con dos, "no está en la lista"). La pantalla usa `listaActiva` (la misma del robot) con el
+  comprobante del remito del formulario.
+- **Pantalla:** una línea abajo de la NP ("Precio por m³ (sin IVA) $ [ ] Lista: $ … (?)", con "−3,7 % de la lista" si es
+  distinto), editable hasta que sale la NP. Vacío = el de la lista; el de la lista exacto se guarda vacío. NP de
+  proyecto: "el del proyecto" (y el número cuando salió). NP con saldo: "el de la NP con saldo".
+- **Servidor:** el precio solo sale de `GET /api/zomatik/np/precio` (403 sin el permiso). `GET /api/zomatik/np`,
+  `zomatik_np` y `scheduled_dispatches` no lo llevan; los mensajes de `zomatik_np` y los avisos no llevan montos.
+  "sincronizar" acepta `precio_m3` (sin el permiso se ignora). Se guarda en `zomatik_np_precio` con
+  `zomatik_np_precio_guardar` (bloqueado si la NP nueva de esa fórmula ya salió o pudo salir). Si el pedido cambia de
+  fórmula, vuelve a la lista. Actividad con montos (es de gerenciales).
+- **Robot:** en la NP nueva cambia `costo<id>` y el `fparam` (`conCosto`), **no** `hcosto<id>` (captura de
+  `GrabarDatosDetalle` del 16/11). Sin precio, el Grabar es el de siempre. Después de grabar se controla el costo
+  grabado: si es otro o no se puede leer, la NP queda "ok" con un mensaje sin montos, Actividad con los dos montos y
+  aviso a Bautista. La primera NP nueva "ok" **congela** su precio: las adicionales salen con el mismo aunque cambie la
+  lista. La NP de proyecto no se toca (solo se anota el costo del MATERIAL para mostrarlo). Ajuste al finalizar y Z1, sin
+  cambios.
+- **Pedidos de antes:** sin fila de precio salen como hoy (la lista). Si un pedido con NP de antes se agranda, la
+  adicional sale con la lista.
