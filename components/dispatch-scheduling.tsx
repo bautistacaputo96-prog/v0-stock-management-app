@@ -878,7 +878,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor, remitoTipo)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
         else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
-        else if (rnp.usadas) toast({ title: "El pedido usa la NP con saldo", description: "No se generó otra NP." })
+        else if (rnp.usadas) toast({ title: "El pedido usa la NP elegida", description: "No se generó otra NP." })
         else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
         // Se vinculó algo en este diálogo y el pedido tenía la NP en error: sin cambios, avisarNp no corre el robot
         if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && !npFaltan.cliente && !npFaltan.formula && npDialogo?.nps.some((x) => x.estado === "error")) {
@@ -1398,11 +1398,13 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                     setForm({ ...form, client_id: p.client_id, construction_site_id: p.construction_site_id || "" })
                     setNpEleccion({ tipo: "proyecto", proyecto_codigo: p.codigo, tope_m3: null, np_id: null })
                   }}
-                  onSaldo={(x: NpSaldo) => {
+                  onSaldo={(x: NpSaldo, remito?: "R" | "X") => {
                     setNpPreguntada(true)
                     setForm({
                       ...form, ...(x.plant_id ? { plant_id: x.plant_id } : {}), client_id: x.client_id || "", construction_site_id: x.construction_site_id || "",
                       formula_id: x.formula_id || "", quantity_m3: String(x.libre),
+                      // NP traída de Zomatik: si el formulario no tiene R/X, el de la NP (NP → R, NP2 → X)
+                      ...(remito && !form.remito_tipo ? { remito_tipo: remito } : {}),
                     })
                     setNpEleccion({ tipo: "saldo", proyecto_codigo: null, tope_m3: null, np_id: x.id })
                   }}

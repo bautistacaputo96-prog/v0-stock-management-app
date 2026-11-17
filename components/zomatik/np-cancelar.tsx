@@ -4,6 +4,7 @@
  *   - No, dejala pendiente: queda en "NP con saldo" para reprogramar (por ejemplo, por lluvia).
  *   - Sí, cancelarla: la vacía en el momento, como "Devolver el saldo".
  * Sin elegir no se cancela el pedido. Si el pedido ya tuvo despachos (remitos), solo la primera, con el aviso de DEVOL.
+ * Si alguna NP es traída de Zomatik (la cargaron a mano), solo la primera: el sistema no la vacía.
  */
 import { cn } from "@/lib/utils"
 import { avisarNp, decidirSaldoNp, type NpFila } from "@/lib/zomatik/np-cliente"
@@ -16,6 +17,7 @@ export const npsEnZomatik = (nps: NpFila[] | undefined | null) => (nps || []).fi
 export function NpCancelarPregunta({ nps, despachado, valor, onCambio }: { nps: NpFila[]; despachado: number; valor: DecisionNpCancelar | null; onCambio: (v: DecisionNpCancelar) => void }) {
   if (!nps.length) return null
   const conRemitos = despachado > 0.001
+  const traida = nps.some((x) => x.traida)
   const numeros = nps.map((x) => x.numero || `NP ${x.n}`).join(", ")
   return (
     <div className="space-y-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
@@ -24,7 +26,9 @@ export function NpCancelarPregunta({ nps, despachado, valor, onCambio }: { nps: 
         <span className="font-medium">No, dejala pendiente</span>
         <span className="block text-xs text-muted-foreground">Por ejemplo, por lluvia: queda en «NP con saldo» para reprogramar.</span>
       </button>
-      {conRemitos ? (
+      {traida ? (
+        <p className="text-xs text-amber-900">La NP la cargaron a mano en Zomatik: queda pendiente en «NP con saldo». Si hay que anularla, se hace en Zomatik.</p>
+      ) : conRemitos ? (
         <p className="text-xs text-amber-900">Ya tuvo despachos: para cancelar el saldo hace falta una devolución (DEVOL) a mano en Zomatik. Queda pendiente y se devuelve desde «NP con saldo».</p>
       ) : (
         <button type="button" onClick={() => onCambio("cancelar")} className={cn("block w-full rounded-md border-2 bg-white px-2 py-1.5 text-left", valor === "cancelar" ? "border-primary" : "border-border")}>
