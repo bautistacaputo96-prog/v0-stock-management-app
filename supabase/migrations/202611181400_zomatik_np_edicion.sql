@@ -63,8 +63,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS zomatik_np_ajustes_edicion_abierta_key ON publ
 -- robot grabó en Zomatik y la reserva que decidió; si la fila dice otra cosa, no se aplica nada (nunca una NP de 9 con
 -- una reserva de 10). Si el pedido ya no usa la NP (uso inactivo), solo la NP. No cierra el saldo ni toca saldo_desde (el
 -- pedido sigue activo). Idempotente: si ya se aplicó, solo la deja 'ok'. Devuelve {ok} o {error}.
+-- Las dos firmas posibles de antes (de un parámetro, o de tres con DEFAULT: CREATE OR REPLACE no le puede sacar los
+-- DEFAULT), así se puede correr dos veces
 DROP FUNCTION IF EXISTS public.zomatik_np_edicion_aplicar(uuid);
-CREATE OR REPLACE FUNCTION public.zomatik_np_edicion_aplicar(p_id uuid, p_m3_objetivo numeric DEFAULT NULL, p_m3_uso numeric DEFAULT NULL)
+DROP FUNCTION IF EXISTS public.zomatik_np_edicion_aplicar(uuid, numeric, numeric);
+CREATE FUNCTION public.zomatik_np_edicion_aplicar(p_id uuid, p_m3_objetivo numeric, p_m3_uso numeric)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = public
@@ -91,7 +94,7 @@ BEGIN
   IF v_a.m3_objetivo IS NULL OR v_a.m3_objetivo <= 0 OR v_a.m3_uso_objetivo IS NULL OR v_a.m3_uso_objetivo < 0 THEN
     RETURN jsonb_build_object('error', 'A la edición le faltan los m³.');
   END IF;
-  IF (p_m3_objetivo IS NOT NULL AND abs(v_a.m3_objetivo - p_m3_objetivo) > 0.001) OR (p_m3_uso IS NOT NULL AND abs(v_a.m3_uso_objetivo - p_m3_uso) > 0.001) THEN
+  IF p_m3_objetivo IS NULL OR p_m3_uso IS NULL OR abs(v_a.m3_objetivo - p_m3_objetivo) > 0.001 OR abs(v_a.m3_uso_objetivo - p_m3_uso) > 0.001 THEN
     RETURN jsonb_build_object('error', 'La edición cambió mientras se trabajaba.');
   END IF;
   IF v_a.m3_uso_objetivo > v_a.m3_objetivo + 0.001 THEN
