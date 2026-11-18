@@ -13,6 +13,8 @@
  * Si al cliente o a la fórmula les falta el vínculo con Zomatik, avisa y ofrece "Vincular" (04/11, quien programa).
  * Precio por m³ (16/11, docs/specs/2026-11-16-precio-en-programacion.md): una línea, SOLO con precios_np.editar (si no,
  * no existe ni se pide nada). Se puede cambiar hasta que sale la NP; vacío = el de la lista. Precio neto (sin IVA).
+ * Editar la NP (18/11, docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md): con una sola NP y editable, al cambiar
+ * los m³ avisa "Al guardar, la NP …1194 pasa a 9 m³." (se edita la misma NP en Zomatik, sin NP adicional).
  */
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
@@ -49,7 +51,7 @@ type EstadoBusqueda = { color: "gris" | "ambar" | "verde"; texto: string; avisos
 
 export function NpBloque({
   planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
-  precio, onPrecio, remito, onRemito, pedidoId, plantId,
+  precio, onPrecio, remito, onRemito, pedidoId, plantId, despachado,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -86,6 +88,8 @@ export function NpBloque({
   /** Al editar, el pedido (para saber si la NP ya salió). */
   pedidoId?: string | null
   plantId?: string
+  /** Al editar, lo despachado del pedido (la NP nunca baja de eso al editarla). */
+  despachado?: number | null
 }) {
   const { usuario } = usePermisos()
   const puedeVincular = puedeVincularDesdePedido(usuario) && !!onVincular
@@ -226,6 +230,17 @@ export function NpBloque({
   const faltaTexto = [faltan?.cliente && `el cliente «${faltan.cliente}»`, faltan?.formula && `la fórmula «${faltan.formula}»`].filter(Boolean).join(" y ")
   const avisoVinculo = !!faltaTexto && !(estado && !estado.entra) && valor.tipo !== "saldo"
   const errorPorVinculo = yaTiene.some((x) => x.estado === "error" && esFaltaDeVinculo(x.mensaje))
+  // Una sola NP y editable: al cambiar los m³ se edita en Zomatik. Misma cuenta que el servidor (lo de los otros pedidos
+  // + máx(m³ del pedido, lo despachado)); si lo libre de la NP alcanza, no cambia
+  const pasaA = (() => {
+    if (soloLectura || yaTiene.length !== 1 || m3 <= 0) return null
+    const x = yaTiene[0]
+    if (x.estado !== "ok" || !x.editable || Math.abs(m3 - Number(x.m3_uso)) < 0.001) return null
+    if (m3 > Number(x.m3_uso) && m3 - Number(x.m3_uso) <= Number(x.libre || 0) + 0.001) return null
+    const otros = Math.max(0, Number(x.m3) - Number(x.libre || 0) - Number(x.m3_uso))
+    const nuevo = Math.round((otros + Math.max(m3, Number(despachado || 0))) * 1000) / 1000
+    return Math.abs(nuevo - Number(x.m3)) < 0.001 ? null : { numero: x.numero, m3: nuevo }
+  })()
   const botonVincular = puedeVincular && !soloLectura ? (
     <button type="button" className="rounded border border-amber-400 bg-white px-2 py-0.5 text-xs font-medium" onClick={onVincular}>Vincular</button>
   ) : null
@@ -375,6 +390,12 @@ export function NpBloque({
           {yaTiene.filter((x) => x.mensaje && x.estado !== "ok").map((x) => <span key={x.id} className="text-red-700">{x.mensaje}</span>)}
           {errorPorVinculo && !avisoVinculo && botonVincular}
         </div>
+      )}
+      {pasaA && (
+        <p className="flex flex-wrap items-center gap-1 text-xs">
+          <span>Al guardar, la NP {pasaA.numero ? pasaA.numero.replace(/^(NP2?) 0001-0000/, "…") : ""} pasa a {m3t(pasaA.m3)} m³.</span>
+          <span className="cursor-help text-muted-foreground" title="Se edita la misma NP en Zomatik. Si tiene factura, va una NP adicional.">(?)</span>
+        </p>
       )}
     </div>
   )
