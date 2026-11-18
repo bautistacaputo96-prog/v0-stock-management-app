@@ -111,7 +111,8 @@ export type ResultadoNp = {
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
-export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string; recorte?: string }
+/** `totalAntes` / `totalDespues`: el total del listado (montos) para Actividad y el mail; NUNCA van en `mensaje`. */
+export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string; recorte?: string; totalAntes?: number | null; totalDespues?: number | null }
 
 export type OpcionesRobot = {
   /** Se llama antes de cada paso. Con "grabar" quien llama tiene que dejarlo guardado ANTES de que se mande. */
@@ -633,10 +634,11 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     const leido = await detalleGrabado(nav, a, base, proyecto, azar)
     let det: Detalle | null = leido.det
     let rs = leido.renglones
-    if (!leido.valido && !rs.length) return { estado: "revisar", mensaje: `No se pudo leer el detalle de la NP (Zomatik dice total ${antes ?? "sin dato"}). No se tocó: vaciala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    // Sin montos en el mensaje (llega a zomatik_np.mensaje y a la pantalla): el total va aparte
+    if (!leido.valido && !rs.length) return { estado: "revisar", mensaje: "No se pudo leer el detalle de la NP. No se tocó: vaciala a mano.", paso, recorte: recorte(det?.html || a.html), totalAntes: antes }
     // ¿Ya está vacía en Zomatik? (un grabar anterior llegó): el detalle cargó bien, sin renglones, y el listado da 0
     if (!rs.length && antes === 0 && (leido.total === null || leido.total === 0)) return { estado: "vaciada", mensaje: null, paso }
-    if (!rs.length) return { estado: "revisar", mensaje: `El detalle de la NP no tiene renglones pero Zomatik dice total ${antes ?? "sin dato"}. No se tocó: revisala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    if (!rs.length) return { estado: "revisar", mensaje: `El detalle de la NP no tiene renglones pero en Zomatik ${antes === null ? "no se pudo leer el total" : "el total no es 0"}. No se tocó: revisala a mano.`, paso, recorte: recorte(det?.html || a.html), totalAntes: antes }
     for (const r of [...rs]) {
       if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
       if (!r.borrar) throw formato("un renglón no tiene el tacho", det?.html || a.html)
@@ -663,8 +665,10 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     if (no) return { estado: "error", mensaje: `Zomatik no dejó vaciar la NP: ${no}`, paso, recorte: recorte(g.html) }
     return {
       estado: "revisar",
-      mensaje: `Se grabó pero la NP no quedó vacía en Zomatik (${quedan ? `${quedan.renglones.length} renglón(es)` : "no se pudo abrir"}, total ${despues ?? "sin dato"}). Revisala en Zomatik.`,
+      mensaje: `Se grabó pero la NP no quedó vacía en Zomatik (${quedan ? `${quedan.renglones.length} renglón(es)` : "no se pudo abrir"}). Revisala en Zomatik.`,
       paso,
+      totalAntes: antes,
+      totalDespues: despues,
       recorte: recorte(quedan?.det?.html || v.html),
     }
   } catch (e) {
@@ -765,6 +769,24 @@ export type ResultadoAjusteNp = {
   yaEstaba?: boolean
   grabado?: boolean
   recorte?: string
+  /**
+   * Con "ok": la fila de la NP en el listado (la que se leyó al verificar) tiene el ícono Autorizar (solo lectura,
+   * `autorizacionEnListado`). null = no se pudo saber. La autoriza la pasada de siempre (spec 2026-11-18, 5.2 paso 5).
+   */
+  porAutorizar?: boolean | null
+}
+
+/** El total del listado no quedó en proporción después de grabar (SIN montos: el mensaje llega a la pantalla). */
+export const msjTotalNoCerro = (m3: number) => `Zomatik grabó la NP en ${m3Texto(m3)} m³ pero el total no cerró: revisala.`
+
+/**
+ * Los totales del listado leídos en un ajuste o una edición, para Actividad y el mail a Bautista (los ven solo los
+ * gerenciales). Nunca van al `mensaje` de la fila. null si no se leyó ninguno.
+ */
+export function totalesDeAjuste(r: { totalAntes?: number | null; totalDespues?: number | null }): Record<string, string> | null {
+  const t = (n: number | null | undefined) => (n === null || n === undefined ? "sin dato" : `$ ${Number(n).toLocaleString("es-AR", { maximumFractionDigits: 2 })}`)
+  if ((r.totalAntes ?? null) === null && (r.totalDespues ?? null) === null) return null
+  return { "Total antes": t(r.totalAntes), "Total después": t(r.totalDespues) }
 }
 
 export type LecturaAjuste = {
@@ -774,7 +796,7 @@ export type LecturaAjuste = {
   renglon: Renglon
   det: Detalle | null
   cantidad: number
-  fila: { total: number | null; estado: string } | null
+  fila: { total: number | null; estado: string; porAutorizar: boolean | null } | null
 }
 
 /** La fila de la NP en el listado de REBUCRET (null si no aparece o el listado vino de otra sucursal). */
@@ -784,7 +806,7 @@ async function filaNp(nav: NavegadorNp, d: { codigo: number; numero: string | nu
   const l = await listado(nav, { bus_numero: numeroNormalizado(d.numero) || d.numero }, SUCURSAL_REBUCRET)
   if (l.sucursalPagina !== SUCURSAL_REBUCRET) return null
   const f = l.filas.find((x) => x.codigo === d.codigo)
-  return f ? { total: f.total, estado: f.estado } : null
+  return f ? { total: f.total, estado: f.estado, porAutorizar: autorizacionEnListado(l.html, d.codigo)?.porAutorizar ?? null } : null
 }
 
 /**
@@ -859,7 +881,7 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     const l = await leerNpParaAjuste(nav, d, { azar })
     leidoAntes = l.cantidad
     // Un corte anterior en el Grabar: lo que dice Zomatik ahora manda
-    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true }
+    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true, porAutorizar: l.fila?.porAutorizar ?? null }
     if (!igual(l.cantidad, d.m3Np)) return { estado: "revisar", mensaje: msjNpCambio(l.cantidad, d.m3Np), paso, leido: l.cantidad }
     await marcar("leer_factura")
     const f = facturaDeNp({ detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null, comprobantes: await comprobantesNp(nav, d.codigo, azar) })
@@ -869,7 +891,7 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     // El total grabado de antes (para ver que quedó en proporción): sin la fila del listado no se sigue
     if (!l.fila || l.fila.total === null) return { estado: "revisar", mensaje: `No se encontró la ${d.numero} en el listado de pedidos de REBUCRET. No se tocó: revisala.`, paso, leido: l.cantidad }
     const totalAntes = l.fila.total
-    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true }
+    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true, porAutorizar: l.fila.porAutorizar }
 
     await marcar("decidir")
     await marcar("editar_detalle")
@@ -892,8 +914,9 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     if (v && igual(v.cantidad, d.objetivo)) {
       const despues = v.fila?.total ?? null
       if (despues !== null && totalProporcional(totalAntes, l.cantidad, despues, d.objetivo))
-        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true }
-      return { estado: "revisar", mensaje: `La NP quedó en ${m3Texto(d.objetivo)} m³ pero el total del listado no cerró (antes ${totalAntes}, ahora ${despues ?? "sin dato"}). Revisala en Zomatik.`, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
+        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, porAutorizar: v.fila?.porAutorizar ?? null }
+      // Sin montos en el mensaje (lo ve Programación y Despacho): los totales van en totalAntes / totalDespues (Actividad y mail)
+      return { estado: "revisar", mensaje: msjTotalNoCerro(d.objetivo), paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
     }
     if (v && igual(v.cantidad, l.cantidad)) {
       if (no && rechazoPorFactura(no)) return { estado: "con_factura", mensaje: null, paso: "grabar_np", leido: l.cantidad, facturaTexto: `Zomatik contestó: ${no}`, recorte: recorte(g.html) }

@@ -1,6 +1,7 @@
 /**
  * Zomatik Z2 · Pasada de las NP: sincroniza los pedidos de hoy en adelante (plantas con la llave prendida) y trabaja
- * las NP pendientes, las de un "Grabar" cortado (primero se busca la marca) y las que hay que vaciar. Después, Z1: la OF
+ * las NP pendientes, las de un "Grabar" cortado (primero se busca la marca) y las que hay que vaciar. Después, las
+ * ediciones de la NP por un cambio del pedido (docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md). Después, Z1: la OF
  * de los despachos sin pedido (últimos 3 días), el aviso de despachos anulados o editados después de la OF y los
  * reintentos de OF + remito (spec 26).
  *
@@ -17,6 +18,7 @@ import { esLlamadaDeCron } from "@/lib/cron"
 import { faltaMigracion, pasadaNp, procesarNp } from "@/lib/zomatik/np-servidor"
 import { hoyAR } from "@/lib/zomatik/np"
 import { controlarCambiosZ1, prepararOfSueltas, procesarZ1 } from "@/lib/zomatik/z1-servidor"
+import { procesarEdiciones } from "@/lib/zomatik/edicion-servidor"
 import { ultimosDias } from "@/lib/zomatik/z1"
 
 export const dynamic = "force-dynamic"
@@ -37,6 +39,14 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     // Primero la base (como mucho 20 s); el robot, con lo que quede (no arranca una NP con menos de 30 s)
     const pasada = await pasadaNp(usuario, { inicio, hastaMs: 20_000 })
     const proceso = await procesarNp({ usuario, inicio })
+    // Editar la NP cuando el pedido cambió de m³: después de generar las NP (más urgente: el modo duro frena el despacho
+    // sin NP) y antes de Z1. Con su llave apagada (o sin su migración) no hace nada; un error acá no cambia la pasada.
+    let ediciones: unknown = null
+    try {
+      ediciones = await procesarEdiciones({ usuario, inicio })
+    } catch (e) {
+      console.error("[zomatik-edicion] pasada", (e as Error)?.message)
+    }
     // Z1 (spec 26): OF de los despachos sin pedido y reintentos de OF + remito, con el tiempo que quede. Con la llave de
     // remitir apagada (o sin su migración) no hace nada; un error acá no cambia la pasada de las NP.
     let z1: unknown = null
@@ -48,7 +58,7 @@ async function correr(usuario: string, frenar: boolean, inicio: number) {
     } catch (e) {
       console.error("[zomatik-z1] pasada", (e as Error)?.message)
     }
-    return NextResponse.json({ ok: true, pasada, proceso, z1 })
+    return NextResponse.json({ ok: true, pasada, proceso, ediciones, z1 })
   } catch (e) {
     if (faltaMigracion(e)) return NextResponse.json({ ok: false, sinMigracion: true })
     throw e

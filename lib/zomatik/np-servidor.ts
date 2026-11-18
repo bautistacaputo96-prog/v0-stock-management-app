@@ -19,13 +19,16 @@ import { sbServicio } from "@/lib/auth/servidor"
 import { CLAVE_BLOQUEO_LOGIN, discoverForm, fetchExport, navegadorLectura, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
-import { autorizarNp, buscarNpEnZomatik, generarNp, vaciarNp, type DatosNp, type LecturaNp, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
+import { autorizarNp, buscarNpEnZomatik, generarNp, totalesDeAjuste, vaciarNp, type DatosNp, type LecturaNp, type LlaveAjuste, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
 import { SUCURSAL_REBUCRET, esFaltaDeVinculo, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, PASOS_GRABADA, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
   pedidoConNp, planificarNp, controlDespacho, npConSaldo, saldoNp, esNpTraida, MSJ_TRAIDA_DEVOLVER, type EstadoNp, type FilaNp, type ModoNp, type PlantaNp, type SaldoNp, type TipoNp, type UsoPlan, type UsoSaldo,
 } from "@/lib/zomatik/np"
-import { AJUSTE_EN_CURSO, MSJ_NP_AJUSTANDOSE, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
+import {
+  AJUSTE_EN_CURSO, EDICION_ABIERTA, MIN_JUNTAR_EDICION, MSJ_EDICION_CANCELADO, MSJ_EDICION_YA_NO_HACE_FALTA, MSJ_NP_AJUSTANDOSE, ORIGEN_FINALIZAR, ORIGEN_PEDIDO, PASO_NP_SIN_USO, TOL_AJUSTE,
+  edicionFija, marcaEdicion, msjEdicionPendiente, npEditable, objetivoEdicion, type EntradaEdicion, type UsoAjuste,
+} from "@/lib/zomatik/ajuste"
 import { MSJ_PRECIO_BLOQUEADO, precioBloqueado, precioValido, textoPrecio } from "@/lib/zomatik/np"
 import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
 import { congelarPrecio, faltaMigracionPrecio, filaPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp } from "@/lib/zomatik/precio-servidor"
@@ -58,9 +61,10 @@ export const COLUMNAS_NP =
   "id, scheduled_dispatch_id, n, marca, tipo, es_adicional, proyecto_codigo, plant_id, client_id, formula_id, fecha, m3, estado, paso, mensaje, numero, zomatik_codigo, sucursal, disponible_m3, intentos, proximo_intento, en_curso_desde, created_at, updated_at, saldo_decision, saldo_mensaje, saldo_desde, fecha_zomatik, vendedor_usuario_id"
 
 const COLUMNAS_PEDIDO =
-  "id, status, quantity_m3, plant_id, client_id, construction_site_id, formula_id, scheduled_arrival_time, created_at, created_by"
+  "id, status, quantity_m3, plant_id, client_id, construction_site_id, formula_id, scheduled_arrival_time, created_at, created_by, dispatched_m3"
 
-export type PlantaNpDB = PlantaNp & { id: string; name: string; zomatik_deposito: number | null }
+/** `editar_activo`: llave de la edición de la NP cuando el pedido cambia de m³ (spec 2026-11-18). Sin la migración, apagada. */
+export type PlantaNpDB = PlantaNp & { id: string; name: string; zomatik_deposito: number | null; editar_activo?: boolean }
 
 /** ¿Falta la migración de Z2? (las rutas responden "apagado" en vez de romper). */
 export const faltaMigracion = (e: unknown) => /\b(zomatik_np(_config|_pedido|_excepciones)?|zomatik_np_tomar|zomatik_robot_tomar|zomatik_robot_soltar|zomatik_np_uso|zomatik_vendedores|saldo_decision|saldo_mensaje|saldo_desde|fecha_zomatik|vendedor_usuario_id|despachado_fijo|zomatik_np_reservar|zomatik_np_devolver|zomatik_np_desvincular|codigo_sistema|disponible_m3|disponible_articulo|disponible_at|zomatik_proyecto_codigo)\b/i.test(String((e as { message?: string })?.message || ""))
@@ -69,11 +73,17 @@ export const faltaMigracion = (e: unknown) => /\b(zomatik_np(_config|_pedido|_ex
 // Plantas y llave
 // ---------------------------------------------------------------------------
 
-type ConfigDB = { plant_id: string; activo: boolean; desde: string | null; deposito: number | null; exigir_np: string | null; aviso_hasta: string | null }
+type ConfigDB = { plant_id: string; activo: boolean; desde: string | null; deposito: number | null; exigir_np: string | null; aviso_hasta: string | null; editar_activo?: boolean | null }
 
-/** Plantas con su llave (de `zomatik_np_config`; sin fila = apagada). Sin la migración: vacío (todo apagado). */
+const COLUMNAS_CONFIG = "plant_id, activo, desde, deposito, exigir_np, aviso_hasta"
+
+/**
+ * Plantas con su llave (de `zomatik_np_config`; sin fila = apagada). Sin la migración: vacío (todo apagado). Sin la de
+ * la edición (no existe `editar_activo`, 42703): lo de siempre, con la edición apagada.
+ */
 export async function plantasNp(sb: SB = sbServicio()): Promise<Record<string, PlantaNpDB>> {
-  const [pl, cfg] = await Promise.all([sb.from("plants").select("id, name"), sb.from("zomatik_np_config").select("plant_id, activo, desde, deposito, exigir_np, aviso_hasta")])
+  let [pl, cfg] = await Promise.all([sb.from("plants").select("id, name"), sb.from("zomatik_np_config").select(`${COLUMNAS_CONFIG}, editar_activo`)])
+  if (cfg.error && (cfg.error as { code?: string }).code === "42703") cfg = await sb.from("zomatik_np_config").select(COLUMNAS_CONFIG)
   if (cfg.error) {
     if (faltaMigracion(cfg.error)) return {}
     throw cfg.error
@@ -83,7 +93,7 @@ export async function plantasNp(sb: SB = sbServicio()): Promise<Record<string, P
   return Object.fromEntries(
     ((pl.data as { id: string; name: string }[]) || []).map((p) => {
       const c = porPlanta.get(p.id)
-      return [p.id, { id: p.id, name: p.name, zomatik_np_activo: c?.activo === true, zomatik_np_desde: c?.desde ?? null, zomatik_deposito: c?.deposito ?? null, exigir_np: c?.exigir_np ?? "aviso", aviso_hasta: c?.aviso_hasta ?? null }]
+      return [p.id, { id: p.id, name: p.name, zomatik_np_activo: c?.activo === true, zomatik_np_desde: c?.desde ?? null, zomatik_deposito: c?.deposito ?? null, exigir_np: c?.exigir_np ?? "aviso", aviso_hasta: c?.aviso_hasta ?? null, editar_activo: c?.editar_activo === true }]
     }),
   )
 }
@@ -91,6 +101,14 @@ export async function plantasNp(sb: SB = sbServicio()): Promise<Record<string, P
 /** El ÚNICO lugar que arma la llave para escribir en Zomatik: solo con la llave de la planta prendida en la base. */
 export function llaveDe(planta: PlantaNpDB | undefined): LlaveNp | null {
   return planta?.zomatik_np_activo === true ? { activo: true, plantId: planta.id } : null
+}
+
+/**
+ * El ÚNICO lugar que arma la llave del navegador del ajuste (`navegadorAjuste`) para EDITAR la NP cuando el pedido
+ * cambia: la NP y la edición (`editar_activo`) prendidas en la planta. No requiere remitir ni el ajuste al finalizar.
+ */
+export function llaveEdicion(planta: PlantaNpDB | undefined): LlaveAjuste | null {
+  return planta?.zomatik_np_activo === true && planta.editar_activo === true ? { ajustar: true, plantId: planta.id } : null
 }
 
 export function modoDe(planta: PlantaNpDB | undefined): ModoNp {
@@ -433,11 +451,15 @@ export type Eleccion = { tipo: TipoNp | "saldo"; proyecto_codigo?: number | null
 
 export type ResultadoSync =
   | { activo: false; motivo: string }
-  | { activo: true; fuera?: boolean; error?: string; creadas: number; usadas: number; desvinculadas: number; anuladas: number; avisos: string[]; nps: FilaNpDB[] }
+  | {
+      activo: true; fuera?: boolean; error?: string; creadas: number; usadas: number; desvinculadas: number; anuladas: number; avisos: string[]; nps: FilaNpDB[]
+      /** Ediciones de la NP que se crearon o cambiaron (spec 2026-11-18) y la última: "NP: pasa a 9 m³". */
+      editadas?: number; edicion?: { numero: string | null; m3: number } | null
+    }
 
 type PedidoDB = {
   id: string; status: string; quantity_m3: number; plant_id: string; client_id: string; construction_site_id: string | null; formula_id: string
-  scheduled_arrival_time: string; created_at: string; created_by: string | null
+  scheduled_arrival_time: string; created_at: string; created_by: string | null; dispatched_m3?: number | null
 }
 
 export type EleccionDB = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null }
@@ -489,6 +511,181 @@ export async function npsAjustandose(sb: SB, ids: string[]): Promise<Set<string>
     throw error
   }
   return new Set(((data as { np_id: string; paso: string | null }[]) || []).filter((x) => x.paso !== PASO_NP_SIN_USO).map((x) => x.np_id))
+}
+
+// ---------------------------------------------------------------------------
+// Editar la NP cuando el pedido cambia de m³ (docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md)
+// ---------------------------------------------------------------------------
+
+/** Una fila de `zomatik_np_ajustes` con lo que hace falta para la edición (de cualquier origen). */
+export type FilaEdicionDB = {
+  id: string; np_id: string; scheduled_dispatch_id: string | null; plant_id: string; marca: string; origen: string | null; estado: string; tipo: string | null
+  con_factura: boolean | null; paso: string | null; mensaje: string | null; aplicado_at: string | null; m3_np: number | null; m3_objetivo: number | null
+  m3_uso_objetivo: number | null; m3_despachado: number | null; intentos: number; proximo_intento: string | null; en_curso_desde: string | null
+  aviso_juan_at: string | null; created_at: string; updated_at: string
+}
+export const COLUMNAS_EDICION =
+  "id, np_id, scheduled_dispatch_id, plant_id, marca, origen, estado, tipo, con_factura, paso, mensaje, aplicado_at, m3_np, m3_objetivo, m3_uso_objetivo, m3_despachado, intentos, proximo_intento, en_curso_desde, aviso_juan_at, created_at, updated_at"
+
+/** ¿Falta la migración de la edición (sin `origen`) o la del ajuste (sin la tabla)? Entonces no hay edición. */
+export const faltaMigracionEdicion = (e: unknown) =>
+  ["42703", "42P01", "PGRST204"].includes(String((e as { code?: string } | null)?.code ?? "")) ||
+  /\b(zomatik_np_ajustes\.origen|zomatik_np_ajustes\.m3_uso_objetivo|zomatik_np_config\.editar_activo|zomatik_np_edicion_aplicar)\b/i.test(String((e as { message?: string })?.message || ""))
+
+const esEdicion = (a: { origen?: string | null }) => (a.origen ?? ORIGEN_FINALIZAR) === ORIGEN_PEDIDO
+/** La edición abierta (pendiente, generando, revisar o error) de esa NP y ese pedido. */
+export const edicionAbierta = (filas: FilaEdicionDB[], npId: string, pedidoId: string) =>
+  filas.find((a) => a.np_id === npId && a.scheduled_dispatch_id === pedidoId && esEdicion(a) && EDICION_ABIERTA.includes(a.estado as never)) || null
+
+/**
+ * Lo que hace falta para saber si las NP se pueden editar: sus filas de `zomatik_np_ajustes` y los pedidos ACTIVOS que
+ * usan cada una. `ajustes` null = falta la migración (sin edición).
+ */
+export async function contextoEdicion(sb: SB, npIds: string[], o: { soloEdiciones?: boolean } = {}): Promise<{ ajustes: FilaEdicionDB[] | null; activos: Map<string, Set<string>> }> {
+  const activos = new Map<string, Set<string>>()
+  if (!npIds.length) return { ajustes: [], activos }
+  // `soloEdiciones`: sin ninguna planta con la llave, solo hacen falta las ediciones (para mostrarlas): una consulta
+  if (o.soloEdiciones) {
+    const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds).eq("origen", ORIGEN_PEDIDO)
+    if (error) {
+      if (faltaMigracionEdicion(error)) return { ajustes: null, activos }
+      throw error
+    }
+    return { ajustes: (data as unknown as FilaEdicionDB[]) || [], activos }
+  }
+  const [{ data, error }, todosUsos] = await Promise.all([sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds), usosDe(sb, "np_id", npIds)])
+  if (error) {
+    if (faltaMigracionEdicion(error)) return { ajustes: null, activos }
+    throw error
+  }
+  const usos = todosUsos.filter((u) => u.activo && u.scheduled_dispatch_id)
+  const pedIds = [...new Set(usos.map((u) => u.scheduled_dispatch_id!))]
+  const { data: peds, error: ep } = pedIds.length ? await sb.from("scheduled_dispatches").select("id, status").in("id", pedIds) : { data: [], error: null }
+  if (ep) throw ep
+  const vivo = new Set(((peds as { id: string; status: string }[]) || []).filter((p) => p.status !== "completed" && p.status !== "cancelled").map((p) => p.id))
+  for (const u of usos) if (vivo.has(u.scheduled_dispatch_id!)) activos.set(u.np_id, new Set([...(activos.get(u.np_id) || []), u.scheduled_dispatch_id!]))
+  return { ajustes: (data as unknown as FilaEdicionDB[]) || [], activos }
+}
+
+/** ¿Se puede editar esta NP para este pedido? (`npEditable` con lo leído de la base). */
+export function editableDe(planta: PlantaNpDB | undefined, np: FilaNpDB, pedidoId: string, ctx: { ajustes: FilaEdicionDB[] | null; activos: Map<string, Set<string>> }) {
+  return npEditable({
+    llave: !!llaveEdicion(planta) && ctx.ajustes !== null,
+    np: { tipo: np.tipo, marca: np.marca, estado: np.estado, zomatik_codigo: np.zomatik_codigo, sucursal: np.sucursal, paso: np.paso, saldo_decision: np.saldo_decision ?? null },
+    otroPedidoActivo: [...(ctx.activos.get(np.id) || [])].some((id) => id !== pedidoId),
+    ajustes: (ctx.ajustes || []).filter((a) => a.np_id === np.id),
+  })
+}
+
+/** Lo remitido contra una NP por TODOS los pedidos (remito ok o cortado en Grabar, como `remitidoContra`). */
+async function remitidoNp(sb: SB, npId: string): Promise<number> {
+  const { data, error } = await sb.from("zomatik_remitos").select("m3, estado, remito_estado, paso").eq("np_id", npId).neq("estado", "anulado")
+  if (error) throw error
+  const filas = (data as { m3: number; estado: string | null; remito_estado: string | null; paso: string | null }[]) || []
+  return Math.round(filas.filter((r) => r.remito_estado === "ok" || (r.estado !== "error" && PASOS_REMITO_GRABADO.includes(r.paso || ""))).reduce((s, r) => s + (Number(r.m3) || 0), 0) * 1000) / 1000
+}
+
+/** Lo que pide `objetivoEdicion` (ajuste.ts) para una NP y un pedido, con la base de ahora (menos la reserva nueva). */
+export async function datosObjetivo(sb: SB, npId: string, pedidoId: string): Promise<Omit<EntradaEdicion, "m3Uso">> {
+  const [delPedido, deNp, remitido] = await Promise.all([usosDe(sb, "scheduled_dispatch_id", [pedidoId]), usosDe(sb, "np_id", [npId]), remitidoNp(sb, npId)])
+  const pedIds = [...new Set([pedidoId, ...deNp.map((u) => u.scheduled_dispatch_id).filter(Boolean) as string[]])]
+  const [dePedidos, { data: peds, error }] = await Promise.all([
+    usosDe(sb, "scheduled_dispatch_id", pedIds.filter((id) => id !== pedidoId)),
+    sb.from("scheduled_dispatches").select("id, status, dispatched_m3").in("id", pedIds),
+  ])
+  if (error) throw error
+  const porId = new Map(((peds as { id: string; status: string; dispatched_m3: number | null }[]) || []).map((p) => [p.id, p]))
+  const todos = [...new Map([...deNp, ...dePedidos].map((u) => [u.id, u])).values()].filter((u) => u.scheduled_dispatch_id !== pedidoId)
+  const fijo = (u: UsoDB) => (u.despachado_fijo === null || u.despachado_fijo === undefined ? null : Number(u.despachado_fijo))
+  return {
+    npId, pedidoId,
+    despachado: Number(porId.get(pedidoId)?.dispatched_m3) || 0,
+    usosDelPedido: delPedido.map((u): UsoAjuste => ({ id: u.id, np_id: u.np_id, m3: Number(u.m3), activo: u.activo, created_at: u.created_at, despachado_fijo: fijo(u) })),
+    usosSaldo: todos.map((u) => ({ id: u.id, np_id: u.np_id, m3: Number(u.m3), activo: u.activo, created_at: u.created_at, despachado_fijo: fijo(u), pedido: u.scheduled_dispatch_id ? porId.get(u.scheduled_dispatch_id) || null : null })),
+    remitido,
+  }
+}
+
+const distinto = (a: number | null | undefined, b: number | null | undefined) => a === null || a === undefined || b === null || b === undefined || Math.abs(Number(a) - Number(b)) > TOL_AJUSTE
+
+/**
+ * Aplica el `plan.editar` de un pedido (5.1, sin Zomatik): por cada NP, la cantidad que tiene que quedar (3.2). Una
+ * edición abierta y no fija se actualiza (y espera 2 min más) solo si cambió algo; una fija no se toca; si no hay, se
+ * crea "pendiente" (2 min). 23505 = otro proceso la creó: se relee. Devuelve cuántas creó o cambió.
+ */
+async function aplicarEdiciones(
+  sb: SB, ped: PedidoDB, editar: { uso_id: string; np_id: string; m3_uso: number }[], usoPlan: UsoPlan[], ajustes: FilaEdicionDB[], usuario: string,
+  log: (d: Record<string, unknown>, action?: "crear" | "editar") => Promise<void>,
+): Promise<{ editadas: number; ultima: { numero: string | null; m3: number } | null }> {
+  let editadas = 0
+  let ultima: { numero: string | null; m3: number } | null = null
+  for (const e of editar) {
+    const u = usoPlan.find((x) => x.uso_id === e.uso_id)
+    if (!u) continue
+    const np = u.np as FilaNpDB
+    const o = objetivoEdicion({ ...(await datosObjetivo(sb, np.id, ped.id)), m3Uso: e.m3_uso })
+    const cambios = { m3_np: Number(np.m3), m3_objetivo: o.m3_objetivo, m3_uso_objetivo: e.m3_uso, m3_despachado: o.ok ? o.m3_despachado : null }
+    const proximo = new Date(Date.now() + MIN_JUNTAR_EDICION * 60_000).toISOString()
+    let filas = ajustes.filter((a) => a.np_id === np.id)
+    for (let vuelta = 0; vuelta < 2; vuelta++) {
+      const abierta = edicionAbierta(filas, np.id, ped.id)
+      if (abierta) {
+        if (edicionFija(abierta)) break
+        if (!distinto(abierta.m3_objetivo, o.m3_objetivo) && !distinto(abierta.m3_uso_objetivo, e.m3_uso) && !distinto(abierta.m3_np, np.m3)) break
+        // Solo si sigue pendiente (el robot pudo tomarla recién): la espera de 2 min vuelve a empezar
+        const { data, error } = await sb.from("zomatik_np_ajustes").update({ ...cambios, proximo_intento: proximo, mensaje: null, updated_at: new Date().toISOString() } as never).eq("id", abierta.id).eq("estado", "pendiente").select("id")
+        if (error) throw error
+        if (((data as unknown[]) || []).length) {
+          editadas++
+          ultima = { numero: np.numero, m3: o.m3_objetivo }
+          await log({ "Qué pasó": msjEdicionPendiente(np.numero, o.m3_objetivo), Marca: abierta.marca })
+        }
+        break
+      }
+      if (!distinto(o.m3_objetivo, np.m3) && !distinto(e.m3_uso, u.m3)) break
+      const k = filas.filter((a) => a.scheduled_dispatch_id === ped.id && esEdicion(a)).length + 1
+      const marca = marcaEdicion(ped.id, np, k)
+      const { error } = await sb.from("zomatik_np_ajustes").insert({
+        ...cambios, np_id: np.id, scheduled_dispatch_id: ped.id, plant_id: ped.plant_id, marca, origen: ORIGEN_PEDIDO, tipo: "editar", estado: "pendiente", proximo_intento: proximo, created_by: usuario,
+      } as never)
+      if (error && (error as { code?: string }).code === "23505") {
+        // Otro proceso la creó recién (una sola abierta por NP): se relee y se actualiza esa
+        const { data, error: er } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).eq("np_id", np.id)
+        if (er) throw er
+        filas = (data as unknown as FilaEdicionDB[]) || []
+        continue
+      }
+      if (error) throw error
+      editadas++
+      ultima = { numero: np.numero, m3: o.m3_objetivo }
+      await log({ "Qué pasó": msjEdicionPendiente(np.numero, o.m3_objetivo), Marca: marca }, "crear")
+      break
+    }
+  }
+  return { editadas, ultima }
+}
+
+/**
+ * Las ediciones abiertas del pedido que el plan ya no pide (volvió a los m³ de antes, se canceló, se desvinculó la NP
+ * por fecha, fórmula, cliente o planta, o se apagó la llave) se anulan, salvo las fijas. Sin la migración, nada.
+ */
+async function anularEdicionesSobrantes(sb: SB, ped: PedidoDB, pedidas: Set<string>, log: (d: Record<string, unknown>) => Promise<void>): Promise<number> {
+  const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).eq("scheduled_dispatch_id", ped.id).eq("origen", ORIGEN_PEDIDO).eq("estado", "pendiente")
+  if (error) {
+    if (faltaMigracionEdicion(error)) return 0
+    throw error
+  }
+  let n = 0
+  for (const a of (data as unknown as FilaEdicionDB[]) || []) {
+    if (edicionFija(a) || pedidas.has(a.np_id)) continue
+    const mensaje = ped.status === "cancelled" ? MSJ_EDICION_CANCELADO : MSJ_EDICION_YA_NO_HACE_FALTA
+    const { data: an, error: ea } = await sb.from("zomatik_np_ajustes").update({ estado: "anulado", mensaje, proximo_intento: null, updated_at: new Date().toISOString() } as never).eq("id", a.id).eq("estado", "pendiente").select("id")
+    if (ea) throw ea
+    if (!((an as unknown[]) || []).length) continue
+    n++
+    await log({ "Qué pasó": "Cambio de la NP anulado", Mensaje: mensaje, Marca: a.marca })
+  }
+  return n
 }
 
 /**
@@ -599,11 +796,24 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   const npsUso = await npsPorId(sb, usos.map((u) => u.np_id))
   const saldoElegida = el.tipo === "saldo" && el.np_id && !usos.some((u) => u.np_id === el.np_id) ? await validarSaldo(sb, ped, el.np_id) : null
   const saldos = await saldosDe(sb, npsUso)
+  // La edición de la NP (spec 2026-11-18): con la llave de la planta y la migración, cada NP dice si se puede editar y
+  // si ya tiene una edición abierta de este pedido
+  const ctxEd = llaveEdicion(planta) ? await contextoEdicion(sb, npsUso.map((x) => x.id)) : { ajustes: null, activos: new Map<string, Set<string>>() }
+  const conEdicion = ctxEd.ajustes !== null
   const usoPlan: UsoPlan[] = usos
     .map((u) => ({ u, np: npsUso.find((x) => x.id === u.np_id) }))
     .filter((x) => !!x.np)
     .sort((a, b) => a.u.created_at.localeCompare(b.u.created_at))
-    .map(({ u, np }) => ({ uso_id: u.id, m3: Number(u.m3), np: np!, libre: Math.max(0, saldos.get(np!.id)?.libre ?? 0) }))
+    .map(({ u, np }) => {
+      const base = { uso_id: u.id, m3: Number(u.m3), np: np!, libre: Math.max(0, saldos.get(np!.id)?.libre ?? 0) }
+      if (!conEdicion) return base
+      const ab = edicionAbierta(ctxEd.ajustes!, np!.id, ped.id)
+      return {
+        ...base,
+        editable: editableDe(planta, np!, ped.id, ctxEd).editable,
+        edicion: ab ? { id: ab.id, estado: ab.estado, m3_uso_objetivo: ab.m3_uso_objetivo === null ? null : Number(ab.m3_uso_objetivo), fija: edicionFija(ab) } : null,
+      }
+    })
   const fecha = diaAR(ped.scheduled_arrival_time)
   const plan = planificarNp(
     {
@@ -701,6 +911,20 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
     creadas++
     await log({ "Qué pasó": c.es_adicional ? `NP adicional por ${c.m3} m³ (el pedido se agrandó)` : `NP ${c.tipo === "proyecto" ? `contra el proyecto ${c.proyecto_codigo}` : "nueva"} por ${c.m3} m³: pendiente de generar`, Marca: fila.marca }, "crear")
   }
+  // Editar la NP en Zomatik en vez de una NP adicional o de dejar saldo (spec 2026-11-18): queda "pendiente" 2 min
+  let editadas = 0
+  let edicion: { numero: string | null; m3: number } | null = null
+  if (conEdicion && !incompleto && plan.editar.length) ({ editadas, ultima: edicion } = await aplicarEdiciones(sb, ped, plan.editar, usoPlan, ctxEd.ajustes!, usuario, log))
+  // Las ediciones abiertas que el plan ya no pide se anulan (salvo las fijas). Un pedido completo no: lo resuelve el robot
+  // (con el ajuste al finalizar prendido se anula; si no, termina igual)
+  if (!incompleto && ped.status !== "completed") {
+    try {
+      await anularEdicionesSobrantes(sb, ped, new Set(conEdicion ? plan.editar.map((e) => e.np_id) : []), log)
+    } catch (e) {
+      // No rompe el guardado del pedido: la próxima sincronización lo vuelve a intentar
+      console.error("[zomatik-np] anular ediciones", ped.id, (e as Error)?.message)
+    }
+  }
   // Los avisos no se repiten: si el último aviso de este pedido dice lo mismo, no se vuelve a grabar
   if (plan.avisos.length) {
     const texto = plan.avisos.join(" · ")
@@ -711,7 +935,7 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   await marcarPendientes(sb, [...new Set([...(await usosDe(sb, "scheduled_dispatch_id", [ped.id])).map((u) => u.np_id), ...propias.map((x) => x.id)])], ahora)
   usos = (await usosDe(sb, "scheduled_dispatch_id", [ped.id])).filter((u) => u.activo)
   const nps = await npsPorId(sb, usos.map((u) => u.np_id))
-  return { activo: true, creadas, usadas, desvinculadas: plan.desvincular.length, anuladas, avisos: [...plan.avisos, ...avisosPrecio], nps }
+  return { activo: true, creadas, usadas, desvinculadas: plan.desvincular.length, anuladas, avisos: [...plan.avisos, ...avisosPrecio], nps, editadas, edicion }
 }
 
 /**
@@ -1257,8 +1481,10 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
   } else {
     guardo = await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
     if (guardo) {
-      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
-      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
+      // Los totales (montos) solo en Actividad y en el mail, nunca en zomatik_np.mensaje (lo ve la pantalla)
+      const totales = totalesDeAjuste(r) || {}
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...totales, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
+      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", ...Object.entries(totales).map(([k, v]) => `${k}: ${v}`), `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
     }
   }
   if (!guardo) await noSePudoGuardar(sb, np, ctx, r.estado)
@@ -1688,11 +1914,16 @@ async function registrarNoche(sb: SB, hoy: string, todoIlegible: boolean, avisar
 
 export type EstadoPedidoNp = {
   activo: boolean
+  /** La llave de la edición de la NP de la planta del pedido (spec 2026-11-18). */
+  editar: boolean
   modo: ModoNp
   /** El pedido entra en la NP automática (cargado después de prender la llave). */
   entra: boolean
-  /** Las NP que usa el pedido (con los m³ que reserva de cada una, lo libre de la NP y si es traída de Zomatik). */
-  nps: (FilaNpDB & { m3_uso: number; libre: number; traida: boolean })[]
+  /**
+   * Las NP que usa el pedido (con los m³ que reserva de cada una, lo libre de la NP y si es traída de Zomatik). Con la
+   * llave de la edición: si se puede editar cuando el pedido cambia y su última edición (spec 2026-11-18).
+   */
+  nps: (FilaNpDB & { m3_uso: number; libre: number; traida: boolean; editable?: boolean; edicion?: EdicionNpEstado | null })[]
   /** El pedido está cancelado o completo: sus NP con saldo van a "NP con saldo". */
   cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
@@ -1701,10 +1932,15 @@ export type EstadoPedidoNp = {
   eleccion: EleccionDB | null
 }
 
-export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<string, EstadoPedidoNp>; plantas: Record<string, { activo: boolean; modo: ModoNp; aviso_hasta: string | null }> }> {
-  const sb = sbServicio()
+/** La última edición de una NP de un pedido, para el chip y el menú (sin montos). */
+export type EdicionNpEstado = {
+  id: string; estado: string; tipo: string | null; paso: string | null; mensaje: string | null; con_factura: boolean | null
+  m3_np: number | null; m3_objetivo: number | null; m3_uso_objetivo: number | null
+}
+
+export async function estadoPedidos(ids: string[], sb: SB = sbServicio()): Promise<{ porPedido: Record<string, EstadoPedidoNp>; plantas: Record<string, { activo: boolean; modo: ModoNp; aviso_hasta: string | null; editar: boolean }> }> {
   const plantas = await plantasNp(sb)
-  const resumen = Object.fromEntries(Object.values(plantas).map((p) => [p.id, { activo: !!p.zomatik_np_activo, modo: modoDe(p), aviso_hasta: p.aviso_hasta ?? null }]))
+  const resumen = Object.fromEntries(Object.values(plantas).map((p) => [p.id, { activo: !!p.zomatik_np_activo, modo: modoDe(p), aviso_hasta: p.aviso_hasta ?? null, editar: !!llaveEdicion(p) }]))
   if (!ids.length || !Object.values(plantas).some((p) => p.zomatik_np_activo)) {
     return { porPedido: {}, plantas: resumen }
   }
@@ -1716,7 +1952,22 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
   ])
   const activos = usos.filter((u) => u.activo)
   const nps = await npsPorId(sb, [...new Set(activos.map((u) => u.np_id))])
-  const saldos = await saldosDe(sb, nps.filter((x) => x.estado === "ok"))
+  // La edición de la NP (spec 2026-11-18). La última edición se muestra aunque la llave esté apagada (una trabada la
+  // resuelve un gerencial desde el menú); `editable`, solo con la llave (sin ninguna planta con la llave, solo se leen
+  // las ediciones). Sin la migración o si falla, la pantalla sigue sin esos datos (nunca un 500)
+  const algunaLlave = Object.values(plantas).some((p) => !!llaveEdicion(p))
+  const [saldos, ctxEd] = await Promise.all([
+    saldosDe(sb, nps.filter((x) => x.estado === "ok")),
+    contextoEdicion(sb, nps.map((x) => x.id), { soloEdiciones: !algunaLlave }).catch((e) => {
+      console.error("[zomatik-np] estado de la edición", (e as Error)?.message)
+      return { ajustes: null, activos: new Map<string, Set<string>>() }
+    }),
+  ])
+  const num = (n: number | null) => (n === null || n === undefined ? null : Number(n))
+  const ultimaEdicion = (npId: string, pedidoId: string): EdicionNpEstado | null => {
+    const a = (ctxEd.ajustes || []).filter((x) => x.np_id === npId && x.scheduled_dispatch_id === pedidoId && esEdicion(x) && x.estado !== "anulado").sort((x, y) => y.created_at.localeCompare(x.created_at))[0]
+    return a ? { id: a.id, estado: a.estado, tipo: a.tipo, paso: a.paso, mensaje: a.mensaje, con_factura: a.con_factura, m3_np: num(a.m3_np), m3_objetivo: num(a.m3_objetivo), m3_uso_objetivo: num(a.m3_uso_objetivo) } : null
+  }
   const porPedido: Record<string, EstadoPedidoNp> = {}
   for (const p of (peds as { id: string; plant_id: string; created_at: string; status: string }[]) || []) {
     const planta = plantas[p.plant_id]
@@ -1725,13 +1976,17 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
       .filter((u) => u.scheduled_dispatch_id === p.id)
       .map((u) => {
         const x = nps.find((n) => n.id === u.np_id)
-        return x ? { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca) } : null
+        if (!x) return null
+        const base = { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca) }
+        if (ctxEd.ajustes === null) return base
+        return { ...base, editable: !!llaveEdicion(planta) && editableDe(planta, x, p.id, ctxEd).editable, edicion: ultimaEdicion(x.id, p.id) }
       })
-      .filter(Boolean) as (FilaNpDB & { m3_uso: number; libre: number; traida: boolean })[]
+      .filter(Boolean) as EstadoPedidoNp["nps"]
     const entra = pedidoConNp(planta, p.created_at) || suyas.length > 0
     const e = ((exc as { scheduled_dispatch_id: string; autorizado_por: string; motivo_tipo: string; motivo: string | null }[]) || []).find((x) => x.scheduled_dispatch_id === p.id) || null
     porPedido[p.id] = {
       activo: !!planta?.zomatik_np_activo,
+      editar: !!llaveEdicion(planta),
       modo,
       entra,
       nps: suyas,

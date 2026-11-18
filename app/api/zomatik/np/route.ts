@@ -8,6 +8,10 @@
  *   POST /api/zomatik/np {accion: "generar", pedido_id}            "Generar NP ahora" (programacion.cargar o editar): espera al robot
  *   POST /api/zomatik/np {accion: "revisada", np_id, decision}      un gerencial resuelve una NP "revisar" (otra | buena)
  *   POST /api/zomatik/np {accion: "saldo", np_id, decision}         NP con saldo: devolver | cerrada ("Ya la devolví") (programacion.cargar)
+ *   POST /api/zomatik/np {accion: "edicion", pedido_id, edicion_id, decision, motivo?}  un gerencial resuelve un cambio de la NP
+ *        trabado (revisar o error): reintentar | dejar ("Dejar la NP como está", con motivo). Spec 2026-11-18, 7.3.
+ *   "generar" trabaja también los cambios de la NP del pedido (sin esperar los 2 min, también los de error).
+ *   "sincronizar" devuelve `editadas`: los cambios de la NP que quedaron pendientes (salen en la pasada, a propósito).
  *   "sincronizar" acepta además `mover_fecha` (true/false): el pedido cambió de fecha y se decidió qué hacer con la NP.
  *   "sincronizar" acepta `precio_m3` (número o null = el de la lista; ausente = no se toca): solo con precios_np.editar y
  *   pudiendo ajustar el pedido (si no, se ignora). 0, negativo o no numérico: 400. El GET nunca trae precios (ver
@@ -18,6 +22,7 @@ import { esErrorDeConfiguracion, exigirSesion, respuestaError, respuestaModoLoca
 import { puedeCon, puedeVincularDesdePedido, tipoDe } from "@/lib/permisos"
 import { precioDelCuerpo } from "@/lib/zomatik/np"
 import { avisarFallaInesperada, esDeZomatik, decidirSaldo, estadoPedidos, faltaMigracion, procesarNp, revisarNp, sincronizarPedido, type Eleccion } from "@/lib/zomatik/np-servidor"
+import { procesarEdiciones, resolverEdicion } from "@/lib/zomatik/edicion-servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -116,6 +121,22 @@ export async function POST(req: Request) {
       return NextResponse.json(out)
     }
 
+    if (accion === "edicion") {
+      if (tipoDe(u) !== "gerencial") return NextResponse.json({ error: "Lo resuelve un gerencial." }, { status: 403 })
+      const pid = uuid(body?.pedido_id)
+      const id = uuid(body?.edicion_id)
+      const decision = body?.decision === "reintentar" ? "reintentar" : body?.decision === "dejar" ? "dejar" : null
+      if (!pid || !id || !decision) return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
+      const motivo = String(body?.motivo || "").trim().slice(0, 300)
+      if (decision === "dejar" && motivo.replace(/\s/g, "").length < 5) return NextResponse.json({ error: "Contá por qué se deja la NP como está." }, { status: 400 })
+      const out = await resolverEdicion({ pedidoId: pid, edicionId: id, decision, usuario: u.name, motivo: motivo || null })
+      if (!out.ok) return NextResponse.json({ error: out.error }, { status: 409 })
+      if (decision === "reintentar") after(() => procesarEdiciones({ usuario: u.name, pedidoId: pid, manual: true, inicio }).catch((e) => console.error("[zomatik-edicion] procesar", e?.message)))
+      // "Dejar": si el pedido necesita más, la NP adicional sale ahora
+      else after(() => procesarNp({ usuario: u.name, pedidoId: pid, inicio }).catch((e) => console.error("[zomatik-np] procesar", e?.message)))
+      return NextResponse.json({ ok: true })
+    }
+
     const pedidoId = uuid(body?.pedido_id)
     if (!pedidoId) return NextResponse.json({ error: "Falta el pedido" }, { status: 400 })
     const puedeProg = puedeCon(u, "programacion", "cargar")
@@ -146,7 +167,14 @@ export async function POST(req: Request) {
     if (!sync.activo || sync.error) return NextResponse.json(sync, { status: sync.activo && sync.error ? 400 : 200 })
     if (accion === "generar") {
       const proc = await procesarNp({ usuario: u.name, pedidoId, inicio })
-      return NextResponse.json({ ...sync, proceso: proc })
+      // Y el cambio de la NP del pedido, sin esperar los 2 min (también uno en error). Un error acá no tapa el de la NP
+      let ediciones: Awaited<ReturnType<typeof procesarEdiciones>> | null = null
+      try {
+        ediciones = await procesarEdiciones({ usuario: u.name, pedidoId, manual: true, inicio })
+      } catch (err) {
+        console.error("[zomatik-edicion] generar", pedidoId, (err as Error)?.message)
+      }
+      return NextResponse.json({ ...sync, proceso: proc, ediciones })
     }
     // Primero se responde (la base ya quedó sincronizada); el robot trabaja después, dentro del tiempo que queda
     if (sync.creadas) after(() => procesarNp({ usuario: u.name, pedidoId, inicio }).catch((err) => caidaDespues(err, { pedidoId, usuario: u.name })))

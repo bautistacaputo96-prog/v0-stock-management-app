@@ -13,7 +13,7 @@
  * Cómo se ve una NP facturada es REAL (06/11); la respuesta del Grabar al editar sigue SUPUESTO hasta la captura 4
  * (lib/__fixtures__/zomatik-ajuste/README.md).
  */
-import { despachadoPorUso, type Renglon, type UsoSaldo } from "@/lib/zomatik/np"
+import { despachadoPorUso, esNpTraida, SUCURSAL_REBUCRET, type Renglon, type UsoSaldo } from "@/lib/zomatik/np"
 
 const r3 = (n: number) => Math.round(Number(n) * 1000) / 1000
 export const TOL_AJUSTE = 0.001
@@ -341,3 +341,121 @@ export function textoFinalizar(nps: { numero: string | null; m3: number; m3_uso:
   }
   return "Al remitir, la NP se ajusta a lo despachado."
 }
+
+// ---------------------------------------------------------------------------
+// Editar la NP cuando el pedido cambia de m³ antes de terminar (docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md)
+// Es el mismo robot del ajuste con otro origen: el ajuste deja la NP en lo despachado AL TERMINAR; la edición la deja en
+// lo que el pedido necesita AHORA. Las dos van en `zomatik_np_ajustes` (columna `origen`).
+// ---------------------------------------------------------------------------
+
+/** Origen de una fila de `zomatik_np_ajustes`: el ajuste al finalizar o la edición por un cambio del pedido. */
+export const ORIGEN_FINALIZAR = "finalizar"
+export const ORIGEN_PEDIDO = "pedido"
+/** Una edición que todavía no terminó (una sola por NP: índice único parcial de la migración 202611181400). */
+export const EDICION_ABIERTA: EstadoAjuste[] = ["pendiente", "generando", "revisar", "error"]
+/** Pasos de una edición que ya pudo tocar Zomatik (o pasarlo a la base): su cantidad no se cambia más. */
+export const PASOS_EDICION_FIJA = [...PASOS_GRABAR_AJUSTE, "aplicar"]
+/** Minutos de espera desde el último cambio del pedido, para juntar 8 → 9 → 10 en una sola edición (decisión 12.5). */
+export const MIN_JUNTAR_EDICION = 2
+
+/**
+ * ¿La edición ya no se puede cambiar? El robot la está trabajando (generando), se cortó en el Grabar o al pasarla a la
+ * base, o espera a una persona (revisar / error). Una "fija" no se actualiza ni se anula al cambiar el pedido.
+ */
+export function edicionFija(e: { estado: string; paso?: string | null; aplicado_at?: string | null }): boolean {
+  if (["generando", "revisar", "error"].includes(e.estado)) return true
+  return e.estado === "pendiente" && (PASOS_EDICION_FIJA.includes(e.paso || "") || !!e.aplicado_at)
+}
+
+/**
+ * "Sistema Rebucret - pedido 1a2b3c4d - edicion NP 0001-00001194 - 1" (ASCII; clave interna, no se graba en Zomatik).
+ * `k` = cuántas ediciones de esa NP y ese pedido hubo + 1 (la marca es única en la tabla).
+ */
+export function marcaEdicion(pedidoId: string, np: { numero?: string | null; n?: number | null }, k: number): string {
+  const num = String(np.numero || "").replace(/[^\x20-\x7e]/g, "").replace(/\s+/g, " ").trim()
+  return `Sistema Rebucret - pedido ${corto(pedidoId)} - edicion ${num || `NP ${np.n ?? 0}`} - ${Math.max(1, Math.floor(Number(k) || 1))}`
+}
+
+/** Lo que hace falta de la NP para saber si se puede editar (lo que se lee de `zomatik_np`). */
+export type NpParaEditar = {
+  tipo: string; marca: string; estado: string; zomatik_codigo: number | null; sucursal: string | null; paso: string | null; saldo_decision?: string | null
+}
+/** Las filas de `zomatik_np_ajustes` de esa NP (de cualquier origen y pedido). */
+export type FilaAjusteNp = { origen?: string | null; estado: string; tipo: string | null; con_factura: boolean | null }
+
+export type Editable = { editable: boolean; espera: boolean; motivo: string | null }
+
+/**
+ * ¿Se puede editar la cantidad de esta NP en Zomatik cuando el pedido cambia? (3.1). Todo se tiene que cumplir:
+ * la llave `editar_activo` de la planta; una NP nueva con la marca del sistema (ni traída ni de proyecto); en Zomatik
+ * (`ok`, con código, sucursal 18, sin `autorizar_revisar`); sin decisión de "NP con saldo"; sin otro pedido activo que
+ * la use; y sin factura conocida ni una edición que ya terminó como "no se pudo". Si la NP se está generando, la
+ * edición ESPERA (cuenta como editable, con `espera`).
+ */
+export function npEditable(o: { llave: boolean; np: NpParaEditar; otroPedidoActivo: boolean; ajustes: FilaAjusteNp[] }): Editable {
+  const no = (motivo: string): Editable => ({ editable: false, espera: false, motivo })
+  const { np } = o
+  if (!o.llave) return no("La edición de la NP está apagada en la planta.")
+  if (np.tipo !== "nueva") return no("Es de un proyecto.")
+  if (esNpTraida(np.marca)) return no("La NP la trajeron de Zomatik.")
+  if (SALDO_DECIDIDO.includes(String(np.saldo_decision || ""))) return no("Ya se decidió qué hacer con su saldo.")
+  if (o.otroPedidoActivo) return no("La usa otro pedido activo.")
+  if (o.ajustes.some((a) => a.con_factura === true)) return no("La NP tiene factura.")
+  if (o.ajustes.some((a) => (a.origen ?? ORIGEN_FINALIZAR) === ORIGEN_PEDIDO && ["nada", "a_mano"].includes(a.estado) && ["adicional", "devol"].includes(a.tipo || "")))
+    return no("Zomatik no dejó cambiarla antes.")
+  if (np.estado === "generando") return { editable: true, espera: true, motivo: "Esperando que salga la NP." }
+  if (np.estado !== "ok" || !np.zomatik_codigo || np.sucursal !== SUCURSAL_REBUCRET) return no("La NP no está en Zomatik.")
+  if (np.paso === "autorizar_revisar") return no("La NP está para revisar.")
+  return { editable: true, espera: false, motivo: null }
+}
+
+export type EntradaEdicion = {
+  npId: string
+  pedidoId: string
+  /** Lo despachado del pedido (`scheduled_dispatches.dispatched_m3`). */
+  despachado: number
+  /** La reserva nueva del pedido en esta NP (la decide `planificarNp`). */
+  m3Uso: number
+  /** Todos los usos del pedido (activos y no), para repartir lo despachado como el saldo. */
+  usosDelPedido: UsoAjuste[]
+  /** Los usos de esta NP y de los pedidos que la usan (como `saldoNp`); los de este pedido se ignoran. */
+  usosSaldo: UsoSaldo[]
+  /** Σ zomatik_remitos.m3 de la NP, de todos los pedidos (remito ok o cortado en Grabar, como `remitidoContra`). */
+  remitido: number
+}
+
+export type ObjetivoEdicion = { ok: true; m3_objetivo: number; m3_despachado: number } | { ok: false; m3_objetivo: number; mensaje: string }
+
+/**
+ * Cuántos m³ tiene que quedar la NP después de editarla (3.2): lo que comprometen los otros pedidos + máx(reserva
+ * nueva, lo despachado de este pedido contra ella) + la foto de un uso suyo que se desvinculó de esta NP. Es la cuenta
+ * del ajuste al finalizar (decisión 16) con la reserva en lugar de lo despachado: la NP queda sin libre.
+ * Pisos (si no se cumplen, `ok: false` y no se toca): más de 0 y no menos de lo remitido contra la NP.
+ */
+export function objetivoEdicion(e: EntradaEdicion): ObjetivoEdicion {
+  const usos = e.usosDelPedido.map((u) => (u.np_id === e.npId && u.activo !== false ? { ...u, m3: r3(e.m3Uso) } : u))
+  const reparto = despachadoPorUso(usos, Number(e.despachado) || 0)
+  const otros = comprometidoOtros(e.npId, e.usosSaldo.filter((v) => v.pedido?.id !== e.pedidoId))
+  const activos = usos.filter((u) => u.np_id === e.npId && u.activo !== false)
+  const desp = r3(activos.reduce((s, u) => s + (reparto.get(u.id) || 0), 0))
+  const fotos = r3(usos.filter((u) => u.np_id === e.npId && u.activo === false).reduce((s, u) => s + (Number(u.despachado_fijo) || 0), 0))
+  const obj = r3(otros + Math.max(r3(e.m3Uso), desp) + fotos)
+  if (obj <= TOL_AJUSTE) return { ok: false, m3_objetivo: obj, mensaje: "La NP quedaría en 0 m³: no se toca (la decide una persona)." }
+  if (obj + TOL_AJUSTE < Number(e.remitido || 0)) return { ok: false, m3_objetivo: obj, mensaje: msjDebajoDeRemitido(obj, Number(e.remitido)) }
+  return { ok: true, m3_objetivo: obj, m3_despachado: desp }
+}
+
+export const msjDebajoDeRemitido = (obj: number, remitido: number) =>
+  `La NP quedaría en ${m3Texto(obj)} m³ y ya se remitieron ${m3Texto(remitido)} m³ contra ella. No se tocó: revisala.`
+
+// Textos de la edición (secciones 5.3 y 7)
+export const MSJ_EDICION_ESPERA_NP = "Esperando que salga la NP."
+export const MSJ_EDICION_ESPERA_OTRO = "Esperando otro cambio de la NP."
+export const MSJ_EDICION_LO_DEJA_EL_AJUSTE = "Lo deja justo el ajuste al finalizar."
+export const MSJ_EDICION_YA_NO_HACE_FALTA = "El pedido ya no necesita este cambio."
+export const MSJ_EDICION_CANCELADO = "El pedido se canceló."
+export const MSJ_AJUSTE_ESPERA_EDICION = "Esperando el cambio de la NP."
+/** "NP 0001-00001194 8 → 9 m³" (Actividad y el título del chip). */
+export const textoEdicion = (numero: string | null | undefined, antes: number | null | undefined, despues: number | null | undefined) => `${numero || "NP"} ${m3Texto(antes)} → ${m3Texto(despues)} m³`
+/** "La NP 0001-00001194 pasa a 9 m³ en Zomatik (pendiente)". */
+export const msjEdicionPendiente = (numero: string | null | undefined, m3: number) => `La ${numero || "NP"} pasa a ${m3Texto(m3)} m³ en Zomatik (pendiente)`

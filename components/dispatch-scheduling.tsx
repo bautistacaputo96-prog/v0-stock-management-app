@@ -46,7 +46,7 @@ import { NpChip } from "@/components/zomatik/np-chip"
 import { NpSaldos } from "@/components/zomatik/np-saldos"
 import { NpPregunta, type ProyectoAlta } from "@/components/zomatik/np-pregunta"
 import { NpCancelarPregunta, npDespuesDeCancelar, npsEnZomatik, type DecisionNpCancelar } from "@/components/zomatik/np-cancelar"
-import { avisarNp, estadoNpDePedido, generarNpAhora, useNp, usePasadaNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
+import { avisarNp, edicionesTrabadas, estadoNpDePedido, generarNpAhora, resolverEdicionNp, tieneEdicionPorHacer, useNp, usePasadaNp, type EdicionNp, type EleccionNp, type EstadoPedidoNp, type NpFila, type NpSaldo } from "@/lib/zomatik/np-cliente"
 import { VincularCartel } from "@/components/zomatik/vincular-cartel"
 import { PRECIO_NP_VACIO, esFaltaDeVinculo, precioParaEnviar, type PrecioNpForm } from "@/lib/zomatik/np"
 import { puedeVincularDesdePedido } from "@/lib/permisos"
@@ -266,6 +266,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const puedeCrear = puede("programacion", "cargar")
   const [motivo, setMotivo] = useState("")
   const [cancelar, setCancelar] = useState<ScheduledDispatch | null>(null)
+  // Cambio de la NP trabado (spec 2026-11-18, 7.3): "Dejar la NP como está" pide motivo (solo gerenciales)
+  const [dejarNp, setDejarNp] = useState<{ pedido: ScheduledDispatch; np: NpFila; edicion: EdicionNp } | null>(null)
   // Al cancelar: las NP del pedido que ya están en Zomatik (null = leyendo) y qué hacer con ellas (28/10)
   const [npCancelarNps, setNpCancelarNps] = useState<NpFila[] | null>([])
   const [npCancelarDecision, setNpCancelarDecision] = useState<DecisionNpCancelar | null>(null)
@@ -884,9 +886,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         // Al editar, la elección solo se manda si ya se había leído la guardada (si no, el servidor deja la que tenía)
         const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor, remitoTipo)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
-        else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
-        else if (rnp.usadas) toast({ title: "El pedido usa la NP elegida", description: "No se generó otra NP." })
-        else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        else {
+          // Se edita la misma NP en Zomatik (spec 2026-11-18): sale en la pasada, después de 2 min sin cambios. Si además
+          // sale una NP nueva (lo de un proyecto con tope), se ven los dos avisos
+          const editada = !!(rnp.editadas && rnp.edicion)
+          if (editada) toast({ title: `NP: pasa a ${String(rnp.edicion!.m3).replace(".", ",")} m³`, description: "En unos minutos queda en Zomatik." })
+          if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
+          else if (!editada && rnp.usadas) toast({ title: "El pedido usa la NP elegida", description: "No se generó otra NP." })
+          else if (!editada && rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        }
         // Se vinculó algo en este diálogo y el pedido tenía la NP en error: sin cambios, avisarNp no corre el robot
         if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && !npFaltan.cliente && !npFaltan.formula && npDialogo?.nps.some((x) => x.estado === "error")) {
           const r = await generarNpAhora(pedidoId)
@@ -982,7 +990,18 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     np.recargar()
   }
 
+  /** "Reintentar cambio de NP" (gerencial): vuelve a pendiente; si se cortó al grabar, el robot relee la NP primero. */
+  async function reintentarEdicion(d: ScheduledDispatch, edicionId: string) {
+    const r = await resolverEdicionNp(d.id, edicionId, "reintentar")
+    toast({ title: r.ok ? "Cambio de la NP: se reintenta" : "No se pudo", description: r.texto, variant: r.ok ? undefined : "destructive" })
+    np.recargarEn()
+  }
+
   function menuPedido(d: ScheduledDispatch) {
+    // También en un pedido completo: una edición trabada ahí la destraba un gerencial (no frena el ajuste al finalizar)
+    const trabadas = esGerencial && d.status !== "cancelled" ? edicionesTrabadas(np.porPedido[d.id]) : []
+    // Con la llave de la edición apagada solo se puede dejar la NP como está
+    const reintentable = np.porPedido[d.id]?.editar !== false
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -1006,12 +1025,26 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             </DropdownMenuItem>
           )}
           {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error). Con cargar o editar, como la ruta */}
-          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && !np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") && (
+          {/* También con un cambio de la NP esperando (pendiente o en error): lo hace ya, sin esperar los 2 min (spec 2026-11-18) */}
+          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && (!np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") || tieneEdicionPorHacer(np.porPedido[d.id])) && (
             <DropdownMenuItem onClick={() => generarAhora(d)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Generar NP ahora
             </DropdownMenuItem>
           )}
+          {/* Cambio de la NP trabado (revisar o error): lo resuelve un gerencial (spec 2026-11-18, 7.3) */}
+          {reintentable && trabadas.map(({ np: x, edicion }) => (
+            <DropdownMenuItem key={`r-${edicion.id}`} onClick={() => reintentarEdicion(d, edicion.id)}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Reintentar cambio de NP{trabadas.length > 1 && x.numero ? ` (${x.numero})` : ""}
+            </DropdownMenuItem>
+          ))}
+          {trabadas.map(({ np: x, edicion }) => (
+            <DropdownMenuItem key={`d-${edicion.id}`} onClick={() => setDejarNp({ pedido: d, np: x, edicion })}>
+              <Check className="h-4 w-4 mr-2" />
+              Dejar la NP como está{trabadas.length > 1 && x.numero ? ` (${x.numero})` : ""}
+            </DropdownMenuItem>
+          ))}
           {/* Zomatik (04/11): la NP quedó en error porque falta vincular el cliente o la fórmula */}
           {puedeVincular && np.porPedido[d.id]?.activo && !["cancelled", "completed"].includes(d.status) && np.porPedido[d.id]?.nps.some((x) => x.estado === "error" && esFaltaDeVinculo(x.mensaje)) && (
             <DropdownMenuItem onClick={() => setVincular({ modo: "menu", pedido: d })}>
@@ -1796,6 +1829,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 onRemito={(r) => setForm((f) => ({ ...f, remito_tipo: r }))}
                 pedidoId={editingDispatch?.id || null}
                 plantId={form.plant_id}
+                despachado={editingDispatch?.dispatched_m3 ?? null}
               />
             </SeccionPedido>
 
@@ -1979,6 +2013,23 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         }
         textoBoton="Eliminar"
         onConfirmar={handleDelete}
+      />
+      <ConfirmarConMotivo
+        open={!!dejarNp}
+        onOpenChange={(open) => !open && setDejarNp(null)}
+        titulo="Dejar la NP como está"
+        descripcion={dejarNp && `¿Dejás la NP en ${String(dejarNp.edicion.m3_np ?? dejarNp.np.m3).replace(".", ",")} m³? Si el pedido necesita más, va una NP adicional.`}
+        textoBoton="Dejar como está"
+        destructivo={false}
+        ejemplo="Ej: la revisé en Zomatik y está bien"
+        onConfirmar={async (m) => {
+          if (dejarNp) {
+            const r = await resolverEdicionNp(dejarNp.pedido.id, dejarNp.edicion.id, "dejar", m)
+            toast({ title: r.ok ? "La NP queda como está" : "No se pudo", description: r.texto, variant: r.ok ? undefined : "destructive" })
+            np.recargarEn()
+          }
+          setDejarNp(null)
+        }}
       />
       <ConfirmarConMotivo
         open={!!cancelar}

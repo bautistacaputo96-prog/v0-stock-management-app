@@ -802,8 +802,17 @@ export type FilaNp = {
   fecha?: string | null
 }
 
-/** Un uso activo del pedido, con su NP y lo libre de la NP (ya descontado lo que reserva este uso). */
-export type UsoPlan = { uso_id: string; m3: number; np: FilaNp; libre: number }
+/**
+ * La edición de la NP por un cambio del pedido que ya está abierta para esta NP y este pedido (zomatik_np_ajustes con
+ * origen 'pedido'). `fija` = el robot la está trabajando, se cortó en el Grabar o espera a una persona: no se cambia.
+ */
+export type EdicionPlan = { id: string; estado: string; m3_uso_objetivo: number | null; fija: boolean }
+
+/**
+ * Un uso activo del pedido, con su NP y lo libre de la NP (ya descontado lo que reserva este uso). `editable`: la NP se
+ * puede editar en Zomatik cuando el pedido cambia (lo decide el servidor con `npEditable`, ajuste.ts); sin el dato, no.
+ */
+export type UsoPlan = { uso_id: string; m3: number; np: FilaNp; libre: number; editable?: boolean; edicion?: EdicionPlan | null }
 
 export type NuevaNp = { n: number; tipo: TipoNp; m3: number; proyecto_codigo: number | null; es_adicional: boolean }
 
@@ -828,10 +837,18 @@ export type PlanNp = {
   anular: string[]
   /** Pedido cancelado con una NP que se cortó al grabar: puede estar en Zomatik, la mira un gerencial. */
   revisar: string[]
+  /**
+   * Editar la cantidad de la NP en Zomatik (docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md): la reserva nueva del
+   * pedido en esa NP. La NP y la reserva cambian juntas en la base cuando Zomatik lo confirma.
+   */
+  editar: { uso_id: string; np_id: string; m3_uso: number }[]
   avisos: string[]
 }
 
-export const planVacio = (): PlanNp => ({ crear: [], usar: [], ajustar: [], desvincular: [], mover_fecha: [], anular: [], revisar: [], avisos: [] })
+export const planVacio = (): PlanNp => ({ crear: [], usar: [], ajustar: [], desvincular: [], mover_fecha: [], anular: [], revisar: [], editar: [], avisos: [] })
+
+/** "La NP se está actualizando: el cambio a 10 m³ va después." (hay una edición de la NP en curso que no se toca). */
+export const msjEdicionDespues = (m3: number) => `La NP se está actualizando: el cambio a ${String(r3(m3)).replace(".", ",")} m³ va después.`
 
 /** Reparte m³ entre el proyecto (hasta el tope) y una NP nueva. */
 function repartir(m3: number, tipo: TipoNp, proyecto: number | null, tope: number | null, yaContraProyecto: number): { tipo: TipoNp; m3: number; proyecto_codigo: number | null }[] {
@@ -926,8 +943,20 @@ export function planificarNp(p: PedidoNp, usos: UsoPlan[], nMax = 0): PlanNp {
     plan.anular.push(...pendientes.map((u) => u.np.id))
   }
 
-  // 3. Cobertura
+  // 3. Cobertura. Una NP editable (spec 2026-11-18) cambia su cantidad en Zomatik en vez de una NP adicional (crece) o de
+  // dejar saldo (achica): la reserva y la NP cambian juntas cuando Zomatik confirma, así que acá no se `ajustar`.
   let total = cubierto
+  /** La reserva que va a tener cada uso después de este plan (para la edición: lo libre ya tomado más lo que se edita). */
+  const reserva = new Map(quedan.map((u) => [u.uso_id, r3(Number(u.m3) || 0)]))
+  /** Editar la NP de un uso hasta la reserva `m3Uso`; con una edición fija que no llega a eso, solo el aviso. */
+  const editar = (u: UsoPlan, m3Uso: number) => {
+    const ed = u.edicion
+    if (ed?.fija) {
+      if (ed.m3_uso_objetivo === null || Math.abs(Number(ed.m3_uso_objetivo) - m3Uso) > TOL) plan.avisos.push(msjEdicionDespues(m3Uso))
+      return
+    }
+    plan.editar.push({ uso_id: u.uso_id, np_id: u.np.id, m3_uso: r3(m3Uso) })
+  }
   if (m3 > total + TOL) {
     let falta = r3(m3 - total)
     // a) crecer lo que reserva de sus NP, hasta lo libre de cada una
@@ -936,6 +965,7 @@ export function planificarNp(p: PedidoNp, usos: UsoPlan[], nMax = 0): PlanNp {
       const crece = Math.min(falta, Math.max(0, Number(u.libre) || 0))
       if (crece > TOL) {
         plan.ajustar.push({ uso_id: u.uso_id, m3: r3(Number(u.m3) + crece) })
+        reserva.set(u.uso_id, r3(Number(u.m3) + crece))
         falta = r3(falta - crece)
       }
     }
@@ -947,22 +977,34 @@ export function planificarNp(p: PedidoNp, usos: UsoPlan[], nMax = 0): PlanNp {
         falta = r3(falta - toma)
       }
     }
-    // c) el resto, NP nueva (adicional si el pedido ya tenía alguna)
+    // c) el resto: lo que va en una NP nueva, a la ÚLTIMA NP editable (es la que se está consumiendo); si no hay, NP
+    //    nueva (adicional si el pedido ya tenía alguna). Lo que va contra un proyecto con tope, como siempre.
     if (falta > TOL) {
       const contraProyecto = quedan.filter((u) => u.np.tipo === "proyecto").reduce((s, u) => s + Number(u.m3 || 0), 0)
       const adicional = quedan.length > 0 || plan.usar.length > 0
-      for (const q of repartir(falta, tipo, proyecto, tope, contraProyecto)) plan.crear.push({ n: ++n, ...q, es_adicional: adicional })
+      const ultimaEditable = [...quedan].reverse().find((u) => u.editable === true)
+      for (const q of repartir(falta, tipo, proyecto, tope, contraProyecto)) {
+        if (q.tipo === "nueva" && ultimaEditable) editar(ultimaEditable, r3((reserva.get(ultimaEditable.uso_id) || 0) + q.m3))
+        else plan.crear.push({ n: ++n, ...q, es_adicional: adicional })
+      }
     }
   } else if (m3 < total - TOL) {
-    // Se achicó: reserva menos (de la última NP para atrás); lo que sobra queda de saldo en la NP
+    // Se achicó: de la última NP para atrás. Una NP editable baja en Zomatik junto con la reserva (sin saldo); si no, o si
+    // quedaría en 0, solo baja la reserva y lo que sobra queda de saldo en la NP (al finalizar, el ajuste)
     let sobra = r3(total - m3)
+    let deSaldo = 0
     for (const u of [...quedan].reverse()) {
       if (sobra <= TOL) break
       const baja = Math.min(sobra, Number(u.m3) || 0)
-      plan.ajustar.push({ uso_id: u.uso_id, m3: r3(Number(u.m3) - baja) })
+      const queda = r3(Number(u.m3) - baja)
+      if (u.editable === true && queda > TOL) editar(u, queda)
+      else {
+        plan.ajustar.push({ uso_id: u.uso_id, m3: queda })
+        deSaldo = r3(deSaldo + baja)
+      }
       sobra = r3(sobra - baja)
     }
-    plan.avisos.push(`El pedido bajó a ${cantidadTexto(m3)} m³: sobran ${cantidadTexto(r3(total - m3))} m³ en la NP. Quedan de saldo (al finalizar se devuelven o se reprograman).`)
+    if (deSaldo > TOL) plan.avisos.push(`El pedido bajó a ${cantidadTexto(m3)} m³: sobran ${cantidadTexto(deSaldo)} m³ en la NP. Quedan de saldo (al finalizar se devuelven o se reprograman).`)
     total = m3
   }
   return plan
