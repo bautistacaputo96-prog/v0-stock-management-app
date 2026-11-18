@@ -27,6 +27,8 @@ export type EdicionNp = {
 }
 export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
+  /** La llave de la edición de la NP de la planta (spec 2026-11-18). Apagada: un cambio a medias no lo termina nadie. */
+  editar?: boolean
   /** Pedido cancelado o completo: sus NP con saldo quedan pendientes en Programación. */
   cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
@@ -34,7 +36,7 @@ export type EstadoPedidoNp = {
   /** NP nueva o de un proyecto, guardada en el servidor (null = todavía no se eligió). */
   eleccion: { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id: string | null } | null
 }
-export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null }
+export type PlantaNpResumen = { activo: boolean; modo: ModoNp; aviso_hasta: string | null; editar?: boolean }
 export type EleccionNp = { tipo: TipoNp | "saldo"; proyecto_codigo: number | null; tope_m3: number | null; np_id?: string | null }
 
 /** Una NP del sistema con saldo (lista de Programación y opción "Traer NP de Zomatik"). */
@@ -258,13 +260,17 @@ export async function resolverEdicionNp(pedidoId: string, edicionId: string, dec
   }
 }
 
-/** Los cambios de la NP trabados de un pedido (revisar o error): los resuelve un gerencial desde el menú ⋯. */
+/** Estados de un cambio de la NP que resuelve un gerencial. Con la llave apagada, también uno pendiente o en curso. */
+const trabadasDe = (e: EstadoPedidoNp | undefined | null) => (e?.editar === false ? ["revisar", "error", "pendiente", "generando"] : ["revisar", "error"])
+
+/** Los cambios de la NP trabados de un pedido: los resuelve un gerencial desde el menú ⋯. */
 export function edicionesTrabadas(e: EstadoPedidoNp | undefined | null): { np: NpFila; edicion: EdicionNp }[] {
-  return (e?.nps || []).filter((x) => x.edicion && ["revisar", "error"].includes(x.edicion.estado)).map((x) => ({ np: x, edicion: x.edicion! }))
+  const t = trabadasDe(e)
+  return (e?.nps || []).filter((x) => x.edicion && t.includes(x.edicion.estado)).map((x) => ({ np: x, edicion: x.edicion! }))
 }
 
 /** ¿El pedido tiene un cambio de la NP esperando al robot (pendiente o en error)? "Generar NP ahora" lo hace ya. */
-export const tieneEdicionPorHacer = (e: EstadoPedidoNp | undefined | null) => (e?.nps || []).some((x) => x.edicion && ["pendiente", "error"].includes(x.edicion.estado))
+export const tieneEdicionPorHacer = (e: EstadoPedidoNp | undefined | null) => e?.editar !== false && (e?.nps || []).some((x) => x.edicion && ["pendiente", "error"].includes(x.edicion.estado))
 
 export async function revisarNp(npId: string, decision: "otra" | "buena"): Promise<string | null> {
   const r = await fetch("/api/zomatik/np", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "revisada", np_id: npId, decision }) })
@@ -376,11 +382,18 @@ export function chipNp(e: EstadoPedidoNp | undefined | null): { texto: string; c
       : " · Tiene factura: se ajusta al terminar"
   }
   const titulo = vivas.map((x) => `${x.numero || `NP ${x.n}`} · ${x.m3} m³${x.tipo === "proyecto" ? " · proyecto" : ""}${x.estado !== "ok" ? ` · ${x.mensaje || x.estado}` : ""}${notaEdicion(x)}`).join("\n")
-  // Cambio de la NP por un cambio del pedido (spec 2026-11-18, 7.3)
+  // Cambio de la NP por un cambio del pedido (spec 2026-11-18, 7.3). Con la llave de la edición apagada, uno pendiente o
+  // en curso no lo termina nadie: es "revisar cambio", y no tapa "NP sin autorizar"
+  const sinLlave = e.editar === false
   const editando = vivas.filter((x) => x.estado === "ok" && x.edicion && ["pendiente", "generando", "revisar", "error"].includes(x.edicion.estado))
-  if (!malas.length && editando.length) {
-    const trabada = editando.find((x) => ["revisar", "error"].includes(x.edicion!.estado))
-    if (trabada) return { texto: "NP: revisar cambio", clase: trabada.edicion!.estado === "error" ? "mal" : "aviso", titulo: trabada.edicion!.mensaje || "El cambio de la NP quedó para revisar" }
+  const sinAutorizar = vivas.filter((x) => x.estado === "ok" && (x.paso === "sin_autorizar" || x.paso === "autorizar_revisar"))
+  if (!malas.length && editando.length && !(sinLlave && sinAutorizar.length)) {
+    const t = trabadasDe(e)
+    const trabada = editando.find((x) => t.includes(x.edicion!.estado))
+    if (trabada) {
+      const quieto = sinLlave && ["pendiente", "generando"].includes(trabada.edicion!.estado)
+      return { texto: "NP: revisar cambio", clase: trabada.edicion!.estado === "error" ? "mal" : "aviso", titulo: quieto ? "El cambio de la NP quedó a medias y la edición está apagada: dejala como está." : trabada.edicion!.mensaje || "El cambio de la NP quedó para revisar" }
+    }
     const x = editando[0]
     const ed = x.edicion!
     const espera = ed.mensaje && /^Esperando/.test(ed.mensaje) ? `\n${ed.mensaje}` : ""

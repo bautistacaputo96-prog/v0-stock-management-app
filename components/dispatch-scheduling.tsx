@@ -998,7 +998,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   }
 
   function menuPedido(d: ScheduledDispatch) {
-    const trabadas = esGerencial && !["cancelled", "completed"].includes(d.status) ? edicionesTrabadas(np.porPedido[d.id]) : []
+    // También en un pedido completo: una edición trabada ahí la destraba un gerencial (no frena el ajuste al finalizar)
+    const trabadas = esGerencial && d.status !== "cancelled" ? edicionesTrabadas(np.porPedido[d.id]) : []
+    // Con la llave de la edición apagada solo se puede dejar la NP como está
+    const reintentable = np.porPedido[d.id]?.editar !== false
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -1030,7 +1033,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
             </DropdownMenuItem>
           )}
           {/* Cambio de la NP trabado (revisar o error): lo resuelve un gerencial (spec 2026-11-18, 7.3) */}
-          {trabadas.map(({ np: x, edicion }) => (
+          {reintentable && trabadas.map(({ np: x, edicion }) => (
             <DropdownMenuItem key={`r-${edicion.id}`} onClick={() => reintentarEdicion(d, edicion.id)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Reintentar cambio de NP{trabadas.length > 1 && x.numero ? ` (${x.numero})` : ""}
