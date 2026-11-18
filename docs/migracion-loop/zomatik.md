@@ -2052,3 +2052,31 @@ Spec: `docs/specs/2026-11-17-traer-np-de-zomatik.md`. Motivo: Juan cargó a mano
 - Sin montos en ningún lado. Sin cambios de base. La fila de MERVA del 17/11 ("A mano - NP …") se trata como traída.
 - **Pendiente (fase 2, necesita migración):** traer NP con remitos previos (libre = cantidad − remitido). Hoy se
   rechazan.
+
+## 29. Editar la NP cuando el pedido cambia de m³ (18/11/2026) — cambia 24.1.2, 24.5.6 y 25.2 (Agrandar / Achicar)
+
+Spec: `docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md` (la sección 12, cuando la conteste Bautista, manda).
+Migración `supabase/migrations/202611181400_zomatik_np_edicion.sql`. Motivo: La Tercera, Cordones (18/11) pasó de 8 a
+9 m³ y quedaron dos NP (1194 + adicional 1197); un camión con m³ de las dos salía en dos remitos.
+
+- **Qué cambia:** con la llave nueva `zomatik_np_config.editar_activo` (por planta, apagada por defecto), si el pedido
+  cambia de m³ antes de terminar, el robot **edita la cantidad de su NP** en Zomatik (8 → 9 o 9 → 6) en vez de hacer
+  una NP adicional o dejar saldo. Mismo camino que el ajuste al finalizar (`ajustarCantidadNp`, `navegadorAjuste`,
+  control de factura); el `costo` del renglón no se toca.
+- **NP editable:** nueva, con la marca del sistema, `ok` en la sucursal 18, sin decisión de "NP con saldo", sin otro
+  pedido activo que la use y sin factura conocida. **No** se editan: traídas de Zomatik, de proyecto ni compartidas
+  (siguen como en 25.2).
+- **Cuánto:** la NP queda en lo que reservan los otros + máx(reserva nueva, lo despachado de este pedido). Nunca menos de
+  lo remitido ni 0. Crece: después de lo libre y la NP con saldo, la última NP editable. Achica: de la última para atrás.
+- **Base:** `zomatik_np_ajustes.origen` (`finalizar` / `pedido`) y `m3_uso_objetivo`; una sola edición abierta por NP;
+  `zomatik_np_edicion_aplicar` pasa a la base la NP y la reserva juntas cuando Zomatik confirma.
+- **Cuándo:** 2 min después del último cambio, en la pasada de cada 10 min (o ya, con "Generar NP ahora"). 8 → 9 → 10
+  sale en una sola edición. La pantalla dice "NP: actualizando a 9 m³".
+- **Si no se puede:** con factura o si Zomatik dice que no → crece: NP adicional (como antes); achica: no se toca y lo
+  resuelve el ajuste al finalizar. "Revisar" o "error": mail a Bautista; un gerencial elige "Reintentar cambio de NP" o
+  "Dejar la NP como está".
+- **Con el resto:** el ajuste al finalizar anula una edición pendiente y espera una en curso; Z1 no cambia (con la
+  reserva en 9, un camión de 9 sale en un remito). Cambiar la fecha: "Sí, mover" edita la misma NP; "No" deja la vieja
+  con saldo y va una nueva por el total.
+- **Datos ya cargados:** no cambian. Las adicionales que ya existen (Cordones 1197) quedan; prender la llave no edita
+  nada solo.
