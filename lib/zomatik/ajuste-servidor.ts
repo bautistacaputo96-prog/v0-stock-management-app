@@ -465,13 +465,15 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         continue
       }
       const cortado = PASOS_GRABAR_AJUSTE.includes(antes.paso || "")
-      // La NP tiene una edición por un cambio del pedido en curso (spec 2026-11-18, 6.1): el ajuste la espera (el remito
-      // también, por el gate). Una edición que todavía no tocó Zomatik no frena (la anula prepararAjustes)
-      // Con la llave de la edición apagada en la planta nadie termina esa edición: no se espera (si no, el ajuste y el
-      // remito quedarían esperando para siempre)
+      // La NP tiene una edición por un cambio del pedido EN CURSO (spec 2026-11-18, 6.1): el ajuste la espera (el remito
+      // también, por el gate). Solo una que el robot está trabajando o que se cortó en el Grabar (pendiente/generando y
+      // fija): una que todavía no tocó Zomatik la anula prepararAjustes, y una en revisar/error no se espera (el ajuste
+      // sigue y, si hace falta, queda él en "revisar" con "Remitir sin ajustar"). Con la llave de la edición apagada
+      // nadie la termina: no se espera (si no, el ajuste y el remito quedarían esperando para siempre)
       const conEdicion = o.cfg[a.plant_id]?.activo === true && o.cfg[a.plant_id]?.editar_activo === true
-      if (!cortado && conEdicion && (await edicionesAbiertas(sb, "np_id", a.np_id)).some((e) => edicionFija(e))) {
-        await guardarSi(sb, a.id, { estado: "pendiente", en_curso_desde: null, mensaje: MSJ_AJUSTE_ESPERA_EDICION, proximo_intento: despuesDe(10) })
+      if (!cortado && conEdicion && (await edicionesAbiertas(sb, "np_id", a.np_id)).some((e) => ["pendiente", "generando"].includes(e.estado) && edicionFija(e))) {
+        // Esperar no es un intento: se devuelve el que sumó "tomar"
+        await guardarSi(sb, a.id, { estado: "pendiente", en_curso_desde: null, mensaje: MSJ_AJUSTE_ESPERA_EDICION, proximo_intento: despuesDe(10), intentos: Number(a.intentos || 0) })
         hecho("pendiente", MSJ_AJUSTE_ESPERA_EDICION)
         continue
       }
