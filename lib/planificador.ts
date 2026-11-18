@@ -181,6 +181,31 @@ function descargaDe(p: Pedido, m3: number, prm: Parametros) {
 export type Ocupado = { camionId: string; desde: number; hasta: number }
 
 /**
+ * m³ de cada camión de un pedido: camiones llenos y el último con el resto, PERO si el último quedaría con menos de
+ * medio camión, los dos últimos se reparten parejo (m³ enteros; el más cargado y la fracción van primero).
+ * 18/11, Bautista: "9 m³ = 5 + 4, no 8 + 1" (en la práctica no sale un camión con 1 m³). El que despacha lo cambia
+ * en "Viajes" si carga distinto.
+ *   9 → 5 + 4 · 10 → 5 + 5 · 17 → 8 + 5 + 4 · 14 → 8 + 6 · 16 → 8 + 8 · 8,5 → 4,5 + 4 · 3,5 → 3,5
+ */
+export function repartirM3(total: number, tam: number): number[] {
+  const out: number[] = []
+  let resto = Math.round(total * 100) / 100
+  if (!(tam > 0)) return out
+  while (resto > 0.01) { const q = Math.min(tam, resto); out.push(Math.round(q * 100) / 100); resto = Math.round((resto - q) * 100) / 100 }
+  const n = out.length
+  if (n >= 2 && out[n - 1] < tam / 2 - 1e-9) {
+    const par = out[n - 2] + out[n - 1]
+    const enteros = Math.floor(par + 1e-9)
+    const frac = Math.round((par - enteros) * 100) / 100
+    const chico = Math.floor(enteros / 2)
+    const grande = Math.round((enteros - chico + frac) * 100) / 100
+    // Solo si los dos quedan con algo y sin pasarse del camión (con m³ por camión de menos de 2 no se toca)
+    if (chico > 0 && grande <= tam + 1e-9) { out[n - 2] = grande; out[n - 1] = chico }
+  }
+  return out
+}
+
+/**
  * Asignación de camiones (fase 2b, "pocos camiones bien usados"): para cada viaje se elige primero un camión ya
  * usado en el día que llegue a tiempo (el que se liberó más tarde, para no dejar huecos); solo si ninguno llega
  * se suma uno nuevo; si no quedan nuevos, el que pueda cargar antes. Un camión nunca queda en dos viajes que se
@@ -239,11 +264,9 @@ export function planificar(
   const capMax = Math.max(...camiones.map((c) => c.capacidad), 8)
 
   for (const p of [...pedidos].sort((a, b) => a.llegada - b.llegada)) {
-    // Viajes del pedido: camiones llenos y el último con el resto
-    const cant: number[] = []
-    let resto = p.m3
+    // Viajes del pedido: los camiones que hagan falta, repartidos parejo (18/11, Bautista: 9 m³ = 5 + 4, no 8 + 1)
     const tam = p.m3PorViaje && p.m3PorViaje > 0 ? p.m3PorViaje : 8
-    while (resto > 0.01) { const q = Math.min(tam, resto); cant.push(Math.round(q * 100) / 100); resto -= q }
+    const cant = repartirM3(p.m3, tam)
     // Ritmo y ciclo con un camión lleno del pedido (8 m³ salvo que el pedido diga otra cosa)
     const descargaLleno = descargaDe(p, tam, prm)
     const espaciado = p.espaciadoMin && p.espaciadoMin > 0 ? p.espaciadoMin : null

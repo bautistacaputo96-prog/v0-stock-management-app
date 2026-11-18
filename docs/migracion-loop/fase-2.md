@@ -50,7 +50,7 @@ Los viajes **no tocan stock**: el stock lo sigue moviendo solo el despacho (moto
 ## 2. Cómo se generan los viajes
 
 - **Al guardar un pedido** (Semana o edición) se generan sus viajes con el motor actual:
-  - m³ por viaje = `m3_por_viaje`, el último con el resto;
+  - m³ por viaje = `m3_por_viaje`, el último con el resto (si quedaría con menos de medio camión, los dos últimos van parejos: 9 = 5 + 4);
   - el primero llega a la hora pedida;
   - los siguientes, separados por el espaciado;
   - la carga empieza ida + carga antes de la llegada.
