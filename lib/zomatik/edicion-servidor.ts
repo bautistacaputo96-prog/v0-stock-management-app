@@ -18,11 +18,11 @@
 import { sbServicio } from "@/lib/auth/servidor"
 import { mensajeZomatik, navegadorAjuste } from "@/lib/zomatik/cliente"
 import {
-  COLUMNAS_EDICION, COLUMNAS_NP, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
+  COLUMNAS_EDICION, COLUMNAS_NP, PENDIENTE_LARGO_INTENTOS, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
   editableDe, esFallaDeAcceso, faltaMigracionEdicion, llaveEdicion, plantasNp, sincronizarPedido, tipoDeFalla,
   type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB,
 } from "@/lib/zomatik/np-servidor"
-import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
+import { ajustarCantidadNp, totalesDeAjuste as totalesDe, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
 import { hoyAR, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
@@ -149,13 +149,26 @@ type Ctx = {
   renovar: () => Promise<void>; alAbrir: () => Promise<void>
 }
 
-async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hecha: ResultadoEdiciones["hechas"][number]; corte?: boolean }> {
-  const hecha = (estado: string, mensaje: string | null) => ({ hecha: { id: a.id, estado, mensaje } })
-  const { data: tom, error: et } = await sb.rpc("zomatik_ajuste_tomar", { p_id: a.id, p_desde: ["pendiente", ...(c.manual ? ["error"] : [])] })
+async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ hecha: ResultadoEdiciones["hechas"][number]; corte?: boolean }> {
+  const hecha = (estado: string, mensaje: string | null) => ({ hecha: { id: lista.id, estado, mensaje } })
+  const { data: tom, error: et } = await sb.rpc("zomatik_ajuste_tomar", { p_id: lista.id, p_desde: ["pendiente", ...(c.manual ? ["error"] : [])] })
   if (et) throw et
   const t = (tom as { ajuste_id: string; estado_anterior: string; paso_anterior: string | null }[] | null)?.[0]
   if (!t) return hecha("ocupada", null)
   const antes = { estado: t.estado_anterior, paso: t.paso_anterior }
+  // La fila se RELEE ya tomada: entre la lista y el "tomar", quien guarda el pedido pudo cambiarla (8 → 9 → 10). Desde
+  // acá está "generando" y nadie más la cambia (sincronizar solo toca las "pendiente"): se trabaja con lo releído
+  const { data: rel, error: er } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).eq("id", lista.id).maybeSingle()
+  if (er) throw er
+  const a = rel as unknown as FilaEdicionDB | null
+  if (!a) return hecha("ocupada", null)
+  /** Las veces que se trabajó ANTES de este intento (`tomar` ya sumó este). */
+  const intentosAntes = Math.max(0, Number(a.intentos || 0) - 1)
+  // La pasada respeta la espera de 2 min: si el pedido cambió recién (proximo_intento corrido), se suelta sin sumar intento
+  if (!c.manual && antes.estado === "pendiente" && a.proximo_intento && Date.parse(a.proximo_intento) > Date.now()) {
+    await guardarSi(sb, a.id, { estado: "pendiente", en_curso_desde: null, intentos: intentosAntes })
+    return hecha("esperando", "El pedido cambió recién: se espera")
+  }
   const pedidoId = a.scheduled_dispatch_id || ""
   const ref = refDe(pedidoId)
   const planta = c.plantas[a.plant_id]
@@ -171,32 +184,38 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
       console.error("[zomatik-edicion] sincronizar", pedidoId, (e as Error)?.message)
     }
   }
-  /** Termina sin tocar Zomatik y sin aviso: "anulado" (ya no hace falta) o "pendiente" (espera algo). */
+  /**
+   * Termina sin tocar Zomatik: "anulado" (ya no hace falta, sin aviso) o "pendiente" (espera algo: no suma intento y, si
+   * lleva más de 1 hora esperando, el aviso de siempre).
+   */
   const cerrar = async (estado: "anulado" | "pendiente", mensaje: string, resincronizar = false) => {
-    await guardarSi(sb, a.id, { estado, en_curso_desde: null, mensaje, proximo_intento: estado === "pendiente" ? despuesDe(10) : null })
+    const guardo = await guardarSi(sb, a.id, { estado, en_curso_desde: null, mensaje, proximo_intento: estado === "pendiente" ? despuesDe(10) : null, ...(estado === "pendiente" ? { intentos: intentosAntes } : {}) })
     if (estado === "anulado") await log({ "Qué pasó": "Cambio de la NP anulado", Mensaje: mensaje, NP: numero })
+    if (guardo && estado === "pendiente") await pendienteLargo(mensaje, true)
     if (resincronizar) await sincronizar()
     return hecha(estado, mensaje)
   }
-  /** Termina con revisar, error o pendiente (Actividad y avisos de cada caso). */
-  const trabar = async (estado: "revisar" | "error" | "pendiente", mensaje: string | null, extra: Record<string, unknown> = {}, recorte?: string) => {
+  /** Termina con revisar, error o pendiente (Actividad y avisos de cada caso). Los totales (montos), solo en Actividad y el mail. */
+  const trabar = async (estado: "revisar" | "error" | "pendiente", mensaje: string | null, extra: Record<string, unknown> = {}, recorte?: string, totales?: Record<string, unknown> | null) => {
     const guardo = await guardarSi(sb, a.id, { estado, en_curso_desde: null, mensaje, proximo_intento: estado === "pendiente" ? despuesDe(10) : null, ...extra })
-    await log({ "Qué pasó": "El cambio de la NP no salió", Estado: estado, Mensaje: mensaje, Paso: (extra.paso as string) || ultimoPaso, NP: numero, ...(recorte ? { "Respuesta de Zomatik (recorte)": recorte } : {}) })
+    await log({ "Qué pasó": "El cambio de la NP no salió", Estado: estado, Mensaje: mensaje, Paso: (extra.paso as string) || ultimoPaso, NP: numero, ...(totales || {}), ...(recorte ? { "Respuesta de Zomatik (recorte)": recorte } : {}) })
     if (guardo && estado !== "pendiente" && antes.estado !== estado)
       await avisarTrabada(sb, c.dep.avisarError, { ...a, ...(extra as Partial<FilaEdicionDB>) }, numero, `cambio de la NP ${estado === "error" ? "con error" : "para revisar"}`, mensaje, [
+        ...Object.entries(totales || {}).map(([k, v]) => `${k}: ${v}`),
         "El pedido no saca una NP adicional mientras tanto (la NP pudo haber quedado cambiada). Un gerencial elige en el pedido (Programación, menú ⋯): «Reintentar cambio de NP» o «Dejar la NP como está».",
       ], recorte)
     if (guardo && estado === "pendiente") await pendienteLargo(mensaje)
     return hecha(estado, mensaje)
   }
-  const pendienteLargo = async (mensaje: string | null) => {
-    const intentos = Number(a.intentos || 0) + 1
+  /** Más de 1 hora pendiente: un aviso a Bautista por edición. Una espera (otra NP, otro cambio) cuenta por el tiempo. */
+  const pendienteLargo = async (mensaje: string | null, espera = false) => {
+    const intentos = espera ? Math.max(PENDIENTE_LARGO_INTENTOS, Number(a.intentos || 0)) : Number(a.intentos || 0)
     await avisarPendienteLargo(sb, c.dep.avisarError, {
       usuario: c.usuario, pedidoId, plantId: a.plant_id, ref, marca: a.marca, creada: a.created_at, intentos,
       titulo: `Cambio de la NP pendiente hace más de 1 hora · ${ref}`,
       lineas: [
         `${ref} · ${numero || "NP"}`,
-        `El cambio de la NP lleva más de 1 hora sin salir (${intentos} intentos), por red o sesión de Zomatik.`,
+        espera ? "El cambio de la NP lleva más de 1 hora esperando." : `El cambio de la NP lleva más de 1 hora sin salir (${intentos} intentos), por red o sesión de Zomatik.`,
         `Último mensaje: ${mensaje || "(sin mensaje)"}`,
         `Marca: ${a.marca}`,
         "Se sigue reintentando en la próxima pasada (cada 10 minutos). Este aviso llega una sola vez por cambio.",
@@ -214,8 +233,9 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
     const ped = pd as { id: string; status: string; quantity_m3: number; plant_id: string } | null
 
     /** Pasa a la base la NP y la reserva juntas (`zomatik_np_edicion_aplicar`) y lo que sigue (paso 5). */
-    const aplicar = async (objetivo: number, m3Antes: number, porAutorizar: boolean | null, nada = false) => {
-      const { data, error } = await sb.rpc("zomatik_np_edicion_aplicar", { p_id: a.id })
+    const aplicar = async (objetivo: number, m3Uso: number, m3Antes: number, porAutorizar: boolean | null, nada = false) => {
+      // Con lo que quedó en Zomatik y la reserva que se decidió: si la fila no dice eso, la base no aplica nada
+      const { data, error } = await sb.rpc("zomatik_np_edicion_aplicar", { p_id: a.id, p_m3_objetivo: objetivo, p_m3_uso: m3Uso })
       const r = data as { ok?: boolean; error?: string } | null
       if (error || !r?.ok) {
         // Zomatik ya dice el objetivo: queda "generando" en "aplicar" y el reintento solo repite esto
@@ -248,12 +268,13 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
     }
 
     // Solo faltaba pasarlo a la base: no se vuelve a abrir Zomatik
-    if (antes.paso === "aplicar" || a.aplicado_at) return await aplicar(Number(a.m3_objetivo), Number(a.m3_np), null, a.tipo === "nada")
+    if (antes.paso === "aplicar" || a.aplicado_at) return await aplicar(Number(a.m3_objetivo), Number(a.m3_uso_objetivo), Number(a.m3_np), null, a.tipo === "nada")
     // Trabada: más de 3 cortes seguidos (colgada en "generando")
-    if (antes.estado === "generando" && Number(a.intentos || 0) >= MAX_CORTES) return await trabar("revisar", "El cambio de la NP se cortó más de 3 veces. Revisá la NP en Zomatik antes de seguir.")
+    if (antes.estado === "generando" && intentosAntes >= MAX_CORTES) return await trabar("revisar", "El cambio de la NP se cortó más de 3 veces. Revisá la NP en Zomatik antes de seguir.")
     const cortado = PASOS_GRABAR_AJUSTE.includes(antes.paso || "")
     if (!np || (!np.zomatik_codigo && !cortado && np.estado !== "generando")) return await cerrar("anulado", "La NP no está en Zomatik: no se cambia.", true)
     let objetivo = Number(a.m3_objetivo)
+    const m3Uso = Number(a.m3_uso_objetivo)
     const m3Np = Number(np.m3)
 
     if (!cortado) {
@@ -269,13 +290,14 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
       if (ed.espera) return await cerrar("pendiente", MSJ_EDICION_ESPERA_NP)
       if ((ctx.ajustes || []).some((x) => x.id !== a.id && EDICION_ABIERTA.includes(x.estado as never))) return await cerrar("pendiente", MSJ_EDICION_ESPERA_OTRO)
       // 2. decidir: la cantidad con la base de AHORA y la reserva de la fila
-      const o = objetivoEdicion({ ...(await datosObjetivo(sb, np.id, pedidoId)), m3Uso: Number(a.m3_uso_objetivo) })
+      const o = objetivoEdicion({ ...(await datosObjetivo(sb, np.id, pedidoId)), m3Uso })
       if (!o.ok) return await trabar("revisar", o.mensaje, { m3_objetivo: o.m3_objetivo, m3_np: m3Np })
       objetivo = o.m3_objetivo
       const nada = Math.abs(objetivo - m3Np) <= TOL_AJUSTE
-      if (!(await guardarSi(sb, a.id, { tipo: nada ? "nada" : "editar", m3_np: m3Np, m3_objetivo: objetivo, m3_despachado: o.m3_despachado, ...(nada ? { paso: "aplicar" } : {}) }))) throw new Cambio("La edición cambió mientras se trabajaba")
+      // La cantidad y la reserva van juntas: son las que después pasan a la base
+      if (!(await guardarSi(sb, a.id, { tipo: nada ? "nada" : "editar", m3_np: m3Np, m3_objetivo: objetivo, m3_uso_objetivo: m3Uso, m3_despachado: o.m3_despachado, ...(nada ? { paso: "aplicar" } : {}) }))) throw new Cambio("La edición cambió mientras se trabajaba")
       // Ya está en la cantidad: solo la base (la reserva), sin abrir Zomatik
-      if (nada) return await aplicar(objetivo, m3Np, null, true)
+      if (nada) return await aplicar(objetivo, m3Uso, m3Np, null, true)
     } else if (!np.zomatik_codigo || np.estado !== "ok") {
       return await trabar("revisar", "La NP no está en Zomatik: no se puede cambiar.")
     }
@@ -301,7 +323,7 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
     if (res.estado === "ok") {
       // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
       if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("La edición cambió mientras se trabajaba")
-      return await aplicar(objetivo, m3Np, res.porAutorizar ?? null)
+      return await aplicar(objetivo, m3Uso, m3Np, res.porAutorizar ?? null)
     }
     const cant = res.leido ?? m3Np
     const crece = objetivo > cant + TOL_AJUSTE
@@ -321,7 +343,7 @@ async function trabajarEdicion(sb: SB, a: FilaEdicionDB, c: Ctx): Promise<{ hech
       if (guardo) await sincronizar()
       return hecha("nada", mensaje)
     }
-    return await trabar(res.estado, res.mensaje, { paso: res.paso, ...(res.leido !== undefined && res.leido !== null ? { m3_np: res.leido } : {}) }, res.recorte)
+    return await trabar(res.estado, res.mensaje, { paso: res.paso, ...(res.leido !== undefined && res.leido !== null ? { m3_np: res.leido } : {}) }, res.recorte, totalesDe(res))
   } catch (e) {
     if (e instanceof Cambio) return hecha("cambió", e.message)
     const interno = errorInterno(e)
@@ -371,6 +393,8 @@ export async function resolverEdicion(o: { pedidoId: string; edicionId: string; 
   const a = data as unknown as FilaEdicionDB | null
   if (!a || a.origen !== ORIGEN_PEDIDO) return { ok: false, error: "No hay un cambio de la NP para resolver. Actualizá la pantalla." }
   if (!TRABADAS.includes(a.estado)) return { ok: false, error: "Ese cambio de la NP ya no está trabado. Actualizá la pantalla." }
+  // Con la llave de la edición apagada nadie la va a reintentar: solo se puede dejar la NP como está
+  if (o.decision === "reintentar" && !llaveEdicion((await plantasNp(sb))[a.plant_id])) return { ok: false, error: "La edición de la NP está apagada en la planta: elegí «Dejar la NP como está»." }
   const ahora = new Date().toISOString()
   const { data: np } = await sb.from("zomatik_np").select("id, numero").eq("id", a.np_id).maybeSingle()
   const numero = (np as { numero?: string | null } | null)?.numero ?? null

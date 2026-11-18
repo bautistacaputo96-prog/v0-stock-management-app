@@ -21,7 +21,7 @@ import {
   actividadNp, avisarAjusteNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso, tipoDeFalla,
   type AvisarFn,
 } from "@/lib/zomatik/np-servidor"
-import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
+import { ajustarCantidadNp, totalesDeAjuste, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
 import { comprobanteDeNumero, esNpTraida, hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
@@ -156,11 +156,12 @@ export async function planDelPedido(sb: SB, pedidoId: string, cfgs?: Record<stri
 // ---------------------------------------------------------------------------
 
 /** Ajuste en "revisar" o "error": un mail a Bautista por episodio (15.4). */
-async function avisarTrabado(sb: SB, avisar: AvisarFn, a: { marca: string; scheduled_dispatch_id: string | null }, numero: string | null, estado: "revisar" | "error", mensaje: string | null, recorte?: string) {
+async function avisarTrabado(sb: SB, avisar: AvisarFn, a: { marca: string; scheduled_dispatch_id: string | null }, numero: string | null, estado: "revisar" | "error", mensaje: string | null, recorte?: string, totales?: Record<string, string> | null) {
   const ref = refDe(a.scheduled_dispatch_id)
   const r = await avisar(sb, `Zomatik: ajuste de la NP ${estado === "error" ? "con error" : "para revisar"} · ${ref}`, [
     `${ref} · ${numero || "NP"}`,
     `Mensaje: ${mensaje || "(sin mensaje)"}`,
+    ...Object.entries(totales || {}).map(([k, v]) => `${k}: ${v}`),
     "El remito del pedido espera hasta que se resuelva. Si la NP se arregló a mano en Zomatik, un gerencial toca «Remitir sin ajustar la NP» en el pedido.",
     `Marca: ${a.marca}`,
     ...(recorte ? [`Respuesta de Zomatik (recorte): ${recorte}`] : []),
@@ -399,10 +400,11 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       })
     }
     /** Termina el intento con un estado que no es "ok" (actividad y avisos de cada caso). */
-    const trabar = async (estado: "revisar" | "error" | "pendiente", mensaje: string | null, extra: Record<string, unknown> = {}, recorte?: string) => {
+    /** Los totales (montos) van solo a Actividad y al mail a Bautista, nunca al `mensaje` (lo ve la pantalla). */
+    const trabar = async (estado: "revisar" | "error" | "pendiente", mensaje: string | null, extra: Record<string, unknown> = {}, recorte?: string, totales?: Record<string, string> | null) => {
       const guardo = await guardarSi(sb, a.id, { estado, en_curso_desde: null, mensaje, proximo_intento: estado === "pendiente" ? despuesDe(10) : null, ...extra })
-      await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": "El ajuste de la NP no salió", Estado: estado, Mensaje: mensaje, Paso: (extra.paso as string) || ultimoPaso, NP: numero, Marca: a.marca, ...(recorte ? { "Respuesta de Zomatik (recorte)": recorte } : {}) } })
-      if (guardo && estado !== "pendiente" && antes.estado !== estado) await avisarTrabado(sb, o.dep.avisarError, a, numero, estado, mensaje, recorte)
+      await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": "El ajuste de la NP no salió", Estado: estado, Mensaje: mensaje, Paso: (extra.paso as string) || ultimoPaso, NP: numero, Marca: a.marca, ...(totales || {}), ...(recorte ? { "Respuesta de Zomatik (recorte)": recorte } : {}) } })
+      if (guardo && estado !== "pendiente" && antes.estado !== estado) await avisarTrabado(sb, o.dep.avisarError, a, numero, estado, mensaje, recorte, totales)
       if (guardo && estado === "pendiente") await pendienteLargo(mensaje)
       hecho(estado, mensaje)
     }
@@ -465,7 +467,10 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       const cortado = PASOS_GRABAR_AJUSTE.includes(antes.paso || "")
       // La NP tiene una edición por un cambio del pedido en curso (spec 2026-11-18, 6.1): el ajuste la espera (el remito
       // también, por el gate). Una edición que todavía no tocó Zomatik no frena (la anula prepararAjustes)
-      if (!cortado && (await edicionesAbiertas(sb, "np_id", a.np_id)).some((e) => edicionFija(e))) {
+      // Con la llave de la edición apagada en la planta nadie termina esa edición: no se espera (si no, el ajuste y el
+      // remito quedarían esperando para siempre)
+      const conEdicion = o.cfg[a.plant_id]?.activo === true && o.cfg[a.plant_id]?.editar_activo === true
+      if (!cortado && conEdicion && (await edicionesAbiertas(sb, "np_id", a.np_id)).some((e) => edicionFija(e))) {
         await guardarSi(sb, a.id, { estado: "pendiente", en_curso_desde: null, mensaje: MSJ_AJUSTE_ESPERA_EDICION, proximo_intento: despuesDe(10) })
         hecho("pendiente", MSJ_AJUSTE_ESPERA_EDICION)
         continue
@@ -549,7 +554,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         hecho("revisar", msj)
         continue
       }
-      await trabar(res.estado, res.mensaje, { paso: res.paso, ...(res.leido !== undefined && res.leido !== null ? { m3_np: res.leido } : {}) }, res.recorte)
+      await trabar(res.estado, res.mensaje, { paso: res.paso, ...(res.leido !== undefined && res.leido !== null ? { m3_np: res.leido } : {}) }, res.recorte, totalesDeAjuste(res))
     } catch (e) {
       if (e instanceof Cambio) {
         hecho("cambió", e.message)

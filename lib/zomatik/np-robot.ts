@@ -772,6 +772,19 @@ export type ResultadoAjusteNp = {
   porAutorizar?: boolean | null
 }
 
+/** El total del listado no quedó en proporción después de grabar (SIN montos: el mensaje llega a la pantalla). */
+export const msjTotalNoCerro = (m3: number) => `Zomatik grabó la NP en ${m3Texto(m3)} m³ pero el total no cerró: revisala.`
+
+/**
+ * Los totales del listado leídos en un ajuste o una edición, para Actividad y el mail a Bautista (los ven solo los
+ * gerenciales). Nunca van al `mensaje` de la fila. null si no se leyó ninguno.
+ */
+export function totalesDeAjuste(r: { totalAntes?: number | null; totalDespues?: number | null }): Record<string, string> | null {
+  const t = (n: number | null | undefined) => (n === null || n === undefined ? "sin dato" : `$ ${Number(n).toLocaleString("es-AR", { maximumFractionDigits: 2 })}`)
+  if ((r.totalAntes ?? null) === null && (r.totalDespues ?? null) === null) return null
+  return { "Total antes": t(r.totalAntes), "Total después": t(r.totalDespues) }
+}
+
 export type LecturaAjuste = {
   pagina: Awaited<ReturnType<typeof abrir>>
   form: NonNullable<ReturnType<typeof camposFormulario>>
@@ -898,7 +911,8 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
       const despues = v.fila?.total ?? null
       if (despues !== null && totalProporcional(totalAntes, l.cantidad, despues, d.objetivo))
         return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, porAutorizar: v.fila?.porAutorizar ?? null }
-      return { estado: "revisar", mensaje: `La NP quedó en ${m3Texto(d.objetivo)} m³ pero el total del listado no cerró (antes ${totalAntes}, ahora ${despues ?? "sin dato"}). Revisala en Zomatik.`, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
+      // Sin montos en el mensaje (lo ve Programación y Despacho): los totales van en totalAntes / totalDespues (Actividad y mail)
+      return { estado: "revisar", mensaje: msjTotalNoCerro(d.objetivo), paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
     }
     if (v && igual(v.cantidad, l.cantidad)) {
       if (no && rechazoPorFactura(no)) return { estado: "con_factura", mensaje: null, paso: "grabar_np", leido: l.cantidad, facturaTexto: `Zomatik contestó: ${no}`, recorte: recorte(g.html) }
