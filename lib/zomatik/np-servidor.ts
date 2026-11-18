@@ -19,7 +19,7 @@ import { sbServicio } from "@/lib/auth/servidor"
 import { CLAVE_BLOQUEO_LOGIN, discoverForm, fetchExport, navegadorLectura, navegadorNp, obtenerSesion, mensajeZomatik } from "@/lib/zomatik/cliente"
 import { renglonesRemitos } from "@/lib/zomatik/parseo"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
-import { autorizarNp, buscarNpEnZomatik, generarNp, vaciarNp, type DatosNp, type LecturaNp, type LlaveAjuste, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
+import { autorizarNp, buscarNpEnZomatik, generarNp, totalesDeAjuste, vaciarNp, type DatosNp, type LecturaNp, type LlaveAjuste, type LlaveNp, type NavegadorNp, type ResultadoAutorizar, type ResultadoNp } from "@/lib/zomatik/np-robot"
 import { SUCURSAL_REBUCRET, esFaltaDeVinculo, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import {
   MIN_REINTENTO, PASOS_GRABADA, VIGENTES, comprobanteDe, puedeEstarGrabada, comprobanteDeNumero, diaAR, esSerieRebucret, hoyAR, marcaNp, modoNp, numeroNormalizado,
@@ -1464,8 +1464,10 @@ async function trabajarVaciar(sb: SB, np: FilaNpDB, ctx: Contexto) {
   } else {
     guardo = await guardarSi(sb, np.id, V, { estado: "revisar", en_curso_desde: null, mensaje: r.mensaje, proximo_intento: null })
     if (guardo) {
-      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
-      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
+      // Los totales (montos) solo en Actividad y en el mail, nunca en zomatik_np.mensaje (lo ve la pantalla)
+      const totales = totalesDeAjuste(r) || {}
+      await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "No se pudo vaciar la NP", Mensaje: r.mensaje, NP: np.numero, ...totales, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
+      await ctx.dep.avisar(sb, `No se pudo vaciar la ${np.numero || "NP"}`, [r.mensaje || "", ...Object.entries(totales).map(([k, v]) => `${k}: ${v}`), `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`])
     }
   }
   if (!guardo) await noSePudoGuardar(sb, np, ctx, r.estado)

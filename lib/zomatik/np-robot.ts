@@ -111,7 +111,8 @@ export type ResultadoNp = {
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
-export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string; recorte?: string }
+/** `totalAntes` / `totalDespues`: el total del listado (montos) para Actividad y el mail; NUNCA van en `mensaje`. */
+export type ResultadoVaciar = { estado: "vaciada" | "revisar" | "error" | "vaciar"; mensaje: string | null; paso: string; recorte?: string; totalAntes?: number | null; totalDespues?: number | null }
 
 export type OpcionesRobot = {
   /** Se llama antes de cada paso. Con "grabar" quien llama tiene que dejarlo guardado ANTES de que se mande. */
@@ -633,10 +634,11 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     const leido = await detalleGrabado(nav, a, base, proyecto, azar)
     let det: Detalle | null = leido.det
     let rs = leido.renglones
-    if (!leido.valido && !rs.length) return { estado: "revisar", mensaje: `No se pudo leer el detalle de la NP (Zomatik dice total ${antes ?? "sin dato"}). No se tocó: vaciala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    // Sin montos en el mensaje (llega a zomatik_np.mensaje y a la pantalla): el total va aparte
+    if (!leido.valido && !rs.length) return { estado: "revisar", mensaje: "No se pudo leer el detalle de la NP. No se tocó: vaciala a mano.", paso, recorte: recorte(det?.html || a.html), totalAntes: antes }
     // ¿Ya está vacía en Zomatik? (un grabar anterior llegó): el detalle cargó bien, sin renglones, y el listado da 0
     if (!rs.length && antes === 0 && (leido.total === null || leido.total === 0)) return { estado: "vaciada", mensaje: null, paso }
-    if (!rs.length) return { estado: "revisar", mensaje: `El detalle de la NP no tiene renglones pero Zomatik dice total ${antes ?? "sin dato"}. No se tocó: revisala a mano.`, paso, recorte: recorte(det?.html || a.html) }
+    if (!rs.length) return { estado: "revisar", mensaje: `El detalle de la NP no tiene renglones pero en Zomatik ${antes === null ? "no se pudo leer el total" : "el total no es 0"}. No se tocó: revisala a mano.`, paso, recorte: recorte(det?.html || a.html), totalAntes: antes }
     for (const r of [...rs]) {
       if (String(c.pedidos || "") !== String(d.codigo)) throw formato("la página abierta no es de esta NP", a.html)
       if (!r.borrar) throw formato("un renglón no tiene el tacho", det?.html || a.html)
@@ -663,8 +665,10 @@ export async function vaciarNp(nav: NavegadorNp, d: DatosVaciar, o: OpcionesRobo
     if (no) return { estado: "error", mensaje: `Zomatik no dejó vaciar la NP: ${no}`, paso, recorte: recorte(g.html) }
     return {
       estado: "revisar",
-      mensaje: `Se grabó pero la NP no quedó vacía en Zomatik (${quedan ? `${quedan.renglones.length} renglón(es)` : "no se pudo abrir"}, total ${despues ?? "sin dato"}). Revisala en Zomatik.`,
+      mensaje: `Se grabó pero la NP no quedó vacía en Zomatik (${quedan ? `${quedan.renglones.length} renglón(es)` : "no se pudo abrir"}). Revisala en Zomatik.`,
       paso,
+      totalAntes: antes,
+      totalDespues: despues,
       recorte: recorte(quedan?.det?.html || v.html),
     }
   } catch (e) {
