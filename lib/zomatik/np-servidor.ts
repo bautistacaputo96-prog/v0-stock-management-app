@@ -543,12 +543,12 @@ export const edicionAbierta = (filas: FilaEdicionDB[], npId: string, pedidoId: s
 export async function contextoEdicion(sb: SB, npIds: string[]): Promise<{ ajustes: FilaEdicionDB[] | null; activos: Map<string, Set<string>> }> {
   const activos = new Map<string, Set<string>>()
   if (!npIds.length) return { ajustes: [], activos }
-  const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds)
+  const [{ data, error }, todosUsos] = await Promise.all([sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds), usosDe(sb, "np_id", npIds)])
   if (error) {
     if (faltaMigracionEdicion(error)) return { ajustes: null, activos }
     throw error
   }
-  const usos = (await usosDe(sb, "np_id", npIds)).filter((u) => u.activo && u.scheduled_dispatch_id)
+  const usos = todosUsos.filter((u) => u.activo && u.scheduled_dispatch_id)
   const pedIds = [...new Set(usos.map((u) => u.scheduled_dispatch_id!))]
   const { data: peds, error: ep } = pedIds.length ? await sb.from("scheduled_dispatches").select("id, status").in("id", pedIds) : { data: [], error: null }
   if (ep) throw ep
@@ -577,11 +577,12 @@ async function remitidoNp(sb: SB, npId: string): Promise<number> {
 
 /** Lo que pide `objetivoEdicion` (ajuste.ts) para una NP y un pedido, con la base de ahora (menos la reserva nueva). */
 export async function datosObjetivo(sb: SB, npId: string, pedidoId: string): Promise<Omit<EntradaEdicion, "m3Uso">> {
-  const delPedido = await usosDe(sb, "scheduled_dispatch_id", [pedidoId])
-  const deNp = await usosDe(sb, "np_id", [npId])
+  const [delPedido, deNp, remitido] = await Promise.all([usosDe(sb, "scheduled_dispatch_id", [pedidoId]), usosDe(sb, "np_id", [npId]), remitidoNp(sb, npId)])
   const pedIds = [...new Set([pedidoId, ...deNp.map((u) => u.scheduled_dispatch_id).filter(Boolean) as string[]])]
-  const dePedidos = await usosDe(sb, "scheduled_dispatch_id", pedIds.filter((id) => id !== pedidoId))
-  const { data: peds, error } = await sb.from("scheduled_dispatches").select("id, status, dispatched_m3").in("id", pedIds)
+  const [dePedidos, { data: peds, error }] = await Promise.all([
+    usosDe(sb, "scheduled_dispatch_id", pedIds.filter((id) => id !== pedidoId)),
+    sb.from("scheduled_dispatches").select("id, status, dispatched_m3").in("id", pedIds),
+  ])
   if (error) throw error
   const porId = new Map(((peds as { id: string; status: string; dispatched_m3: number | null }[]) || []).map((p) => [p.id, p]))
   const todos = [...new Map([...deNp, ...dePedidos].map((u) => [u.id, u])).values()].filter((u) => u.scheduled_dispatch_id !== pedidoId)
@@ -591,7 +592,7 @@ export async function datosObjetivo(sb: SB, npId: string, pedidoId: string): Pro
     despachado: Number(porId.get(pedidoId)?.dispatched_m3) || 0,
     usosDelPedido: delPedido.map((u): UsoAjuste => ({ id: u.id, np_id: u.np_id, m3: Number(u.m3), activo: u.activo, created_at: u.created_at, despachado_fijo: fijo(u) })),
     usosSaldo: todos.map((u) => ({ id: u.id, np_id: u.np_id, m3: Number(u.m3), activo: u.activo, created_at: u.created_at, despachado_fijo: fijo(u), pedido: u.scheduled_dispatch_id ? porId.get(u.scheduled_dispatch_id) || null : null })),
-    remitido: await remitidoNp(sb, npId),
+    remitido,
   }
 }
 
@@ -1932,9 +1933,9 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
   const activos = usos.filter((u) => u.activo)
   const nps = await npsPorId(sb, [...new Set(activos.map((u) => u.np_id))])
   const saldos = await saldosDe(sb, nps.filter((x) => x.estado === "ok"))
-  // La edición de la NP (spec 2026-11-18): solo si alguna planta tiene la llave
-  const conLlaveEd = Object.values(plantas).some((p) => !!llaveEdicion(p))
-  const ctxEd = conLlaveEd ? await contextoEdicion(sb, nps.map((x) => x.id)) : { ajustes: null, activos: new Map<string, Set<string>>() }
+  // La edición de la NP (spec 2026-11-18). La última edición se muestra aunque la llave esté apagada (una trabada la
+  // resuelve un gerencial desde el menú); `editable`, solo con la llave. Sin la migración, nada
+  const ctxEd = await contextoEdicion(sb, nps.map((x) => x.id))
   const num = (n: number | null) => (n === null || n === undefined ? null : Number(n))
   const ultimaEdicion = (npId: string, pedidoId: string): EdicionNpEstado | null => {
     const a = (ctxEd.ajustes || []).filter((x) => x.np_id === npId && x.scheduled_dispatch_id === pedidoId && esEdicion(x) && x.estado !== "anulado").sort((x, y) => y.created_at.localeCompare(x.created_at))[0]
@@ -1950,8 +1951,8 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
         const x = nps.find((n) => n.id === u.np_id)
         if (!x) return null
         const base = { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca) }
-        if (ctxEd.ajustes === null || !llaveEdicion(planta)) return base
-        return { ...base, editable: editableDe(planta, x, p.id, ctxEd).editable, edicion: ultimaEdicion(x.id, p.id) }
+        if (ctxEd.ajustes === null) return base
+        return { ...base, editable: !!llaveEdicion(planta) && editableDe(planta, x, p.id, ctxEd).editable, edicion: ultimaEdicion(x.id, p.id) }
       })
       .filter(Boolean) as EstadoPedidoNp["nps"]
     const entra = pedidoConNp(planta, p.created_at) || suyas.length > 0

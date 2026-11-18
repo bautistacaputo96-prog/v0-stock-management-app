@@ -886,11 +886,15 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         // Al editar, la elección solo se manda si ya se había leído la guardada (si no, el servidor deja la que tenía)
         const rnp = await avisarNp(pedidoId, !editingDispatch || npEleccionLista ? npEleccion : null, npFechaCambiada ? npMoverFecha : null, precioNp.valor, remitoTipo)
         if (rnp.error) toast({ title: "El pedido se guardó, pero la NP no", description: rnp.error, variant: "destructive" })
-        // Se edita la misma NP en Zomatik (spec 2026-11-18): sale en la pasada, después de 2 min sin cambios
-        else if (rnp.editadas && rnp.edicion) toast({ title: `NP: pasa a ${String(rnp.edicion.m3).replace(".", ",")} m³`, description: "En unos minutos queda en Zomatik." })
-        else if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
-        else if (rnp.usadas) toast({ title: "El pedido usa la NP elegida", description: "No se generó otra NP." })
-        else if (rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        else {
+          // Se edita la misma NP en Zomatik (spec 2026-11-18): sale en la pasada, después de 2 min sin cambios. Si además
+          // sale una NP nueva (lo de un proyecto con tope), se ven los dos avisos
+          const editada = !!(rnp.editadas && rnp.edicion)
+          if (editada) toast({ title: `NP: pasa a ${String(rnp.edicion!.m3).replace(".", ",")} m³`, description: "En unos minutos queda en Zomatik." })
+          if (rnp.creadas) toast({ title: "Generando la NP en Zomatik…", description: "En unos segundos aparece el número en el pedido." })
+          else if (!editada && rnp.usadas) toast({ title: "El pedido usa la NP elegida", description: "No se generó otra NP." })
+          else if (!editada && rnp.avisos?.length) toast({ title: "NP", description: rnp.avisos.join(" ") })
+        }
         // Se vinculó algo en este diálogo y el pedido tenía la NP en error: sin cambios, avisarNp no corre el robot
         if (!rnp.error && !rnp.creadas && editingDispatch && npVinculoHecho && !npFaltan.cliente && !npFaltan.formula && npDialogo?.nps.some((x) => x.estado === "error")) {
           const r = await generarNpAhora(pedidoId)
