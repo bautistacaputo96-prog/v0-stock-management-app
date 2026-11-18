@@ -4,7 +4,8 @@
  * Lo usan el formulario del pedido (Semana), la vista Día ("Ordenar el día" / "Guardar plan del día"),
  * el gerenciador de viajes y las ediciones de hora o total. Por dentro usa el planificador que ya
  * existía (lib/planificador.ts), así un pedido solo y el día entero se calculan con las mismas reglas:
- *   - m³ por viaje = m3_por_viaje del pedido (8 por defecto), el último con el resto;
+ *   - m³ por viaje = m3_por_viaje del pedido (8 por defecto), el último con el resto; si quedaría con menos de medio
+ *     camión, los dos últimos van parejos (9 = 5 + 4; `repartirM3` del planificador);
  *   - el primero llega a la hora pedida; los siguientes, separados por el espaciado del pedido
  *     o, si no tiene, por la descarga de la planta (bomba o directo);
  *   - la carga empieza ida + carga antes de la llegada; la planta carga de a `bocas_carga` camiones;
@@ -14,7 +15,7 @@
  * Se guardan con una sola función de la base (guardar_viajes_pedido): todo o nada.
  * Los viajes no tocan stock.
  */
-import { planificar, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado, type Pedido } from "@/lib/planificador"
+import { planificar, repartirM3, aMin, aHora, parametrosDePlanta, type Parametros, type Camion, type Plan, type Ocupado, type Pedido } from "@/lib/planificador"
 import { cargarTiemposGps, descargaParaM3, type TiemposGps, type TiemposObraGps, type MedidaGps, type MedidaObraGps, type DescargaGps, type M3SugeridoGps } from "@/lib/gps-viajes"
 
 export type EstadoViaje = "planificado" | "despachado" | "cancelado"
@@ -415,7 +416,7 @@ export function cambiosQueRearman(antes: Partial<PedidoParaViajes>, despues: Par
 /** Agrega un viaje al final con lo que falta (o m3_por_viaje si no falta nada), separado por el espaciado. */
 export function agregarViaje(vs: ViajeRow[], p: PedidoParaViajes, prm: Parametros): ViajeRow[] {
   const falta = m3Faltantes(vs, p)
-  const m3 = falta > 0.01 ? Math.min(m3PorViajeDe(p), falta) : m3PorViajeDe(p)
+  const m3 = falta > 0.01 ? repartirM3(falta, m3PorViajeDe(p))[0] ?? Math.min(m3PorViajeDe(p), falta) : m3PorViajeDe(p)
   const ult = ordenarPorN(vs.filter((v) => v.estado !== "cancelado")).pop()
   const llegada = ult
     ? new Date(new Date(ult.hora_llegada).getTime() + espaciadoDe(p, Number(ult.m3), prm) * MIN)
