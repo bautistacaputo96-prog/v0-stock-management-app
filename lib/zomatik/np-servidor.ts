@@ -529,7 +529,8 @@ export const COLUMNAS_EDICION =
 
 /** ¿Falta la migración de la edición (sin `origen`) o la del ajuste (sin la tabla)? Entonces no hay edición. */
 export const faltaMigracionEdicion = (e: unknown) =>
-  (e as { code?: string } | null)?.code === "42703" || /zomatik_np_ajustes|origen|m3_uso_objetivo|editar_activo|zomatik_np_edicion_aplicar|does not exist|schema cache/i.test(String((e as { message?: string })?.message || ""))
+  ["42703", "42P01", "PGRST204"].includes(String((e as { code?: string } | null)?.code ?? "")) ||
+  /\b(zomatik_np_ajustes\.origen|zomatik_np_ajustes\.m3_uso_objetivo|zomatik_np_config\.editar_activo|zomatik_np_edicion_aplicar)\b/i.test(String((e as { message?: string })?.message || ""))
 
 const esEdicion = (a: { origen?: string | null }) => (a.origen ?? ORIGEN_FINALIZAR) === ORIGEN_PEDIDO
 /** La edición abierta (pendiente, generando, revisar o error) de esa NP y ese pedido. */
@@ -540,9 +541,18 @@ export const edicionAbierta = (filas: FilaEdicionDB[], npId: string, pedidoId: s
  * Lo que hace falta para saber si las NP se pueden editar: sus filas de `zomatik_np_ajustes` y los pedidos ACTIVOS que
  * usan cada una. `ajustes` null = falta la migración (sin edición).
  */
-export async function contextoEdicion(sb: SB, npIds: string[]): Promise<{ ajustes: FilaEdicionDB[] | null; activos: Map<string, Set<string>> }> {
+export async function contextoEdicion(sb: SB, npIds: string[], o: { soloEdiciones?: boolean } = {}): Promise<{ ajustes: FilaEdicionDB[] | null; activos: Map<string, Set<string>> }> {
   const activos = new Map<string, Set<string>>()
   if (!npIds.length) return { ajustes: [], activos }
+  // `soloEdiciones`: sin ninguna planta con la llave, solo hacen falta las ediciones (para mostrarlas): una consulta
+  if (o.soloEdiciones) {
+    const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds).eq("origen", ORIGEN_PEDIDO)
+    if (error) {
+      if (faltaMigracionEdicion(error)) return { ajustes: null, activos }
+      throw error
+    }
+    return { ajustes: (data as unknown as FilaEdicionDB[]) || [], activos }
+  }
   const [{ data, error }, todosUsos] = await Promise.all([sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).in("np_id", npIds), usosDe(sb, "np_id", npIds)])
   if (error) {
     if (faltaMigracionEdicion(error)) return { ajustes: null, activos }
@@ -907,7 +917,14 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   if (conEdicion && !incompleto && plan.editar.length) ({ editadas, ultima: edicion } = await aplicarEdiciones(sb, ped, plan.editar, usoPlan, ctxEd.ajustes!, usuario, log))
   // Las ediciones abiertas que el plan ya no pide se anulan (salvo las fijas). Un pedido completo no: lo resuelve el robot
   // (con el ajuste al finalizar prendido se anula; si no, termina igual)
-  if (!incompleto && ped.status !== "completed") await anularEdicionesSobrantes(sb, ped, new Set(conEdicion ? plan.editar.map((e) => e.np_id) : []), log)
+  if (!incompleto && ped.status !== "completed") {
+    try {
+      await anularEdicionesSobrantes(sb, ped, new Set(conEdicion ? plan.editar.map((e) => e.np_id) : []), log)
+    } catch (e) {
+      // No rompe el guardado del pedido: la próxima sincronización lo vuelve a intentar
+      console.error("[zomatik-np] anular ediciones", ped.id, (e as Error)?.message)
+    }
+  }
   // Los avisos no se repiten: si el último aviso de este pedido dice lo mismo, no se vuelve a grabar
   if (plan.avisos.length) {
     const texto = plan.avisos.join(" · ")
@@ -1897,6 +1914,8 @@ async function registrarNoche(sb: SB, hoy: string, todoIlegible: boolean, avisar
 
 export type EstadoPedidoNp = {
   activo: boolean
+  /** La llave de la edición de la NP de la planta del pedido (spec 2026-11-18). */
+  editar: boolean
   modo: ModoNp
   /** El pedido entra en la NP automática (cargado después de prender la llave). */
   entra: boolean
@@ -1919,10 +1938,9 @@ export type EdicionNpEstado = {
   m3_np: number | null; m3_objetivo: number | null; m3_uso_objetivo: number | null
 }
 
-export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<string, EstadoPedidoNp>; plantas: Record<string, { activo: boolean; modo: ModoNp; aviso_hasta: string | null }> }> {
-  const sb = sbServicio()
+export async function estadoPedidos(ids: string[], sb: SB = sbServicio()): Promise<{ porPedido: Record<string, EstadoPedidoNp>; plantas: Record<string, { activo: boolean; modo: ModoNp; aviso_hasta: string | null; editar: boolean }> }> {
   const plantas = await plantasNp(sb)
-  const resumen = Object.fromEntries(Object.values(plantas).map((p) => [p.id, { activo: !!p.zomatik_np_activo, modo: modoDe(p), aviso_hasta: p.aviso_hasta ?? null }]))
+  const resumen = Object.fromEntries(Object.values(plantas).map((p) => [p.id, { activo: !!p.zomatik_np_activo, modo: modoDe(p), aviso_hasta: p.aviso_hasta ?? null, editar: !!llaveEdicion(p) }]))
   if (!ids.length || !Object.values(plantas).some((p) => p.zomatik_np_activo)) {
     return { porPedido: {}, plantas: resumen }
   }
@@ -1934,10 +1952,17 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
   ])
   const activos = usos.filter((u) => u.activo)
   const nps = await npsPorId(sb, [...new Set(activos.map((u) => u.np_id))])
-  const saldos = await saldosDe(sb, nps.filter((x) => x.estado === "ok"))
   // La edición de la NP (spec 2026-11-18). La última edición se muestra aunque la llave esté apagada (una trabada la
-  // resuelve un gerencial desde el menú); `editable`, solo con la llave. Sin la migración, nada
-  const ctxEd = await contextoEdicion(sb, nps.map((x) => x.id))
+  // resuelve un gerencial desde el menú); `editable`, solo con la llave (sin ninguna planta con la llave, solo se leen
+  // las ediciones). Sin la migración o si falla, la pantalla sigue sin esos datos (nunca un 500)
+  const algunaLlave = Object.values(plantas).some((p) => !!llaveEdicion(p))
+  const [saldos, ctxEd] = await Promise.all([
+    saldosDe(sb, nps.filter((x) => x.estado === "ok")),
+    contextoEdicion(sb, nps.map((x) => x.id), { soloEdiciones: !algunaLlave }).catch((e) => {
+      console.error("[zomatik-np] estado de la edición", (e as Error)?.message)
+      return { ajustes: null, activos: new Map<string, Set<string>>() }
+    }),
+  ])
   const num = (n: number | null) => (n === null || n === undefined ? null : Number(n))
   const ultimaEdicion = (npId: string, pedidoId: string): EdicionNpEstado | null => {
     const a = (ctxEd.ajustes || []).filter((x) => x.np_id === npId && x.scheduled_dispatch_id === pedidoId && esEdicion(x) && x.estado !== "anulado").sort((x, y) => y.created_at.localeCompare(x.created_at))[0]
@@ -1961,6 +1986,7 @@ export async function estadoPedidos(ids: string[]): Promise<{ porPedido: Record<
     const e = ((exc as { scheduled_dispatch_id: string; autorizado_por: string; motivo_tipo: string; motivo: string | null }[]) || []).find((x) => x.scheduled_dispatch_id === p.id) || null
     porPedido[p.id] = {
       activo: !!planta?.zomatik_np_activo,
+      editar: !!llaveEdicion(planta),
       modo,
       entra,
       nps: suyas,

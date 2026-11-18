@@ -137,8 +137,9 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
   const marcas = new Set(((mm as { marca: string }[]) || []).map((x) => x.marca))
   let creados = 0
   const problemas: string[] = []
-  // Una edición de la NP abierta (spec 2026-11-18, 6.2): el despacho que no entra espera a que la NP crezca en Zomatik
-  const edicion = await edicionAbiertaDelPedido(sb, ped.id)
+  // Una edición de la NP abierta (spec 2026-11-18, 6.2): el despacho que no entra espera a que la NP crezca en Zomatik.
+  // Con la llave de la edición apagada nadie la va a hacer: el texto de siempre
+  const edicion = cfg!.editar_activo === true ? await edicionAbiertaDelPedido(sb, ped.id) : null
   const conEdicion = (x: string) => (edicion ? x.replace(/supera lo que le queda a la NP: generá una NP adicional antes de remitir\.$/, `supera lo que le queda a la NP. ${msjEsperandoEdicion(edicion.m3_objetivo)}`) : x)
   for (const dia of [...porDia.keys()].sort()) {
     const despachos = porDia.get(dia)!

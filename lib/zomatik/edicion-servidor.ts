@@ -377,12 +377,15 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
 // ---------------------------------------------------------------------------
 
 const TRABADAS = ["revisar", "error"]
+/** Con la llave de la edición apagada nadie termina una edición pendiente o en curso: también se puede dejar como está. */
+const TRABADAS_SIN_LLAVE = [...TRABADAS, "pendiente", "generando"]
 
 /**
  * "Reintentar cambio de NP": la edición vuelve a "pendiente" (si se cortó en el Grabar, el robot relee la NP primero,
  * como siempre). "Dejar la NP como está" (con motivo): queda "a_mano" (tipo adicional), la NP deja de ser editable
- * para el pedido y se sincroniza (si el pedido necesita más, va una NP adicional). Lo controla la ruta (solo
- * gerenciales; dejar, con motivo).
+ * para el pedido y se sincroniza (si el pedido necesita más, va una NP adicional). Con la llave de la edición apagada
+ * no se reintenta, y "dejar" vale también para una pendiente o en curso (nadie la va a terminar). Lo controla la ruta
+ * (solo gerenciales; dejar, con motivo).
  */
 export async function resolverEdicion(o: { pedidoId: string; edicionId: string; decision: "reintentar" | "dejar"; usuario: string; motivo?: string | null }, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
   const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_EDICION).eq("id", o.edicionId).eq("scheduled_dispatch_id", o.pedidoId).maybeSingle()
@@ -392,16 +395,18 @@ export async function resolverEdicion(o: { pedidoId: string; edicionId: string; 
   }
   const a = data as unknown as FilaEdicionDB | null
   if (!a || a.origen !== ORIGEN_PEDIDO) return { ok: false, error: "No hay un cambio de la NP para resolver. Actualizá la pantalla." }
-  if (!TRABADAS.includes(a.estado)) return { ok: false, error: "Ese cambio de la NP ya no está trabado. Actualizá la pantalla." }
+  const conLlave = !!llaveEdicion((await plantasNp(sb))[a.plant_id])
+  const trabadas = conLlave ? TRABADAS : TRABADAS_SIN_LLAVE
+  if (!trabadas.includes(a.estado)) return { ok: false, error: "Ese cambio de la NP ya no está trabado. Actualizá la pantalla." }
   // Con la llave de la edición apagada nadie la va a reintentar: solo se puede dejar la NP como está
-  if (o.decision === "reintentar" && !llaveEdicion((await plantasNp(sb))[a.plant_id])) return { ok: false, error: "La edición de la NP está apagada en la planta: elegí «Dejar la NP como está»." }
+  if (o.decision === "reintentar" && !conLlave) return { ok: false, error: "La edición de la NP está apagada en la planta: elegí «Dejar la NP como está»." }
   const ahora = new Date().toISOString()
   const { data: np } = await sb.from("zomatik_np").select("id, numero").eq("id", a.np_id).maybeSingle()
   const numero = (np as { numero?: string | null } | null)?.numero ?? null
   const cambios = o.decision === "reintentar"
     ? { estado: "pendiente", proximo_intento: ahora, en_curso_desde: null, mensaje: `Reintento pedido por ${o.usuario}`, updated_at: ahora }
     : { estado: "a_mano", tipo: "adicional", resuelto_por: o.usuario, resuelto_motivo: o.motivo || null, mensaje: `NP dejada como está por ${o.usuario}: ${o.motivo || ""}`.trim(), proximo_intento: null, en_curso_desde: null, updated_at: ahora }
-  const { data: hecho, error: eu } = await sb.from("zomatik_np_ajustes").update(cambios as never).eq("id", a.id).in("estado", TRABADAS).select("id")
+  const { data: hecho, error: eu } = await sb.from("zomatik_np_ajustes").update(cambios as never).eq("id", a.id).in("estado", trabadas).select("id")
   if (eu) throw eu
   if (!((hecho as unknown[]) || []).length) return { ok: false, error: "El cambio de la NP cambió. Actualizá la pantalla." }
   await actividadNp(sb, {
