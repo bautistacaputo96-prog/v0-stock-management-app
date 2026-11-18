@@ -765,6 +765,11 @@ export type ResultadoAjusteNp = {
   yaEstaba?: boolean
   grabado?: boolean
   recorte?: string
+  /**
+   * Con "ok": la fila de la NP en el listado (la que se leyó al verificar) tiene el ícono Autorizar (solo lectura,
+   * `autorizacionEnListado`). null = no se pudo saber. La autoriza la pasada de siempre (spec 2026-11-18, 5.2 paso 5).
+   */
+  porAutorizar?: boolean | null
 }
 
 export type LecturaAjuste = {
@@ -774,7 +779,7 @@ export type LecturaAjuste = {
   renglon: Renglon
   det: Detalle | null
   cantidad: number
-  fila: { total: number | null; estado: string } | null
+  fila: { total: number | null; estado: string; porAutorizar: boolean | null } | null
 }
 
 /** La fila de la NP en el listado de REBUCRET (null si no aparece o el listado vino de otra sucursal). */
@@ -784,7 +789,7 @@ async function filaNp(nav: NavegadorNp, d: { codigo: number; numero: string | nu
   const l = await listado(nav, { bus_numero: numeroNormalizado(d.numero) || d.numero }, SUCURSAL_REBUCRET)
   if (l.sucursalPagina !== SUCURSAL_REBUCRET) return null
   const f = l.filas.find((x) => x.codigo === d.codigo)
-  return f ? { total: f.total, estado: f.estado } : null
+  return f ? { total: f.total, estado: f.estado, porAutorizar: autorizacionEnListado(l.html, d.codigo)?.porAutorizar ?? null } : null
 }
 
 /**
@@ -859,7 +864,7 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     const l = await leerNpParaAjuste(nav, d, { azar })
     leidoAntes = l.cantidad
     // Un corte anterior en el Grabar: lo que dice Zomatik ahora manda
-    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true }
+    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true, porAutorizar: l.fila?.porAutorizar ?? null }
     if (!igual(l.cantidad, d.m3Np)) return { estado: "revisar", mensaje: msjNpCambio(l.cantidad, d.m3Np), paso, leido: l.cantidad }
     await marcar("leer_factura")
     const f = facturaDeNp({ detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null, comprobantes: await comprobantesNp(nav, d.codigo, azar) })
@@ -869,7 +874,7 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     // El total grabado de antes (para ver que quedó en proporción): sin la fila del listado no se sigue
     if (!l.fila || l.fila.total === null) return { estado: "revisar", mensaje: `No se encontró la ${d.numero} en el listado de pedidos de REBUCRET. No se tocó: revisala.`, paso, leido: l.cantidad }
     const totalAntes = l.fila.total
-    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true }
+    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true, porAutorizar: l.fila.porAutorizar }
 
     await marcar("decidir")
     await marcar("editar_detalle")
@@ -892,7 +897,7 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     if (v && igual(v.cantidad, d.objetivo)) {
       const despues = v.fila?.total ?? null
       if (despues !== null && totalProporcional(totalAntes, l.cantidad, despues, d.objetivo))
-        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true }
+        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, porAutorizar: v.fila?.porAutorizar ?? null }
       return { estado: "revisar", mensaje: `La NP quedó en ${m3Texto(d.objetivo)} m³ pero el total del listado no cerró (antes ${totalAntes}, ahora ${despues ?? "sin dato"}). Revisala en Zomatik.`, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
     }
     if (v && igual(v.cantidad, l.cantidad)) {

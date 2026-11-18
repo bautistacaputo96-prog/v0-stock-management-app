@@ -34,7 +34,7 @@ import {
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
-import { PASO_ESPERANDO_AJUSTE } from "@/lib/zomatik/ajuste"
+import { EDICION_ABIERTA, ORIGEN_PEDIDO, PASO_ESPERANDO_AJUSTE, m3Texto } from "@/lib/zomatik/ajuste"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -42,16 +42,21 @@ export type ConfigZ1 = {
   plant_id: string; activo: boolean; remitir_activo: boolean; remitir_desde: string | null; deposito: number | null
   /** Llave del ajuste de la NP al finalizar (docs/specs/2026-11-06-ajustar-np-al-finalizar.md). Sin la migración, apagada. */
   ajustar_activo?: boolean; ajustar_desde?: string | null
+  /** Llave de la edición de la NP cuando el pedido cambia (docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md). Sin la migración, apagada. */
+  editar_activo?: boolean; editar_desde?: string | null
 }
 
 /**
  * Config por planta. Sin la migración de Z1 (no existe remitir_activo): vacío (todo apagado). Sin la del ajuste (no
- * existe ajustar_activo): lo de Z1 como siempre, con el ajuste apagado.
+ * existe ajustar_activo) o la de la edición (no existe editar_activo): lo de antes como siempre, con eso apagado.
  */
 export async function configZ1(sb: SB): Promise<Record<string, ConfigZ1>> {
-  let { data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito, ajustar_activo, ajustar_desde")
-  // Solo si falta la columna (42703, la migración del ajuste sin aplicar); cualquier otro error, como siempre
-  if (error && (error as { code?: string }).code === "42703") ({ data, error } = await sb.from("zomatik_np_config").select("plant_id, activo, remitir_activo, remitir_desde, deposito"))
+  const base = "plant_id, activo, remitir_activo, remitir_desde, deposito"
+  let { data, error } = await sb.from("zomatik_np_config").select(`${base}, ajustar_activo, ajustar_desde, editar_activo, editar_desde`)
+  // Solo si falta una columna (42703, una migración sin aplicar): primero sin la edición, después sin el ajuste. Cualquier
+  // otro error, como siempre
+  if (error && (error as { code?: string }).code === "42703") ({ data, error } = await sb.from("zomatik_np_config").select(`${base}, ajustar_activo, ajustar_desde`))
+  if (error && (error as { code?: string }).code === "42703") ({ data, error } = await sb.from("zomatik_np_config").select(base))
   if (error) return {}
   return Object.fromEntries(((data as ConfigZ1[]) || []).map((c) => [c.plant_id, c]))
 }
@@ -132,10 +137,13 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
   const marcas = new Set(((mm as { marca: string }[]) || []).map((x) => x.marca))
   let creados = 0
   const problemas: string[] = []
+  // Una edición de la NP abierta (spec 2026-11-18, 6.2): el despacho que no entra espera a que la NP crezca en Zomatik
+  const edicion = await edicionAbiertaDelPedido(sb, ped.id)
+  const conEdicion = (x: string) => (edicion ? x.replace(/supera lo que le queda a la NP: generá una NP adicional antes de remitir\.$/, `supera lo que le queda a la NP. ${msjEsperandoEdicion(edicion.m3_objetivo)}`) : x)
   for (const dia of [...porDia.keys()].sort()) {
     const despachos = porDia.get(dia)!
     const plan = planificarRemitos(despachos, nps, yaRemitidos, remitidoPorNp)
-    problemas.push(...plan.problemas.map((x) => `${dia}: ${x}`))
+    problemas.push(...plan.problemas.map((x) => `${dia}: ${conEdicion(x)}`))
     const filas = plan.remitos.map((r) => {
       let marca = marcaZ1(ped.id, dia, r.np_n)
       for (let k = 2; marcas.has(marca) && k < 50; k++) marca = marcaZ1(ped.id, dia, r.np_n, k)
@@ -180,6 +188,17 @@ export async function prepararRemitos(pedidoId: string, diaPantalla: string | nu
   }
   if (problemas.length) await actividadNp(sb, { usuario, pedidoId: ped.id, plantId: ped.plant_id, referencia: `Pedido ${ped.id.slice(0, 8)}`, detalle: { "Qué pasó": "No se puede remitir todo", Aviso: problemas.join(" · ") } })
   return { activo: true, creados, problemas }
+}
+
+/** "Esperando que la NP pase a 9 m³ en Zomatik." (el problema del remito con una edición de la NP abierta). */
+export const msjEsperandoEdicion = (m3: number | null) => `Esperando que la NP pase a ${m3Texto(m3)} m³ en Zomatik.`
+
+/** La edición de la NP abierta de un pedido (la de más m³), o null. Sin la migración de la edición, null. */
+async function edicionAbiertaDelPedido(sb: SB, pedidoId: string): Promise<{ m3_objetivo: number | null } | null> {
+  const { data, error } = await sb.from("zomatik_np_ajustes").select("np_id, m3_objetivo, estado, origen").eq("scheduled_dispatch_id", pedidoId).eq("origen", ORIGEN_PEDIDO).in("estado", EDICION_ABIERTA)
+  if (error) return null // sin la migración (o una falla al leer): el texto de siempre
+  const filas = ((data as { m3_objetivo: number | null }[]) || []).sort((a, b) => Number(b.m3_objetivo) - Number(a.m3_objetivo))
+  return filas[0] ? { m3_objetivo: filas[0].m3_objetivo === null ? null : Number(filas[0].m3_objetivo) } : null
 }
 
 /**

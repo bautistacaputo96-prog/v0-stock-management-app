@@ -25,7 +25,8 @@ import { ajustarCantidadNp, type LlaveAjuste, type NavegadorNp } from "@/lib/zom
 import { comprobanteDeNumero, esNpTraida, hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
-  MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, msjSaldoDecididoEnMedio, pendienteEsperado, planificarAjuste, saldoDecidido, textoAjuste,
+  EDICION_ABIERTA, MSJ_AJUSTE_ESPERA_EDICION, MSJ_EDICION_LO_DEJA_EL_AJUSTE, MSJ_ESPERANDO_AJUSTE, MSJ_NP_NO_AJUSTADA, ORIGEN_FINALIZAR, ORIGEN_PEDIDO, PASOS_GRABAR_AJUSTE, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO,
+  edicionFija, m3Texto, marcaAjuste, msjConFactura, msjConFacturaExceso, msjSaldoDecididoEnMedio, pendienteEsperado, planificarAjuste, saldoDecidido, textoAjuste,
   type EstadoAjuste, type PlanAjuste,
 } from "@/lib/zomatik/ajuste"
 import { configZ1, prepararRemitos, type ConfigZ1 } from "@/lib/zomatik/z1-servidor"
@@ -38,14 +39,46 @@ export function llaveAjuste(c: ConfigZ1 | undefined): LlaveAjuste | null {
   return c?.activo === true && c.remitir_activo === true && c.ajustar_activo === true ? { ajustar: true, plantId: c.plant_id } : null
 }
 
-export const COLUMNAS_AJUSTE =
+/** Las columnas de la migración del ajuste (202611061200). */
+const COLUMNAS_AJUSTE_BASE =
   "id, np_id, scheduled_dispatch_id, plant_id, marca, tipo, m3_np, m3_objetivo, m3_despachado, con_factura, factura_texto, estado, paso, mensaje, intentos, proximo_intento, en_curso_desde, aplicado_at, aviso_juan_at, resuelto_por, resuelto_motivo, created_at, updated_at, ok_at"
+/** Con las de la edición de la NP (202611181400): `origen` ('finalizar' | 'pedido') y `m3_uso_objetivo`. */
+export const COLUMNAS_AJUSTE = `${COLUMNAS_AJUSTE_BASE}, origen, m3_uso_objetivo`
 
 export type AjusteDB = {
   id: string; np_id: string; scheduled_dispatch_id: string | null; plant_id: string; marca: string; tipo: string | null
   m3_np: number | null; m3_objetivo: number | null; m3_despachado: number | null; con_factura: boolean | null; factura_texto: string | null
   estado: EstadoAjuste; paso: string | null; mensaje: string | null; intentos: number; proximo_intento: string | null; en_curso_desde: string | null
   aplicado_at: string | null; aviso_juan_at: string | null; resuelto_por: string | null; resuelto_motivo: string | null; created_at: string; updated_at: string; ok_at: string | null
+  /** Sin la migración de la edición, no viene (todas son del ajuste al finalizar). */
+  origen?: string | null; m3_uso_objetivo?: number | null
+}
+
+/** Lo mínimo del armado de una consulta de PostgREST que usan los filtros de abajo. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Consulta = any
+
+/**
+ * Las filas del ajuste AL FINALIZAR (origen 'finalizar'): las ediciones de la NP por un cambio del pedido no cuentan
+ * acá (spec 2026-11-18, 6.1). Sin la migración de la edición (42703: no existe `origen`), todas, como hoy.
+ */
+async function ajustesFinalizar(sb: SB, filtrar: (q: Consulta) => PromiseLike<{ data: unknown; error: unknown }>): Promise<AjusteDB[]> {
+  const con = await filtrar(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("origen", ORIGEN_FINALIZAR))
+  if (!con.error) return (con.data as AjusteDB[]) || []
+  if ((con.error as { code?: string }).code !== "42703") throw con.error
+  const sin = await filtrar(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE_BASE))
+  if (sin.error) throw sin.error
+  return (sin.data as AjusteDB[]) || []
+}
+
+/** Las ediciones de la NP (origen 'pedido') abiertas de una NP o de un pedido. Sin la migración de la edición: ninguna. */
+async function edicionesAbiertas(sb: SB, campo: "np_id" | "scheduled_dispatch_id", id: string): Promise<AjusteDB[]> {
+  const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq(campo, id).eq("origen", ORIGEN_PEDIDO).in("estado", EDICION_ABIERTA)
+  if (error) {
+    if ((error as { code?: string }).code === "42703") return []
+    throw error
+  }
+  return (data as unknown as AjusteDB[]) || []
 }
 
 const despuesDe = (min: number) => new Date(Date.now() + min * 60_000).toISOString()
@@ -150,7 +183,15 @@ export async function prepararAjustes(pedidoId: string, usuario: string, sb: SB 
   const p = await planDelPedido(sb, pedidoId, o.cfg)
   if (!p.aplica) return p
   const avisar = o.avisar ?? avisarErrorZomatik
-  const ya = await lista<AjusteDB>(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", p.pedido.id))
+  // Las ediciones de la NP de este pedido que todavía no tocaron Zomatik se anulan: el ajuste ya cubre lo que faltaba
+  // (6.1). Las fijas (en curso, cortadas o para revisar) siguen: el ajuste las espera
+  for (const e of await edicionesAbiertas(sb, "scheduled_dispatch_id", p.pedido.id)) {
+    if (e.estado !== "pendiente" || edicionFija(e)) continue
+    const { data: an, error: ea } = await sb.from("zomatik_np_ajustes").update({ estado: "anulado", mensaje: MSJ_EDICION_LO_DEJA_EL_AJUSTE, proximo_intento: null, updated_at: new Date().toISOString() } as never).eq("id", e.id).eq("estado", "pendiente").select("id")
+    if (ea) throw ea
+    if (((an as unknown[]) || []).length) await actividadNp(sb, { usuario, pedidoId: p.pedido.id, plantId: p.pedido.plant_id, referencia: refDe(p.pedido.id), detalle: { "Qué pasó": "Cambio de la NP anulado", Mensaje: MSJ_EDICION_LO_DEJA_EL_AJUSTE, Marca: e.marca } })
+  }
+  const ya = await ajustesFinalizar(sb, (q) => q.eq("scheduled_dispatch_id", p.pedido.id))
   let creados = 0
   const ahora = new Date().toISOString()
   for (const pl of p.planes) {
@@ -175,7 +216,7 @@ export async function prepararAjustes(pedidoId: string, usuario: string, sb: SB 
     await actividadNp(sb, { usuario, action: "crear", pedidoId: p.pedido.id, plantId: p.pedido.plant_id, referencia: refDe(p.pedido.id), detalle: { "Qué pasó": que, ...(pl.mensaje ? { Mensaje: pl.mensaje } : {}), NP: np.numero, Marca: marcaAjuste(p.pedido.id, np) } })
     if (pl.estado === "revisar") await avisarTrabado(sb, avisar, { marca: marcaAjuste(p.pedido.id, np), scheduled_dispatch_id: p.pedido.id }, np.numero, "revisar", pl.mensaje)
   }
-  const ahoraHay = await lista<AjusteDB>(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", p.pedido.id))
+  const ahoraHay = await ajustesFinalizar(sb, (q) => q.eq("scheduled_dispatch_id", p.pedido.id))
   return {
     aplica: true, creados,
     pendientes: ahoraHay.filter((x) => x.estado === "pendiente" || x.estado === "generando").length,
@@ -198,9 +239,7 @@ export async function prepararAjustesSeguro(pedidoId: string, usuario: string, s
 // ---------------------------------------------------------------------------
 
 async function ajusteDe(sb: SB, pedidoId: string, npId: string): Promise<AjusteDB | null> {
-  const { data, error } = await sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", pedidoId).eq("np_id", npId).maybeSingle()
-  if (error) throw error
-  return (data as unknown as AjusteDB) || null
+  return (await ajustesFinalizar(sb, (q) => q.eq("scheduled_dispatch_id", pedidoId).eq("np_id", npId)))[0] || null
 }
 
 /** Mensaje del remito cuando no se pudo leer el ajuste (una falla pasajera de la base): espera, nunca sale libre. */
@@ -271,12 +310,12 @@ export const DEPENDENCIAS_AJUSTE: DependenciasAjuste = { navegador: navegadorAju
 /** Los ajustes para trabajar ahora (como las NP: pendientes con el reintento vencido y colgados). Con el botón, los del pedido, también los de error. */
 export async function ajustesATrabajar(sb: SB, cfg: Record<string, ConfigZ1>, pedidoId?: string | null): Promise<AjusteDB[]> {
   try {
-    let q = sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).in("estado", ["pendiente", "generando", ...(pedidoId ? ["error"] : [])]).order("created_at").limit(20)
-    if (pedidoId) q = q.eq("scheduled_dispatch_id", pedidoId)
-    const { data, error } = await q
-    if (error) throw error
+    const data = await ajustesFinalizar(sb, (q) => {
+      const x = q.in("estado", ["pendiente", "generando", ...(pedidoId ? ["error"] : [])])
+      return (pedidoId ? x.eq("scheduled_dispatch_id", pedidoId) : x).order("created_at").limit(20)
+    })
     const ahora = Date.now()
-    return ((data as unknown as AjusteDB[]) || []).filter((a) => !!llaveAjuste(cfg[a.plant_id]) && trabajoPendiente(a, ahora, !!pedidoId))
+    return data.filter((a) => !!llaveAjuste(cfg[a.plant_id]) && trabajoPendiente(a, ahora, !!pedidoId))
   } catch (e) {
     if (!faltaMigracionAjuste(e)) console.error("[zomatik-ajuste] a trabajar", (e as Error)?.message)
     return []
@@ -424,6 +463,13 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         continue
       }
       const cortado = PASOS_GRABAR_AJUSTE.includes(antes.paso || "")
+      // La NP tiene una edición por un cambio del pedido en curso (spec 2026-11-18, 6.1): el ajuste la espera (el remito
+      // también, por el gate). Una edición que todavía no tocó Zomatik no frena (la anula prepararAjustes)
+      if (!cortado && (await edicionesAbiertas(sb, "np_id", a.np_id)).some((e) => edicionFija(e))) {
+        await guardarSi(sb, a.id, { estado: "pendiente", en_curso_desde: null, mensaje: MSJ_AJUSTE_ESPERA_EDICION, proximo_intento: despuesDe(10) })
+        hecho("pendiente", MSJ_AJUSTE_ESPERA_EDICION)
+        continue
+      }
       // Reintento después de un corte (no se vuelve a armar el plan): si mientras tanto se decidió el saldo, revisar
       const decididoAhora = saldoDecidido(d.np)
       if (cortado && decididoAhora) {
@@ -561,7 +607,7 @@ export type ResolucionAjuste = { motivo: string; ajusteId?: string | null; /** N
  * Los remitos del pedido que esperaban salen ya. Lo controla la ruta (solo gerenciales, con motivo).
  */
 export async function remitirSinAjustar(pedidoId: string, usuario: string, r: ResolucionAjuste, sb: SB = sbServicio()): Promise<{ ok: boolean; error?: string }> {
-  const ajustes = await lista<AjusteDB>(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).eq("scheduled_dispatch_id", pedidoId))
+  const ajustes = await ajustesFinalizar(sb, (q) => q.eq("scheduled_dispatch_id", pedidoId))
   const trabados = ajustes.filter((x) => TRABADOS.includes(x.estado))
   if (!trabados.length) return { ok: false, error: "No hay un ajuste trabado para resolver. Actualizá la pantalla." }
   const a = r.ajusteId ? trabados.find((x) => x.id === r.ajusteId) : trabados.length === 1 ? trabados[0] : null
@@ -622,7 +668,7 @@ export async function estadoAjustes(ids: string[], sb: SB = sbServicio()): Promi
   const activo = Object.fromEntries(Object.values(cfg).map((c) => [c.plant_id, !!llaveAjuste(c)]))
   if (!ids.length || !Object.values(activo).some(Boolean)) return { porPedido: {}, activo }
   try {
-    const as = await lista<AjusteDB>(sb.from("zomatik_np_ajustes").select(COLUMNAS_AJUSTE).in("scheduled_dispatch_id", ids).neq("estado", "anulado"))
+    const as = await ajustesFinalizar(sb, (q) => q.in("scheduled_dispatch_id", ids).neq("estado", "anulado"))
     const nps = as.length ? await lista<{ id: string; numero: string | null }>(sb.from("zomatik_np").select("id, numero").in("id", [...new Set(as.map((x) => x.np_id))])) : []
     const numero = new Map(nps.map((x) => [x.id, x.numero]))
     const porPedido: Record<string, EstadoAjusteNp[]> = {}
