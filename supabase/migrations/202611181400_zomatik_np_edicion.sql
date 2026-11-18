@@ -3,7 +3,7 @@
 --
 -- Especificación: docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md (sección 4; la 14 manda sobre la 12).
 -- CORRERLA FUERA DE HORARIO y ANTES de publicar el código: candados cortos sobre zomatik_np_config y zomatik_np_ajustes.
--- Probarla antes en BEGIN … ROLLBACK.
+-- Va entera en una transacción (BEGIN … COMMIT): para probarla antes, cambiar el COMMIT del final por ROLLBACK.
 --
 -- Qué cambia (se agrega; no se borra ningún dato):
 --   zomatik_np_config.editar_activo  LLAVE PROPIA de la edición por planta, APAGADA por defecto. Requiere la de la NP
@@ -15,7 +15,8 @@
 --   UNIQUE (np_id, scheduled_dispatch_id) → dos índices únicos parciales: lo mismo de hoy para 'finalizar', y UNA sola
 --                         edición abierta (pendiente, generando, revisar, error) por NP para 'pedido'.
 --   zomatik_np_edicion_aplicar (nueva)  con la fila y la NP bloqueadas: la NP en m3_objetivo y la reserva del pedido en
---                         m3_uso_objetivo, juntas. No cierra el saldo. Idempotente.
+--                         m3_uso_objetivo, juntas, solo si son las que grabó el robot en Zomatik (p_m3_objetivo,
+--                         p_m3_uso) y la reserva entra en la NP. No cierra el saldo ni toca saldo_desde. Idempotente.
 --   zomatik_ajuste_aplicar  igual que antes, con un control más al principio: solo acepta filas 'finalizar'.
 --
 -- Qué pasa con los datos ya cargados:
@@ -32,13 +33,24 @@
 SET lock_timeout = '3s';
 SET statement_timeout = '60s';
 
+BEGIN;
+
 ALTER TABLE public.zomatik_np_config ADD COLUMN IF NOT EXISTS editar_activo boolean NOT NULL DEFAULT false;
 ALTER TABLE public.zomatik_np_config ADD COLUMN IF NOT EXISTS editar_desde timestamptz;
 COMMENT ON COLUMN public.zomatik_np_config.editar_activo IS 'Zomatik: llave de la edición de la NP cuando el pedido cambia de m³ (spec 2026-11-18). false (por defecto) = NP adicional o saldo, como antes. Requiere activo.';
 COMMENT ON COLUMN public.zomatik_np_config.editar_desde IS 'Zomatik: cuándo se prendió la edición de la NP (de registro).';
 
-ALTER TABLE public.zomatik_np_ajustes ADD COLUMN IF NOT EXISTS origen text NOT NULL DEFAULT 'finalizar' CHECK (origen IN ('finalizar', 'pedido'));
+ALTER TABLE public.zomatik_np_ajustes ADD COLUMN IF NOT EXISTS origen text NOT NULL DEFAULT 'finalizar';
 ALTER TABLE public.zomatik_np_ajustes ADD COLUMN IF NOT EXISTS m3_uso_objetivo numeric(10,3);
+-- El CHECK aparte y con nombre: al correrla dos veces no se duplica (un CHECK dentro de ADD COLUMN IF NOT EXISTS
+-- depende de la versión de Postgres)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'zomatik_np_ajustes_origen_check' AND conrelid = 'public.zomatik_np_ajustes'::regclass) THEN
+    ALTER TABLE public.zomatik_np_ajustes ADD CONSTRAINT zomatik_np_ajustes_origen_check CHECK (origen IN ('finalizar', 'pedido'));
+  END IF;
+END;
+$$;
 COMMENT ON COLUMN public.zomatik_np_ajustes.origen IS 'Zomatik: finalizar = ajuste a lo despachado al finalizar el pedido; pedido = edición de la NP por un cambio de m³ del pedido.';
 COMMENT ON COLUMN public.zomatik_np_ajustes.m3_uso_objetivo IS 'Zomatik (solo origen pedido): la reserva del pedido en la NP después de editarla.';
 
@@ -47,10 +59,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS zomatik_np_ajustes_finalizar_key ON public.zom
 CREATE UNIQUE INDEX IF NOT EXISTS zomatik_np_ajustes_edicion_abierta_key ON public.zomatik_np_ajustes (np_id) WHERE origen = 'pedido' AND estado IN ('pendiente', 'generando', 'revisar', 'error');
 
 -- Pasar a la base una edición que Zomatik ya tiene (la NP en m3_objetivo): con la fila y la NP bloqueadas (no se pisa
--- con una reserva al mismo tiempo), la NP y la reserva del pedido cambian juntas. Si el pedido ya no usa la NP (uso
--- inactivo), solo la NP. No cierra el saldo (el pedido sigue activo). Idempotente: si ya se aplicó, solo la deja 'ok'.
--- Devuelve {ok} o {error}.
-CREATE OR REPLACE FUNCTION public.zomatik_np_edicion_aplicar(p_id uuid)
+-- con una reserva al mismo tiempo), la NP y la reserva del pedido cambian juntas. p_m3_objetivo / p_m3_uso: lo que el
+-- robot grabó en Zomatik y la reserva que decidió; si la fila dice otra cosa, no se aplica nada (nunca una NP de 9 con
+-- una reserva de 10). Si el pedido ya no usa la NP (uso inactivo), solo la NP. No cierra el saldo ni toca saldo_desde (el
+-- pedido sigue activo). Idempotente: si ya se aplicó, solo la deja 'ok'. Devuelve {ok} o {error}.
+DROP FUNCTION IF EXISTS public.zomatik_np_edicion_aplicar(uuid);
+CREATE OR REPLACE FUNCTION public.zomatik_np_edicion_aplicar(p_id uuid, p_m3_objetivo numeric DEFAULT NULL, p_m3_uso numeric DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = public
@@ -77,11 +91,17 @@ BEGIN
   IF v_a.m3_objetivo IS NULL OR v_a.m3_objetivo <= 0 OR v_a.m3_uso_objetivo IS NULL OR v_a.m3_uso_objetivo < 0 THEN
     RETURN jsonb_build_object('error', 'A la edición le faltan los m³.');
   END IF;
+  IF (p_m3_objetivo IS NOT NULL AND abs(v_a.m3_objetivo - p_m3_objetivo) > 0.001) OR (p_m3_uso IS NOT NULL AND abs(v_a.m3_uso_objetivo - p_m3_uso) > 0.001) THEN
+    RETURN jsonb_build_object('error', 'La edición cambió mientras se trabajaba.');
+  END IF;
+  IF v_a.m3_uso_objetivo > v_a.m3_objetivo + 0.001 THEN
+    RETURN jsonb_build_object('error', 'La reserva del pedido no entra en la NP.');
+  END IF;
   SELECT * INTO v_np FROM zomatik_np WHERE id = v_a.np_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('error', 'La NP no existe.');
   END IF;
-  UPDATE zomatik_np SET m3_original = coalesce(m3_original, m3), m3 = v_a.m3_objetivo, saldo_desde = NULL, updated_at = now() WHERE id = v_np.id;
+  UPDATE zomatik_np SET m3_original = coalesce(m3_original, m3), m3 = v_a.m3_objetivo, updated_at = now() WHERE id = v_np.id;
   UPDATE zomatik_np_uso SET m3 = v_a.m3_uso_objetivo, updated_at = now()
    WHERE np_id = v_a.np_id AND scheduled_dispatch_id = v_a.scheduled_dispatch_id AND activo;
   UPDATE zomatik_np_ajustes
@@ -91,8 +111,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.zomatik_np_edicion_aplicar(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.zomatik_np_edicion_aplicar(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.zomatik_np_edicion_aplicar(uuid, numeric, numeric) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.zomatik_np_edicion_aplicar(uuid, numeric, numeric) TO service_role;
 
 -- La misma función de 202611061200_zomatik_np_ajuste.sql con UN control más al principio: solo filas 'finalizar' (una
 -- edición por cambio del pedido no deja la reserva en lo despachado ni cierra el saldo).
@@ -157,6 +177,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.zomatik_ajuste_aplicar(uuid, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.zomatik_ajuste_aplicar(uuid, text, text) TO service_role;
+
+COMMIT;
 
 RESET lock_timeout;
 RESET statement_timeout;
