@@ -126,7 +126,7 @@ Dos números, que se aplican juntos en la base (nunca uno sin el otro):
 
 ## 4. Base de datos
 
-Migración nueva `supabase/migrations/202611181200_zomatik_np_edicion.sql`, **sin aplicar**. Correrla fuera de
+Migración nueva `supabase/migrations/202611181400_zomatik_np_edicion.sql`, **sin aplicar**. Correrla fuera de
 horario, probada antes en `BEGIN … ROLLBACK` (lock_timeout 3 s). **Va antes de publicar el código** (6.4).
 
 | Cambio | Detalle |
@@ -366,7 +366,7 @@ generada y autorizada (sea 0001-0000XXXX).
 
 | Archivo | Qué | Patrón a copiar |
 |---|---|---|
-| `supabase/migrations/202611181200_zomatik_np_edicion.sql` (nuevo, **sin aplicar**) | Sección 4 | `202611061200_zomatik_np_ajuste.sql` |
+| `supabase/migrations/202611181400_zomatik_np_edicion.sql` (nuevo, **sin aplicar**) | Sección 4 | `202611061200_zomatik_np_ajuste.sql` |
 | `lib/zomatik/np.ts` | `UsoPlan.editable` y `UsoPlan.edicion`; `PlanNp.editar`; las reglas de 3.3 en `planificarNp` (crece: después de libre y saldo, la última editable; achica: editar en vez de `ajustar` en las editables); textos de aviso | `planificarNp` |
 | `lib/zomatik/ajuste.ts` | `objetivoEdicion`, `marcaEdicion`, `npEditable` (pura, con lo leído de la base), `ORIGEN_FINALIZAR`/`ORIGEN_PEDIDO`, textos de 7 y 5.3 | `planificarAjuste`, `comprometidoOtros`, `marcaAjuste` |
 | `lib/zomatik/np-servidor.ts` | `plantasNp` lee `editar_activo` (con 42703); `llaveEdicion(planta)` (el único lugar que arma la `LlaveAjuste` para una edición: NP + edición prendidas); `sincronizarPedido` arma `editable`/`edicion`, aplica `plan.editar` (5.1), anula ediciones que ya no hacen falta y devuelve `editadas`; `estadoPedidos` suma por NP `editable` y `edicion` (estado, `m3_objetivo`, mensaje) | `sincronizarPedido`, `npsAjustandose` |
@@ -416,7 +416,7 @@ No se tocan: `web.ts` (lista cerrada), `cliente.ts`, `z1.ts`, `z1-robot.ts`, el 
 ## 29. Editar la NP cuando el pedido cambia de m³ (18/11/2026) — cambia 24.1.2, 24.5.6 y 25.2 (Agrandar / Achicar)
 
 Spec: `docs/specs/2026-11-18-editar-np-al-cambiar-pedido.md` (la sección 12, cuando la conteste Bautista, manda).
-Migración `supabase/migrations/202611181200_zomatik_np_edicion.sql`. Motivo: La Tercera, Cordones (18/11) pasó de 8 a
+Migración `supabase/migrations/202611181400_zomatik_np_edicion.sql`. Motivo: La Tercera, Cordones (18/11) pasó de 8 a
 9 m³ y quedaron dos NP (1194 + adicional 1197); un camión con m³ de las dos salía en dos remitos.
 
 - **Qué cambia:** con la llave nueva `zomatik_np_config.editar_activo` (por planta, apagada por defecto), si el pedido
