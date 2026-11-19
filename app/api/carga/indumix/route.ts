@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { respuestaError, sbServicio } from "@/lib/auth/servidor"
-import { emparejar, desvio, type Candidato } from "@/lib/carga/auditoria"
+import { emparejar, desvio, salidaCementoExtra, type Candidato } from "@/lib/carga/auditoria"
 import { cargarPuestoPorId } from "@/lib/carga/datos"
-import { error, exigirCarga, hhmmAR, horaPuente, registrarEvento, yaProcesado } from "@/lib/carga/servidor"
+import { cementoExtraCarga, error, exigirCarga, hhmmAR, horaPuente, registrarEvento, yaProcesado } from "@/lib/carga/servidor"
 import { SALIDAS, grupoDeSalida, normalizarPatente, type ReportePlanta, type Salida } from "@/lib/carga/tipos"
 
 export const dynamic = "force-dynamic"
@@ -82,7 +82,13 @@ export async function POST(req: Request) {
       humedad_pct: m.humedad_pct ?? null, teorico_corregido: m.teorico_corregido ?? null, real: m.real ?? null, extra: m.extra ?? 0, unidad: m.unidad || null,
     }))
     if (filas.length) await sb.from("cargas_materiales").upsert(filas, { onConflict: "carga_id,ciclo,salida" })
-    const conDesvio = filas.some((f) => desvio({ grupo: grupoDeSalida(f.salida), teorico_corregido: f.teorico_corregido, real: f.real }, puesto.tolerancias.pesaje))
+    // Replanteo: en la salida del cemento, lo esperado suma el cemento agregado a mano (el de la orden o el del despacho)
+    const cargaRep = enCola
+      ? ((await sb.from("cargas").select("*").eq("id", cargaId).maybeSingle()).data as any) || { dispatch_id: null }
+      : { cemento_extra_kg: null, completa_carga_id: null, dispatch_id: desp?.id ?? null }
+    const cemRep = await cementoExtraCarga(cargaRep)
+    const salExtra: Salida | null = cemRep.kg > 0 ? salidaCementoExtra(filas, cemRep.materialId) : null
+    const conDesvio = filas.some((f) => desvio({ grupo: grupoDeSalida(f.salida), teorico_corregido: f.teorico_corregido, real: f.real }, puesto.tolerancias.pesaje, f.salida === salExtra ? cemRep.kg : 0))
     await sb.from("cargas").update({ estado_auditoria: conDesvio ? "con_desvios" : "ok" }).eq("id", cargaId)
     for (const x of rep.extras || []) {
       if (Number(x.litros) > 0) await sb.from("cargas_agua_extra").insert({ carga_id: cargaId, dispatch_id: desp?.id ?? null, at: fin, litros: Number(x.litros), despues_de_terminar: !!x.despues_de_terminar, origen: "indumix_reporte" })

@@ -476,7 +476,10 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       )}
       {parada && (() => {
         const k = parada.carga
-        const ef = efectoSobreDespacho(parada.modo === "completar" && k.completa_carga_id ? "sale" : parada.modo, { m3_despacho: k.m3, m3_cargados: Number(k.m3_cargados ?? e?.m3_en_trompo ?? 0), remito: k.remito ? `${k.remito_tipo || ""} ${k.remito}`.trim() : null, simulada: k.simulada, esCompletar: !!k.completa_carga_id, retorno_m3: k.retorno_m3 })
+        const ef = efectoSobreDespacho(parada.modo === "completar" && k.completa_carga_id ? "sale" : parada.modo, { m3_despacho: k.m3, m3_cargados: Number(k.m3_cargados ?? e?.m3_en_trompo ?? 0), remito: k.remito ? `${k.remito_tipo || ""} ${k.remito}`.trim() : null, simulada: k.simulada, esCompletar: !!k.completa_carga_id,
+          // La que completa a otra: el remito suma lo de la primera carga y lo que volvió (replanteo)
+          retorno_m3: k.completa_carga_id ? D.cargas.find((c) => c.id === k.completa_carga_id)?.retorno_m3 ?? null : k.retorno_m3,
+          m3_primera: k.completa_carga_id ? (() => { const c1 = D.cargas.find((c) => c.id === k.completa_carga_id); return c1 ? Number(c1.m3_cargados ?? c1.m3) : null })() : null })
         const tit = { sale: "Sale con lo cargado", completar: "Completar con otra carga", tirada: "Se tiró: anular el despacho" }[parada.modo]
         return <MotivoDialog titulo={tit} cuerpo={ef.texto} boton="Confirmar" peligro={parada.modo === "tirada"}
           onConfirmar={async (m) => { const j = await api(`/api/carga/${k.id}`, { accion: "resolver_parada", modo: parada.modo, motivo: m }); if (j) { if (P.orden?.cargaId === k.id) P.soltarOrden(); aviso(tit, j.efecto?.texto) } return !!j }} onCerrar={() => setParada(null)} />

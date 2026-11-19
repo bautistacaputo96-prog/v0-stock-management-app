@@ -11,6 +11,7 @@ import { NextResponse } from "next/server"
 import { exigirSesion, respuestaModoLocal, sbServicio, type Sesion } from "@/lib/auth/servidor"
 import { puedeCon, type Accion, type SeccionClave } from "@/lib/permisos"
 import { bloqueoDe, cargarContexto, cargarFormulas, controlDeFormula, type Contexto, type Puesto } from "@/lib/carga/datos"
+import { cementoExtraDe } from "@/lib/carga/auditoria"
 
 type Exigido = { sesion: Sesion; usuario: string; respuesta?: undefined } | { sesion?: undefined; usuario?: undefined; respuesta: NextResponse }
 
@@ -167,4 +168,22 @@ export async function mailDespachoFrenado(d: {
   } catch (e) {
     return { enviado: false, a: [], motivo: (e as Error)?.message || "no se pudo mandar" }
   }
+}
+
+/**
+ * Replanteo: kg de cemento agregado a mano que hay que sumar a lo esperado en la salida del cemento de esta carga
+ * (la misma regla que cementoExtraDe: el de la carga o, si la carga no lo tiene y es la primera, el del despacho) y
+ * de qué material es (la fila es_replanteo del despacho). Sin la migración: 0.
+ */
+export async function cementoExtraCarga(c: { cemento_extra_kg?: number | null; completa_carga_id?: string | null; dispatch_id?: string | null }): Promise<{ kg: number; materialId: string | null }> {
+  const sb = sbServicio()
+  let desp: { cemento_extra_kg: number | null } | null = null
+  if (c.dispatch_id && c.cemento_extra_kg == null && !c.completa_carga_id) {
+    const r = await sb.from("dispatches").select("cemento_extra_kg").eq("id", c.dispatch_id).maybeSingle()
+    desp = r.error || !r.data ? null : { cemento_extra_kg: (r.data as { cemento_extra_kg: number | null }).cemento_extra_kg }
+  }
+  const kg = cementoExtraDe({ cemento_extra_kg: c.cemento_extra_kg ?? null, completa_carga_id: c.completa_carga_id ?? null }, desp)
+  if (!(kg > 0) || !c.dispatch_id) return { kg: kg > 0 ? kg : 0, materialId: null }
+  const { data, error: e } = await sb.from("dispatch_materials").select("material_id").eq("dispatch_id", c.dispatch_id).eq("es_replanteo", true).limit(1)
+  return { kg, materialId: e ? null : ((data || []) as { material_id: string }[])[0]?.material_id ?? null }
 }
