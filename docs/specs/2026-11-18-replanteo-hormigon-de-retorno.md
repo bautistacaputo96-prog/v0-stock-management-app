@@ -1,6 +1,6 @@
 # Replanteo: hormigón que vuelve en el camión
 
-Estado: **propuesta del arquitecto, 18/11/2026. Falta que Bautista conteste la sección 14.** Rama
+Estado: **propuesta del arquitecto, 18/11/2026; decisiones tomadas al final.** Rama
 `feat/replanteo-retorno` (sale de `main`).
 
 Pedido de Bautista (18/11): "cuando vayas a despachar un camión, abajo de todo, al lado del cartel que dice despachar,
