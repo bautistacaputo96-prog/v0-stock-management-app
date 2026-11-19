@@ -47,6 +47,9 @@ export type DespachoT = {
   is_test_dispatch?: boolean | null
   sample_taken?: boolean | null
   sample_number?: string | null
+  /** Replanteo: m³ con que volvió el camión y cemento agregado (nulos = sin replanteo) */
+  retorno_m3?: number | null
+  cemento_extra_kg?: number | null
   clients?: { name: string } | null
   construction_sites?: { name: string; travel_time_minutes?: number | null } | null
   formulas?: { code: string } | null

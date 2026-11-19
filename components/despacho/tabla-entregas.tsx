@@ -1,6 +1,6 @@
 "use client"
 
-import { hhmm, m3txt, tipoPorNumero } from "@/lib/despacho"
+import { hhmm, m3Cargados, m3txt, tipoPorNumero } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
 import { MarcaTipo } from "./columna-viajes"
 import { COLOR_ESTADO } from "./columna-camiones"
@@ -77,7 +77,17 @@ export function TablaEntregas({
                   <td className="whitespace-nowrap px-2 py-1">{(d.chofer_id && choferes[d.chofer_id]) || "—"}</td>
                   <td className="whitespace-nowrap px-2 py-1">{d.clients?.name || "—"} · <span className="text-muted-foreground">{d.construction_sites?.name || "—"}</span></td>
                   <td className="whitespace-nowrap px-2 py-1">{d.formulas?.code || "—"}</td>
-                  <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums">{m3txt(d.quantity_m3)}</td>
+                  <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums">
+                    {m3txt(d.quantity_m3)}
+                    {Number(d.retorno_m3) > 0 && (
+                      <span
+                        className="ml-1 text-[10px] font-semibold text-amber-700"
+                        title={`Replanteo: se cargaron ${m3txt(m3Cargados(Number(d.quantity_m3), Number(d.retorno_m3)))} m³${Number(d.cemento_extra_kg) > 0 ? ` + ${m3txt(d.cemento_extra_kg)} kg de cemento` : ""}`}
+                      >
+                        volvió {m3txt(d.retorno_m3)}
+                      </span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap px-2 py-1">{viajeDe[d.id] || (p ? "—" : "")}</td>
                   <td className="whitespace-nowrap px-2 py-1">{d.sample_taken && d.sample_number ? d.sample_number : <span className="text-muted-foreground">—</span>}</td>
                   <td className="whitespace-nowrap px-2 py-1">

@@ -6,6 +6,10 @@
  * `registrar_despacho` (una transacción: remito, materiales, stock, fibra, probetas, pedido, viaje y camión).
  * Si la base rechaza (remito repetido, supera lo que falta, pedido suspendido o cancelado por otro), el mensaje
  * aparece arriba del botón y no se graba nada.
+ *
+ * Replanteo (docs/specs/2026-11-18-replanteo-hormigon-de-retorno.md): el camión vuelve con hormigón que sobró. El
+ * botón "Replanteo" abre un panel con los m³ que volvieron y el cemento agregado; el remito sigue por los m³ del
+ * camión y la materia prima (y la orden a la planta) por lo que falta, más el cemento.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
@@ -24,8 +28,9 @@ import { currentUserName } from "@/lib/current-user"
 import { textoBomba, type Chofer, type EmpresaBombeo } from "@/lib/maestros"
 import { cargarViajes, pendientes, regenerarViajesPedido } from "@/lib/viajes"
 import {
-  armarPayloadDespacho, avisosRemito, duracion, faltaDe, hhmm, m3txt, num, remitoRepetido, remitoSugerido, textoFuenteEstado,
-  TIPO_TEXTO, validarEntrega, type AvisoRemito, type FormEntrega, type OrigenTipo, type RemitoHist, type TipoRemito,
+  armarPayloadDespacho, avisoCemento, avisosRemito, cementoDe, duracion, faltaDe, hhmm, m3txt, num, PASOS_RETORNO, remitoRepetido,
+  remitoSugerido, textoFuenteEstado, textoReplanteo, TIPO_TEXTO, validarEntrega, type AvisoRemito, type FormEntrega, type OrigenTipo, type RemitoHist,
+  type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
 import { cargarContexto, cargarFormulas, cargarPuesto, controlDeFormula, mandaOrdenes } from "@/lib/carga/datos"
@@ -36,6 +41,8 @@ export type EntregaAbierta = { pedido: PedidoT; viajeClave: string | null; camio
 
 /** Si la planta tiene puesto de carga que recibe órdenes (se recuerda entre aperturas, para que la Entrega no salte) */
 const puestoPorPlanta = new Map<string, boolean>()
+/** Despacho del que volvió el hormigón: el último del mismo camión en las últimas 12 h (no de prueba) */
+type DespachoAnterior = { id: string; remito: string | null; remito_tipo: string | null; dispatch_date: string; cliente: string | null; formula: string | null }
 export type ResultadoDespacho = {
   id: string
   pedidoId: string
@@ -108,6 +115,11 @@ export function EntregaDialog({
   const [muestraPedida, setMuestraPedida] = useState(false)
   // Cada apertura tiene su número: si se cambia de pedido, la respuesta vieja se descarta
   const vueltaPlanta = useRef(0)
+  // Replanteo: la base tiene las columnas (sonda), de qué cemento se descuenta y de qué despacho volvió
+  const [replanteoOk, setReplanteoOk] = useState(false)
+  const [cemento, setCemento] = useState<{ nombre?: string; error?: string } | null>(null)
+  const [anterior, setAnterior] = useState<DespachoAnterior | null | "buscando">(null)
+  const vueltaAnterior = useRef(0)
 
   const pend = useMemo(() => (p ? pendientes(viajes.filter((v) => v.pedido_id === p.id)) as ViajeT[] : []), [p, viajes])
   const camion = (id: string) => camiones.find((c) => c.id === id) || null
@@ -136,7 +148,12 @@ export function EntregaDialog({
       muestraOn: false,
       muestraNum: "",
       asentamiento: "",
+      replanteoOn: false,
+      retorno: "",
+      cementoKg: "",
+      retornoDe: null,
     })
+    setCemento(null); setAnterior(null); setReplanteoOk(false)
     setChoferTocado(false); setRemitoTocado(false); setCambiando(false); setErr(null); setAviso(null); setAvisoOk(false)
     setResuelto({ tipo: null, origen: null })
     setCargando(true)
@@ -154,6 +171,8 @@ export function EntregaDialog({
       setForm((f) => (f ? { ...f, muestraOn: false, muestraNum: "", asentamiento: "", agua: "0" } : f))
     }).catch(() => { if (vuelta === vueltaPlanta.current) setEnPlanta(null) })
       .finally(() => { if (vuelta === vueltaPlanta.current) setCargandoPlanta(false) })
+    // Sonda del replanteo (como la de remito_tipo): sin la migración no aparece el botón
+    sb.from("dispatches").select("retorno_m3").limit(0).then((r: any) => { if (vuelta === vueltaPlanta.current) setReplanteoOk(!r.error) })
     const desde = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString()
     Promise.all([
       sb.rpc("remito_tipo_para", { p_pedido_id: ped.id }).then((r: any) => (r.error ? null : r.data)),
@@ -171,6 +190,33 @@ export function EntregaDialog({
     }).finally(() => setCargando(false))
   }, [abierta]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Replanteo abierto: de qué despacho volvió (último del mismo camión en 12 h); se busca de nuevo si cambia el camión
+  const mixerRep = form?.replanteoOn ? form.mixerId : null
+  useEffect(() => {
+    if (!mixerRep) return
+    const vuelta = ++vueltaAnterior.current
+    setAnterior("buscando")
+    const sb = createClient()
+    sb.from("dispatches").select("id, remito, remito_tipo, dispatch_date, clients(name), formulas(code)")
+      .eq("mixer_id", mixerRep).eq("is_test_dispatch", false).gte("dispatch_date", new Date(Date.now() - 12 * 3600_000).toISOString())
+      .order("dispatch_date", { ascending: false }).limit(1)
+      .then((r: any) => {
+        if (vuelta !== vueltaAnterior.current) return
+        const d = r.data?.[0]
+        const a: DespachoAnterior | null = d ? { id: d.id, remito: d.remito, remito_tipo: d.remito_tipo, dispatch_date: d.dispatch_date, cliente: d.clients?.name || null, formula: d.formulas?.code || null } : null
+        setAnterior(a)
+        setForm((f) => (f ? { ...f, retornoDe: a?.id || null } : f))
+      })
+  }, [mixerRep])
+  // De qué cemento se descuenta (misma regla que la base)
+  const formulaRep = form?.replanteoOn ? p?.formula_id || null : null
+  useEffect(() => {
+    if (!formulaRep) return
+    setCemento(null)
+    createClient().rpc("cemento_para_replanteo", { p_formula_id: formulaRep, p_plant_id: planta.id })
+      .then((r: any) => setCemento(r.error ? { error: "No se pudo saber de qué cemento se descuenta." } : r.data?.nombre ? { nombre: r.data.nombre } : { error: r.data?.error || "La fórmula no tiene cemento." }))
+  }, [formulaRep, planta.id])
+
   const sugeridoDe = (h: RemitoHist[], tipo: TipoRemito) => {
     const s = remitoSugerido(h, planta.id, tipo)
     return s ? String(s.numero) : ""
@@ -187,6 +233,8 @@ export function EntregaDialog({
   const sinDefinir = !resuelto.tipo
   const preguntando = !form.tipo || form.origenTipo === "pregunta" || cambiando
   const m3n = num(form.m3), fibra = num(form.fibraKgM3)
+  const retN = num(form.retorno), cemN = cementoDe(form.cementoKg)
+  const repValido = !!form.replanteoOn && retN > 0 && m3n > 0 && retN <= m3n
   // Con la receta que frena la carga, hay que tildar "¿Despachar igual?" (carga-planta.md 20.1)
   const frenadaFalta = !!enPlanta?.ctl.frena && !frenadaOk
   // Mientras se controla "En la planta", se muestra la versión con puesto de carga (sin el agua, con "Sacar muestra"),
@@ -244,7 +292,14 @@ export function EntregaDialog({
         setErr(error.message || "No se pudo registrar el despacho. No se grabó nada.")
         return
       }
-      const r = data as { id: string; restante: number | null; completo: boolean; viaje_n?: number; viaje_m3_planificado?: number | null; remito_tipo?: TipoRemito }
+      const r = data as { id: string; restante: number | null; completo: boolean; viaje_n?: number; viaje_m3_planificado?: number | null; remito_tipo?: TipoRemito; m3_cargados?: number | null; cemento_extra_kg?: number | null }
+      // Se mandó replanteo y contestó la función vieja (sin la migración): descontó los m³ completos
+      const repMandado = !!form.replanteoOn
+      const repGrabado = repMandado && r?.m3_cargados != null
+      if (repMandado && !repGrabado)
+        toast({ title: "El despacho se grabó sin el replanteo", description: `Descontó ${m3txt(m3n)} m³. Avisale a Bautista.`, variant: "destructive" })
+      const cargadosRep = repGrabado ? Number(r.m3_cargados) : m3n
+      const cemRep = repGrabado ? Number(r.cemento_extra_kg) || 0 : 0
       // Si el camión salió con otros m³ que los del viaje, se rearman los pendientes (como siempre)
       if (r?.viaje_n != null && r.viaje_m3_planificado != null && !r.completo && Math.abs(Number(r.viaje_m3_planificado) - m3n) > 0.01) {
         const rv = await regenerarViajesPedido(sb, p.id, currentUserName(), { soloSiTiene: true, motivo: `m³ del viaje ${r.viaje_n} (${r.viaje_m3_planificado} → ${m3n})` })
@@ -259,14 +314,15 @@ export function EntregaDialog({
           const rc = await fetch("/api/carga/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dispatch_id: r.id, frenada_confirmada: enPlanta.ctl.frena && frenadaOk, muestra_pedida: muestraPedida }) })
           const jc = await rc.json().catch(() => ({}))
           if (!rc.ok) toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: jc?.error || `Error ${rc.status}` })
-          else if (jc.enviada) toast({ title: `Orden en la cola de carga${jc.simulada ? " (planta simulada)" : ""}`, description: jc.frena ? `Va a quedar frenada en la planta. ${jc.mail?.enviado ? "Se avisó por mail a Juan Oreguy." : `No salió el mail (${jc.mail?.motivo || "?"}).`}` : jc.agua_distinta ? "Agua de la receta distinta: no frena, queda en la auditoría." : "La tarjeta del camión dice «En cola de carga · Ver carga»." })
+          else if (!jc.enviada && jc.volvio_entero) toast({ title: "No va orden a la planta: volvió entero", description: cemRep > 0 ? "Agregá el cemento a mano." : undefined })
+          else if (jc.enviada) toast({ title: `Orden en la cola de carga${jc.simulada ? " (planta simulada)" : ""}${repGrabado ? ` · ${m3txt(cargadosRep)} m³${cemRep > 0 ? ` + ${m3txt(cemRep)} kg de cemento a mano` : ""}` : ""}`, description: jc.frena ? `Va a quedar frenada en la planta. ${jc.mail?.enviado ? "Se avisó por mail a Juan Oreguy." : `No salió el mail (${jc.mail?.motivo || "?"}).`}` : jc.agua_distinta ? "Agua de la receta distinta: no frena, queda en la auditoría." : "La tarjeta del camión dice «En cola de carga · Ver carga»." })
         } catch {
           toast({ title: "El despacho quedó grabado, pero la orden no llegó a la cola de carga", description: "Sin conexión con el sistema." })
         }
       }
       toast({
         title: `Camión despachado · Remito ${tipo} ${form.remito.trim()}`,
-        description: `${cam?.patente || ""} sale con ${m3txt(m3n)} m³ · ${r.completo || restante <= 0.01 ? "Pedido completo" : `falta ${m3txt(restante)} m³`}${form.origenTipo === "pregunta" ? ` · ${TIPO_TEXTO[tipo]} queda para todo el día de ${p.clients?.name || "este cliente"}` : ""}${av && avisoAceptado ? " · aviso de remito aceptado (queda en Actividad)" : ""}`,
+        description: `${cam?.patente || ""} sale con ${m3txt(m3n)} m³ · ${r.completo || restante <= 0.01 ? "Pedido completo" : `falta ${m3txt(restante)} m³`}${form.origenTipo === "pregunta" ? ` · ${TIPO_TEXTO[tipo]} queda para todo el día de ${p.clients?.name || "este cliente"}` : ""}${av && avisoAceptado ? " · aviso de remito aceptado (queda en Actividad)" : ""}${repGrabado ? ` · replanteo: se descontaron ${m3txt(cargadosRep)} m³${cemRep > 0 ? ` + ${m3txt(cemRep)} kg de cemento` : ""}` : ""}`,
       })
       const url = `/api/remito/${r.id}?doc=remitox&fondo=0`
       if (ventana) ventana.location.href = url
@@ -477,6 +533,68 @@ export function EntregaDialog({
 
           </div>
 
+          {form.replanteoOn && (
+            <div className="space-y-1.5 rounded-lg border-2 border-amber-400 px-3 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold">Replanteo</span>
+                <span
+                  className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border text-[10px] text-muted-foreground"
+                  title="Usalo cuando el camión vuelve con hormigón que sobró y lo completás. El cliente recibe los m³ del camión; la planta carga y la materia prima baja por lo que falta, más el cemento."
+                >?</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Label className="mr-1">¿Con cuántos m³ volvió?</Label>
+                {PASOS_RETORNO.map((x) => (
+                  <button
+                    key={x}
+                    type="button"
+                    disabled={m3n > 0 && x > m3n}
+                    onClick={() => set({ retorno: String(x).replace(".", ",") })}
+                    className={cn("h-[28px] min-w-[38px] rounded-md border px-2 text-[13px] font-semibold disabled:opacity-40", retN === x ? "border-foreground bg-foreground text-background" : "bg-card")}
+                  >
+                    {m3txt(x)}
+                  </button>
+                ))}
+                <span className="ml-1 text-xs text-muted-foreground">Otro</span>
+                <Input
+                  className="h-[28px] w-[70px] text-[13px]"
+                  inputMode="decimal"
+                  value={PASOS_RETORNO.includes(retN) ? "" : form.retorno}
+                  onChange={(e) => set({ retorno: e.target.value })}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Label>Cemento agregado (kg)</Label>
+                <Input className="h-[28px] w-[90px] text-[13px]" inputMode="decimal" value={form.cementoKg} onChange={(e) => set({ cementoKg: e.target.value })} placeholder="0" />
+                {cemento?.nombre && <span className="text-xs text-muted-foreground">Se descuenta de {cemento.nombre}.</span>}
+                {cemento?.error && <span className="text-xs font-semibold text-amber-800">{cemento.error}</span>}
+              </div>
+              {repValido && (
+                <div className="rounded-md bg-amber-50 px-2.5 py-1.5 text-[13px] font-semibold text-amber-900">
+                  {textoReplanteo({ m3: m3n, retorno: retN, cementoKg: Number.isFinite(cemN) ? cemN : 0, conPuesto: modoPlanta, receta: enPlanta?.ctl.numero ?? null })}
+                </div>
+              )}
+              {repValido && Number.isFinite(cemN) && avisoCemento(retN, cemN) && (
+                <div className="text-xs font-semibold text-amber-700">{avisoCemento(retN, cemN)}</div>
+              )}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {anterior === "buscando" ? (
+                  <span><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Buscando el viaje anterior de este camión…</span>
+                ) : anterior && form.retornoDe === anterior.id ? (
+                  <>
+                    <span>Volvió del remito {anterior.remito_tipo ? `${anterior.remito_tipo} ` : ""}{anterior.remito || "s/n"}{anterior.cliente ? ` · ${anterior.cliente}` : ""}{anterior.formula ? ` · ${anterior.formula}` : ""} ({hhmm(anterior.dispatch_date)})</span>
+                    <button type="button" className="underline" onClick={() => set({ retornoDe: null })}>No es ese</button>
+                  </>
+                ) : anterior ? (
+                  <span>Sin el viaje anterior (se sacó).</span>
+                ) : (
+                  <span>No encontramos el viaje anterior de este camión.</span>
+                )}
+              </div>
+              <button type="button" className="text-xs underline" onClick={() => set({ replanteoOn: false, retorno: "", cementoKg: "", retornoDe: null })}>Sacar replanteo</button>
+            </div>
+          )}
+
           {err && <div className="rounded-lg bg-red-100 px-3 py-1.5 text-[13px] font-semibold text-red-800">{err}</div>}
           {aviso && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-100 px-3 py-2 text-[13px] font-bold text-amber-900">
@@ -487,6 +605,16 @@ export function EntregaDialog({
         </div>
         <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" className="h-[32px] text-[13px]" onClick={onClose} disabled={enviando}>Cancelar</Button>
+          {replanteoOk && (
+            <Button
+              variant="outline"
+              className={cn("h-[32px] text-[13px]", repValido && "border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200")}
+              onClick={() => set({ replanteoOn: true })}
+              disabled={enviando}
+            >
+              {repValido ? `Replanteo · volvió ${m3txt(retN)} m³` : "Replanteo"}
+            </Button>
+          )}
           <Button variant="outline" className="h-[32px] text-[13px]" onClick={() => despachar(true)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta || npFrena}>🖨 Despachar e imprimir</Button>
           <Button className="h-[32px] bg-green-600 text-[13px] hover:bg-green-700" onClick={() => despachar(false)} disabled={enviando || cargando || cargandoPlanta || frenadaFalta || npFrena}>
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Despachar"}
