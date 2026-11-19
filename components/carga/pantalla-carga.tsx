@@ -24,7 +24,7 @@ import { SinAcceso } from "@/components/seccion-protegida"
 import { cn } from "@/lib/utils"
 import { controlDeFormula, recetaDeFormula, type Contexto } from "@/lib/carga/datos"
 import { efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
-import { banderas, type FilaAuditoria } from "@/lib/carga/auditoria"
+import { banderas, cementoExtraDe, salidaCementoExtra, textoReplanteoAuditoria, type FilaAuditoria } from "@/lib/carga/auditoria"
 import { recetasIniciales } from "@/lib/carga/recetas-sim"
 import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
 import { cantidadPorM3 } from "@/lib/carga/receta"
@@ -181,7 +181,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
     const { data } = await createClient().from("cargas_materiales").select("*").eq("carga_id", k.id).eq("ciclo", 0)
     const orden = (s: string) => SALIDAS.indexOf(s as Salida)
     const filas: FilaReporte[] = ((data || []) as any[]).sort((a, b) => orden(a.salida) - orden(b.salida)).map((m) => ({
-      salida: m.salida, nombre: ctx?.materiales.find((x) => x.id === m.material_id)?.name || null, receta_por_m3: m.receta_por_m3 == null ? null : Number(m.receta_por_m3),
+      salida: m.salida, material_id: m.material_id ?? null, nombre: ctx?.materiales.find((x) => x.id === m.material_id)?.name || null, receta_por_m3: m.receta_por_m3 == null ? null : Number(m.receta_por_m3),
       formula_por_m3: m.formula_por_m3 == null ? null : Number(m.formula_por_m3), teorico: m.teorico == null ? null : Number(m.teorico), humedad_pct: m.humedad_pct == null ? null : Number(m.humedad_pct),
       teorico_corregido: m.teorico_corregido == null ? null : Number(m.teorico_corregido), real: m.real == null ? null : Number(m.real), unidad: m.unidad,
     }))
@@ -443,6 +443,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
                 agua={{ abierta: !!e?.agua_extra_abierta, pulso: e?.agua_extra_pulso || 0, total: e?.agua.extra || 0, abrir: P.aguaAbrir, soltar: () => void P.aguaParar() }}
                 pesajeTerminado={P.pesajeTerminado} onTerminar={(k) => void P.terminarCarga(k.id, k.formula_id)}
                 puedeMuestra={puedeMuestra} onMuestra={(k, si) => { if (si) setMuestra(k); else void responderMuestra(k, false) }}
+                onCemento={(k, kg) => P.cementoManual(k.id, kg)}
               />
             </div>
           </section>
@@ -462,7 +463,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       {confirmar && (
         <ConfirmarCamion
           patente={confirmar.mixers?.license_plate || confirmar.patente_planta || "—"}
-          resumen={<><b className="font-medium">{confirmar.despacho?.cliente || confirmar.cliente_planta}</b> · {confirmar.despacho?.obra || ""} · {confirmar.formulas?.code} · <b className="font-medium">{m3t(confirmar.m3)} m³</b> · Remito {confirmar.remito_tipo || ""} {confirmar.remito}</>}
+          resumen={<><b className="font-medium">{confirmar.despacho?.cliente || confirmar.cliente_planta}</b> · {confirmar.despacho?.obra || ""} · {confirmar.formulas?.code} · <b className="font-medium">{m3t(confirmar.m3)} m³</b>{Number(confirmar.retorno_m3) > 0 ? ` (volvió ${m3t(Number(confirmar.retorno_m3))}${confirmar.despacho ? `, remito ${m3t(confirmar.despacho.quantity_m3)}` : ""})` : ""}{Number(confirmar.cemento_extra_kg) > 0 ? <> · <b className="font-medium">+ {nf(Number(confirmar.cemento_extra_kg))} kg de cemento a mano</b></> : null} · Remito {confirmar.remito_tipo || ""} {confirmar.remito}</>}
           avisos={chequeo(confirmar).items.filter((i) => i.ok && i.aviso).map((i) => i.texto)}
           onBocina={() => void P.bocina()} onCerrar={() => setConfirmar(null)}
           onConfirmar={() => {
@@ -475,7 +476,7 @@ function Pantalla({ plants, puedeCargar, puedeEditar, puedeResolver, puedeMuestr
       )}
       {parada && (() => {
         const k = parada.carga
-        const ef = efectoSobreDespacho(parada.modo === "completar" && k.completa_carga_id ? "sale" : parada.modo, { m3_despacho: k.m3, m3_cargados: Number(k.m3_cargados ?? e?.m3_en_trompo ?? 0), remito: k.remito ? `${k.remito_tipo || ""} ${k.remito}`.trim() : null, simulada: k.simulada, esCompletar: !!k.completa_carga_id })
+        const ef = efectoSobreDespacho(parada.modo === "completar" && k.completa_carga_id ? "sale" : parada.modo, { m3_despacho: k.m3, m3_cargados: Number(k.m3_cargados ?? e?.m3_en_trompo ?? 0), remito: k.remito ? `${k.remito_tipo || ""} ${k.remito}`.trim() : null, simulada: k.simulada, esCompletar: !!k.completa_carga_id, retorno_m3: k.retorno_m3 })
         const tit = { sale: "Sale con lo cargado", completar: "Completar con otra carga", tirada: "Se tiró: anular el despacho" }[parada.modo]
         return <MotivoDialog titulo={tit} cuerpo={ef.texto} boton="Confirmar" peligro={parada.modo === "tirada"}
           onConfirmar={async (m) => { const j = await api(`/api/carga/${k.id}`, { accion: "resolver_parada", modo: parada.modo, motivo: m }); if (j) { if (P.orden?.cargaId === k.id) P.soltarOrden(); aviso(tit, j.efecto?.texto) } return !!j }} onCerrar={() => setParada(null)} />
@@ -528,6 +529,12 @@ function FilaCola({ k, sel, ch, corriendo, onClick }: { k: CargaFila; sel: boole
         <span className="min-w-0 flex-1 truncate">{k.formulas?.code}</span>
         <Tag tono={tono}>{txt}</Tag>
       </div>
+      {(Number(k.retorno_m3) > 0 || Number(k.cemento_extra_kg) > 0) && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+          {Number(k.cemento_extra_kg) > 0 && <Tag tono="warn" className="font-medium">+ {nf(Number(k.cemento_extra_kg))} kg cemento a mano</Tag>}
+          {Number(k.retorno_m3) > 0 && <span>volvió {m3t(Number(k.retorno_m3))}{k.despacho ? ` · remito ${m3t(k.despacho.quantity_m3)} m³` : ""}</span>}
+        </div>
+      )}
     </button>
   )
 }
@@ -546,6 +553,8 @@ function PanelDerecho(p: {
   agua: { abierta: boolean; pulso: number; total: number; abrir: () => Promise<boolean>; soltar: () => void }
   pesajeTerminado: boolean; onTerminar: (k: CargaFila) => void
   puedeMuestra: boolean; onMuestra: (k: CargaFila, si: boolean) => void
+  /** Replanteo: "Listo, agregado" con los kg de cemento que se agregaron a mano */
+  onCemento: (k: CargaFila, kg: number) => Promise<boolean>
 }) {
   const { ctx, enPlanta, puedeCargar, prep, activa, elegida, estado: e } = p
   const listaExtras = (id: string) => {
@@ -608,6 +617,7 @@ function PanelDerecho(p: {
         {k.agua_distinta && <div className="rounded-md border border-l-[3px] border-l-amber-500 px-2 py-1 text-xs">Agua de la receta distinta de la fórmula: no frena, queda en la auditoría.</div>}
         {k.sin_internet && <div className="text-[11px] text-amber-800">Arrancó sin internet: la orden ya había bajado.</div>}
         {listaExtras(k.id)}
+        <FranjaCemento k={k} modo="curso" puede={puedeCargar && enPlanta} onConfirmar={p.onCemento} />
         {parada ? (
           <div className="rounded-md border border-l-[3px] border-l-slate-900 px-2 py-1.5 text-xs">
             <h3 className="mb-1 text-xs font-medium">Carga parada{k.parada_at ? ` a las ${hhmm(k.parada_at)}` : ""} · en el trompo ~{m3t(Math.round(m3Tr * 10) / 10)} m³</h3>
@@ -650,6 +660,7 @@ function PanelDerecho(p: {
     <div className="rounded-md border border-l-[3px] border-l-blue-500 px-2 py-1.5 text-xs">
       <h3 className="text-xs font-medium">{pat(p.ultima)} · Cargado {hhmm(p.ultima.fin_at)} · esperando salir (GPS)</h3>
       {listaExtras(p.ultima.id)}
+      <FranjaCemento k={p.ultima} modo="cierre" puede={p.puedeCargar && enPlanta} onConfirmar={p.onCemento} />
       {"muestra" in p.ultima && p.ultima.dispatch_id && !p.ultima.muestra && (
         <div className={cn("mt-1 flex flex-wrap items-center gap-1 rounded-md px-1.5 py-1", p.ultima.muestra_pedida ? "border-2 border-amber-500 bg-amber-50" : "border")}>
           <b className={cn(p.ultima.muestra_pedida && "text-amber-900")}>¿Se sacó muestra?</b>
@@ -724,6 +735,53 @@ function PanelDerecho(p: {
 }
 
 /**
+ * Replanteo: el cemento que el plantista agrega a mano (Indumix no recibe kilos sueltos). Durante la carga, la franja
+ * "Agregar 50 kg de cemento a mano" con "Listo, agregado"; al cerrar, "¿Agregaste los 50 kg de cemento?". Confirmado:
+ * "Cemento agregado: 50 kg ✓". No mueve stock (ya bajó al despachar).
+ */
+function FranjaCemento({ k, modo, puede, onConfirmar }: { k: CargaFila; modo: "curso" | "cierre"; puede: boolean; onConfirmar: (k: CargaFila, kg: number) => Promise<boolean> }) {
+  const pedido = Number(k.cemento_extra_kg) || 0
+  const [editando, setEditando] = useState(false)
+  const [kg, setKg] = useState(String(pedido))
+  const [env, setEnv] = useState(false)
+  if (!(pedido > 0)) return null
+  const h = k.cemento_extra_hecho
+  if (h) return <div className="rounded-md border border-l-[3px] border-l-green-600 px-2 py-1 text-xs">Cemento agregado: <b className="font-medium">{nf(Number(h.kg))} kg</b> ✓ <span className="text-slate-500">· {h.por} {hhmm(h.at)}</span></div>
+  const n = Number(String(kg).replace(",", "."))
+  const valido = Number.isFinite(n) && n >= 0 && n <= 1000
+  const guardar = async (x: number) => { setEnv(true); const ok = await onConfirmar(k, x); setEnv(false); if (ok) setEditando(false) }
+  return (
+    <div className="rounded-md border-2 border-amber-500 bg-amber-50 px-2 py-1 text-xs">
+      {editando ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <b className="font-medium text-amber-900">¿Cuántos kg?</b>
+          <input className="h-[26px] w-[70px] rounded-md border px-1.5 text-xs" inputMode="decimal" value={kg} onChange={(e) => setKg(e.target.value)} />
+          <Btn tono="pri" className="h-[26px] text-xs" disabled={!valido || env} onClick={() => void guardar(n)}>Guardar</Btn>
+          <Btn className="h-[26px] text-xs" disabled={env} onClick={() => setEditando(false)}>Cancelar</Btn>
+          {!valido && <span className="text-[11px] text-red-700">De 0 a 1.000 kg.</span>}
+        </div>
+      ) : modo === "curso" ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <b className="font-medium text-amber-900">Agregar {nf(pedido)} kg de cemento a mano</b>
+          <span className="flex-1" />
+          {puede ? <Btn tono="amb" className="h-[26px] text-xs" onClick={() => { setKg(String(pedido)); setEditando(true) }}>Listo, agregado</Btn> : <span className="text-[11px] text-slate-500">Lo confirma el plantista.</span>}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1">
+          <b className="font-medium text-amber-900">¿Agregaste los {nf(pedido)} kg de cemento?</b>
+          <span className="flex-1" />
+          {puede ? <>
+            <Btn tono="pri" className="h-[26px] text-xs" disabled={env} onClick={() => void guardar(pedido)}>Sí</Btn>
+            <Btn className="h-[26px] text-xs" disabled={env} onClick={() => { setKg(String(pedido)); setEditando(true) }}>Otra cantidad</Btn>
+            <Btn className="h-[26px] text-xs" disabled={env} onClick={() => void guardar(0)}>No</Btn>
+          </> : <span className="text-[11px] text-slate-500">Lo confirma el plantista.</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * Fórmula contra planta en 300 px (22/10): si coincide, una línea que se abre; si no, solo las filas que fallan y
  * "Ver los N materiales". La tolerancia va en el tooltip de la diferencia; el % solo si falla.
  */
@@ -770,12 +828,13 @@ function ComparacionCompacta({ cmp, numero }: { cmp: NonNullable<ReturnType<type
 
 function ReporteCarga({ k, filas, extras, ahora, onCerrar }: { k: CargaFila; filas: FilaReporte[]; extras: { litros: number; at: string; despues_de_terminar: boolean; usuario: string | null }[]; ahora: number; onCerrar: () => void }) {
   const fila: FilaAuditoria = {
-    despacho: k.dispatch_id ? { id: k.dispatch_id, remito: k.remito, remito_tipo: k.remito_tipo, patente: k.mixers?.license_plate || null, despachado_at: k.despacho?.created_at || null, salio_at: k.despacho?.dispatch_date || null, cliente: k.despacho?.cliente || "", obra: k.despacho?.obra || "", formula: k.formulas?.code || "", m3: k.despacho?.quantity_m3 ?? k.m3 } : null,
+    despacho: k.dispatch_id ? { id: k.dispatch_id, remito: k.remito, remito_tipo: k.remito_tipo, patente: k.mixers?.license_plate || null, despachado_at: k.despacho?.created_at || null, salio_at: k.despacho?.dispatch_date || null, cliente: k.despacho?.cliente || "", obra: k.despacho?.obra || "", formula: k.formulas?.code || "", m3: k.despacho?.quantity_m3 ?? k.m3, retorno_m3: k.retorno_m3 ?? null, cemento_extra_kg: k.completa_carga_id ? null : k.cemento_extra_kg ?? null } : null,
     cargas: [{
       id: k.id, origen: k.origen, simulada: k.simulada, estado: k.estado, contador: k.contador_planta, inicio_at: k.inicio_at, fin_at: k.fin_at, m3: k.m3, m3_cargados: k.m3_cargados, ciclos: k.ciclos,
       receta_numero: k.receta_numero, receta_ok: !(k.bloqueo?.items || []).some((i) => i.clave === "receta" && (!i.ok || i.aviso)), agua_distinta: k.agua_distinta, autorizada: !!k.autorizacion,
       parada: k.resolucion?.modo && k.resolucion.modo !== "cancelada" ? k.resolucion.modo : null, completa_carga_id: k.completa_carga_id,
-      materiales: filas.map((f) => ({ ...f, material_id: null, grupo: INFO_SALIDA[f.salida].grupo, unidad: f.unidad || "" })) as any, plantista: k.arrancada_por, patente_planta: k.patente_planta, observacion_planta: k.observacion_planta, revisada: k.estado_auditoria === "revisada",
+      materiales: filas.map((f) => ({ ...f, material_id: f.material_id ?? null, grupo: INFO_SALIDA[f.salida].grupo, unidad: f.unidad || "" })) as any, plantista: k.arrancada_por, patente_planta: k.patente_planta, observacion_planta: k.observacion_planta, revisada: k.estado_auditoria === "revisada",
+      cemento_extra_kg: k.cemento_extra_kg ?? null, cemento_extra_hecho: k.cemento_extra_hecho ?? null,
     }],
     extras, salida_gps: k.salida_gps || null, union: (k.union_remito as any) || null,
   }
@@ -786,6 +845,7 @@ function ReporteCarga({ k, filas, extras, ahora, onCerrar }: { k: CargaFila; fil
       filas={filas} extras={extras}
       tiempos={{ despachado: k.despacho?.created_at || null, inicio: k.inicio_at, fin: k.fin_at || k.parada_at, salida: k.salida_gps || null }}
       banderas={banderas(fila, ahora)} nota={k.resolucion?.efecto?.texto || null} onCerrar={onCerrar}
+      cementoExtra={(() => { const kg = cementoExtraDe(fila.cargas[0], fila.despacho); const t = textoReplanteoAuditoria(fila); return kg > 0 || t ? { salida: kg > 0 ? salidaCementoExtra(fila.cargas[0].materiales) : null, kg, texto: t } : null })()}
     />
   )
 }

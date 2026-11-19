@@ -47,6 +47,10 @@ export type CargaFila = {
   /** "Sacar muestra a este camión" (aviso de la Entrega) y la respuesta al terminar */
   muestra_pedida: boolean
   muestra: { tomada: boolean; numero: string | null; asentamiento: number | null; por: string; at: string } | null
+  /** Replanteo: m³ que volvieron en el camión, kg de cemento a agregar a mano y lo que confirmó el plantista (nulos = sin replanteo) */
+  retorno_m3?: number | null
+  cemento_extra_kg?: number | null
+  cemento_extra_hecho?: { kg: number; por: string; at: string } | null
   created_by: string | null
   created_at: string
   formulas?: { code: string } | null

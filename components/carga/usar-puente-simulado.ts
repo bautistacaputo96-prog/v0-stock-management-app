@@ -440,6 +440,32 @@ export function usarPuenteSimulado(o: {
     return true
   }, [aguaParar, subir, onAviso, onCambio]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Replanteo: "Listo, agregado". El plantista confirma los kg de cemento que agregó a mano. Si la carga es la de esta PC
+   * (en curso o la última), el simulador los suma al real de la salida de cemento (como si los hubiera dosificado con la
+   * balanza) y, si la carga ya se cerró, se manda el real nuevo de esa salida. Nunca mueve stock.
+   */
+  const cementoManual = useCallback(async (cargaId: string, kg: number) => {
+    const s = simRef.current, p = puenteRef.current
+    const ord = ordenRef.current, ult = ultimaRef.current
+    const contador = ord?.cargaId === cargaId ? ord.contador : ult?.cargaId === cargaId ? ult.contador : null
+    let real: { salida: string; real: number } | null = null
+    if (s && p && contador != null && s.carga?.contador === contador && kg > 0) {
+      try {
+        await p.cementoManual(kg)
+        const rep = (await s.leerReportes().catch(() => [] as ReportePlanta[])).find((r) => r.numero === contador)
+        const sal = s.carga?.cemento_manual?.salida
+        const l = sal ? rep?.lineas.find((x) => x.salida === sal) : null
+        if (l && ult?.cargaId === cargaId) real = { salida: l.salida, real: l.real }
+      } catch { /* sin conexión con la planta simulada: la confirmación del plantista se guarda igual */ }
+    }
+    const r = await subir(`/api/carga/${cargaId}`, { accion: "cemento_extra", kg, ...(real ? { salida: real.salida, real: real.real } : {}) })
+    if (!r.ok) { onAviso("No se pudo guardar el cemento", r.error); return false }
+    onAviso(`Cemento agregado: ${kg.toLocaleString("es-AR")} kg`, "Queda en la carga y en la auditoría. No mueve stock (ya bajó al despachar).")
+    onCambio()
+    return true
+  }, [subir, onAviso, onCambio])
+
   const simular = useCallback(async (f: Falla | { tipo: "cambiar_receta"; numero: number; cambios: Record<string, number> } | { tipo: "internet" } | { tipo: "leer" }) => {
     const s = simRef.current
     if (!s) return
@@ -461,7 +487,7 @@ export function usarPuenteSimulado(o: {
   return {
     listo, estado, conectado, internet, vel, setVel, porSubir, prep, ultimaLectura, orden, ultima,
     simulador: simRef.current,
-    cargar, parar, simular, aguaAbrir, aguaParar, terminarCarga,
+    cargar, parar, simular, aguaAbrir, aguaParar, terminarCarga, cementoManual,
     suspender: () => conPlanta((p) => p.suspender()),
     reanudar: () => conPlanta((p) => p.reanudar()),
     bocina: () => conPlanta((p) => p.bocina(2000)),

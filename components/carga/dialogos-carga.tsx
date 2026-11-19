@@ -160,12 +160,16 @@ export function TablaComparacion({ cmp }: { cmp: Comparacion }) {
 export type FilaReporte = {
   salida: Salida; nombre: string | null; receta_por_m3: number | null; formula_por_m3: number | null; teorico: number | null; humedad_pct: number | null
   teorico_corregido: number | null; real: number | null; unidad: string | null
+  /** material de la salida (para ubicar el cemento del replanteo en la auditoría) */
+  material_id?: string | null
 }
 
 /** Reporte de una carga: material por material, tiempos, agua extra y banderas (5.6, 19.5, 19.6). */
-export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, banderas, nota, onCerrar, pie }: {
+export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, banderas, nota, onCerrar, pie, cementoExtra }: {
   titulo: string; cabecera: React.ReactNode; filas: FilaReporte[]; extras: { litros: number; at: string; despues_de_terminar: boolean; usuario: string | null }[]
   tiempos: { despachado: string | null; inicio: string | null; fin: string | null; salida: string | null }; banderas: Bandera[]; nota?: string | null; onCerrar: () => void; pie?: React.ReactNode
+  /** Replanteo: el cemento agregado a mano (se suma a lo esperado en su salida) y el texto de la bandera */
+  cementoExtra?: { salida: Salida | null; kg: number; texto: string | null } | null
 }) {
   const ex = extras.reduce((s, e) => s + Number(e.litros || 0), 0)
   const agua = filas.find((f) => f.salida === "agua")?.real || 0
@@ -187,7 +191,8 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
             <span><span className="text-slate-500">Salió de planta (GPS) </span><b className="font-medium">{sal ? hhmm(sal) : "esperando GPS"}</b></span>
             <span><span className="text-slate-500">Espera hasta salir </span><b className="font-medium">{sal && fin ? minTxt((sal - fin) / 60000) : "—"}</b></span>
           </div>
-          <div className="flex flex-wrap gap-1">{banderas.length ? banderas.map((b) => <span key={b} className={cn("d3c-tag rounded px-1 text-[10.5px] font-medium", b === "simulada" ? "bg-amber-100 text-amber-900" : b === "aguaExtra" ? "bg-blue-50 text-blue-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[b]}</span>) : <span className="d3c-tag rounded bg-emerald-50 px-1 text-[10.5px] font-medium text-emerald-800">Sin problemas</span>}</div>
+          <div className="flex flex-wrap gap-1">{banderas.length ? banderas.map((b) => <span key={b} title={b === "replanteo" ? cementoExtra?.texto || undefined : undefined} className={cn("d3c-tag rounded px-1 text-[10.5px] font-medium", b === "simulada" || b === "cementoExtra" ? "bg-amber-100 text-amber-900" : b === "aguaExtra" ? "bg-blue-50 text-blue-800" : b === "replanteo" ? "bg-slate-200 text-slate-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[b]}</span>) : <span className="d3c-tag rounded bg-emerald-50 px-1 text-[10.5px] font-medium text-emerald-800">Sin problemas</span>}</div>
+          {cementoExtra?.texto && <div className="rounded-md bg-slate-100 px-2 py-1 text-xs">Replanteo: {cementoExtra.texto}. En la salida del cemento, lo esperado suma el cemento agregado a mano.</div>}
           {nota && <div className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">{nota}</div>}
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-xs">
@@ -197,8 +202,10 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
               <tbody>
                 {filas.map((f) => {
                   const g = INFO_SALIDA[f.salida].grupo
-                  const d = f.teorico_corregido ? (Number(f.real || 0) - f.teorico_corregido) / f.teorico_corregido : 0
-                  const bad = desvio({ grupo: g, teorico_corregido: f.teorico_corregido, real: f.real })
+                  const extra = cementoExtra && cementoExtra.salida === f.salida ? cementoExtra.kg : 0
+                  const esp = f.teorico_corregido != null ? f.teorico_corregido + extra : null
+                  const d = esp ? (Number(f.real || 0) - esp) / esp : 0
+                  const bad = desvio({ grupo: g, teorico_corregido: f.teorico_corregido, real: f.real }, undefined, extra)
                   return (
                     <tr key={f.salida} className={cn(bad && "bg-red-50")}>
                       <td className="border-b px-1.5 py-0.5">{nombreCorto(f.nombre)} <span className="text-slate-500">{INFO_SALIDA[f.salida].nombre}</span></td>
@@ -206,7 +213,7 @@ export function ReporteDialog({ titulo, cabecera, filas, extras, tiempos, bander
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.receta_por_m3)}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.teorico)}</td>
                       <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{f.humedad_pct != null ? `${nf(f.humedad_pct)} %` : f.salida === "agua" && f.teorico != null && f.teorico_corregido != null ? `−${nf(f.teorico - f.teorico_corregido)}` : ""}</td>
-                      <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.teorico_corregido)}</td>
+                      <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{nf(f.teorico_corregido)}{extra ? <span className="text-amber-800"> + {nf(extra)} a mano</span> : null}</td>
                       <td className="border-b px-1.5 py-0.5 text-right font-medium tabular-nums">{nf(f.real)} {f.unidad}</td>
                       <td className={cn("border-b px-1.5 py-0.5 text-right tabular-nums", bad && "font-medium text-red-700")}>{d > 0 ? "+" : ""}{nf(d * 100, 1)} %</td>
                     </tr>

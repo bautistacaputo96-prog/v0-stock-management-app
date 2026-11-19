@@ -17,14 +17,19 @@ import { SinAcceso } from "@/components/seccion-protegida"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { cargarPuesto, type Puesto } from "@/lib/carga/datos"
-import { NOMBRE_BANDERA, banderas, resumenAguaExtra, tiempos, type Bandera, type CargaAuditoria, type FilaAuditoria, type MaterialAuditoria } from "@/lib/carga/auditoria"
+import { NOMBRE_BANDERA, banderas, cementoExtraDe, resumenAguaExtra, salidaCementoExtra, textoReplanteoAuditoria, tiempos, type Bandera, type CargaAuditoria, type FilaAuditoria, type MaterialAuditoria } from "@/lib/carga/auditoria"
 import { INFO_SALIDA, SALIDAS, nf, type Salida } from "@/lib/carga/tipos"
 import { Btn, CartelSimulada, Tag, hhmm, m3t, minTxt, mmss } from "./comun"
 import { ReporteDialog, type FilaReporte } from "./dialogos-carga"
 import { Buscador, coincide } from "@/components/despacho/buscador"
 
 type Planta = { id: string; name: string }
-const CATS: Bandera[] = ["sinRemito", "sinCarga", "difVol", "desv", "receta", "aguaDist", "aguaExtra", "indumix", "parada"]
+const CATS: Bandera[] = ["sinRemito", "sinCarga", "difVol", "desv", "receta", "aguaDist", "aguaExtra", "indumix", "parada", "replanteo", "cementoExtra"]
+/** Banderas que informan y no son un problema */
+const INFORMATIVAS: Bandera[] = ["aguaExtra", "simulada", "replanteo"]
+const SEL_DESP = "id, remito, remito_tipo, created_at, dispatch_date, quantity_m3, mixer_id, mixers(license_plate), clients(name), construction_sites(name), formulas(code)"
+// Replanteo: si la base todavía no tiene las columnas, se lee como siempre
+const sinColumnaReplanteo = (r: any) => !!r?.error && /retorno_m3|cemento_extra_kg/.test(r.error.message || "")
 const diaHoy = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` }
 
 export function AuditoriaCarga({ plants }: { plants: Planta[] }) {
@@ -66,20 +71,31 @@ function Auditoria({ plants }: { plants: Planta[] }) {
     const [cg, ds, mats] = await Promise.all([
       sb.from("cargas").select("*, formulas(code), mixers(license_plate)").eq("puesto_id", p.id).not("estado", "in", "(cancelada)")
         .or(`and(created_at.gte."${ini.toISOString()}",created_at.lt."${fin.toISOString()}"),and(fin_at.gte."${ini.toISOString()}",fin_at.lt."${fin.toISOString()}")`),
-      sb.from("dispatches").select("id, remito, remito_tipo, created_at, dispatch_date, quantity_m3, mixer_id, mixers(license_plate), clients(name), construction_sites(name), formulas(code)")
-        .eq("plant_id", planta).eq("is_test_dispatch", false).gte("dispatch_date", ini.toISOString()).lt("dispatch_date", fin.toISOString()),
+      (async () => {
+        const q = (sel: string) => sb.from("dispatches").select(sel).eq("plant_id", planta).eq("is_test_dispatch", false).gte("dispatch_date", ini.toISOString()).lt("dispatch_date", fin.toISOString())
+        const r = await q(`${SEL_DESP}, retorno_m3, cemento_extra_kg`)
+        return sinColumnaReplanteo(r) ? q(SEL_DESP) : r
+      })(),
       sb.from("materials").select("id, name, tipo").eq("plant_id", planta),
     ])
     const cargas = (cg.data || []) as any[]
     const ids = cargas.map((c) => c.id)
     const dIds = [...new Set([...cargas.map((c) => c.dispatch_id).filter(Boolean), ...((ds.data || []) as any[]).map((d) => d.id)])]
-    const [cm, ex, gps, dExtra] = await Promise.all([
+    const [cm, ex, gps, dExtra, rep] = await Promise.all([
       ids.length ? sb.from("cargas_materiales").select("*").in("carga_id", ids).eq("ciclo", 0) : Promise.resolve({ data: [] }),
       ids.length ? sb.from("cargas_agua_extra").select("*").in("carga_id", ids).order("at") : Promise.resolve({ data: [] }),
       dIds.length ? sb.from("viajes_gps").select("dispatch_id, salida_planta").in("dispatch_id", dIds) : Promise.resolve({ data: [] }),
       // Despachos de las cargas que no son del día (se despachó ayer y se cargó hoy, raro pero posible)
-      (() => { const faltan = cargas.map((c) => c.dispatch_id).filter((x) => x && !((ds.data || []) as any[]).some((d) => d.id === x)); return faltan.length ? sb.from("dispatches").select("id, remito, remito_tipo, created_at, dispatch_date, quantity_m3, mixer_id, mixers(license_plate), clients(name), construction_sites(name), formulas(code)").in("id", faltan) : Promise.resolve({ data: [] }) })(),
+      (async () => {
+        const faltan = cargas.map((c) => c.dispatch_id).filter((x) => x && !((ds.data || []) as any[]).some((d) => d.id === x))
+        if (!faltan.length) return { data: [] }
+        const r = await sb.from("dispatches").select(`${SEL_DESP}, retorno_m3, cemento_extra_kg`).in("id", faltan)
+        return sinColumnaReplanteo(r) ? sb.from("dispatches").select(SEL_DESP).in("id", faltan) : r
+      })(),
+      // Replanteo: de qué material es el cemento agregado (la fila es_replanteo del despacho)
+      dIds.length ? sb.from("dispatch_materials").select("dispatch_id, material_id").in("dispatch_id", dIds).eq("es_replanteo", true).then((r: any) => (r.error ? { data: [] } : r)) : Promise.resolve({ data: [] }),
     ])
+    const matReplanteo = new Map(((rep.data || []) as any[]).map((x) => [x.dispatch_id, x.material_id]))
     const matN = new Map(((mats.data || []) as any[]).map((m) => [m.id, m.name]))
     const despachos = new Map([...((ds.data || []) as any[]), ...((dExtra.data || []) as any[])].map((d) => [d.id, d]))
     const salida = new Map(((gps.data || []) as any[]).map((g) => [g.dispatch_id, g.salida_planta]))
@@ -94,10 +110,12 @@ function Auditoria({ plants }: { plants: Planta[] }) {
       ciclos: c.ciclos, receta_numero: c.receta_numero, receta_ok: !((c.bloqueo?.items || []) as any[]).some((i) => i.clave === "receta" && (!i.ok || i.aviso)) && !!c.bloqueo, agua_distinta: !!c.agua_distinta,
       autorizada: !!c.autorizacion, parada: c.resolucion?.modo && c.resolucion.modo !== "cancelada" ? c.resolucion.modo : c.estado === "parada" ? "sin resolver" : null,
       completa_carga_id: c.completa_carga_id, materiales: materialesDe(c.id), plantista: c.arrancada_por, patente_planta: c.patente_planta, observacion_planta: c.observacion_planta, revisada: c.estado_auditoria === "revisada",
+      cemento_extra_kg: num(c.cemento_extra_kg), cemento_extra_hecho: c.cemento_extra_hecho ?? null,
     })
     const aDesp = (d: any) => ({
       id: d.id, remito: d.remito, remito_tipo: d.remito_tipo, patente: d.mixers?.license_plate || null, despachado_at: d.created_at, salio_at: d.dispatch_date,
       cliente: d.clients?.name || "", obra: d.construction_sites?.name || "", formula: d.formulas?.code || "", m3: Number(d.quantity_m3) || 0,
+      retorno_m3: num(d.retorno_m3), cemento_extra_kg: num(d.cemento_extra_kg), cemento_extra_material_id: matReplanteo.get(d.id) ?? null,
     })
     const extras = (cargaIds: string[]) => ((ex.data || []) as any[]).filter((x) => cargaIds.includes(x.carga_id)).map((x) => ({ litros: Number(x.litros), at: x.at, despues_de_terminar: x.despues_de_terminar, usuario: x.usuario }))
     // Una fila por despacho (con sus cargas: la principal y la que la completa) y una por carga sin despacho
@@ -129,7 +147,8 @@ function Auditoria({ plants }: { plants: Planta[] }) {
       const fo = f.despacho?.formula || info[c.id]?.formula || "—"
       const x = cem.get(fo) || { real: 0, teorico: 0, n: 0 }
       x.real += ms.reduce((s, m) => s + Number(m.real || 0), 0)
-      x.teorico += ms.reduce((s, m) => s + Number(m.formula_por_m3 || 0), 0) * Number(c.m3_cargados ?? c.m3 ?? 0)
+      // Replanteo: lo esperado suma el cemento agregado a mano
+      x.teorico += ms.reduce((s, m) => s + Number(m.formula_por_m3 || 0), 0) * Number(c.m3_cargados ?? c.m3 ?? 0) + cementoExtraDe(c, f.despacho)
       x.n++
       cem.set(fo, x)
     }
@@ -144,7 +163,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
 
   const ahora = Date.now()
   const todas = useMemo(() => (conSinCarga ? [...filas, ...sinCargaFilas] : filas).map((f) => ({ f, b: banderas(f, ahora, puesto?.tolerancias.pesaje) })), [filas, sinCargaFilas, conSinCarga, puesto]) // eslint-disable-line react-hooks/exhaustive-deps
-  const vis = todas.filter((x) => (!cat || x.b.includes(cat)) && (!soloProblemas || x.b.some((b) => b !== "aguaExtra" && b !== "simulada"))
+  const vis = todas.filter((x) => (!cat || x.b.includes(cat)) && (!soloProblemas || x.b.some((b) => !INFORMATIVAS.includes(b)))
     && coincide(buscar, x.f.despacho?.remito, x.f.despacho?.patente, x.f.despacho?.cliente, x.f.despacho?.obra, x.f.despacho?.formula, x.f.cargas[0]?.patente_planta, x.f.cargas[0]?.plantista, x.f.cargas[0] ? extraInfo[x.f.cargas[0].id]?.formula : null))
   const cnt = (b: Bandera) => todas.filter((x) => x.b.includes(b)).length
   const agua = useMemo(() => resumenAguaExtra(filas), [filas])
@@ -167,6 +186,9 @@ function Auditoria({ plants }: { plants: Planta[] }) {
         "Salió (GPS)": f.salida_gps ? hhmm(f.salida_gps) : "", "Espera hasta salir (min)": t.esperaSalidaMin != null ? Math.round(t.esperaSalidaMin) : "",
         "m³ carga": f.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0) || "", Receta: c?.receta_numero ?? "", "Agua extra (L)": f.extras.reduce((s, e) => s + e.litros, 0) || "",
         Plantista: c?.plantista || "", Unión: f.union || "", Simulada: c?.simulada ? "sí" : "", Problemas: b.map((x) => NOMBRE_BANDERA[x]).join(", "),
+        "Volvió (m³)": f.despacho?.retorno_m3 ?? "",
+        "Cemento extra pedido (kg)": f.despacho && Number(f.despacho.retorno_m3) > 0 ? Number(f.despacho.cemento_extra_kg) || 0 : "",
+        "Cemento extra confirmado (kg)": f.cargas.find((x) => x.cemento_extra_hecho)?.cemento_extra_hecho?.kg ?? "",
       }
     })
     const wb = XLSX.utils.book_new()
@@ -211,7 +233,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
             <span><span className="text-slate-500">Espera en cola prom. </span><b className="font-medium">{promCola != null ? minTxt(promCola) : "—"}</b></span>
             <span><span className="text-slate-500">Tiempo de carga prom. </span><b className="font-medium">{promCarga != null ? mmss(promCarga * 60) : "—"}</b></span>
             <span><span className="text-slate-500">Espera hasta salir prom. </span><b className="font-medium">{promEspera != null ? `${nf(promEspera, 1)} min` : "—"}</b></span>
-            <span><span className="text-slate-500">Con problemas </span><b className="font-medium text-red-700">{todas.filter((x) => x.b.some((b) => b !== "aguaExtra" && b !== "simulada")).length}</b></span>
+            <span><span className="text-slate-500">Con problemas </span><b className="font-medium text-red-700">{todas.filter((x) => x.b.some((b) => !INFORMATIVAS.includes(b))).length}</b></span>
           </div>
           <div className="flex flex-wrap gap-1">
             <button onClick={() => setCat(null)} className={cn("h-[26px] rounded border border-slate-200 px-2 text-xs", !cat && "border-slate-500 bg-slate-100")}><span className="tabular-nums">{todas.length}</span> Todas</button>
@@ -252,10 +274,10 @@ function Auditoria({ plants }: { plants: Planta[] }) {
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.cargaMin != null ? mmss(t.cargaMin * 60) : "—"}</td>
                         <td className="border-b px-1.5 py-0.5 tabular-nums">{f.salida_gps ? hhmm(f.salida_gps) : c ? <span className="text-slate-500">—</span> : ""}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{t.esperaSalidaMin != null ? minTxt(t.esperaSalidaMin) : ""}</td>
-                        <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{c ? m3t(f.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0)) : "—"}</td>
+                        <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{c ? m3t(f.cargas.reduce((s, x) => s + Number(x.m3_cargados ?? x.m3 ?? 0), 0)) : "—"}{Number(f.despacho?.retorno_m3) > 0 ? <span className="text-slate-500"> (volvió {m3t(Number(f.despacho!.retorno_m3))})</span> : null}</td>
                         <td className="border-b px-1.5 py-0.5">{c?.receta_numero ?? "—"}</td>
                         <td className="border-b px-1.5 py-0.5 text-right tabular-nums">{ex ? `${nf(ex)} L` : ""}</td>
-                        <td className="whitespace-normal border-b px-1.5 py-0.5">{b.length ? b.map((x) => <span key={x} className={cn("d3c-tag mr-0.5 inline-block rounded px-1 text-[10.5px]", x === "simulada" ? "bg-amber-100 text-amber-900" : x === "aguaExtra" ? "bg-blue-50 text-blue-800" : x === "indumix" ? "bg-sky-50 text-sky-900" : x === "parada" ? "bg-slate-200 text-slate-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[x]}</span>) : <Tag tono="ok">OK</Tag>}{c?.revisada ? <Tag tono="ok" className="ml-0.5">revisada</Tag> : null}</td>
+                        <td className="whitespace-normal border-b px-1.5 py-0.5">{b.length ? b.map((x) => <span key={x} title={x === "replanteo" ? textoReplanteoAuditoria(f) || undefined : undefined} className={cn("d3c-tag mr-0.5 inline-block rounded px-1 text-[10.5px]", x === "simulada" || x === "cementoExtra" ? "bg-amber-100 text-amber-900" : x === "aguaExtra" ? "bg-blue-50 text-blue-800" : x === "indumix" ? "bg-sky-50 text-sky-900" : x === "parada" || x === "replanteo" ? "bg-slate-200 text-slate-800" : "bg-red-50 text-red-700")}>{NOMBRE_BANDERA[x]}</span>) : <Tag tono="ok">OK</Tag>}{c?.revisada ? <Tag tono="ok" className="ml-0.5">revisada</Tag> : null}</td>
                       </tr>
                     )
                   })}
@@ -277,6 +299,7 @@ function Auditoria({ plants }: { plants: Planta[] }) {
             filas={filasR} extras={abierta.extras}
             tiempos={{ despachado: abierta.despacho?.despachado_at || null, inicio: c.inicio_at, fin: abierta.cargas[abierta.cargas.length - 1].fin_at, salida: abierta.salida_gps }}
             banderas={banderas(abierta, ahora, puesto?.tolerancias.pesaje)} onCerrar={() => setAbierta(null)}
+            cementoExtra={(() => { const kg = cementoExtraDe(c, abierta.despacho); return kg > 0 || textoReplanteoAuditoria(abierta) ? { salida: kg > 0 ? salidaCementoExtra(filasR.map((x) => ({ salida: x.salida, material_id: (x as any).material_id ?? null })), abierta.despacho?.cemento_extra_material_id) : null, kg, texto: textoReplanteoAuditoria(abierta) } : null })()}
             pie={puede("carga", "editar") && !c.revisada ? <Btn onClick={() => revisar(c.id)}>Marcar revisada</Btn> : c.revisada ? <div className="text-xs text-emerald-800">Revisada.</div> : null}
           />
         )

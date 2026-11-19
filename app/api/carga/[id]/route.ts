@@ -151,6 +151,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (!(await evento("cemento_extra", { kg, pedido_kg: carga.cemento_extra_kg ?? null }))) return listo({ duplicado: true })
         const { error: ec } = await upd({ cemento_extra_hecho: hecho })
         if (ec) return error(/cemento_extra_hecho/.test(ec.message || "") ? "Falta aplicar en la base la migración del replanteo (202611181700)." : ec.message, 409)
+        // Planta simulada con la carga ya cerrada: el simulador sumó esos kg al real de la salida de cemento (como si se
+        // hubieran pesado con la balanza). Solo en una simulada: con Indumix real, lo pesado lo trae su reporte.
+        const salCem = String(body?.salida || "")
+        if (carga.simulada && ["cemento_1", "cemento_2"].includes(salCem) && num(body?.real) != null)
+          await sb.from("cargas_materiales").update({ real: num(body.real) }).eq("carga_id", id).eq("ciclo", 0).eq("salida", salCem)
         return listo({ cemento_extra_hecho: hecho })
       }
 
