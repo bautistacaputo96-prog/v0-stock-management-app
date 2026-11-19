@@ -546,6 +546,7 @@ Código:
 | Facturación: el remito es la base de FA/F2 | El remito lleva lo despachado de verdad; Zomatik factura como hoy |
 | Seguridad de Zomatik: `traerdatos.php` recibe la tabla y el filtro desde el navegador | Lo usamos solo como lo usa la página. Conviene contárselo al proveedor de Zomatik |
 | Edición o borrado de despachos ya remitidos | Bloqueado sin permiso. Si se fuerza, queda marcado "revisar en Zomatik" (no se anula solo) |
+| Replanteo (18/11/2026): el camión vuelve con hormigón y se completa | OF, remito y NP siguen con `quantity_m3` (los m³ del camión). El consumo de MP del sistema baja por el retorno (fórmula × m³ cargados + cemento agregado): la OF puede consumir en Zomatik la composición por los m³ del camión. Se acepta la diferencia por ahora. Ver `docs/specs/2026-11-18-replanteo-hormigon-de-retorno.md`, 10.3 y 14.7 |
 
 ---
 

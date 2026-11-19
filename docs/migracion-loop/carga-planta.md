@@ -1018,6 +1018,23 @@ La pantalla de Carga (`/carga`) y la Auditoría usan el mismo criterio visual qu
    - Las salidas de la planta se reparten el ancho (entre 50 y 78 px) para entrar en un renglón; con menos de 70 px, nombres cortos ("6/12", "0/6", "A. fina", "Sika 90E"). Cuentas: a 1366 con el menú quedan ~543 px → 51 px por salida; a 1920, 78.
 2. **Despacho, Viajes:** el detalle del viaje se abre solo al elegirlo (tocar la tarjeta) y se cierra al elegir otro; la flecha sigue andando a mano.
 
+## 28. Replanteo: hormigón que vuelve en el camión (18/11/2026)
+
+Especificación: `docs/specs/2026-11-18-replanteo-hormigon-de-retorno.md` (sección 5). En corto:
+- **La orden** va por los m³ a cargar (`m3 = quantity_m3 − retorno_m3`; ciclos sobre eso) y copia `retorno_m3` y
+  `cemento_extra_kg` en `cargas`. A Indumix se escribe lo de siempre (receta, m³ a cargar, cliente, camión, remito).
+  Volvió entero: no hay orden. La fila la arma `filaOrdenCarga` (`lib/carga/datos.ts`).
+- **El cemento** no va a Indumix (no recibe kilos sueltos): es una indicación en la pantalla de Carga ("Agregar 50 kg
+  de cemento a mano" → "Listo, agregado"; al cerrar, "¿Agregaste los 50 kg?"). Lo confirmado queda en
+  `cargas.cemento_extra_hecho` y en el evento `cemento_extra`. No mueve stock (ya bajó al despachar). El simulador suma
+  esos kg al real de la salida de cemento.
+- **Parada:** "Sale con lo cargado" deja el remito en cargados + lo que volvió.
+- **Auditoría:** "Dif. volumen" contra los m³ a cargar; "Sin carga" no se marca si volvió entero; lo esperado en la
+  salida del cemento suma el cemento agregado; banderas "Replanteo" (informativa) y "Cemento extra" (lo confirmado
+  distinto de lo pedido).
+- **Antes de prender `usa_kilos_reales`:** confirmar cómo se agrega el cemento en la planta (balanza o bolsas). Con
+  balanza, `ajustar_stock_carga` queda como está; en bolsas, hay que sacar la fila `es_replanteo` del teórico.
+
 ## Hecho
 
 ### Etapa simulada (21/10/2026, rama `loop/carga-planta`, sin publicar)

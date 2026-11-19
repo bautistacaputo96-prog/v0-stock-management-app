@@ -470,6 +470,7 @@ export type Database = {
           created_at: string | null
           dispatch_id: string
           dry_quantity: number | null
+          es_replanteo: boolean
           humidity_at_dispatch: number | null
           id: string
           material_id: string
@@ -480,6 +481,7 @@ export type Database = {
           created_at?: string | null
           dispatch_id: string
           dry_quantity?: number | null
+          es_replanteo?: boolean
           humidity_at_dispatch?: number | null
           id?: string
           material_id: string
@@ -490,6 +492,7 @@ export type Database = {
           created_at?: string | null
           dispatch_id?: string
           dry_quantity?: number | null
+          es_replanteo?: boolean
           humidity_at_dispatch?: number | null
           id?: string
           material_id?: string
@@ -554,6 +557,7 @@ export type Database = {
       dispatches: {
         Row: {
           actual_slump_cm: number | null
+          cemento_extra_kg: number | null
           chofer_id: string | null
           client: string | null
           client_id: string | null
@@ -573,6 +577,8 @@ export type Database = {
           remito: string | null
           remito_tipo: string | null
           remito_tipo_origen: string | null
+          retorno_de_dispatch_id: string | null
+          retorno_m3: number | null
           sample_number: string | null
           sample_taken: boolean | null
           sand_stockpile_humidity: number | null
@@ -580,6 +586,7 @@ export type Database = {
         }
         Insert: {
           actual_slump_cm?: number | null
+          cemento_extra_kg?: number | null
           chofer_id?: string | null
           client?: string | null
           client_id?: string | null
@@ -599,6 +606,8 @@ export type Database = {
           remito?: string | null
           remito_tipo?: string | null
           remito_tipo_origen?: string | null
+          retorno_de_dispatch_id?: string | null
+          retorno_m3?: number | null
           sample_number?: string | null
           sample_taken?: boolean | null
           sand_stockpile_humidity?: number | null
@@ -606,6 +615,7 @@ export type Database = {
         }
         Update: {
           actual_slump_cm?: number | null
+          cemento_extra_kg?: number | null
           chofer_id?: string | null
           client?: string | null
           client_id?: string | null
@@ -625,6 +635,8 @@ export type Database = {
           remito?: string | null
           remito_tipo?: string | null
           remito_tipo_origen?: string | null
+          retorno_de_dispatch_id?: string | null
+          retorno_m3?: number | null
           sample_number?: string | null
           sample_taken?: boolean | null
           sand_stockpile_humidity?: number | null
@@ -657,6 +669,13 @@ export type Database = {
             columns: ["formula_id"]
             isOneToOne: false
             referencedRelation: "formulas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dispatches_retorno_de_dispatch_id_fkey"
+            columns: ["retorno_de_dispatch_id"]
+            isOneToOne: false
+            referencedRelation: "dispatches"
             referencedColumns: ["id"]
           },
           {
@@ -2838,6 +2857,7 @@ export type Database = {
       _ajustar_pedido: { Args: { p_pedido_id: string; p_delta_m3: number; p_usuario: string; p_nota: string }; Returns: undefined }
       _ancla_stock: { Args: { p_material_id: string; p_desde: string }; Returns: string }
       _aplicar_neto: { Args: { p_dispatch_id: string; p_desde: string; p_neto: Json; p_nota: string }; Returns: Json }
+      _cemento_replanteo: { Args: { p_formula_id: string; p_plant_id: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
       _consumo_formula: { Args: { p_formula_id: string; p_plant_id: string; p_m3: number }; Returns: ({ mat_id: string; mat_nombre: string; mat_tipo: string; descuenta: boolean; kg_m3: number; kg_seco: number; humedad_pct: number; kg_humedo: number })[] }
       _material_controla_stock: { Args: { p_material_id: string }; Returns: boolean }
       _material_en_planta: { Args: { p_material_id: string; p_plant_id: string; p_contexto?: string }; Returns: Database["public"]["Tables"]["materials"]["Row"] }
@@ -2850,6 +2870,7 @@ export type Database = {
       ajustar_material_despacho: { Args: { p_dispatch_id: string; p_material: string; p_cantidad: number; p_usuario?: string; p_nota?: string; p_motivo?: string }; Returns: Json }
       anular_despacho: { Args: { p_id: string; p_usuario?: string; p_motivo?: string }; Returns: Json }
       camion_volvio: { Args: { p_mixer_id: string; p_fuente?: string; p_usuario?: string; p_visto_fuera_at?: string }; Returns: Json }
+      cemento_para_replanteo: { Args: { p_formula_id: string; p_plant_id: string }; Returns: Json }
       cerrar_ingreso_clave_comun: { Args: { p_por: string }; Returns: ({ user_id: string; tenia_clave_comun: boolean; sesion_cerrada: boolean })[] }
       clasificar_material: { Args: { p_nombre: string }; Returns: ({ tipo: string; descuenta_stock: boolean; corrige_humedad: boolean })[] }
       editar_despacho: { Args: { p_id: string; p: Json }; Returns: Json }
