@@ -4,6 +4,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { CheckCircle2, XCircle } from "lucide-react"
+import { useEffect, useState } from "react"
+import { createClient } from "@/lib/supabase/client"
+import { m3Cargados, m3txt } from "@/lib/despacho"
 
 type DispatchData = {
   id: string
@@ -16,6 +19,10 @@ type DispatchData = {
   sample_taken: boolean | null
   sample_number: string | null
   actual_slump_cm: number | null
+  /** Replanteo: m³ con que volvió el camión, cemento agregado y de qué despacho volvió (nulos = sin replanteo) */
+  retorno_m3?: number | null
+  cemento_extra_kg?: number | null
+  retorno_de_dispatch_id?: string | null
   clients: {
     id: string
     name: string
@@ -55,11 +62,27 @@ export function ViewDispatchDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  // Replanteo: la fórmula va por los m³ que se cargaron de verdad (m³ del camión − los que volvieron)
+  const retorno = Number(dispatch.retorno_m3) > 0 ? Number(dispatch.retorno_m3) : null
+  const cementoExtra = retorno ? Number(dispatch.cemento_extra_kg) || 0 : 0
+  const cargados = m3Cargados(Number(dispatch.quantity_m3), retorno)
+  // De qué remito volvió el hormigón (solo lectura)
+  const [volvioDe, setVolvioDe] = useState<string | null>(null)
+  useEffect(() => {
+    setVolvioDe(null)
+    if (!open || !retorno || !dispatch.retorno_de_dispatch_id) return
+    createClient().from("dispatches").select("remito, remito_tipo, dispatch_date, clients(name)").eq("id", dispatch.retorno_de_dispatch_id).maybeSingle()
+      .then((r: any) => {
+        const d = r.data
+        if (d) setVolvioDe(`${d.remito_tipo ? `${d.remito_tipo} ` : ""}${d.remito || "s/n"}${d.clients?.name ? ` · ${d.clients.name}` : ""}`)
+      })
+  }, [open, retorno, dispatch.retorno_de_dispatch_id])
+
   // Calculate materials used
   const materialsUsed = dispatch.formulas.formula_materials.map((fm) => ({
     name: fm.materials.name,
     unit: fm.materials.unit,
-    quantity: (fm.quantity * dispatch.quantity_m3) / dispatch.formulas.yield_m3,
+    quantity: (fm.quantity * cargados) / dispatch.formulas.yield_m3,
   }))
 
   const formatDate = (dateString: string) => {
@@ -95,6 +118,19 @@ export function ViewDispatchDialog({
               <p className="font-medium text-sm">{dispatch.formulas.code}</p>
             </div>
           </div>
+
+          {retorno && (
+            <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+              <h4 className="text-sm font-semibold text-amber-900">Replanteo</h4>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><p className="text-xs text-muted-foreground">Volvió en el camión</p><p className="font-medium">{m3txt(retorno)} m³</p></div>
+                <div><p className="text-xs text-muted-foreground">Cemento agregado</p><p className="font-medium">{cementoExtra > 0 ? `${m3txt(cementoExtra)} kg` : "No se agregó"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Cargado de verdad</p><p className="font-medium">{cargados > 0 ? `${m3txt(cargados)} m³` : "Nada (volvió entero)"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Volvió del remito</p><p className="font-medium">{volvioDe || (dispatch.retorno_de_dispatch_id ? "…" : "No se sabe")}</p></div>
+              </div>
+              <p className="text-xs text-muted-foreground">El remito va por {m3txt(dispatch.quantity_m3)} m³. La materia prima se descontó por {m3txt(cargados)} m³{cementoExtra > 0 ? ` + ${m3txt(cementoExtra)} kg de cemento` : ""}. La muestra es de un hormigón mezclado.</p>
+            </div>
+          )}
 
           <Separator />
 
@@ -175,7 +211,7 @@ export function ViewDispatchDialog({
           <Separator />
 
           <div>
-            <p className="text-sm font-semibold mb-2">Materiales Utilizados</p>
+            <p className="text-sm font-semibold mb-2">Materiales Utilizados{retorno ? ` (fórmula × ${m3txt(cargados)} m³ cargados${cementoExtra > 0 ? `; más ${m3txt(cementoExtra)} kg de cemento del replanteo` : ""})` : ""}</p>
             <div className="grid grid-cols-2 gap-2">
               {materialsUsed.map((material, index) => (
                 <div key={index} className="flex justify-between items-center p-2 bg-muted/40 rounded text-sm">

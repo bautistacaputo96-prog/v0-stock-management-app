@@ -25,7 +25,7 @@ import { currentUserName, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
-import { cementoDe, errorReplanteo, m3Cargados, m3txt, num as numTxt } from "@/lib/despacho"
+import { cementoDe, errorReplanteo, m3Cargados, m3txt, num as numTxt, textoReplanteoCorto } from "@/lib/despacho"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
@@ -1114,6 +1114,14 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                                 aria-label={`Fibra: ${dispatch.fiber_kg} kg`}
                               />
                             )}
+                            {Number(dispatch.retorno_m3) > 0 && (
+                              <span
+                                className="shrink-0 rounded bg-amber-100 px-1 font-sans text-[10px] font-semibold text-amber-800"
+                                title={textoReplanteoCorto(dispatch.quantity_m3, dispatch.retorno_m3, dispatch.cemento_extra_kg)}
+                              >
+                                Replanteo
+                              </span>
+                            )}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -1144,7 +1152,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                           {Number(dispatch.retorno_m3) > 0 && (
                             <span
                               className="ml-1 whitespace-nowrap text-[10px] font-semibold text-amber-700"
-                              title={`Replanteo: se cargaron ${m3txt(m3Cargados(Number(dispatch.quantity_m3), Number(dispatch.retorno_m3)))} m³${Number(dispatch.cemento_extra_kg) > 0 ? ` + ${m3txt(dispatch.cemento_extra_kg)} kg de cemento` : ""}`}
+                              title={textoReplanteoCorto(dispatch.quantity_m3, dispatch.retorno_m3, dispatch.cemento_extra_kg)}
                             >
                               volvió {m3txt(dispatch.retorno_m3)}
                             </span>

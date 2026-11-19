@@ -599,6 +599,18 @@ export function textoReplanteo(o: { m3: number; retorno: number; cementoKg: numb
   return `Se van a descontar ${m3txt(c)} m³ de materia prima${kg > 0 ? ` + ${kgTxt(kg)} kg de cemento` : ""} cuando se despache. ${remito}`
 }
 
+/**
+ * Detalle corto para marcar un despacho (o su muestra) con replanteo: "Replanteo: volvió 1 m³ + 50 kg cem. · se
+ * cargaron 7 de 8 m³". Sin retorno: "".
+ */
+export function textoReplanteoCorto(m3: number | null | undefined, retorno: number | null | undefined, cementoKg: number | null | undefined): string {
+  const r = Number(retorno)
+  if (!(r > 0)) return ""
+  const kg = Number(cementoKg) > 0 ? Number(cementoKg) : 0
+  const c = m3Cargados(Number(m3 || 0), r)
+  return `Replanteo: volvió ${m3txt(r)} m³${kg > 0 ? ` + ${kgTxt(kg)} kg cem.` : ""} · se cargaron ${m3txt(c)} de ${m3txt(m3)} m³`
+}
+
 /** Error que frena (o null). Las mismas reglas de la pantalla de siempre, más tipo de remito y "Salió a las". */
 export function validarEntrega(f: FormEntrega, ctx: {
   falta: number
