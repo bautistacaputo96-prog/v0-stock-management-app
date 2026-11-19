@@ -37,12 +37,16 @@ type DispatchMovement = {
   id: string
   dispatch_id: string
   quantity: number
+  /** Replanteo: la fila del cemento agregado a mano */
+  es_replanteo?: boolean
   dispatches: {
     dispatch_date: string
     remito: string
     client: string
     obra: string
     quantity_m3: number
+    /** Replanteo: m³ con que volvió el camión */
+    retorno_m3?: number | null
     formulas: {
       code: string
       name: string
@@ -100,19 +104,19 @@ export function MaterialDetailDialog({
       const { data: entriesData } = await entriesQuery
       setStockEntries(entriesData || [])
 
-      // Load dispatch movements
-      const dispatchesQuery = supabase
+      // Load dispatch movements (con el replanteo; sin la migración, como siempre)
+      const consulta = (conReplanteo: boolean) => supabase
         .from("dispatch_materials")
         .select(`
           id,
           dispatch_id,
-          quantity,
+          quantity,${conReplanteo ? "\n          es_replanteo," : ""}
           dispatches (
             dispatch_date,
             remito,
             client,
             obra,
-            quantity_m3,
+            quantity_m3,${conReplanteo ? "\n            retorno_m3," : ""}
             formulas (
               code,
               name
@@ -122,7 +126,9 @@ export function MaterialDetailDialog({
         .eq("material_id", material.id)
         .order("dispatches(dispatch_date)", { ascending: false })
 
-      const { data: dispatchData } = await dispatchesQuery
+      let res: any = await consulta(true)
+      if (res.error && /retorno_m3|es_replanteo/.test(res.error.message || "")) res = await consulta(false)
+      const dispatchData = res.data
       const filtered = (dispatchData || []).filter((d: any) => {
         if (!d.dispatches) return false
         const dispatchDate = new Date(d.dispatches.dispatch_date)
@@ -381,9 +387,13 @@ export function MaterialDetailDialog({
                           <TableCell>
                             <Badge variant="outline">{dispatch.dispatches.remito}</Badge>
                           </TableCell>
-                          <TableCell className="text-right font-mono">{dispatch.dispatches.quantity_m3}</TableCell>
+                          <TableCell className="text-right font-mono">
+                            {dispatch.dispatches.quantity_m3}
+                            {Number(dispatch.dispatches.retorno_m3) > 0 && <span className="ml-1 text-xs text-amber-700"> · volvió {String(dispatch.dispatches.retorno_m3).replace(".", ",")}</span>}
+                          </TableCell>
                           <TableCell className="text-right font-mono text-red-600 font-semibold">
                             -{getDisplayValue(dispatch.quantity)}
+                            {dispatch.es_replanteo && <span className="ml-1 text-xs font-normal text-amber-700">(replanteo)</span>}
                           </TableCell>
                         </TableRow>
                       ))

@@ -34,6 +34,9 @@ interface TestCylinder {
     sample_number: string
     actual_slump_cm: number | null
     extra_water_liters: number | null
+    /** Replanteo: m³ con que volvió el camión y cemento agregado (nulos = sin replanteo) */
+    retorno_m3?: number | null
+    cemento_extra_kg?: number | null
     client_id: string
     construction_site_id: string
     formula_id: string
@@ -82,6 +85,8 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     setLoading(true)
     const supabase = createClient()
 
+    // Con el replanteo; sin la migración, como siempre
+    const armar = (conReplanteo: boolean) => {
     let query = supabase
       .from("test_cylinders")
       .select(`
@@ -91,7 +96,7 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
           dispatch_date,
           sample_number,
           actual_slump_cm,
-          extra_water_liters,
+          extra_water_liters,${conReplanteo ? "\n          retorno_m3,\n          cemento_extra_kg," : ""}
           client_id,
           construction_site_id,
           formula_id,
@@ -107,8 +112,12 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     if (selectedPlantId !== "all") {
       query = query.eq("dispatch.formula.plant_id", selectedPlantId)
     }
+    return query
+    }
 
-    const { data, error } = await query
+    let res: any = await armar(true)
+    if (res.error && /retorno_m3|cemento_extra_kg/.test(res.error.message || "")) res = await armar(false)
+    const { data, error } = res
 
     if (!error && data) {
       let filtered = data as any[]
@@ -577,6 +586,14 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
                   </TableCell>
                   <TableCell className="text-center font-semibold py-2 px-3 text-xs">
                     {cylinder.dispatch?.sample_number || "-"}
+                    {Number(cylinder.dispatch?.retorno_m3) > 0 && (
+                      <span
+                        className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800"
+                        title={`Replanteo: el camión volvió con ${Number(cylinder.dispatch!.retorno_m3).toLocaleString("es-AR")} m³ y se completó${Number(cylinder.dispatch!.cemento_extra_kg) > 0 ? ` con ${Number(cylinder.dispatch!.cemento_extra_kg).toLocaleString("es-AR")} kg de cemento` : ""}. La muestra es de un hormigón mezclado.`}
+                      >
+                        Replanteo
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="py-2 px-3 text-xs">{cylinder.dispatch?.plant?.code || "-"}</TableCell>
                   <TableCell className="py-2 px-3 text-xs">{formatDate(cylinder.dispatch?.dispatch_date)}</TableCell>

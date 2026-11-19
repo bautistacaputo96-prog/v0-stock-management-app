@@ -79,6 +79,9 @@ interface TestCylinder {
     client: string | null
     mixer: { license_plate: string } | null
     dispatch_materials: { quantity: number; materials: { name: string } | null }[] | null
+    /** Replanteo: m³ con que volvió el camión y cemento agregado (nulos = sin replanteo) */
+    retorno_m3?: number | null
+    cemento_extra_kg?: number | null
     formula: {
       code: string
       name: string
@@ -179,8 +182,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         return
       }
 
-  // Load test cylinders with dispatch info
-  let cylindersQuery = supabase
+  // Load test cylinders with dispatch info (con el replanteo; sin la migración, como siempre)
+  const consultaProbetas = (conReplanteo: boolean) => supabase
     .from("test_cylinders")
     .select(`
       *,
@@ -190,7 +193,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         sample_number,
         actual_slump_cm,
         extra_water_liters,
-        quantity_m3,
+        quantity_m3,${conReplanteo ? "\n        retorno_m3,\n        cemento_extra_kg," : ""}
         sand_stockpile_humidity,
         notes,
         obra,
@@ -204,6 +207,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
     `)
     .not("strength_mpa", "is", null)
     .order("actual_test_date", { ascending: false })
+  const cylindersQuery = consultaProbetas(true).then(async (r: any) => (r.error && /retorno_m3|cemento_extra_kg/.test(r.error.message || "") ? await consultaProbetas(false) : r))
 
       // Load granulometria tests
       let granulometriaQuery = supabase
@@ -353,7 +357,10 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         const kgDe = (pat: RegExp) => mats.filter(m => pat.test(m.materials?.name || "")).reduce((s, m) => s + Number(m.quantity || 0), 0)
         const cemento = kgDe(/cemento|cpc|cph|cpn/i)
         const aguaFormula = kgDe(/^agua/i)
-        const ac = cemento > 0 ? (aguaFormula + (agua || 0)) / cemento : null
+        // Replanteo: con hormigón que volvió, el camión no es solo lo que se cargó: la a/c no se calcula
+        const retorno = Number(c.dispatch?.retorno_m3) > 0 ? Number(c.dispatch!.retorno_m3) : null
+        const cementoExtra = retorno ? Number(c.dispatch?.cemento_extra_kg) || 0 : 0
+        const ac = retorno ? null : cemento > 0 ? (aguaFormula + (agua || 0)) / cemento : null
         const fechaCarga = c.dispatch?.dispatch_date ? new Date(c.dispatch.dispatch_date) : null
         return {
           id: c.dispatch_id,
@@ -382,6 +389,8 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
           cemento,
           aguaFormula,
           ac,
+          retorno,
+          cementoExtra,
           notas: c.dispatch?.notes || "",
           comentario: grupo.map(x => x.comments).filter(Boolean).join(" · "),
         }
@@ -435,7 +444,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
           r.slump != null ? `${r.slump} cm` : "-",
           r.agua != null ? `${r.agua.toFixed(0)} L` : "-",
           r.aguaPorM3 != null ? r.aguaPorM3.toFixed(1) : "-",
-          r.ac != null ? r.ac.toFixed(2) : "-",
+          r.ac != null ? r.ac.toFixed(2) : r.retorno ? "— (replanteo)" : "-",
           r.cliente || "-",
           r.obra || "-",
         ]),
@@ -1473,6 +1482,15 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                         <TableCell className="text-xs whitespace-nowrap">
                           <div className="font-medium">{r.muestra || "—"}</div>
                           <div className="text-muted-foreground">Remito {r.remito || "—"}</div>
+                          {r.retorno && (
+                            <Badge
+                              variant="outline"
+                              className="mt-0.5 border-amber-300 text-[10px] text-amber-800"
+                              title={`Replanteo: el camión volvió con ${r.retorno.toLocaleString("es-AR")} m³ y se completó${r.cementoExtra > 0 ? ` con ${r.cementoExtra.toLocaleString("es-AR")} kg de cemento` : ""}. La muestra es de un hormigón mezclado: la a/c no se calcula.`}
+                            >
+                              Replanteo · volvió {r.retorno.toLocaleString("es-AR")} m³{r.cementoExtra > 0 ? ` + ${r.cementoExtra.toLocaleString("es-AR")} kg cem.` : ""}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
                           <div>{r.cargaFecha}{r.cargaHora && <span className="text-muted-foreground"> {r.cargaHora}</span>}</div>
@@ -1518,7 +1536,7 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className={`text-right font-mono text-xs ${r.ac != null && r.ac > 0.6 ? "text-red-600 font-semibold" : ""}`}>{r.ac != null ? r.ac.toFixed(2) : <span className="text-muted-foreground font-sans">—</span>}</TableCell>
+                        <TableCell className={`text-right font-mono text-xs ${r.ac != null && r.ac > 0.6 ? "text-red-600 font-semibold" : ""}`}>{r.ac != null ? r.ac.toFixed(2) : <span className="text-muted-foreground font-sans" title={r.retorno ? "Con hormigón que volvió: no se calcula" : undefined}>—</span>}</TableCell>
                         <TableCell className="text-right text-xs">{r.humArena != null ? `${Number(r.humArena).toFixed(1)}%` : <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-xs max-w-[200px]">
                           <div className="truncate" title={r.cliente}>{r.cliente || "—"}</div>
