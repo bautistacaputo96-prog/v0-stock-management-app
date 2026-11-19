@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { textoReplanteoCorto } from "@/lib/despacho"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -66,7 +67,8 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
     setLoading(true)
     const supabase = createClient()
 
-    const { data, error } = await supabase
+    // Con el replanteo (m³, retorno y cemento); sin la migración, como siempre
+    const consulta = (conReplanteo: boolean) => supabase
       .from("test_cylinders")
       .select(`
         id,
@@ -75,13 +77,16 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
         dispatch_id,
         dispatches!inner(
           sample_number,
-          formula_id,
+          formula_id,${conReplanteo ? "\n          quantity_m3,\n          retorno_m3,\n          cemento_extra_kg," : ""}
           formulas!inner(code)
         )
       `)
       .in("dispatches.formula_id", selectedFormulas)
       .eq("test_age_days", testAge)
       .not("strength_mpa", "is", null)
+    let res: any = await consulta(true)
+    if (res.error && /retorno_m3|cemento_extra_kg/.test(res.error.message || "")) res = await consulta(false)
+    const { data, error } = res
 
     if (error) {
       console.error("[v0] Error loading compression data:", error)
@@ -91,21 +96,27 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
 
     // For 28 days, we need to average the two cylinders per sample
     let values: number[] = []
+    // Muestra y replanteo de cada valor (en el mismo orden que values)
+    let info: { muestra: string; replanteo: string }[] = []
+    const infoDe = (c: any) => ({ muestra: c.dispatches?.sample_number || "-", replanteo: textoReplanteoCorto(c.dispatches?.quantity_m3, c.dispatches?.retorno_m3, c.dispatches?.cemento_extra_kg) })
 
     if (testAge === 28) {
       // Group by dispatch_id and average
       const grouped: Record<string, number[]> = {}
+      const primera: Record<string, any> = {}
       data?.forEach((cylinder: any) => {
         const dispatchId = cylinder.dispatch_id
-        if (!grouped[dispatchId]) grouped[dispatchId] = []
+        if (!grouped[dispatchId]) { grouped[dispatchId] = []; primera[dispatchId] = cylinder }
         grouped[dispatchId].push(Number.parseFloat(cylinder.strength_mpa))
       })
 
       // Calculate average for each sample
       values = Object.values(grouped).map((vals) => vals.reduce((sum, val) => sum + val, 0) / vals.length)
+      info = Object.keys(grouped).map((k) => infoDe(primera[k]))
     } else {
       // For 7 days, use values directly
       values = data?.map((cylinder: any) => Number.parseFloat(cylinder.strength_mpa)) || []
+      info = (data || []).map(infoDe)
     }
 
     if (values.length === 0) {
@@ -121,6 +132,8 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
     const chartData = values.map((val, idx) => ({
       index: idx + 1,
       mpa: val,
+      muestra: info[idx]?.muestra || "-",
+      replanteo: info[idx]?.replanteo || "",
     }))
     setChartData(chartData)
 
@@ -204,6 +217,20 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
             </div>
           </Card>
 
+          {/* Replanteo: muestras de un hormigón mezclado (el camión volvió con hormigón y se completó) */}
+          {chartData.some((d) => d.replanteo) && (
+            <Card className="border-amber-300 bg-amber-50 p-4 text-sm">
+              <p className="font-semibold text-amber-900">
+                {chartData.filter((d) => d.replanteo).length} muestra{chartData.filter((d) => d.replanteo).length === 1 ? "" : "s"} con replanteo (en ámbar en el gráfico). Entran en las estadísticas; la relación a/c no se calcula.
+              </p>
+              <ul className="mt-1 space-y-0.5 text-amber-900">
+                {chartData.filter((d) => d.replanteo).map((d) => (
+                  <li key={d.index}><span className="rounded bg-amber-100 px-1 text-xs font-semibold">Replanteo</span> Muestra {d.muestra} · {d.mpa.toFixed(1)} MPa · {d.replanteo.replace(/^Replanteo: /, "")}</li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {/* Chart */}
           <div>
             <h3 className="text-lg font-semibold mb-4">Distribución de Resistencias</h3>
@@ -215,7 +242,8 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
                 <Tooltip cursor={{ strokeDasharray: "3 3" }} />
                 <ReferenceLine y={statistics.mean} stroke="green" strokeDasharray="3 3" label="Media" />
                 <ReferenceLine y={statistics.characteristic} stroke="red" strokeDasharray="3 3" label="fck" />
-                <Scatter name="Resistencia" data={chartData} fill="#3b82f6" />
+                <Scatter name="Resistencia" data={chartData.filter((d) => !d.replanteo)} fill="#3b82f6" />
+                {chartData.some((d) => d.replanteo) && <Scatter name="Con replanteo" data={chartData.filter((d) => d.replanteo)} fill="#d97706" />}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
