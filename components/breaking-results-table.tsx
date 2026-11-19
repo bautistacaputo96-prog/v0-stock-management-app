@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { textoReplanteoCorto } from "@/lib/despacho"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -56,6 +57,8 @@ interface BreakingResult {
   client_name: string | null
   site_address: string | null
   comments: string | null
+  /** Replanteo: detalle corto ("" = sin replanteo) */
+  replanteo?: string
 }
 
 interface BreakingResultsTableProps {
@@ -86,6 +89,8 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
     try {
       const supabase = createClient()
 
+      // Con el replanteo (m³, retorno y cemento); sin la migración, como siempre
+      const armar = (conReplanteo: boolean) => {
       let query = supabase
         .from("test_cylinders")
         .select(`
@@ -102,7 +107,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
             id,
             remito,
             dispatch_date,
-            actual_slump_cm,
+            actual_slump_cm,${conReplanteo ? "\n            quantity_m3,\n            retorno_m3,\n            cemento_extra_kg," : ""}
             client_id,
             construction_site_id,
             formula_id,
@@ -120,7 +125,11 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
         query = query.is("actual_test_date", null)
       }
 
-      const { data, error } = await query.limit(10000)
+      return query.limit(10000)
+      }
+      let res: any = await armar(true)
+      if (res.error && /retorno_m3|cemento_extra_kg/.test(res.error.message || "")) res = await armar(false)
+      const { data, error } = res
 
       if (error) {
         console.error("[v0] Error loading results:", error)
@@ -162,6 +171,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
           client_name: item.dispatches?.clients?.name || null,
           site_address: item.dispatches?.construction_sites?.address || item.dispatches?.construction_sites?.name || null,
           comments: item.comments,
+          replanteo: textoReplanteoCorto(item.dispatches?.quantity_m3, item.dispatches?.retorno_m3, item.dispatches?.cemento_extra_kg),
         }
       })
 
@@ -374,7 +384,10 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
                 const status = getStrengthStatus(result)
                 return (
                   <TableRow key={result.id} className="hover:bg-muted/30">
-                    <TableCell className="text-xs font-medium sticky left-0 z-10 bg-card">{result.remito || "-"}</TableCell>
+                    <TableCell className="text-xs font-medium sticky left-0 z-10 bg-card">
+                      {result.remito || "-"}
+                      {result.replanteo && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800" title={`${result.replanteo}. La muestra es de un hormigón mezclado.`}>Replanteo</span>}
+                    </TableCell>
                     <TableCell className="text-xs">
                       <div>
                         <Badge variant="outline" className="font-mono text-xs">

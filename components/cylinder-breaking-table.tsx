@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { textoReplanteoCorto } from "@/lib/despacho"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -49,6 +50,10 @@ interface CylinderBreakingRow {
   dispatch: {
     sample_number: string
     dispatch_date: string
+    /** Replanteo: m³ del camión, m³ que volvieron y cemento agregado (nulos = sin replanteo) */
+    quantity_m3?: number | null
+    retorno_m3?: number | null
+    cemento_extra_kg?: number | null
     formula: {
       plant_id: string
     }
@@ -237,6 +242,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
 
     console.log("[v0] Loading cylinders for plant:", selectedPlantId)
 
+    // Con el replanteo; sin la migración, como siempre
+    const armar = (conReplanteo: boolean) => {
     let query = supabase
       .from("test_cylinders")
       .select(`
@@ -250,7 +257,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
         comments,
         dispatch:dispatches!inner(
           sample_number,
-          dispatch_date,
+          dispatch_date,${conReplanteo ? "\n          quantity_m3,\n          retorno_m3,\n          cemento_extra_kg," : ""}
           formula:formulas!inner(
             plant_id
           )
@@ -263,8 +270,12 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     if (selectedPlantId !== "all") {
       query = query.filter("dispatch.formula.plant_id", "eq", selectedPlantId)
     }
+    return query
+    }
 
-    const { data, error } = await query
+    let res: any = await armar(true)
+    if (res.error && /retorno_m3|cemento_extra_kg/.test(res.error.message || "")) res = await armar(false)
+    const { data, error } = res
 
     if (error) {
       toast({
@@ -565,6 +576,14 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                 <TableRow key={cylinder.id} className={`text-xs ${rowColor}`}>
                   <TableCell className={`font-medium py-2 px-3 sticky left-0 z-10 ${rowColor || "bg-card"}`}>
                     {cylinder.dispatch?.sample_number || "-"}-{cylinder.cylinder_number}
+                    {Number(cylinder.dispatch?.retorno_m3) > 0 && (
+                      <span
+                        className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800"
+                        title={`${textoReplanteoCorto(cylinder.dispatch.quantity_m3, cylinder.dispatch.retorno_m3, cylinder.dispatch.cemento_extra_kg)}. La muestra es de un hormigón mezclado.`}
+                      >
+                        Replanteo
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="py-2 px-3">{formatDate(cylinder.scheduled_test_date)}</TableCell>
                   <TableCell className="py-2 px-3 text-center">
