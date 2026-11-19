@@ -25,6 +25,7 @@ import { currentUserName, usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
+import { cementoDe, errorReplanteo, m3Cargados, m3txt, num as numTxt } from "@/lib/despacho"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
@@ -50,6 +51,9 @@ type ScheduledDispatch = {
   created_at?: string | null;
   is_test_dispatch?: boolean | null;
   scheduled_dispatch_id?: string | null;
+  /** Replanteo: m³ con que volvió el camión y cemento agregado (nulos = sin replanteo; undefined = la base no tiene la columna) */
+  retorno_m3?: number | null;
+  cemento_extra_kg?: number | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -108,7 +112,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     extra_water_liters: "",
     dispatch_date: "",
     remito_tipo: "" as "" | "R" | "X", // fase 3
+    retorno_m3: "", // replanteo (vacío = sin replanteo)
+    cemento_extra_kg: "",
   })
+  // Replanteo: la orden en la cola de carga de ese despacho (10.19: no cambia sola al editar)
+  const [ordenEnCola, setOrdenEnCola] = useState<number | null>(null)
   const [formulaSearch, setFormulaSearch] = useState("")
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   const [sites, setSites] = useState<{ id: string; name: string; client_id: string }[]>([])
@@ -294,6 +302,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         created_at: d.created_at ?? null,
         is_test_dispatch: d.is_test_dispatch ?? null,
         scheduled_dispatch_id: d.scheduled_dispatch_id ?? null,
+        retorno_m3: d.retorno_m3 === undefined ? undefined : d.retorno_m3 == null ? null : Number(d.retorno_m3),
+        cemento_extra_kg: d.cemento_extra_kg == null ? null : Number(d.cemento_extra_kg),
       }))
 
       const combined = [...transformedManual].sort((a, b) =>
@@ -498,6 +508,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       // Fase 1: se suman al final (no se mueven las columnas de siempre)
       Chofer: d.chofer_id ? nombreChofer(d.chofer_id) : "",
       Finalidad: d.finalidad || "",
+      // Replanteo: al final
+      "Volvió (m³)": Number(d.retorno_m3) > 0 ? Number(d.retorno_m3) : "",
+      "Cemento replanteo (kg)": Number(d.retorno_m3) > 0 ? Number(d.cemento_extra_kg) || 0 : "",
     }))
 
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -594,8 +607,15 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
         ? format(parseISO(dispatch.scheduled_arrival_time), "yyyy-MM-dd")
         : "",
       remito_tipo: dispatch.remito_tipo || "",
+      retorno_m3: Number(dispatch.retorno_m3) > 0 ? String(dispatch.retorno_m3).replace(".", ",") : "",
+      cemento_extra_kg: Number(dispatch.retorno_m3) > 0 ? String(Number(dispatch.cemento_extra_kg) || 0).replace(".", ",") : "",
     })
     setFormulaSearch("")
+    setOrdenEnCola(null)
+    if (dispatch.source === "manual") {
+      createClient().from("cargas").select("m3").eq("dispatch_id", dispatch.id).in("estado", ["pendiente", "bloqueada", "lista", "preparada"]).limit(1)
+        .then((r: any) => setOrdenEnCola(!r.error && r.data?.[0] ? Number(r.data[0].m3) : null))
+    }
     
     // Load reference data
     const supabase = createClient()
@@ -631,6 +651,20 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
     const nuevaFecha = editForm.dispatch_date ? `${editForm.dispatch_date}T12:00:00-03:00` : null
 
     // Different tables have different fields
+    // Replanteo: mismas reglas que la Entrega (vacío = sin replanteo)
+    const conReplanteo = editingDispatch.source === "manual" && editingDispatch.retorno_m3 !== undefined
+    if (conReplanteo) {
+      const conRet = editForm.retorno_m3.trim() !== ""
+      const er = conRet
+        ? errorReplanteo({ retorno: editForm.retorno_m3, cementoKg: editForm.cemento_extra_kg }, updateData.quantity_m3)
+        : cementoDe(editForm.cemento_extra_kg) > 0 ? "Elegí con cuántos m³ volvió el camión." : null
+      if (er) {
+        toast({ title: "Revisá el replanteo", description: er, variant: "destructive" })
+        setSaving(false)
+        return
+      }
+    }
+
     if (editingDispatch.source === "manual") {
       // Despacho real (tabla "dispatches", usa "notes"). La base lo edita en una transacción:
       // si cambian los m³ o la fórmula recalcula materiales, corrige el stock por la diferencia
@@ -654,6 +688,12 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           chofer_id: editForm.chofer_id || null,
           // Fase 3: el tipo de remito solo se manda si cambió (la base vuelve a controlar el repetido)
           ...((editingDispatch.remito_tipo || "") !== editForm.remito_tipo ? { remito_tipo: editForm.remito_tipo || null } : {}),
+          // Replanteo: se manda siempre (vacío = sin replanteo). Sin la columna en la base, no se manda.
+          ...(conReplanteo
+            ? editForm.retorno_m3.trim()
+              ? { retorno_m3: numTxt(editForm.retorno_m3), cemento_extra_kg: cementoDe(editForm.cemento_extra_kg) || 0 }
+              : { retorno_m3: null, cemento_extra_kg: null }
+            : {}),
           usuario: currentUserName(),
           motivo: motivo.trim(), // fase 0c-1: la base lo deja en Actividad y en la nota del stock
         },
@@ -1099,7 +1139,17 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                         <TableCell>{dispatch.construction_sites?.name}</TableCell>
                         <TableCell>{dispatch.formulas?.code}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{dispatch.finalidad || "-"}</TableCell>
-                        <TableCell className="text-right">{dispatch.quantity_m3}</TableCell>
+                        <TableCell className="text-right">
+                          {dispatch.quantity_m3}
+                          {Number(dispatch.retorno_m3) > 0 && (
+                            <span
+                              className="ml-1 whitespace-nowrap text-[10px] font-semibold text-amber-700"
+                              title={`Replanteo: se cargaron ${m3txt(m3Cargados(Number(dispatch.quantity_m3), Number(dispatch.retorno_m3)))} m³${Number(dispatch.cemento_extra_kg) > 0 ? ` + ${m3txt(dispatch.cemento_extra_kg)} kg de cemento` : ""}`}
+                            >
+                              volvió {m3txt(dispatch.retorno_m3)}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell>{dispatch.mixers?.license_plate || "-"}</TableCell>
                         <TableCell className="text-sm">{nombreChofer(dispatch.chofer_id)}</TableCell>
                         <TableCell>
@@ -1323,6 +1373,38 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                   />
                 </div>
               </div>
+              {editingDispatch.source === "manual" && editingDispatch.retorno_m3 !== undefined && !editingDispatch.is_test_dispatch && (() => {
+                const m3 = numTxt(editForm.quantity_m3)
+                const ret = numTxt(editForm.retorno_m3)
+                const kg = cementoDe(editForm.cemento_extra_kg)
+                const conRet = editForm.retorno_m3.trim() !== ""
+                const er = conRet ? errorReplanteo({ retorno: editForm.retorno_m3, cementoKg: editForm.cemento_extra_kg }, m3) : null
+                return (
+                  <div className="space-y-2 rounded-md border px-3 py-2">
+                    <div className="font-medium">Replanteo</div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <Label>Volvió con (m³)</Label>
+                        <Input inputMode="decimal" value={editForm.retorno_m3} onChange={(e) => setEditForm({ ...editForm, retorno_m3: e.target.value })} placeholder="Vacío = sin replanteo" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Cemento agregado (kg)</Label>
+                        <Input inputMode="decimal" value={editForm.cemento_extra_kg} onChange={(e) => setEditForm({ ...editForm, cemento_extra_kg: e.target.value })} placeholder="0" disabled={!conRet} />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {!conRet
+                        ? `Sin replanteo: descuenta la fórmula por los ${m3 > 0 ? m3txt(m3) : "—"} m³.`
+                        : er
+                          ? <span className="font-semibold text-red-700">{er}</span>
+                          : `Descuenta ${m3txt(m3Cargados(m3, ret))} m³${kg > 0 ? ` + ${m3txt(kg)} kg de cemento` : ""}.`}
+                    </p>
+                    {ordenEnCola != null && (
+                      <p className="text-xs font-semibold text-amber-700">Ese despacho tiene una orden en la cola de carga con {m3txt(ordenEnCola)} m³: cancelala en Carga si cambió lo que hay que cargar.</p>
+                    )}
+                  </div>
+                )
+              })()}
               <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-editar" />
             </div>
           )}
