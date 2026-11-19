@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { textoReplanteoCorto } from "@/lib/despacho"
 
 // ── Supabase (service role) ───────────────────────────────────────────────────
 function sb() {
@@ -56,13 +57,18 @@ export async function GET(req: Request) {
       .gte("dispatch_date", desde.toISOString())
       .lte("dispatch_date", hasta.toISOString())
       .limit(10000),
-    supabase
-      .from("test_cylinders")
-      .select("id, dispatch_id, cylinder_number, test_age_days, strength_mpa, actual_test_date, dispatches!inner(id, sample_number, plant_id, remito, dispatch_date, extra_water_liters, actual_slump_cm, formulas(code), clients(name), construction_sites(name))")
-      .not("strength_mpa", "is", null)
-      .gte("actual_test_date", desde.toISOString().slice(0, 10))
-      .lte("actual_test_date", hasta.toISOString().slice(0, 10))
-      .limit(10000),
+    // Con el replanteo (m³, retorno y cemento); sin la migración, como siempre
+    (async () => {
+      const q = (extra: string) => supabase
+        .from("test_cylinders")
+        .select(`id, dispatch_id, cylinder_number, test_age_days, strength_mpa, actual_test_date, dispatches!inner(id, sample_number, plant_id, remito, dispatch_date, extra_water_liters, actual_slump_cm${extra}, formulas(code), clients(name), construction_sites(name))`)
+        .not("strength_mpa", "is", null)
+        .gte("actual_test_date", desde.toISOString().slice(0, 10))
+        .lte("actual_test_date", hasta.toISOString().slice(0, 10))
+        .limit(10000)
+      const r = await q(", quantity_m3, retorno_m3, cemento_extra_kg")
+      return r.error && /retorno_m3|cemento_extra_kg/.test(r.error.message || "") ? q("") : r
+    })(),
     supabase
       .from("test_cylinders")
       .select("id")
@@ -120,6 +126,8 @@ export async function GET(req: Request) {
     dispatchId: string | null
     /** Para las muestras a 28 días: las probetas que se promediaron, ej. "P2 37,7 · P3 33,1" */
     detalle?: string
+    /** Replanteo: "Replanteo: volvió 1 m³ + 50 kg cem. · se cargaron 7 de 8 m³" ("" = sin replanteo) */
+    replanteo: string
   }
   const diasEntre = (a: string, b: string) => Math.round((new Date(b.slice(0, 10) + "T12:00:00Z").getTime() - new Date(a.slice(0, 10) + "T12:00:00Z").getTime()) / 86400000)
   const ensayos: Ensayo[] = (roturas || []).map((r: any) => {
@@ -145,6 +153,7 @@ export async function GET(req: Request) {
       obra: disp.construction_sites?.name || "-",
       aguaExtra: disp.extra_water_liters !== null && disp.extra_water_liters !== undefined ? Number(disp.extra_water_liters) : null,
       asentamiento: disp.actual_slump_cm !== null && disp.actual_slump_cm !== undefined ? Number(disp.actual_slump_cm) : null,
+      replanteo: textoReplanteoCorto(disp.quantity_m3, disp.retorno_m3, disp.cemento_extra_kg),
     }
   }).sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
 
@@ -353,7 +362,7 @@ function buildHtml(d: any) {
 
   const td = `padding:6px 8px;border-bottom:1px solid #fee2e2`
   const noCumplenHtml = noCumplen.length ? noCumplen.map((e: any) => `<tr>
-      <td style="${td};font-weight:700">${e.probetaId}</td>
+      <td style="${td};font-weight:700">${e.probetaId}${e.replanteo ? `<br><span style="display:inline-block;margin-top:2px;padding:0 4px;border-radius:3px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;white-space:nowrap">${e.replanteo}</span>` : ""}</td>
       <td style="${td}">${e.remito}</td>
       <td style="${td};font-family:monospace;font-size:11px">${e.formula}</td>
       <td style="${td}">${e.moldeo ? fmtCorta(e.moldeo) : "-"}</td>
@@ -369,7 +378,7 @@ function buildHtml(d: any) {
   const ensayosHtml = ensayos.length ? ensayos.map((e: any) => `<tr>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${fmtCorta(e.fecha)}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.planta}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.muestra}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eef2f7">${e.muestra}${e.replanteo ? `<br><span style="display:inline-block;margin-top:2px;padding:0 4px;border-radius:3px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;white-space:nowrap">${e.replanteo}</span>` : ""}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;font-family:monospace;font-size:12px">${e.formula}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:center">${e.edad}d${e.desfasada ? `<br><span style="color:#b91c1c;font-size:11px;font-weight:700">real ${e.edadReal}d</span>` : ""}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eef2f7;text-align:right;font-weight:700">${e.mpa.toFixed(1)}${e.detalle ? `<br><span style="font-weight:400;font-size:11px;color:#64748b;white-space:nowrap">${e.detalle}</span>` : ""}</td>
@@ -511,7 +520,7 @@ function buildHtml(d: any) {
       </tr></thead>
       <tbody>${ensayosHtml}</tbody>
     </table>
-    <div style="font-size:12px;color:#64748b;margin:-18px 0 24px">El cumplimiento se evalúa a 28 días con el promedio de las probetas de la muestra (normalmente P2 y P3); debajo del promedio se ve cada una. Los ensayos a 7 días se informan como referencia (% de la resistencia especificada alcanzado).</div>
+    <div style="font-size:12px;color:#64748b;margin:-18px 0 24px">El cumplimiento se evalúa a 28 días con el promedio de las probetas de la muestra (normalmente P2 y P3); debajo del promedio se ve cada una. Los ensayos a 7 días se informan como referencia (% de la resistencia especificada alcanzado). «Replanteo»: el camión volvió con hormigón y se completó (la muestra es de un hormigón mezclado; la relación a/c no se calcula).</div>
 
     <!-- Análisis -->
     <h3 style="font-size:15px;margin:0 0 8px">Estado de situación</h3>
