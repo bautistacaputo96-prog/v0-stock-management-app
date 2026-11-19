@@ -9,6 +9,8 @@
  *   - puntualidadPrimerCamion(): "Llegó 07:52 · pedido 07:45 · +7 min".
  *   - remitoSugerido() / remitoRepetido() / avisosRemito(): talonario tipeado por planta y tipo (R / X).
  *   - validarEntrega() / armarPayloadDespacho(): las mismas reglas de hoy para `registrar_despacho`.
+ *   - m3Cargados() / errorReplanteo() / avisoCemento() / textoReplanteo(): el replanteo (hormigón que volvió en el
+ *     camión; docs/specs/2026-11-18-replanteo-hormigon-de-retorno.md).
  *
  * El tipo de remito lo resuelve la base (`remito_tipo_para`): acá solo se muestra lo que devuelve.
  */
@@ -516,6 +518,14 @@ export type FormEntrega = {
   muestraOn: boolean
   muestraNum: string
   asentamiento: string
+  /** Replanteo: el panel está abierto (si no, no se miran los campos ni se mandan) */
+  replanteoOn?: boolean
+  /** m³ con que volvió el camión (texto, con coma) */
+  retorno?: string
+  /** kg de cemento agregados a mano (texto; vacío = 0) */
+  cementoKg?: string
+  /** id del despacho del que volvió el hormigón (automático; null = no se sabe o "No es ese") */
+  retornoDe?: string | null
 }
 
 export const num = (s: string | number | null | undefined) => {
@@ -530,6 +540,63 @@ export function salidaMs(hhmmTxt: string, ahora: number): number {
   const d = new Date(ahora)
   d.setHours(Number(m[1]), Number(m[2]), 0, 0)
   return d.getTime()
+}
+
+// ---------------------------------------------------------------------------
+// Replanteo: el camión vuelve con hormigón que sobró. Remito, OF, NP y pedido van por los m³ del camión; la planta
+// carga y la materia prima baja por lo que falta (m³ − retorno), más el cemento agregado a mano.
+// ---------------------------------------------------------------------------
+/** Botones de "¿Con cuántos m³ volvió?" (más que eso, "Otro") */
+export const PASOS_RETORNO = [0.5, 1, 1.5, 2, 2.5, 3]
+/** Tope de cemento agregado (la base también frena) */
+export const TOPE_CEMENTO_KG = 1000
+/** Arriba de esto por m³ que volvió, aviso ámbar (no frena). Pendiente de confirmar con Bautista: fácil de cambiar. */
+export const AVISO_CEMENTO_KG_POR_M3 = 100
+
+const kgTxt = (x: number) => Number(x || 0).toLocaleString("es-AR", { maximumFractionDigits: 1 })
+
+/** m³ que se cargan en la planta (y por los que se descuenta la fórmula): m³ del camión − retorno, nunca menos de 0. */
+export function m3Cargados(m3: number, retorno: number | null | undefined): number {
+  const r = Number(retorno) > 0 ? Number(retorno) : 0
+  return Math.max(0, Math.round((Number(m3 || 0) - r) * 1000) / 1000)
+}
+
+/** Kg de cemento del formulario: vacío = 0; NaN si no es un número. */
+export const cementoDe = (s: string | null | undefined) => (String(s ?? "").trim() === "" ? 0 : num(s as string))
+
+/** Error del replanteo (o null). Mismos textos que la base. */
+export function errorReplanteo(f: { retorno?: string; cementoKg?: string }, m3: number): string | null {
+  const r = num(f.retorno)
+  if (!(r > 0)) return "Elegí con cuántos m³ volvió el camión."
+  if (Math.abs(r * 2 - Math.round(r * 2)) > 1e-9) return "El retorno va de a 0,5 m³."
+  if (r > m3 + 1e-9) return `No puede volver más de lo que lleva el camión (${m3txt(m3)} m³).`
+  const c = cementoDe(f.cementoKg)
+  if (!Number.isFinite(c) || c < 0) return "Poné los kg de cemento (o 0)."
+  if (c > TOPE_CEMENTO_KG) return "Más de 1.000 kg de cemento: revisá el número."
+  return null
+}
+
+/** Aviso ámbar que no frena: mucho cemento para lo que volvió. */
+export function avisoCemento(retorno: number, kg: number): string | null {
+  if (!(retorno > 0) || !(kg > 0)) return null
+  return kg > AVISO_CEMENTO_KG_POR_M3 * retorno + 1e-9 ? `Es mucho cemento para ${m3txt(retorno)} m³. Revisá el número.` : null
+}
+
+/**
+ * El cartel del replanteo. Sin puesto de carga: lo que se descuenta de materia prima. Con puesto (`conPuesto`): lo que
+ * carga la planta. Volvió entero: solo el cemento.
+ */
+export function textoReplanteo(o: { m3: number; retorno: number; cementoKg: number; conPuesto?: boolean; receta?: number | null }): string {
+  const c = m3Cargados(o.m3, o.retorno)
+  const kg = Number(o.cementoKg) > 0 ? Number(o.cementoKg) : 0
+  const remito = `Remito y OF: ${m3txt(o.m3)} m³.`
+  if (c <= 0) {
+    const base = kg > 0 ? `No se carga hormigón nuevo: solo ${kgTxt(kg)} kg de cemento a mano.` : "No se carga hormigón nuevo."
+    return `${base} ${remito}${o.conPuesto ? " No va orden a la planta." : ""}`
+  }
+  if (o.conPuesto)
+    return `La planta carga ${m3txt(c)} m³${o.receta != null ? ` (receta ${o.receta})` : ""}${kg > 0 ? ` + ${kgTxt(kg)} kg de cemento a mano` : ""}. ${remito}`
+  return `Se van a descontar ${m3txt(c)} m³ de materia prima${kg > 0 ? ` + ${kgTxt(kg)} kg de cemento` : ""} cuando se despache. ${remito}`
 }
 
 /** Error que frena (o null). Las mismas reglas de la pantalla de siempre, más tipo de remito y "Salió a las". */
@@ -557,6 +624,10 @@ export function validarEntrega(f: FormEntrega, ctx: {
     if (ctx.ahora - s > 12 * 60 * MIN) return "La hora de salida tiene que ser de hoy (hasta 12 h para atrás)."
   }
   if (f.fibraOn && !(num(f.fibraKgM3) > 0)) return "Poné los kg de fibra por m³ (o apagá Fibra)."
+  if (f.replanteoOn) {
+    const er = errorReplanteo(f, m3)
+    if (er) return er
+  }
   if (f.muestraOn && (!f.muestraNum.trim() || !f.asentamiento.trim())) return "Completá el número de muestra y el asentamiento."
   if (f.muestraOn && !Number.isFinite(num(f.asentamiento))) return "El asentamiento tiene que ser un número (en cm)."
   return null
@@ -597,6 +668,10 @@ export function armarPayloadDespacho(opts: {
     remito_tipo: f.tipo,
     remito_tipo_origen: f.origenTipo,
     ...(opts.aviso ? { aviso_remito: TEXTO_AVISO[opts.aviso.clave] } : {}),
+    // Replanteo: solo con el panel abierto (si no, el payload es el de siempre)
+    ...(f.replanteoOn
+      ? { retorno_m3: num(f.retorno), cemento_extra_kg: cementoDe(f.cementoKg) || 0, ...(f.retornoDe ? { retorno_de_dispatch_id: f.retornoDe } : {}) }
+      : {}),
     // En Actividad, para medir cuándo se deja de usar la pantalla de siempre
     pantalla: "Despacho en tres columnas",
   }
