@@ -44,6 +44,8 @@ export interface Puente {
   extraAguaAbrir(): Promise<void>
   extraAguaMantener(): Promise<void>
   extraAguaCerrar(): Promise<{ litros: number }>
+  /** Replanteo: el cemento agregado a mano ("Listo, agregado"). No escribe nada en Indumix. */
+  cementoManual(kg: number): Promise<{ kg: number }>
 }
 
 /** Se tocó PARAR mientras arrancaba: no se arrancó nada. */
@@ -107,6 +109,7 @@ export class PuenteConAdaptador implements Puente {
   extraAguaAbrir() { return this.adaptador.extraAguaAbrir() }
   extraAguaMantener() { return this.adaptador.extraAguaMantener() }
   extraAguaCerrar() { return this.adaptador.extraAguaCerrar() }
+  cementoManual(kg: number) { return this.adaptador.cementoManual(kg) }
 }
 
 /** El puente de un puesto. Solo existe el simulador: el de Indumix real todavía no está programado. */

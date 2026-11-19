@@ -105,6 +105,8 @@ type CargaSim = {
   fin_plc: string | null
   extras: { litros: number; despues_de_terminar: boolean; at_s: number }[]
   m3_cargados: number | null
+  /** Replanteo: kg de cemento que el plantista agregó a mano con la balanza (se suman al real de esa salida) */
+  cemento_manual?: { salida: Salida; kg: number }
 }
 
 export class SimuladorIndumix implements AdaptadorDosificadora {
@@ -239,6 +241,26 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
   async extraAguaCerrar(): Promise<{ litros: number }> {
     // Cerrar no pide conexión en el simulador: la válvula se cierra igual (en la real, el vigía de la planta)
     return { litros: this.cerrarAgua() }
+  }
+
+  /**
+   * Replanteo: "Listo, agregado". Simula que el plantista dosificó a mano esos kg de cemento con la balanza: se suman al
+   * real de la salida de cemento de la carga en curso o de la última (como el agua extra después de terminar). No toca
+   * la compensación de los ciclos. Nunca mueve stock.
+   */
+  async cementoManual(kg: number): Promise<{ kg: number }> {
+    this.exigirConexion()
+    if (!(kg >= 0) || kg > 1000) throw new PlantaRechazoError("Kg de cemento fuera de rango.")
+    const C = this.carga
+    if (!C) throw new PlantaRechazoError("No hay un camión cargando ni recién cargado en la planta.")
+    const salida = (["cemento_1", "cemento_2"] as Salida[]).find((s) => C.tot[s] != null) || "cemento_1"
+    C.cemento_manual = { salida, kg: (C.cemento_manual?.kg || 0) + kg }
+    const rep = this.reportes.find((r) => r.numero === C.contador)
+    if (rep) {
+      const l = rep.lineas.find((x) => x.salida === salida)
+      if (l) l.real = Math.round((C.acum[salida] || 0) + C.cemento_manual.kg)
+    }
+    return { kg }
   }
 
   // ───────────── solo del simulador ─────────────
@@ -471,7 +493,7 @@ export class SimuladorIndumix implements AdaptadorDosificadora {
       receta: C.valores[s] || 0,
       teorico: Math.round(C.teo[s] || 0),
       teorico_corregido: Math.round(C.tot[s] || 0),
-      real: Math.round(C.acum[s] || 0),
+      real: Math.round((C.acum[s] || 0) + (C.cemento_manual?.salida === s ? C.cemento_manual.kg : 0)),
       ...(grupoDeSalida(s) === "arido" ? { humedad_pct: C.hum[s] || 0 } : {}),
       ...(s === "agua" ? { extra: C.extras.reduce((a, e) => a + e.litros, 0) } : {}),
     }))

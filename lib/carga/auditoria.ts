@@ -42,6 +42,9 @@ export type CargaAuditoria = {
   patente_planta: string | null
   observacion_planta: string | null
   revisada: boolean
+  /** Replanteo: kg de cemento que se le pidió agregar a mano (nulo = sin replanteo) y lo que confirmó el plantista */
+  cemento_extra_kg?: number | null
+  cemento_extra_hecho?: { kg: number; por?: string | null; at?: string | null } | null
 }
 
 export type DespachoAuditoria = {
@@ -58,6 +61,11 @@ export type DespachoAuditoria = {
   formula: string
   m3: number
   anulado?: boolean
+  /** Replanteo: m³ que volvieron en el camión y cemento agregado (nulos = sin replanteo) */
+  retorno_m3?: number | null
+  cemento_extra_kg?: number | null
+  /** material del cemento del replanteo (la fila es_replanteo del despacho), si se sabe */
+  cemento_extra_material_id?: string | null
 }
 
 export type FilaAuditoria = {
@@ -68,18 +76,48 @@ export type FilaAuditoria = {
   union: "por id" | "por remito (Observación)" | "por camión y hora" | null
 }
 
-export type Bandera = "sinRemito" | "sinCarga" | "difVol" | "desv" | "receta" | "aguaDist" | "aguaExtra" | "indumix" | "parada" | "simulada"
+export type Bandera = "sinRemito" | "sinCarga" | "difVol" | "desv" | "receta" | "aguaDist" | "aguaExtra" | "indumix" | "parada" | "simulada" | "replanteo" | "cementoExtra"
 
 export const NOMBRE_BANDERA: Record<Bandera, string> = {
   sinRemito: "Sin remito", sinCarga: "Sin carga", difVol: "Dif. volumen", desv: "Desviación", receta: "Receta distinta",
   aguaDist: "Agua distinta", aguaExtra: "Agua extra", indumix: "Desde Indumix", parada: "Parada", simulada: "Simulada",
+  replanteo: "Replanteo", cementoExtra: "Cemento extra",
 }
 
-/** Lo pesado fuera de la tolerancia de pesaje contra el teórico corregido (cemento 1 %, áridos 2 %, agua y aditivos 3 %). */
-export function desvio(m: Pick<MaterialAuditoria, "grupo" | "teorico_corregido" | "real">, tol: Record<Grupo, number> = TOLERANCIAS_BASE.pesaje): boolean {
-  const tc = Number(m.teorico_corregido || 0)
+/**
+ * Lo pesado fuera de la tolerancia de pesaje contra el teórico corregido (cemento 1 %, áridos 2 %, agua y aditivos 3 %).
+ * `extra`: kg que se agregaron a mano en esa salida (el cemento del replanteo): lo esperado es teórico corregido + extra.
+ */
+export function desvio(m: Pick<MaterialAuditoria, "grupo" | "teorico_corregido" | "real">, tol: Record<Grupo, number> = TOLERANCIAS_BASE.pesaje, extra = 0): boolean {
+  const tc = Number(m.teorico_corregido || 0) + (Number(extra) > 0 ? Number(extra) : 0)
   if (!(tc > 0) || m.real == null) return false
   return Math.abs(Number(m.real) - tc) > tol[m.grupo] * tc + 1e-9
+}
+
+/**
+ * Replanteo: la salida donde cae el cemento agregado a mano. La del material del replanteo o, si no se sabe o no está,
+ * la primera de cemento con material.
+ */
+export function salidaCementoExtra(mats: { salida: Salida; material_id: string | null }[], materialId?: string | null): Salida | null {
+  const cem = mats.filter((m) => m.salida.startsWith("cemento") && m.material_id)
+  return (materialId ? cem.find((m) => m.material_id === materialId) : null)?.salida || cem[0]?.salida || null
+}
+
+/** Replanteo: m³ que había que cargar del despacho (m³ del remito − los que volvieron). */
+export const m3ACargar = (d: Pick<DespachoAuditoria, "m3" | "retorno_m3">) =>
+  Math.max(0, Math.round((Number(d.m3 || 0) - (Number(d.retorno_m3) > 0 ? Number(d.retorno_m3) : 0)) * 1000) / 1000)
+
+/** Kg de cemento extra que se le pidieron a esta carga (la primera del despacho; "completar" va sin cemento). */
+export function cementoExtraDe(c: Pick<CargaAuditoria, "cemento_extra_kg" | "completa_carga_id">, d: Pick<DespachoAuditoria, "cemento_extra_kg"> | null): number {
+  if (c.cemento_extra_kg != null) return Number(c.cemento_extra_kg) || 0
+  return !c.completa_carga_id && d ? Number(d.cemento_extra_kg) || 0 : 0
+}
+
+/** ¿La carga tiene desviación? Con el cemento del replanteo sumado a lo esperado en su salida. */
+export function cargaConDesvio(c: CargaAuditoria, d: DespachoAuditoria | null, tol?: Record<Grupo, number>): boolean {
+  const extra = cementoExtraDe(c, d)
+  const sal = extra > 0 ? salidaCementoExtra(c.materiales, d?.cemento_extra_material_id) : null
+  return c.materiales.some((m) => desvio(m, tol, m.salida === sal ? extra : 0))
 }
 
 const m3DeCargas = (cs: CargaAuditoria[]) => cs.reduce((s, c) => s + Number(c.m3_cargados ?? c.m3 ?? 0), 0)
@@ -97,19 +135,37 @@ export function banderas(f: FilaAuditoria, ahora: number, tol?: Record<Grupo, nu
     const fin = principal.fin_at ? new Date(principal.fin_at).getTime() : null
     if (fin == null || ahora - fin > 30 * MIN) b.push("sinRemito")
   }
-  if (f.despacho && !f.despacho.anulado && !cs.length) b.push("sinCarga")
+  // Replanteo: se compara contra los m³ que había que cargar (volvió entero: no había nada que cargar)
+  const aCargar = f.despacho ? m3ACargar(f.despacho) : 0
+  if (f.despacho && !f.despacho.anulado && !cs.length && aCargar > 0) b.push("sinCarga")
   const termino = cs.filter((c) => c.estado === "terminada" || c.estado === "parada" || c.estado === "leida" || c.estado === "ya_cargada_indumix")
   if (f.despacho && termino.length && !cs.some((c) => c.parada === "completar" && !cs.some((x) => x.completa_carga_id === c.id && x.estado === "terminada"))) {
-    if (Math.abs(m3DeCargas(termino) - f.despacho.m3) > 0.1) b.push("difVol")
+    if (Math.abs(m3DeCargas(termino) - aCargar) > 0.1) b.push("difVol")
   }
-  if (cs.some((c) => !c.parada && c.materiales.some((m) => desvio(m, tol)))) b.push("desv")
+  if (cs.some((c) => !c.parada && cargaConDesvio(c, f.despacho, tol))) b.push("desv")
   if (cs.some((c) => !c.receta_ok || c.autorizada)) b.push("receta")
   if (cs.some((c) => c.agua_distinta)) b.push("aguaDist")
   if (f.extras.length) b.push("aguaExtra")
   if (cs.some((c) => c.origen === "indumix")) b.push("indumix")
   if (cs.some((c) => c.parada)) b.push("parada")
   if (cs.some((c) => c.simulada)) b.push("simulada")
+  if (f.despacho && Number(f.despacho.retorno_m3) > 0) b.push("replanteo")
+  // Lo que confirmó el plantista distinto de lo pedido (o "No" = 0). Sin confirmar: no marca.
+  if (cs.some((c) => {
+    const pedido = cementoExtraDe(c, f.despacho)
+    return pedido > 0 && c.cemento_extra_hecho != null && Math.abs(Number(c.cemento_extra_hecho.kg) - pedido) > 0.5
+  })) b.push("cementoExtra")
   return b
+}
+
+/** Título de la bandera "Replanteo": "Volvió 1 m³ · + 50 kg de cemento · confirmado 50 kg" (o "sin confirmar"). */
+export function textoReplanteoAuditoria(f: Pick<FilaAuditoria, "despacho" | "cargas">): string | null {
+  const d = f.despacho
+  if (!d || !(Number(d.retorno_m3) > 0)) return null
+  const n = (x: number) => x.toLocaleString("es-AR", { maximumFractionDigits: 1 })
+  const kg = Number(d.cemento_extra_kg) || 0
+  const conf = f.cargas.find((c) => c.cemento_extra_hecho != null)?.cemento_extra_hecho
+  return `Volvió ${n(Number(d.retorno_m3))} m³${kg > 0 ? ` · + ${n(kg)} kg de cemento · ${conf ? `confirmado ${n(Number(conf.kg))} kg` : "sin confirmar"}` : ""}`
 }
 
 /**

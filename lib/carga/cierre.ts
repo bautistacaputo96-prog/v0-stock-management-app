@@ -68,14 +68,22 @@ export type EfectoDespacho = {
   aplicar: boolean
 }
 
-/** Qué pasa con el despacho cuando se para a mitad (18.3, con 21.1: se corrige el remito). */
-export function efectoSobreDespacho(modo: ModoParada, d: { m3_despacho: number; m3_cargados: number; remito: string | null; simulada: boolean; esCompletar?: boolean }): EfectoDespacho {
+/**
+ * Qué pasa con el despacho cuando se para a mitad (18.3, con 21.1: se corrige el remito). `m3_despacho` = los m³ de la
+ * carga (lo que se le pidió a la planta). Con replanteo (`retorno_m3`), el remito queda en cargados + lo que volvió y lo
+ * que falta es lo que faltaba cargar.
+ */
+export function efectoSobreDespacho(modo: ModoParada, d: { m3_despacho: number; m3_cargados: number; remito: string | null; simulada: boolean; esCompletar?: boolean; retorno_m3?: number | null }): EfectoDespacho {
   const cargados = Math.max(0, Math.round(d.m3_cargados * 10) / 10)
   const falta = Math.max(0, Math.round((d.m3_despacho - cargados) * 10) / 10)
+  const retorno = Number(d.retorno_m3) > 0 ? Number(d.retorno_m3) : 0
+  const remitoM3 = Math.round((cargados + retorno) * 10) / 10
   const rem = d.remito ? `el remito ${d.remito}` : "el despacho"
   const sim = d.simulada ? " (planta simulada: no se toca el despacho real, solo queda registrado)" : ""
-  if (modo === "sale" || (modo === "completar" && d.esCompletar))
-    return { accion: "editar_m3", m3_despacho: cargados, texto: `Se corrige ${rem} a ${cargados.toLocaleString("es-AR")} m³ y el pedido vuelve a tener ${falta.toLocaleString("es-AR")} m³ por enviar${sim}.`, aplicar: !d.simulada }
+  if (modo === "sale" || (modo === "completar" && d.esCompletar)) {
+    const detalle = retorno ? ` (${cargados.toLocaleString("es-AR")} cargados + ${retorno.toLocaleString("es-AR")} que volvió)` : ""
+    return { accion: "editar_m3", m3_despacho: remitoM3, texto: `Se corrige ${rem} a ${remitoM3.toLocaleString("es-AR")} m³${detalle} y el pedido vuelve a tener ${falta.toLocaleString("es-AR")} m³ por enviar${sim}.`, aplicar: !d.simulada }
+  }
   if (modo === "completar")
     return { accion: "nueva_carga", m3_falta: falta, texto: `Los ${falta.toLocaleString("es-AR")} m³ que faltan van en otra carga del mismo camión y ${rem}, primera en la cola. El despacho no cambia.`, aplicar: true }
   return { accion: "anular", texto: `${rem[0].toUpperCase()}${rem.slice(1)} queda anulado, vuelve el stock teórico y lo pesado se registra como pérdida. El viaje vuelve a Viajes${sim}.`, aplicar: !d.simulada }

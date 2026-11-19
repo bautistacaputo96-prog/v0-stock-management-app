@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { registrarActividad, respuestaError, sbServicio } from "@/lib/auth/servidor"
 import { ajusteStockHabilitado, efectoSobreDespacho, type ModoParada } from "@/lib/carga/cierre"
-import { desvio } from "@/lib/carga/auditoria"
+import { desvio, salidaCementoExtra } from "@/lib/carga/auditoria"
 import { bloqueoDe, cargarFormulas, cargarPuestoPorId, controlDeFormula } from "@/lib/carga/datos"
 import { contextoServidor, error, exigirCarga, horaPuente, registrarEvento, yaProcesado } from "@/lib/carga/servidor"
 import { SALIDAS, grupoDeSalida, type Salida } from "@/lib/carga/tipos"
@@ -27,6 +27,8 @@ export const dynamic = "force-dynamic"
  * - terminar               «Terminar carga»: el fin (ahora), los materiales reales y el agua extra total
  * - resolver_parada        sale con lo cargado · completar con otra carga · se tiró (con motivo)
  * - cancelar               antes de pesar nada, con motivo
+ * - cemento_extra          replanteo: "Listo, agregado" con los kg de cemento que se agregaron a mano (0 a 1.000). No mueve
+ *                          stock (el stock ya bajó al despachar): queda en cargas.cemento_extra_hecho y en el evento
  * - revisar                auditoría revisada (carga.editar)
  *
  * MODO SIMULADO: nunca se toca el despacho real ni el stock (lib/carga/cierre.ts). Queda escrito qué se haría.
@@ -38,6 +40,8 @@ const PERMISO: Record<string, Accion> = {
   arrancar: "cargar", arranco: "cargar", agua_extra: "cargar", resolver_parada: "cargar", cancelar: "cargar",
   // la muestra al terminar la carga pide historial.cargar (como "Agregar muestra" del Historial): se controla aparte
   muestra: "cargar",
+  // Replanteo: "Listo, agregado" (el cemento que el plantista agregó a mano)
+  cemento_extra: "cargar",
   revisar: "editar",
 }
 /** Los botones de la planta (suspender, reanudar, bocina) piden cargar; el resto de los eventos los sube el puente. */
@@ -139,6 +143,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return listo()
       }
 
+      case "cemento_extra": {
+        if (["cancelada", "anulada"].includes(carga.estado)) return error("La carga está cancelada.", 409)
+        const kg = num(body?.kg)
+        if (kg == null || kg < 0 || kg > 1000) return error("Los kg de cemento van de 0 a 1.000.")
+        const hecho = { kg, por: r.usuario, at }
+        if (!(await evento("cemento_extra", { kg, pedido_kg: carga.cemento_extra_kg ?? null }))) return listo({ duplicado: true })
+        const { error: ec } = await upd({ cemento_extra_hecho: hecho })
+        if (ec) return error(/cemento_extra_hecho/.test(ec.message || "") ? "Falta aplicar en la base la migración del replanteo (202611181700)." : ec.message, 409)
+        return listo({ cemento_extra_hecho: hecho })
+      }
+
       case "no_arranco": {
         if (carga.estado !== "en_curso" && !EN_COLA.includes(carga.estado)) return listo()
         if (!(await evento("no_arranco", { motivo: String(body?.motivo || "").slice(0, 300) }))) return listo({ duplicado: true })
@@ -188,7 +203,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const { error: e } = await sb.from("cargas_materiales").upsert(filas, { onConflict: "carga_id,ciclo,salida" })
           if (e) throw e
         }
-        const conDesvio = filas.some((f) => desvio({ grupo: grupoDeSalida(f.salida), teorico_corregido: f.teorico_corregido, real: f.real }, puesto.tolerancias.pesaje))
+        // Replanteo: en la salida del cemento, lo esperado suma el cemento agregado a mano
+        const extraCem = Number(carga.cemento_extra_kg) > 0 ? Number(carga.cemento_extra_kg) : 0
+        let salExtra: Salida | null = null
+        if (extraCem > 0) {
+          const { data: dmRep } = carga.dispatch_id
+            ? await sb.from("dispatch_materials").select("material_id").eq("dispatch_id", carga.dispatch_id).eq("es_replanteo", true).limit(1)
+            : { data: null }
+          salExtra = salidaCementoExtra(filas, dmRep?.[0]?.material_id ?? null)
+        }
+        const conDesvio = filas.some((f) => desvio({ grupo: grupoDeSalida(f.salida), teorico_corregido: f.teorico_corregido, real: f.real }, puesto.tolerancias.pesaje, f.salida === salExtra ? extraCem : 0))
         if (accion === "pesaje_fin") {
           await upd({ fin_plc: body?.fin_plc ? String(body.fin_plc).slice(0, 40) : carga.fin_plc, m3_cargados: num(body?.m3_cargados) ?? carga.m3, ciclo_actual: num(body?.ciclo) ?? carga.ciclo_actual })
           return listo()
@@ -216,7 +240,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (carga.estado !== "parada") return error("La carga no está parada.", 409)
         if (carga.resolucion?.modo) return listo({ duplicado: true })
         const esCompletar = !!carga.completa_carga_id
-        const ef = efectoSobreDespacho(modo === "completar" && esCompletar ? "sale" : modo, { m3_despacho: Number(carga.m3) || 0, m3_cargados: Number(carga.m3_cargados) || 0, remito: carga.remito, simulada: carga.simulada, esCompletar })
+        const ef = efectoSobreDespacho(modo === "completar" && esCompletar ? "sale" : modo, { m3_despacho: Number(carga.m3) || 0, m3_cargados: Number(carga.m3_cargados) || 0, remito: carga.remito, simulada: carga.simulada, esCompletar, retorno_m3: carga.retorno_m3 })
         if (!(await evento("resolver_parada", { modo, motivo, efecto: ef }))) return listo({ duplicado: true })
         let nueva: string | null = null
         if (ef.accion === "nueva_carga" && (ef.m3_falta || 0) > 0.05) {
@@ -227,6 +251,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             mixer_id: carga.mixer_id, patente_planta: carga.patente_planta, cliente_planta: carga.cliente_planta, observacion_planta: carga.observacion_planta,
             formula_id: carga.formula_id, receta_numero: carga.receta_numero, m3: ef.m3_falta, ciclos, m3_ciclo: ef.m3_falta! / ciclos,
             bloqueo: carga.bloqueo, agua_distinta: carga.agua_distinta, autorizacion: carga.autorizacion, bajada_at: at, union_remito: carga.union_remito, created_by: r.usuario,
+            // Replanteo: el cemento va una sola vez, con la primera carga
+            ...("cemento_extra_kg" in carga && carga.retorno_m3 != null ? { cemento_extra_kg: 0, retorno_m3: null } : {}),
           }).select("id").single()
           if (e) throw e
           nueva = n.id

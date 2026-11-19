@@ -5,7 +5,7 @@
  */
 import { controlReceta, type ControlReceta } from "@/lib/carga/receta"
 import {
-  TOLERANCIAS_BASE,
+  TOLERANCIAS_BASE, patenteParaPlanta,
   type FormulaSistema, type MaterialSistema, type RecetaPlanta, type Salida, type SalidaMapa, type Tolerancias, type UnidadPlanta,
 } from "@/lib/carga/tipos"
 
@@ -182,3 +182,51 @@ export function materialesDeReporte(
   })
 }
 const SALIDAS_ORDEN: Salida[] = ["arido_1", "arido_2", "arido_3", "arido_4", "cemento_1", "cemento_2", "aditivo_1", "aditivo_2", "agua"]
+
+/** Lo que hace falta del despacho para armar la orden de carga. */
+export type DespachoOrden = {
+  id: string
+  plant_id: string
+  remito: string | null
+  remito_tipo: string | null
+  quantity_m3: number
+  mixer_id: string | null
+  formula_id: string | null
+  scheduled_dispatch_id: string | null
+  /** Replanteo: m³ que volvieron en el camión y cemento agregado a mano (nulos = sin replanteo) */
+  retorno_m3?: number | null
+  cemento_extra_kg?: number | null
+  patente?: string | null
+  cliente?: string | null
+}
+
+/**
+ * La fila de `cargas` de una orden nueva (secuencia A, carga-planta.md 19.2). Con replanteo, la planta carga los m³ del
+ * camión menos los que volvieron, y el cemento va como indicación (`cemento_extra_kg`): Indumix no recibe kilos sueltos.
+ * Volvió entero: no hay nada que cargar (fila null, con el motivo). Sin replanteo, la fila es la de siempre.
+ */
+export function filaOrdenCarga(
+  desp: DespachoOrden,
+  puesto: Pick<Puesto, "id" | "m3_max_ciclo">,
+  ctl: ControlReceta & { receta?: { id: string } | null },
+  usuario: string,
+  opts: { muestraPedida?: boolean } = {},
+): { fila: Record<string, unknown>; m3: number } | { fila: null; m3: 0; motivo: string } {
+  const total = Number(desp.quantity_m3) || 0
+  const retorno = Number(desp.retorno_m3) > 0 ? Number(desp.retorno_m3) : null
+  const m3 = Math.max(0, Math.round((total - (retorno || 0)) * 1000) / 1000)
+  if (retorno != null && m3 <= 0) return { fila: null, m3: 0, motivo: "Volvió entero: no hay nada que cargar en la planta." }
+  const ciclos = Math.max(1, Math.ceil(m3 / puesto.m3_max_ciclo - 1e-9))
+  const patente = desp.patente || null
+  const fila: Record<string, unknown> = {
+    puesto_id: puesto.id, plant_id: desp.plant_id, estado: ctl.frena ? "bloqueada" : "pendiente", origen: "sistema",
+    dispatch_id: desp.id, pedido_id: desp.scheduled_dispatch_id, remito: desp.remito, remito_tipo: desp.remito_tipo,
+    mixer_id: desp.mixer_id, patente_planta: patente ? patenteParaPlanta(patente) : null,
+    cliente_planta: String(desp.cliente || "").slice(0, 20), observacion_planta: String(desp.remito || "").replace(/\D/g, "").padStart(4, "0"),
+    formula_id: desp.formula_id, receta_numero: ctl.numero, receta_planta_id: ctl.receta?.id ?? null, m3, ciclos, m3_ciclo: m3 / ciclos,
+    bloqueo: bloqueoDe(ctl), agua_distinta: ctl.aguaDistinta, frenada_confirmada_por: ctl.frena ? usuario : null,
+    union_remito: "por id", created_by: usuario, muestra_pedida: opts.muestraPedida === true,
+    ...(retorno != null ? { retorno_m3: retorno, cemento_extra_kg: Number(desp.cemento_extra_kg) > 0 ? Number(desp.cemento_extra_kg) : 0 } : {}),
+  }
+  return { fila, m3 }
+}

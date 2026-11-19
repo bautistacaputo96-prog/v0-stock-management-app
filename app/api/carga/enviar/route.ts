@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server"
 import { registrarActividad, respuestaError, sbServicio } from "@/lib/auth/servidor"
-import { bloqueoDe, cargarFormulas, cargarPuesto, controlDeFormula, mandaOrdenes } from "@/lib/carga/datos"
+import { bloqueoDe, cargarFormulas, cargarPuesto, controlDeFormula, filaOrdenCarga, mandaOrdenes } from "@/lib/carga/datos"
 import { contextoServidor, error, exigirCarga, mailDespachoFrenado, registrarEvento } from "@/lib/carga/servidor"
-import { patenteParaPlanta } from "@/lib/carga/tipos"
 
 export const dynamic = "force-dynamic"
 
@@ -19,6 +18,8 @@ export const dynamic = "force-dynamic"
  * - El agua distinta no frena: solo queda marcada.
  * - Sin puesto en etapa B o C (o sin la migración), no hace nada y lo dice. Nunca deshace el despacho.
  * - NP de Zomatik: todavía no se controla (lo hace la rama de Zomatik).
+ * - Replanteo (spec 2026-11-18): la orden va por los m³ a cargar (m³ − retorno) y lleva el cemento extra como
+ *   indicación; volvió entero: no se crea orden ({enviada: false, volvio_entero: true}).
  */
 export async function POST(req: Request) {
   try {
@@ -28,9 +29,11 @@ export async function POST(req: Request) {
     const dispatchId = String(body?.dispatch_id || "")
     if (!dispatchId) return error("Falta el despacho.")
     const sb = sbServicio()
-    const { data: d, error: e1 } = await sb.from("dispatches")
-      .select("id, plant_id, remito, remito_tipo, quantity_m3, mixer_id, formula_id, scheduled_dispatch_id, is_test_dispatch, created_at, mixers(license_plate), clients(name), construction_sites(name), formulas(code), plants(name)")
-      .eq("id", dispatchId).maybeSingle()
+    const sel = "id, plant_id, remito, remito_tipo, quantity_m3, mixer_id, formula_id, scheduled_dispatch_id, is_test_dispatch, created_at, mixers(license_plate), clients(name), construction_sites(name), formulas(code), plants(name)"
+    let q = await sb.from("dispatches").select(`${sel}, retorno_m3, cemento_extra_kg`).eq("id", dispatchId).maybeSingle()
+    // Sin la migración del replanteo todavía no existen las columnas: la orden sale como siempre
+    if (q.error && /retorno_m3|cemento_extra_kg/.test(q.error.message || "")) q = await sb.from("dispatches").select(sel).eq("id", dispatchId).maybeSingle()
+    const { data: d, error: e1 } = q
     if (e1) throw e1
     // Anular un despacho lo borra (anular_despacho): si no está, no hay nada que mandar
     if (!d) return error("El despacho no existe (¿se anuló?).", 404)
@@ -42,24 +45,21 @@ export async function POST(req: Request) {
     const { data: ya } = await sb.from("cargas").select("id").eq("dispatch_id", dispatchId).is("completa_carga_id", null).not("estado", "in", "(cancelada,anulada)").limit(1)
     if (ya?.length) return NextResponse.json({ ok: true, enviada: false, carga_id: ya[0].id, motivo: "Ese despacho ya está en la cola de carga." })
 
+    // Replanteo: volvió entero, no hay nada que cargar (antes del control de receta: no hay carga que frenar)
+    if (Number(desp.retorno_m3) > 0 && Number(desp.quantity_m3) - Number(desp.retorno_m3) <= 1e-9)
+      return NextResponse.json({ ok: true, enviada: false, volvio_entero: true, motivo: "Volvió entero: no hay nada que cargar en la planta." })
+
     const ctx = await contextoServidor(puesto!)
     const [formula] = await cargarFormulas(sb, desp.formula_id ? [desp.formula_id] : [])
     const ctl = controlDeFormula(ctx, formula || null)
     if (ctl.frena && body?.frenada_confirmada !== true)
       return error(`La carga va a quedar frenada en la planta: ${ctl.motivo}. Tildá la confirmación para despachar igual.`, 409)
 
-    const m3 = Number(desp.quantity_m3) || 0
-    const ciclos = Math.max(1, Math.ceil(m3 / puesto!.m3_max_ciclo - 1e-9))
     const patente = desp.mixers?.license_plate || null
-    const fila: Record<string, unknown> = {
-      puesto_id: puesto!.id, plant_id: desp.plant_id, estado: ctl.frena ? "bloqueada" : "pendiente", origen: "sistema",
-      dispatch_id: dispatchId, pedido_id: desp.scheduled_dispatch_id, remito: desp.remito, remito_tipo: desp.remito_tipo,
-      mixer_id: desp.mixer_id, patente_planta: patente ? patenteParaPlanta(patente) : null,
-      cliente_planta: String(desp.clients?.name || "").slice(0, 20), observacion_planta: String(desp.remito || "").replace(/\D/g, "").padStart(4, "0"),
-      formula_id: desp.formula_id, receta_numero: ctl.numero, receta_planta_id: ctl.receta?.id ?? null, m3, ciclos, m3_ciclo: m3 / ciclos,
-      bloqueo: bloqueoDe(ctl), agua_distinta: ctl.aguaDistinta, frenada_confirmada_por: ctl.frena ? r.usuario : null,
-      union_remito: "por id", created_by: r.usuario, muestra_pedida: body?.muestra_pedida === true,
-    }
+    const orden = filaOrdenCarga({ ...desp, id: dispatchId, patente, cliente: desp.clients?.name || null }, puesto!, ctl, r.usuario, { muestraPedida: body?.muestra_pedida === true })
+    if (!orden.fila) return NextResponse.json({ ok: true, enviada: false, volvio_entero: true, motivo: orden.motivo })
+    const fila = orden.fila
+    const m3 = orden.m3
     let ins = await sb.from("cargas").insert(fila).select("id, simulada").single()
     // Sin la migración 202610212000 todavía no existe muestra_pedida: la orden sale igual, sin el aviso
     if (ins.error && /muestra_pedida/.test(ins.error.message || "")) { delete fila.muestra_pedida; ins = await sb.from("cargas").insert(fila).select("id, simulada").single() }
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
       if ((e2 as { code?: string }).code === "23505") return NextResponse.json({ ok: true, enviada: false, motivo: "Ese despacho ya está en la cola de carga." })
       throw e2
     }
-    await registrarEvento({ carga_id: carga.id, puesto_id: puesto!.id, tipo: "orden_creada", detalle: { remito: desp.remito, m3, frena: ctl.frena, agua: ctl.aguaDistinta }, usuario: r.usuario })
+    await registrarEvento({ carga_id: carga.id, puesto_id: puesto!.id, tipo: "orden_creada", detalle: { remito: desp.remito, m3, frena: ctl.frena, agua: ctl.aguaDistinta, ...(fila.retorno_m3 != null ? { retorno_m3: fila.retorno_m3, cemento_extra_kg: fila.cemento_extra_kg } : {}) }, usuario: r.usuario })
 
     let mail: Awaited<ReturnType<typeof mailDespachoFrenado>> | null = null
     // Con la planta simulada, "no tiene receta" es normal (no están armadas todas): no se le manda el mail a Juan

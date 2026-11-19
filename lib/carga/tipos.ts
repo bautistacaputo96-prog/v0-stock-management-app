@@ -140,6 +140,11 @@ export interface AdaptadorDosificadora {
   extraAguaAbrir(): Promise<void>
   extraAguaMantener(): Promise<void>
   extraAguaCerrar(): Promise<{ litros: number }>
+  /**
+   * Replanteo: "Listo, agregado" (el cemento que el plantista agrega a mano). Indumix no recibe kilos sueltos: en la
+   * planta real no hace nada y solo devuelve los kg; el simulador los suma al real de la salida de cemento.
+   */
+  cementoManual(kg: number): Promise<{ kg: number }>
 }
 
 /** La dosificadora no contesta (puente caído o red local cortada). */
