@@ -740,8 +740,16 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           if (dispatchError) {
             console.log("[v0] Error updating linked dispatch:", dispatchError.message)
           }
-        }
-        toast({ title: "Despacho actualizado" })
+          // El despacho real no se actualizó (por ejemplo, el CHECK del replanteo: los m³ quedan por debajo de lo que volvió)
+          if (dispatchError) toast({
+            title: "El programado se actualizó, pero el despacho no",
+            description: /dispatches_retorno_ck/.test(dispatchError.message || "")
+              ? "Ese despacho tiene replanteo: los m³ no pueden quedar por debajo de los que volvieron en el camión."
+              : dispatchError.message || "No se pudo actualizar el despacho.",
+            variant: "destructive",
+          })
+          else toast({ title: "Despacho actualizado" })
+        } else toast({ title: "Despacho actualizado" })
         // Fase 0c-1: Actividad con el antes → después y el motivo
         const nombre = <T extends { id: string }>(lista: T[], id: string | null | undefined, campo: keyof T) =>
           (id ? String(lista.find((x) => x.id === id)?.[campo] ?? "-") : "-")
