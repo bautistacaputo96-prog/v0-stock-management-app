@@ -18,7 +18,7 @@
 import { sbServicio } from "@/lib/auth/servidor"
 import { mensajeZomatik, navegadorAjuste } from "@/lib/zomatik/cliente"
 import {
-  actividadNp, avisarAjusteNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso, tipoDeFalla,
+  PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, actividadNp, avisarAjusteNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso, tipoDeFalla,
   type AvisarFn,
 } from "@/lib/zomatik/np-servidor"
 import { ajustarCantidadNp, totalesDeAjuste, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
@@ -422,7 +422,8 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         continue
       }
       const nombre = numero || `NP ${d.np.n}`
-      const aplicar = async (objetivo: number, m3Antes: number) => {
+      // `porAutorizar`: lo que dijo el listado de Zomatik después de editar la NP (null = no se pudo saber)
+      const aplicar = async (objetivo: number, m3Antes: number, porAutorizar: boolean | null) => {
         // Decisión 16: si mientras tanto se decidió el saldo en "NP con saldo", no se pasa a la base (se relee ahora)
         if (!a.aplicado_at) {
           const { data: ahoraNp, error: en } = await sb.from("zomatik_np").select("id, saldo_decision, saldo_decision_por").eq("id", a.np_id).maybeSingle()
@@ -442,6 +443,14 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
           hecho("generando", "falta guardarlo en el sistema")
           return
         }
+        // Al cambiarle la cantidad, Zomatik vuelve la NP a "por autorizar" (20/11, NP 0001-00001201: sin el link REMITO y
+        // sin pendientes, el remito fallaba). Si quedó así, o no se pudo saber, deja de figurar "autorizada" y Z1 la
+        // autoriza antes del remito, en esta misma pasada (autorizar una NP ya autorizada no hace nada). Como la edición
+        if (porAutorizar !== false) {
+          const mensaje = porAutorizar ? "NP sin autorizar en Zomatik (después de ajustarla). Se reintenta." : "Se ajustó la NP: falta confirmar que siga autorizada en Zomatik. Se reintenta."
+          const { error: ea } = await sb.from("zomatik_np").update({ paso: PASO_SIN_AUTORIZAR, mensaje, updated_at: new Date().toISOString() } as never).eq("id", a.np_id).eq("estado", "ok").eq("paso", PASO_AUTORIZADA)
+          if (ea) console.error("[zomatik-ajuste] NP sin autorizar después de ajustar", a.id, (ea as { message?: string }).message) // la red de Z1 lo resuelve igual
+        }
         await actividadNp(sb, { usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, referencia: ref, detalle: { "Qué pasó": `NP ajustada en Zomatik: ${textoAjuste({ numero, m3_np: m3Antes, m3_objetivo: objetivo })}`, Marca: a.marca } })
         out.listos.add(a.scheduled_dispatch_id || "")
         hecho("ok", textoAjuste({ numero, m3_np: m3Antes, m3_objetivo: objetivo }))
@@ -456,7 +465,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       }
       // Solo faltaba pasarlo a la base: no se vuelve a abrir Zomatik
       if (antes.paso === "aplicar" || a.aplicado_at) {
-        await aplicar(Number(a.m3_objetivo), Number(a.m3_np))
+        await aplicar(Number(a.m3_objetivo), Number(a.m3_np), null)
         continue
       }
       // Trabado: más de 3 cortes seguidos (colgado en "generando")
@@ -527,7 +536,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       if (res.estado === "ok") {
         // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
         if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("El ajuste cambió mientras se trabajaba")
-        await aplicar(objetivo, m3Np)
+        await aplicar(objetivo, m3Np, res.porAutorizar ?? null)
         continue
       }
       if (res.estado === "con_factura") {
