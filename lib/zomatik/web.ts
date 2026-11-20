@@ -149,7 +149,8 @@ function camposDeCuerpo(cuerpo: string): [string, string][] | null {
 
 /**
  * Lo único que se le puede mandar a `grabar_ordenfabricacioncompo.php`: UNA vez `ordenfabricacion` = la OF que se está
- * trabajando, a lo sumo un `fparam`, y uno o más `adescontar_<id>` (cada id una sola vez) con un número mayor que 0.
+ * trabajando, UN `fparam` VACÍO (como lo manda "Continuar": la página no lo arma), y uno o más `adescontar_<id>` (cada
+ * id una sola vez) con un número mayor que 0.
  * Cualquier otro campo, otra OF o un cuerpo que no se entiende entero: no sale.
  */
 export function cuerpoMpValido(cuerpo: string | null | undefined, ofMp: number | null | undefined): boolean {
@@ -159,6 +160,7 @@ export function cuerpoMpValido(cuerpo: string | null | undefined, ofMp: number |
   const nombres = campos.map(([k]) => k)
   if (new Set(nombres).size !== nombres.length) return false
   if (campos.filter(([k, v]) => k === "ordenfabricacion" && v === String(ofMp)).length !== 1) return false
+  if (campos.filter(([k, v]) => k === "fparam" && v === "").length !== 1) return false
   const materiales = campos.filter(([k]) => /^adescontar_\d+$/.test(k))
   if (!materiales.length || materiales.some(([, v]) => !/^\d+(\.\d+)?$/.test(v) || !(Number(v) > 0))) return false
   return campos.every(([k]) => k === "ordenfabricacion" || k === "fparam" || /^adescontar_\d+$/.test(k))

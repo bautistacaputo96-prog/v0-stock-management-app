@@ -678,7 +678,7 @@ export const MSJ_SIN_COMPOSICION = "El artículo de la OF no tiene composición 
 
 /**
  * La pantalla "Composicion" de la OF `codigoOf` (REAL 19/11, `of-compo.html`): form `grabar_ordenfabricacioncompo.php`
- * por POST, ocultos `ordenfabricacion` (= la OF) y `fparam`, y un `adescontar_<id interno>` por material con las
+ * por POST, ocultos `ordenfabricacion` (= la OF) y `fparam` (VACÍO: "Continuar" no lo arma), y un `adescontar_<id interno>` por material con las
  * toneladas a descontar (composición del artículo × cantidad de la OF). Cada fila trae código de artículo, nombre y
  * cantidad. Falla cerrado: otro form, otra OF, un campo que no se conoce o repetido, o un valor que no es un número
  * mayor que 0 → no se manda nada. `campos`: los de la pantalla, en su orden y sin tocar (lo que manda "Continuar").
@@ -697,6 +697,7 @@ export function formularioMpOf(html: string, codigoOf: number): FormularioMp {
   if (repetido) return mal(`el campo ${repetido} viene repetido`)
   const desconocido = nombres.find((n) => n !== "ordenfabricacion" && n !== "fparam" && !/^adescontar_\d+$/.test(n))
   if (desconocido) return mal(`trae un campo que no se conoce: ${desconocido}`)
+  if (f.campos.fparam !== "") return mal(`fparam ${"fparam" in f.campos ? "no viene vacío" : "no está"}`)
   if (!Number.isInteger(codigoOf) || codigoOf <= 0 || f.campos.ordenfabricacion !== String(codigoOf)) return mal(`es de otra OF: ${f.campos.ordenfabricacion ?? "sin código"} y se esperaba ${codigoOf}`)
   const aDescontar = f.orden.filter((c) => /^adescontar_\d+$/.test(c.nombre))
   if (!aDescontar.length) return { ok: false, motivo: "sin_composicion", mensaje: MSJ_SIN_COMPOSICION }
@@ -755,12 +756,20 @@ export function listadoRmi(html: string): FilaRmi[] | null {
 }
 
 /**
+ * ¿Las fechas del listado vienen del más nuevo al más viejo en TODA la lista (ninguna fila más nueva que la anterior)?
+ * Es lo que se vio en las 150 filas reales (20/11). Si no, el corte del listado no dice nada: no se puede contar.
+ */
+export function rmiEnOrden(filas: FilaRmi[]): boolean {
+  return filas.every((x, i) => i === 0 || x.fecha <= filas[i - 1].fecha)
+}
+
+/**
  * ¿El listado de remitos internos llega hasta antes de `desde` (aaaa-mm-dd)? Viene del más nuevo al más viejo y cortado
- * (por defecto, los últimos 150): solo si la ÚLTIMA fila es anterior a `desde` se sabe que están todos los de `desde`
- * en adelante. Sin filas, o si no llega, no se puede asegurar nada.
+ * (por defecto, los últimos 150): solo si viene en ese orden (`rmiEnOrden`) y la ÚLTIMA fila es anterior a `desde` se
+ * sabe que están todos los de `desde` en adelante. Sin filas, desordenado o si no llega, no se puede asegurar nada.
  */
 export function rmiLlegaHasta(filas: FilaRmi[], desde: string): boolean {
-  return filas.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(desde) && filas[filas.length - 1].fecha < desde
+  return filas.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(desde) && rmiEnOrden(filas) && filas[filas.length - 1].fecha < desde
 }
 
 /** Cuántos remitos internos tiene la OF `numero` ("0001-00003447") en el listado. */
@@ -782,6 +791,15 @@ export function tieneRmiDeMp(estadoOf: string, rmi: number): boolean | null {
   if (e === "FIN") return rmi === 0 ? null : rmi >= 2
   return null
 }
+
+/**
+ * La fila se cierra sin remito del robot y su OF todavía no descontó la materia prima: no se descuenta sola (la OF del
+ * robot puede sobrar). `of`: "OF 0001-00003412".
+ */
+export const msjMpRemitoAMano = (of: string) => `El remito se hizo a mano: revisá si la ${of} del robot sobra antes de descontar`
+export const msjMpCambioDespachos = (of: string) => `Se anularon o editaron despachos después de la OF: revisá si la ${of} del robot sobra o hay que corregirla antes de descontar`
+/** Se suma si la fila ya tenía la marca de un envío que se cortó (pudo llegar a Zomatik). */
+export const MSJ_MP_ENVIO_CORTADO = " (se había mandado la materia prima y se cortó: mirá primero si ya tiene su remito interno)"
 
 /** "CCTS ARENA ESPECIAL (10000004): 0,93 t · …": el detalle de lo descontado, para Actividad. */
 export function textoMateriales(ms: MaterialMp[]): string {

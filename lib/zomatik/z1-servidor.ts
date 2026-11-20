@@ -35,7 +35,7 @@ import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
 import { PASO_MP, descontarMpOf, elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitirOf, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
-  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, textoMateriales, ultimosDias,
+  MAX_SIN_STOCK, MSJ_MP_ENVIO_CORTADO, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjMpCambioDespachos, msjMpRemitoAMano, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, textoMateriales, ultimosDias,
   type DespachoZ1, type MaterialMp, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
@@ -298,6 +298,28 @@ class Cambio extends Error {
 }
 
 /**
+ * La fila sale del flujo SIN remito del robot (el remito ya estaba hecho a mano, o cambiaron los despachos después de la
+ * OF) y su OF ya está en Zomatik. Esa OF puede sobrar, así que su materia prima NO se descuenta sola:
+ *   'pendiente' → 'revisar' con el mensaje (va en el MISMO guardado que cierra la fila: la regularización no la toma);
+ *   'ok' (ya descontó) → no se toca, pero el mail nombra la OF (quedó una OF del robot descontada).
+ * `lineas`: lo que se suma al mail (siempre nombra la OF si existe). Sin OF hecha, nada.
+ */
+function mpAlSalirDelFlujo(r: RemitoDB, motivo: "a_mano" | "cambio"): { cambios: Record<string, unknown>; lineas: string[]; mensaje: string | null } {
+  if (r.of_estado !== "ok" || !r.of_numero) return { cambios: {}, lineas: [], mensaje: null }
+  const lineas = [`OF del robot: ${r.of_numero}`]
+  if (r.of_mp_estado === "pendiente") {
+    const mensaje = `${motivo === "a_mano" ? msjMpRemitoAMano(r.of_numero) : msjMpCambioDespachos(r.of_numero)}${r.of_mp_at ? MSJ_MP_ENVIO_CORTADO : ""}`
+    return { cambios: { of_mp_estado: "revisar", of_mp_mensaje: mensaje }, lineas: [...lineas, `Materia prima SIN descontar. ${mensaje}. El robot no la descuenta sola.`], mensaje }
+  }
+  if (r.of_mp_estado === "ok")
+    lineas.push(motivo === "a_mano"
+      ? "Esa OF del robot YA descontó la materia prima en Zomatik y puede haber quedado sin remitir: si el remito a mano se hizo con otra OF, la del robot sobra. Revisala."
+      : "Esa OF del robot YA descontó la materia prima en Zomatik: tenelo en cuenta al corregirla.")
+  else if (r.of_mp_estado === "revisar") lineas.push("La materia prima de esa OF quedó sin descontar (ya se avisó).")
+  return { cambios: {}, lineas, mensaje: null }
+}
+
+/**
  * Los despachos del remito, como están hoy (anular_despacho los borra; editar_despacho cambia los m³). `enOtros(id)`: lo
  * que tienen esos despachos en OTROS remitos (16/11: un despacho partido entre dos NP está en dos remitos).
  */
@@ -350,9 +372,11 @@ async function alDiaConDespachos(sb: SB, r: RemitoDB, o: { usuario: string; avis
   const m = r.of_estado === "ok"
     ? `Después de la ${r.of_numero || "OF"} ${que}. No se hizo el remito: corregí la OF en Zomatik y cargá el remito a mano.`
     : `Se cortó al grabar la OF y después ${que}. La OF puede estar en Zomatik (marca "${r.marca}"): revisala, corregila y cargá el remito a mano.`
-  await guardarSi(sb, r.id, { estado: "revisar", remito_estado: "revisar", en_curso_desde: null, mensaje: m, paso: "cambio_despachos", cambio_avisado: c.firma, proximo_intento: null })
-  await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": m } })
-  await o.avisar(sb, "Despacho anulado o editado después de la OF", [m, `Marca: ${r.marca}`])
+  // La OF hay que corregirla a mano: su materia prima, si todavía no se descontó, no se descuenta sola
+  const mp = mpAlSalirDelFlujo(r, "cambio")
+  await guardarSi(sb, r.id, { estado: "revisar", remito_estado: "revisar", en_curso_desde: null, mensaje: m, paso: "cambio_despachos", cambio_avisado: c.firma, proximo_intento: null, ...mp.cambios })
+  await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": m, ...(mp.mensaje ? { "Materia prima": mp.mensaje } : {}) } })
+  await o.avisar(sb, "Despacho anulado o editado después de la OF", [m, ...mp.lineas, `Marca: ${r.marca}`])
   return null
 }
 
@@ -444,8 +468,10 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   const avisarMp = dep.avisarMp ?? avisarMpOf
   const columnas = conMp ? `${COLUMNAS_REMITO}, ${COLUMNAS_MP}` : COLUMNAS_REMITO
   /**
-   * OF viejas para regularizar (spec 3.4): filas FUERA del flujo (ya cerradas, o frenadas en "revisar" / "error") con la
-   * OF hecha y la materia prima marcada 'pendiente'. Solo en la pasada (no con "Remitir en Zomatik" de un pedido).
+   * OF viejas para regularizar (spec 3.4): lo que marca el script. Filas que NO están en curso (ya cerradas, o frenadas
+   * en "revisar" / "error") con la OF hecha y la materia prima 'pendiente'. Solo en la pasada (no con "Remitir en Zomatik"
+   * de un pedido). Una fila que el flujo cierra "a mano" o por un cambio de despachos nunca queda acá: en el mismo
+   * guardado su materia prima pasa a 'revisar' (`mpAlSalirDelFlujo`), porque la OF del robot puede sobrar.
    */
   const leerAtrasadas = async (): Promise<RemitoDB[]> => {
     if (!conMp || o.pedidoId) return []
@@ -740,9 +766,13 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         // `propio`: se cortó al grabar el remito del robot y ese número está en la NP. No se pisa: los dos quedan nombrados
         const cerrarAMano = async (numeros: string[], propio: string | null = null) => {
           const m = propio ? `${msjRemitoAMano(numeros)}. ${msjDosRemitos(propio, numeros)}` : msjRemitoAMano(numeros)
-          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", ...(propio ? {} : { remito_numero: numeros.join(", ") }), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
+          // La OF del robot (si ya está hecha) puede sobrar: su materia prima, si no se descontó, queda 'revisar' (no se
+          // regulariza sola); si ya se descontó, el mail la nombra igual
+          const mp = mpAlSalirDelFlujo(r, "a_mano")
+          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", ...(propio ? {} : { remito_numero: numeros.join(", ") }), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null, ...mp.cambios })))
             throw new Cambio("El remito cambió mientras se generaba")
-          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca, ...(propio ? { "Remito del robot": propio, "Remito a mano": numeros.join(", ") } : {}) } })
+          if (mp.mensaje) r.of_mp_estado = "revisar"
+          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca, ...(propio ? { "Remito del robot": propio, "Remito a mano": numeros.join(", ") } : {}), ...(mp.lineas.length ? { OF: r.of_numero } : {}), ...(mp.mensaje ? { "Materia prima": mp.mensaje } : {}) } })
           hechas.push({ id: r.id, estado: "ok", mensaje: m })
           try {
             const { data: pc } = r.scheduled_dispatch_id ? await sb.from("scheduled_dispatches").select("clients(name)").eq("id", r.scheduled_dispatch_id).maybeSingle() : { data: null }
@@ -753,6 +783,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
               `Remito que ya estaba en Zomatik: ${numeros.join(", ")}`,
               "El robot no lo hizo para no duplicar: revisá que ese remito cubra estos m³.",
               ...(propio ? [msjDosRemitos(propio, numeros)] : []),
+              ...mp.lineas,
               `Marca: ${r.marca}`,
             ])
             if (!aviso.enviado) console.error("[zomatik-z1] aviso de remito a mano:", aviso.motivo)
