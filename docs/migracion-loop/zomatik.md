@@ -2092,25 +2092,33 @@ pasa por la pantalla "Composicion" (`modificar_ordenfabricacioncompo.php?codigo=
   remito. Un despacho sin pedido: OF → materia prima → queda a mano, como antes.
 - **El paso (`descontarMpOf`):** sucursal 18 → cuenta los RMI de la OF en `listado_remitosinternos.php` → lee el estado
   de la OF → `tieneRmiDeMp` (PEN: 0 falta; FIN: 1 falta; si ya está, no se manda nada) → abre la pantalla y la controla
-  (form, `ordenfabricacion` = la OF, solo `fparam` y `adescontar_<id>` con valor > 0) → **marca en la base** → POST con
+  (form, `ordenfabricacion` = la OF, `fparam` vacío y solo `adescontar_<id>` con valor > 0) → **marca en la base** → POST con
   los mismos campos y valores de la pantalla → vuelve a contar: exactamente uno más → `ok`.
 - **Nunca dos veces:** la marca (`of_mp_at`) se pone antes de mandar, en una sola sentencia y solo si estaba vacía. Con la
   marca puesta el robot solo cuenta: si el RMI está, `ok`; si no está, `revisar` (no manda otra vez). La respuesta del
   POST no está capturada: no se usa para decidir.
-- **Hasta dónde llega el listado:** trae los últimos 150. Solo vale si su última fila es anterior al día de la OF; si
-  no, se busca por fechas (`bus_fechacred` / `bus_fechacreh`, respuesta **no capturada**) y se le exige lo mismo. Si no
-  se puede asegurar, no se sigue.
+- **Hasta dónde llega el listado:** trae los últimos 150. Solo vale si las fechas vienen del más nuevo al más viejo en
+  toda la lista y la última fila es anterior al día de la OF; si no llega, se busca por fechas (`bus_fechacred` /
+  `bus_fechacreh`, respuesta **no capturada**) y se le exige lo mismo. Si no se puede asegurar, no se manda nada.
+- **Formato del listado de remitos internos** (filas que no se entienden, fechas desordenadas, no llega ni buscando):
+  `revisar` en el primer intento, como la pantalla "Composicion"; reintentar no lo arregla y frenaría una hora cada
+  remito. Solo se reintenta lo transitorio: otra sucursal, red o sesión.
 - **Estados (`zomatik_remitos.of_mp_estado`):** NULL = fila vieja (no se toca sola) · `pendiente` · `ok` · `revisar` ·
   `no`. Las OF nuevas nacen `pendiente`.
 - **Si queda `revisar`** (sin composición, pantalla distinta, verificación que no cierra): el remito del cliente **no se
   frena**; un mail a Bautista y Juan por fila, y en Despacho el chip del pedido dice "· MP sin descontar" con el motivo.
-- **Si todavía no se puede** (listado ilegible, red, sesión): la fila espera sin remitir la OF y se reintenta cada 10
+- **Si todavía no se puede** (otra sucursal, red, sesión): la fila espera sin remitir la OF y se reintenta cada 10
   minutos; a los 6 intentos (`sin_stock`, el mismo tope que remitir la OF), `revisar` y el remito sigue.
-- **Regularizar las OF viejas:** la pasada de cada 10 minutos toma las filas ya cerradas (o frenadas) con la OF hecha y
-  `of_mp_estado = 'pendiente'`, de a una, con el turno del robot. De la fila solo toca las columnas `of_mp_*` y
-  `sin_stock`. Las marca un script de Bautista; las duplicadas de OF hechas a mano no se marcan (o van `no`).
+- **Regularizar las OF viejas:** la pasada de cada 10 minutos toma las filas que no están en curso (ya cerradas, o
+  frenadas) con la OF hecha y `of_mp_estado = 'pendiente'`, de a una, con el turno del robot. De la fila solo toca las
+  columnas `of_mp_*` y `sin_stock` (nunca `paso`). Las marca un script de Bautista; las duplicadas de OF hechas a
+  mano no se marcan (o van `no`).
+- **Remito hecho a mano (o despachos cambiados) con la OF del robot ya hecha:** la OF puede sobrar. Si su materia prima
+  todavía no se descontó, en el mismo guardado que cierra la fila pasa a `revisar` ("El remito se hizo a mano: revisá
+  si la OF … del robot sobra antes de descontar"): no se regulariza sola. Si ya se había descontado, queda `ok`. En
+  los dos casos el mail de "Remito hecho a mano" (o el de despachos cambiados) nombra la OF y dice cómo quedó.
 - **Lista cerrada (`rutaEscrituraZ1`):** la pantalla "Composicion" por GET y su "Continuar" por POST, solo con `ofMp` =
-  el `of_codigo` de la fila en esa misma llamada, y el cuerpo solo de esa OF (`cuerpoMpValido`); el listado de remitos
+  el `of_codigo` de la fila en esa misma llamada, y el cuerpo solo de esa OF y con `fparam` vacío (`cuerpoMpValido`); el listado de remitos
   internos, lectura. Nunca `borrar_`, `grabar_` ni `modificar_remitosinternos`.
 - **Sin la migración:** el paso no corre y todo sigue como antes (se lee `of_mp_estado`; con 42703, apagado).
 - **Lo que no entra:** mandar el consumo real en vez de lo que propone Zomatik (`enviarMp` recibe los campos a mandar;
