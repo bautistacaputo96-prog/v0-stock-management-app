@@ -56,5 +56,8 @@ COMMENT ON COLUMN public.zomatik_remitos.of_mp_detalle IS 'Zomatik Z1: lo que se
 
 COMMIT;
 
+RESET lock_timeout;
+RESET statement_timeout;
+
 -- Para que la API vea las columnas nuevas enseguida
 NOTIFY pgrst, 'reload schema';
