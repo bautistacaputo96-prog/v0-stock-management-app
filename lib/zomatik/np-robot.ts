@@ -224,6 +224,13 @@ const bytes = (ascii: string) => {
   return out
 }
 
+/** aaaa-mm-dd + 1 día. */
+const diaSiguiente = (f: string) => {
+  const d = new Date(`${f}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
 /** Abre una NP (sin importar la sucursal activa, 23.3). */
 async function abrir(nav: NavegadorNp, codigo: number) {
   const r = await nav.get(`modificar_pedidos.php?codigo=${codigo}`)
@@ -236,13 +243,15 @@ async function abrir(nav: NavegadorNp, codigo: number) {
  * Grabar, no el que trae el formulario), desde el día en que se creó hasta hoy, sin filtrar por nombre (la NP se graba
  * con la razón social de Zomatik, no con nuestro nombre). Si la fecha de entrega cae fuera de ese rango (una NP para
  * mañana), el rango la incluye: así aparece filtre el listado por la fecha de la NP o por la de entrega. Se abre cada una.
+ * `bus_fechah` NO incluye ese día (Zomatik lo toma a las 00:00, visto el 20/11): se pide hasta el día SIGUIENTE al último
+ * del rango. Con hoy..hoy no venía ninguna NP y la de proyecto con entrega hoy quedaba "revisar" (NP 1196, 1199 y 1204).
  * No es concluyente si la página muestra otra sucursal, si el listado tiene más de una página, si hay demasiadas o si
  * alguna no se puede abrir.
  */
 async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string, latir: () => Promise<void>): Promise<Busqueda> {
   const dias = [hoy, ...(d.creadaEl && d.creadaEl < hoy ? [d.creadaEl] : []), ...(/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || "") ? [d.fecha] : [])].sort()
   const desde = dias[0]
-  const hasta = dias[dias.length - 1]
+  const hasta = diaSiguiente(dias[dias.length - 1])
   const l = await listado(nav, { bus_fechad: desde, bus_fechah: hasta, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
   const nombre = sucursal === SUCURSAL_REBUCRET ? "REBUCRET" : "RUTA 25"
   if (l.sucursalPagina !== sucursal) return { estado: "dudosa", motivo: `el listado de ${nombre} vino de otra sucursal (otro sistema la cambió)` }
