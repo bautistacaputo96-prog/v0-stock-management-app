@@ -12,3 +12,7 @@ de ejemplo; los nombres de los campos, el orden de las columnas y las respuestas
 - `remito-pendientes.html`: "Continuar" (manage_remitos.php): un renglón por pendiente de la NP, con la cantidad
   PRECARGADA con todo lo pendiente. Capturado.
 - `_validarnumeroremito.php` (en la prueba): "" libre, "… ya se encuentra utilizado", "… no esta cargado en el sistema".
+- `of-compo.html`: modificar_ordenfabricacioncompo.php?codigo=N, la pantalla "Composicion" de una OF (REAL 19/11, OF 8271
+  de 1 m³): un `adescontar_<id>` por material. Capturada sin confirmar (la respuesta de "Continuar" no está).
+- `remitosinternos-listado.html`: listado_remitosinternos.php (REAL 19/11, recortado a 4 filas): la columna OF dice a qué
+  OF pertenece cada remito interno. La búsqueda por fechas (`?enviado=1`) no está capturada.
