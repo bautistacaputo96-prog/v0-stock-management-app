@@ -25,6 +25,7 @@ import {
   autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
   conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL, esLaNpTraida, textoOpcionElegida, tieneMarcaDelSistema, type NpLeidaTraer,
 } from "@/lib/zomatik/np"
+import { msjSinPrecio } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
 
@@ -440,6 +441,8 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
   // Con precio (puesto a mano o el de la primera NP): el renglón con ese costo. Sin precio: el Grabar de siempre
   const rs = [precioValido(d.precioM3) ? conCosto(conCantidad(art[0], d.m3), d.precioM3) : conCantidad(art[0], d.m3)]
+  // Sin precio: la lista no lo tiene (costo 0 o vacío) y el pedido no trae uno puesto a mano. No se pide número ni se graba
+  if (!((numeroZomatik(rs[0].costo) ?? 0) > 0)) throw dato(msjSinPrecio(d.articuloNombre || art[0].nombreArticulo))
   const extra = { precio: numeroZomatik(rs[0].costo), lista: { codigo: ll.lista.codigo, nombre: ll.lista.nombre } }
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)

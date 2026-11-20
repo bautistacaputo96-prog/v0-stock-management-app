@@ -13,6 +13,15 @@
  *   - Control del despacho: modo aviso (2 semanas) y modo duro.
  */
 
+/**
+ * Lo que dice el robot cuando el renglón de la NP nueva quedaría en costo 0: la lista no tiene precio para el artículo
+ * (0 o vacío) y el pedido no trae uno puesto a mano. No se graba: con total $0 Zomatik no muestra ni Autorizar ni REMITO
+ * y el remito esperaría para siempre (20/11, NP 0001-00001200 y NP2 0001-00002127). Sin montos.
+ */
+export const MSJ_SIN_PRECIO = "El artículo no tiene precio en la lista de Zomatik"
+export const msjSinPrecio = (articulo: string | null | undefined) =>
+  `${MSJ_SIN_PRECIO}${articulo ? ` (${articulo})` : ""}: cargalo en la lista o poné el precio en el pedido, y tocá «Generar NP ahora».`
+
 // ---------------------------------------------------------------------------
 // Falta de vínculo con Zomatik (el robot frena antes de tocar nada)
 // ---------------------------------------------------------------------------
