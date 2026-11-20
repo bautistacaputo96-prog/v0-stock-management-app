@@ -6,7 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { MSJ_NP_NO_AJUSTADA, PASO_ADICIONAL_A_MANO, PASO_DEVOL_A_MANO, PASO_NP_SIN_USO } from "@/lib/zomatik/ajuste"
 
-export type RemitoEstado = { id?: string; estado: string; remito_estado?: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso?: string | null }
+export type RemitoEstado = {
+  id?: string; estado: string; remito_estado?: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso?: string | null
+  /** Materia prima de la OF en Zomatik: 'revisar' = quedó sin descontar (el motivo, en `of_mp_mensaje`) */
+  of_mp_estado?: string | null; of_mp_mensaje?: string | null
+}
 
 /** El ajuste de una NP del pedido al finalizar (docs/specs/2026-11-06-ajustar-np-al-finalizar.md). */
 export type AjusteEstado = { id?: string; np_id?: string; paso?: string | null; estado: string; tipo: string | null; numero: string | null; m3_np: number | null; m3_objetivo: number | null; mensaje: string | null; con_factura: boolean | null }
@@ -108,8 +112,22 @@ export function useRemitos(ids: string[]) {
   return { porPedido, ajustes, ajusteActivo, recargar: cargar, recargarEn }
 }
 
-/** Texto corto del chip: "Ajustando NP…", "NP: revisar ajuste", "Remito esperando la NP", "RM2 …2746 ✓", "Remito pendiente"… null = nada. */
+/** Lo que se agrega al chip cuando la materia prima de una OF quedó sin descontar en Zomatik (spec 2026-11-19, 3.5). */
+export const CHIP_MP_SIN_DESCONTAR = "MP sin descontar"
+
+/**
+ * Texto corto del chip: "Ajustando NP…", "NP: revisar ajuste", "Remito esperando la NP", "RM2 …2746 ✓", "Remito pendiente"…
+ * null = nada. Si la materia prima de alguna OF quedó sin descontar, se suma "· MP sin descontar" y el motivo al detalle.
+ */
 export function chipRemito(rs: RemitoEstado[] | undefined, as?: AjusteEstado[]): { texto: string; clase: "ok" | "mal" | "aviso"; titulo: string } | null {
+  const c = chipBase(rs, as)
+  const sinMp = (rs || []).filter((r) => r.of_mp_estado === "revisar")
+  if (!c || !sinMp.length) return c
+  const motivos = sinMp.map((r) => `${r.fecha}: ${r.of_numero || "OF"} · materia prima sin descontar en Zomatik${r.of_mp_mensaje ? ` · ${r.of_mp_mensaje}` : ""}`)
+  return { texto: `${c.texto} · ${CHIP_MP_SIN_DESCONTAR}`, clase: c.clase === "ok" ? "aviso" : c.clase, titulo: [c.titulo, ...motivos].join("\n") }
+}
+
+function chipBase(rs: RemitoEstado[] | undefined, as?: AjusteEstado[]): { texto: string; clase: "ok" | "mal" | "aviso"; titulo: string } | null {
   if (!rs?.length && !as?.length) return null
   rs = rs || []
   const lineasAjuste = (as || []).map((a) => `${a.numero || "NP"} ${a.estado === "ok" ? `${m3t(a.m3_np)} → ${m3t(a.m3_objetivo)} m³` : a.estado === "nada" ? "sin cambios" : a.estado === "a_mano" ? "a mano" : "ajuste pendiente"}${a.mensaje && a.estado !== "ok" ? ` · ${a.mensaje}` : ""}`)
