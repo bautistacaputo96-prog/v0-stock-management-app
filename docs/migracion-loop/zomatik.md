@@ -2124,3 +2124,48 @@ pasa por la pantalla "Composicion" (`modificar_ordenfabricacioncompo.php?codigo=
 - **Lo que no entra:** mandar el consumo real en vez de lo que propone Zomatik (`enviarMp` recibe los campos a mandar;
   hoy, los de la pantalla). Borrar o corregir un RMI: nunca.
 - **Datos ya cargados:** no cambian.
+
+## 31. Tres arreglos del robot (20/11/2026) — cambia 24 (búsqueda por la marca), 26 (autorizar) y 27 (precio)
+
+Rama `fix/np-proyecto-autorizar-precio`. Sin cambios de base.
+
+1. **NP de proyecto con entrega hoy quedaba "para revisar"** (NP 1196, 1199 y 1204 del proyecto 576). En
+   `listado_pedidos.php?enviado=1`, `bus_fechah` **no incluye ese día** (lo toma a las 00:00; visto el 20/11, solo
+   lectura): con hoy..hoy no devuelve ninguna NP. La búsqueda por la marca (`porMarca`) ahora pide hasta el día
+   **siguiente** al último del rango. Es la única búsqueda de pedidos que manda fechas: las demás van por `bus_numero`.
+   Los listados de OF y de remitos ya pedían hasta mañana.
+2. **Después de cambiarle la cantidad, Zomatik vuelve la NP a "por autorizar"** (Cordones, NP 0001-00001201: quedó con
+   `Autorizar(…)` y sin REMITO, y el remito falló porque no vinieron sus pendientes).
+   - El **ajuste al finalizar** y la **edición** hacen lo mismo: si el listado dice que quedó por autorizar, la NP pasa
+     de `paso = autorizada` a `sin_autorizar` (solo desde `autorizada`: no pisa `autorizar_revisar`) y se autoriza antes
+     del remito. Autorizar una NP ya autorizada no manda nada. Si **no se pudo saber**, también se marca: en el ajuste
+     siempre; en la edición solo si la cantidad subió.
+   - **Red de seguridad en Z1:** si "Continuar" del remito no trae los pendientes y la NP figuraba `autorizada`, la NP
+     pasa a `sin_autorizar` y la fila queda `pendiente` (`paso = reautorizar_np`); la pasada siguiente la autoriza y
+     sigue. Una sola vez por fila: si ya se probó, o la autorización se controló en ese mismo intento, queda `error`
+     como antes, con su mail y el agregado "La NP está autorizada y los pendientes siguen sin venir". Si falla la base
+     al marcar la NP, la fila no queda en `reautorizar_np`: sigue `pendiente` y el intento siguiente prueba otra vez.
+   - **Tope a la espera** de una NP que no muestra ni Autorizar ni REMITO (en $0, ya remitida…): antes reintentaba cada
+     10 minutos para siempre y sin avisar. Ahora, a los **6 intentos seguidos** de la pasada (1 hora):
+     - el **remito** queda `error` con el mail de siempre: "La <NP> no muestra ni Autorizar ni REMITO en Zomatik:
+       revisala (¿quedó en $0?, ¿ya está remitida?)." La cuenta va en `zomatik_remitos.sin_stock` mientras el paso es
+       `autorizar_np` (vuelve a 0 cuando la NP queda autorizada). El botón "Remitir en Zomatik" mira de nuevo pero no
+       suma.
+     - la **NP** pasa de `sin_autorizar` a `autorizar_revisar` con aviso a gerenciales y la pasada no la mira más. La
+       cuenta va en su mensaje ("(intento 3 de 6)"). Arreglada a mano en Zomatik, vuelve a `autorizada` cuando sale el
+       remito.
+     Otros motivos de "sin autorizar" (Zomatik no la autorizó, red, otra sucursal) siguen reintentando sin tope.
+3. **NP en $0** (NP 0001-00001200 y NP2 0001-00002127, artículo 10090039 sin precio en la lista): con total $0 Zomatik
+   no muestra ni Autorizar ni REMITO y el remito esperaba para siempre.
+   - **Robot (NP nueva):** si el renglón quedaría en costo 0 (la lista da 0 o vacío y el pedido no trae precio puesto a
+     mano), no pide número ni graba. La NP queda en `error`: "El artículo no tiene precio en la lista de Zomatik
+     (<artículo>). Avisale a Juan: hay que cargarlo en la lista, o un gerencial pone el precio en el pedido. Después,
+     «Generar NP ahora»." Avisa por el mail de siempre. La **NP de proyecto no se frena**: el precio lo pone el proyecto
+     y no hay con qué decidir (el "Continuar" del MATERIAL de prueba trae 0.000 y de las NP de proyecto reales solo una
+     tiene el precio guardado).
+   - **Con la planta en modo duro** (`exigir_np`), este error frena el despacho como cualquier error de NP. Hoy las dos
+     plantas están en modo aviso hasta el 31/12.
+   - **Las NP ya creadas en $0** (NP 0001-00001200 y NP2 0001-00002127) **no se arreglan con esta rama**: hay que
+     ponerles el precio a mano en Zomatik. Hasta entonces, su remito queda en `error` por el tope de arriba.
+   - **Pantalla** (línea "Precio por m³", solo con `precios_np.editar`): si la fórmula no está en la lista y no hay
+     precio puesto, en ámbar "Sin precio en la lista: poné el precio o la NP no sale." Guardar no se bloquea.

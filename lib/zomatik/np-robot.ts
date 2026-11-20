@@ -25,6 +25,7 @@ import {
   autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
   conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL, esLaNpTraida, textoOpcionElegida, tieneMarcaDelSistema, type NpLeidaTraer,
 } from "@/lib/zomatik/np"
+import { MSJ_NI_AUTORIZAR_NI_REMITO, diaSiguiente, msjSinPrecio } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
 
@@ -237,13 +238,15 @@ async function abrir(nav: NavegadorNp, codigo: number) {
  * Grabar, no el que trae el formulario), desde el día en que se creó hasta hoy, sin filtrar por nombre (la NP se graba
  * con la razón social de Zomatik, no con nuestro nombre). Si la fecha de entrega cae fuera de ese rango (una NP para
  * mañana), el rango la incluye: así aparece filtre el listado por la fecha de la NP o por la de entrega. Se abre cada una.
+ * `bus_fechah` NO incluye ese día (Zomatik lo toma a las 00:00, visto el 20/11): se pide hasta el día SIGUIENTE al último
+ * del rango. Con hoy..hoy no venía ninguna NP y la de proyecto con entrega hoy quedaba "revisar" (NP 1196, 1199 y 1204).
  * No es concluyente si la página muestra otra sucursal, si el listado tiene más de una página, si hay demasiadas o si
  * alguna no se puede abrir.
  */
 async function porMarca(nav: NavegadorNp, d: DatosNp, hoy: string, sucursal: string, latir: () => Promise<void>): Promise<Busqueda> {
   const dias = [hoy, ...(d.creadaEl && d.creadaEl < hoy ? [d.creadaEl] : []), ...(/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || "") ? [d.fecha] : [])].sort()
   const desde = dias[0]
-  const hasta = dias[dias.length - 1]
+  const hasta = diaSiguiente(dias[dias.length - 1])
   const l = await listado(nav, { bus_fechad: desde, bus_fechah: hasta, bus_deposito: d.deposito ? String(d.deposito) : "" }, sucursal)
   const nombre = sucursal === SUCURSAL_REBUCRET ? "REBUCRET" : "RUTA 25"
   if (l.sucursalPagina !== sucursal) return { estado: "dudosa", motivo: `el listado de ${nombre} vino de otra sucursal (otro sistema la cambió)` }
@@ -432,6 +435,8 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
   // Con precio (puesto a mano o el de la primera NP): el renglón con ese costo. Sin precio: el Grabar de siempre
   const rs = [precioValido(d.precioM3) ? conCosto(conCantidad(art[0], d.m3), d.precioM3) : conCantidad(art[0], d.m3)]
+  // Sin precio: la lista no lo tiene (costo 0 o vacío) y el pedido no trae uno puesto a mano. No se pide número ni se graba
+  if (!((numeroZomatik(rs[0].costo) ?? 0) > 0)) throw dato(msjSinPrecio(d.articuloNombre || art[0].nombreArticulo))
   const extra = { precio: numeroZomatik(rs[0].costo), lista: { codigo: ll.lista.codigo, nombre: ll.lista.nombre } }
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
@@ -714,7 +719,7 @@ export async function autorizarNp(nav: NavegadorNp, d: { codigo: number; numero:
     if (antes.otraSucursal) return sin("el listado de pedidos vino de otra sucursal")
     if (!antes.a) return sin(`no se encontró la ${d.numero} en el listado de pedidos`, antes.l.html)
     if (antes.a.otroAutorizar) return sin("la fila trae el ícono de autorizar de otro código", antes.l.html)
-    if (!antes.a.porAutorizar) return antes.a.conRemito ? { estado: "ya", mensaje: null } : sin("la NP no muestra ni Autorizar ni REMITO", antes.l.html)
+    if (!antes.a.porAutorizar) return antes.a.conRemito ? { estado: "ya", mensaje: null } : sin(MSJ_NI_AUTORIZAR_NI_REMITO, antes.l.html)
     // Solo una NP con nuestra marca
     const np = await abrir(nav, d.codigo)
     if (!np.form) return sin(`no se pudo abrir la ${d.numero}`, np.html)
