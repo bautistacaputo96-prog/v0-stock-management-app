@@ -19,8 +19,22 @@
  * y el remito esperaría para siempre (20/11, NP 0001-00001200 y NP2 0001-00002127). Sin montos.
  */
 export const MSJ_SIN_PRECIO = "El artículo no tiene precio en la lista de Zomatik"
+/** Le tiene que servir a quien programa y no puede poner precios (lo ve en el pedido): a quién avisarle y qué sigue. */
 export const msjSinPrecio = (articulo: string | null | undefined) =>
-  `${MSJ_SIN_PRECIO}${articulo ? ` (${articulo})` : ""}: cargalo en la lista o poné el precio en el pedido, y tocá «Generar NP ahora».`
+  `${MSJ_SIN_PRECIO}${articulo ? ` (${articulo})` : ""}. Avisale a Juan: hay que cargarlo en la lista, o un gerencial pone el precio en el pedido. Después, «Generar NP ahora».`
+
+/**
+ * Lo que dice `autorizarNp` cuando la fila de la NP no trae ni el ícono Autorizar ni el link REMITO (quedó en $0, ya
+ * está remitida…). No se arregla sola: después de MAX_ESPERA_AUTORIZAR intentos seguidos así se deja de reintentar.
+ */
+export const MSJ_NI_AUTORIZAR_NI_REMITO = "la NP no muestra ni Autorizar ni REMITO"
+/** Intentos seguidos (uno cada 10 min: 1 hora) antes de dejar de esperar una NP que no muestra ni Autorizar ni REMITO. */
+export const MAX_ESPERA_AUTORIZAR = 6
+export const msjNiAutorizarNiRemito = (numero: string | null | undefined) => `La ${numero || "NP"} no muestra ni Autorizar ni REMITO en Zomatik: revisala (¿quedó en $0?, ¿ya está remitida?).`
+/** Cuántos intentos lleva la NP según su mensaje ("… (intento 3 de 6)"): `zomatik_np` no tiene otro contador libre. */
+export function intentosAutorizar(mensaje: string | null | undefined): number {
+  return Number(String(mensaje ?? "").match(/\(intento (\d+) de \d+\)/)?.[1] || 0)
+}
 
 // ---------------------------------------------------------------------------
 // Falta de vínculo con Zomatik (el robot frena antes de tocar nada)
@@ -1098,6 +1112,13 @@ export function hoyAR(ahora: number = Date.now()): string {
 /** Día de un timestamp en Argentina. */
 export function diaAR(iso: string): string {
   return hoyAR(new Date(iso).getTime())
+}
+
+/** aaaa-mm-dd + 1 día (el "hasta" de los listados de Zomatik no incluye ese día: se pide hasta el siguiente). */
+export function diaSiguiente(f: string): string {
+  const d = new Date(`${f}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
 }
 
 // ---------------------------------------------------------------------------

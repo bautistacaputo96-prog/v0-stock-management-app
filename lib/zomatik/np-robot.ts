@@ -25,7 +25,7 @@ import {
   autorizacionEnListado, tieneFormAutorizar, bloqueNp, noPasaValidar, comprobanteDeNumero, MSJ_SIN_CLIENTE, MSJ_SIN_ARTICULO, type CampoForm, type FilaPedido, type Renglon,
   conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL, esLaNpTraida, textoOpcionElegida, tieneMarcaDelSistema, type NpLeidaTraer,
 } from "@/lib/zomatik/np"
-import { msjSinPrecio } from "@/lib/zomatik/np"
+import { MSJ_NI_AUTORIZAR_NI_REMITO, diaSiguiente, msjSinPrecio } from "@/lib/zomatik/np"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
 
@@ -224,13 +224,6 @@ const bytes = (ascii: string) => {
   const out = new Uint8Array(ascii.length)
   for (let i = 0; i < ascii.length; i++) out[i] = ascii.charCodeAt(i) & 255
   return out
-}
-
-/** aaaa-mm-dd + 1 día. */
-const diaSiguiente = (f: string) => {
-  const d = new Date(`${f}T12:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d.toISOString().slice(0, 10)
 }
 
 /** Abre una NP (sin importar la sucursal activa, 23.3). */
@@ -726,7 +719,7 @@ export async function autorizarNp(nav: NavegadorNp, d: { codigo: number; numero:
     if (antes.otraSucursal) return sin("el listado de pedidos vino de otra sucursal")
     if (!antes.a) return sin(`no se encontró la ${d.numero} en el listado de pedidos`, antes.l.html)
     if (antes.a.otroAutorizar) return sin("la fila trae el ícono de autorizar de otro código", antes.l.html)
-    if (!antes.a.porAutorizar) return antes.a.conRemito ? { estado: "ya", mensaje: null } : sin("la NP no muestra ni Autorizar ni REMITO", antes.l.html)
+    if (!antes.a.porAutorizar) return antes.a.conRemito ? { estado: "ya", mensaje: null } : sin(MSJ_NI_AUTORIZAR_NI_REMITO, antes.l.html)
     // Solo una NP con nuestra marca
     const np = await abrir(nav, d.codigo)
     if (!np.form) return sin(`no se pudo abrir la ${d.numero}`, np.html)
