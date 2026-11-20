@@ -162,6 +162,14 @@ export async function avisarAjusteNp(sb: SB, titulo: string, lineas: string[]): 
   return mandarAviso(sb, AVISO_AJUSTE_NP, "sin mail", titulo, lineas)
 }
 
+/** Quien recibe el aviso de una OF cuya materia prima no se pudo descontar en Zomatik (spec 2026-11-19, 3.1): Bautista y Juan. */
+export const AVISO_MP_OF = ["Bautista Caputo", "Juan Oreguy"]
+
+/** Aviso de la materia prima de una OF sin descontar (el remito del cliente no se frena). Nunca corta la operación. */
+export async function avisarMpOf(sb: SB, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
+  return mandarAviso(sb, AVISO_MP_OF, "sin mail", titulo, lineas)
+}
+
 async function mandarAviso(sb: SB, nombres: string[], sinMail: string, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
   try {
     if (!process.env.RESEND_API_KEY) return { enviado: false, motivo: "falta RESEND_API_KEY" }

@@ -16,21 +16,27 @@
  * Zomatik. Si tiene un remito que no grabó el sistema, la fila no se toca: "ok" con el remito "a_mano" y el número leído.
  * Si no se pueden leer, queda "pendiente" y se reintenta (nunca se sigue a ciegas).
  *
+ * Materia prima de la OF (19/11, docs/specs/2026-11-19-of-descuenta-materia-prima.md): entre la OF y remitirla, el robot
+ * pasa la pantalla "Composicion" (`descontarMpOf`), que crea el remito interno que descuenta el stock. Estado aparte,
+ * `of_mp_estado` (migración 202611191200; sin ella el paso no corre y todo sigue como antes). La marca `of_mp_at` se
+ * pone ANTES de mandar, en una sola sentencia: con la marca puesta nunca se manda otra vez. Si queda "revisar", el
+ * remito del cliente sale igual y va un mail a Bautista y Juan. Las OF viejas marcadas `pendiente` las toma la pasada.
+ *
  * LLAVE PROPIA: `zomatik_np_config.remitir_activo` (apagada por defecto), y además la de la NP. `llaveZ1()` es el único
  * lugar que arma la llave que pide `navegadorZ1()`.
  */
 import { sbServicio } from "@/lib/auth/servidor"
 import { navegadorZ1, mensajeZomatik } from "@/lib/zomatik/cliente"
 import {
-  PASO_AUTORIZADA, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarGerenciales, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso,
+  PASO_AUTORIZADA, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarGerenciales, avisarMpOf, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso,
   registrarAutorizacion, tipoDeFalla,
 } from "@/lib/zomatik/np-servidor"
 import { autorizarNp } from "@/lib/zomatik/np-robot"
 import { diaAR, hoyAR, quedaTiempo } from "@/lib/zomatik/np"
-import { elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitirOf, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
+import { PASO_MP, descontarMpOf, elegirNumeroRemito, errorInterno, generarOf, generarRemito, remitirOf, remitoAManoEnNp, type LlaveZ1, type ResultadoZ1 } from "@/lib/zomatik/z1-robot"
 import {
-  MAX_SIN_STOCK, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, ultimosDias,
-  type DespachoZ1, type NpZ1, type RemitoNuestro,
+  MAX_SIN_STOCK, MSJ_MP_ENVIO_CORTADO, cambiosDespachos, entregaRemito, marcaOfSuelta, marcaZ1, msjDosRemitos, msjMpCambioDespachos, msjMpRemitoAMano, msjRemitoAMano, observacionesRemito, planificarRemitos, textoCambio, textoMateriales, ultimosDias,
+  type DespachoZ1, type MaterialMp, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
@@ -69,11 +75,29 @@ export function llaveZ1(c: ConfigZ1 | undefined): LlaveZ1 | null {
 const COLUMNAS_REMITO =
   "id, tipo, scheduled_dispatch_id, np_id, fecha, plant_id, marca, comprobante, m3, formula_id, patente, patentes, remitos_papel, estado, of_estado, of_numero, of_codigo, of_foto, of_foto_dia, sin_stock, cambio_avisado, remito_estado, remito_numero, remito_codigo, paso, mensaje, intentos, proximo_intento, en_curso_desde, created_at"
 
+/**
+ * Materia prima de la OF (migración 202611191200_zomatik_of_mp.sql). Se piden aparte: sin la migración no existen
+ * (`hayMigracionMp`) y todo lo demás sigue como antes.
+ */
+const COLUMNAS_MP = "of_mp_estado, of_mp_at"
+
+/** ¿Está la migración de la materia prima de la OF? Sin ella (42703) el paso no corre. Otro error de la base, como siempre. */
+export async function hayMigracionMp(sb: SB): Promise<boolean> {
+  const { error } = await sb.from("zomatik_remitos").select("id, of_mp_estado").limit(1)
+  if (!error) return true
+  if ((error as { code?: string }).code === "42703") return false
+  throw error
+}
+
 export type RemitoDB = {
   id: string; tipo: "pedido" | "suelto"; scheduled_dispatch_id: string | null; np_id: string | null; fecha: string; plant_id: string; marca: string; comprobante: "7" | "19" | null; m3: number
   formula_id: string | null; patente: string | null; patentes: string | null; remitos_papel: string | null; estado: string; of_estado: string
   of_numero: string | null; of_codigo: number | null; of_foto: string[] | null; of_foto_dia: string | null; sin_stock: number | null; cambio_avisado: string | null; remito_estado: string; remito_numero: string | null; remito_codigo: number | null
   paso: string | null; mensaje: string | null; intentos: number; proximo_intento: string | null; en_curso_desde: string | null; created_at: string
+  /** Materia prima de la OF: null = fila vieja (no se toca sola) · pendiente · ok · revisar · no. Sin la migración, no viene. */
+  of_mp_estado?: "pendiente" | "ok" | "revisar" | "no" | null
+  /** La marca: cuándo se mandó (o pudo mandarse) la materia prima. Con la marca puesta nunca se manda otra vez. */
+  of_mp_at?: string | null
 }
 
 const despuesDe = (min: number) => new Date(Date.now() + min * 60_000).toISOString()
@@ -252,14 +276,16 @@ export type DependenciasZ1 = {
   navegador: (llave: LlaveZ1) => Promise<NavegadorNp>
   avisar: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El robot (en las pruebas del servidor, uno simulado) */
-  robot: { generarOf: typeof generarOf; remitirOf: typeof remitirOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
+  robot: { generarOf: typeof generarOf; descontarMpOf: typeof descontarMpOf; remitirOf: typeof remitirOf; generarRemito: typeof generarRemito; elegirNumeroRemito: typeof elegirNumeroRemito; autorizarNp: typeof autorizarNp; remitoAManoEnNp: typeof remitoAManoEnNp }
   /** Aviso a Bautista cuando la OF o el remito quedan en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
   /** El ajuste de la NP al finalizar (navegador atado a una NP, robot y avisos). Sin esto, los de producción: los arma
    *  `procesarZ1` al correr (no acá, por el import circular con ajuste-servidor.ts). */
   ajuste?: Partial<DependenciasAjuste>
+  /** Aviso a Bautista y Juan cuando la materia prima de una OF queda sin descontar (sin esto, `avisarMpOf`) */
+  avisarMp?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
 }
-export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, remitirOf, generarRemito, elegirNumeroRemito, autorizarNp, remitoAManoEnNp }, avisarError: avisarErrorZomatik }
+export const DEPENDENCIAS_Z1: DependenciasZ1 = { navegador: navegadorZ1, avisar: avisarGerenciales, robot: { generarOf, descontarMpOf, remitirOf, generarRemito, elegirNumeroRemito, autorizarNp, remitoAManoEnNp }, avisarError: avisarErrorZomatik, avisarMp: avisarMpOf }
 
 async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await sb.from("zomatik_remitos").update({ ...cambios, updated_at: new Date().toISOString() } as never).eq("id", id).eq("estado", "generando").select("id")
@@ -269,6 +295,28 @@ async function guardarSi(sb: SB, id: string, cambios: Record<string, unknown>): 
 
 class Cambio extends Error {
   name = "Cambio"
+}
+
+/**
+ * La fila sale del flujo SIN remito del robot (el remito ya estaba hecho a mano, o cambiaron los despachos después de la
+ * OF) y su OF ya está en Zomatik. Esa OF puede sobrar, así que su materia prima NO se descuenta sola:
+ *   'pendiente' → 'revisar' con el mensaje (va en el MISMO guardado que cierra la fila: la regularización no la toma);
+ *   'ok' (ya descontó) → no se toca, pero el mail nombra la OF (quedó una OF del robot descontada).
+ * `lineas`: lo que se suma al mail (siempre nombra la OF si existe). Sin OF hecha, nada.
+ */
+function mpAlSalirDelFlujo(r: RemitoDB, motivo: "a_mano" | "cambio"): { cambios: Record<string, unknown>; lineas: string[]; mensaje: string | null } {
+  if (r.of_estado !== "ok" || !r.of_numero) return { cambios: {}, lineas: [], mensaje: null }
+  const lineas = [`OF del robot: ${r.of_numero}`]
+  if (r.of_mp_estado === "pendiente") {
+    const mensaje = `${motivo === "a_mano" ? msjMpRemitoAMano(r.of_numero) : msjMpCambioDespachos(r.of_numero)}${r.of_mp_at ? MSJ_MP_ENVIO_CORTADO : ""}`
+    return { cambios: { of_mp_estado: "revisar", of_mp_mensaje: mensaje }, lineas: [...lineas, `Materia prima SIN descontar. ${mensaje}. El robot no la descuenta sola.`], mensaje }
+  }
+  if (r.of_mp_estado === "ok")
+    lineas.push(motivo === "a_mano"
+      ? "Esa OF del robot YA descontó la materia prima en Zomatik y puede haber quedado sin remitir: si el remito a mano se hizo con otra OF, la del robot sobra. Revisala."
+      : "Esa OF del robot YA descontó la materia prima en Zomatik: tenelo en cuenta al corregirla.")
+  else if (r.of_mp_estado === "revisar") lineas.push("La materia prima de esa OF quedó sin descontar (ya se avisó).")
+  return { cambios: {}, lineas, mensaje: null }
 }
 
 /**
@@ -324,9 +372,11 @@ async function alDiaConDespachos(sb: SB, r: RemitoDB, o: { usuario: string; avis
   const m = r.of_estado === "ok"
     ? `Después de la ${r.of_numero || "OF"} ${que}. No se hizo el remito: corregí la OF en Zomatik y cargá el remito a mano.`
     : `Se cortó al grabar la OF y después ${que}. La OF puede estar en Zomatik (marca "${r.marca}"): revisala, corregila y cargá el remito a mano.`
-  await guardarSi(sb, r.id, { estado: "revisar", remito_estado: "revisar", en_curso_desde: null, mensaje: m, paso: "cambio_despachos", cambio_avisado: c.firma, proximo_intento: null })
-  await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": m } })
-  await o.avisar(sb, "Despacho anulado o editado después de la OF", [m, `Marca: ${r.marca}`])
+  // La OF hay que corregirla a mano: su materia prima, si todavía no se descontó, no se descuenta sola
+  const mp = mpAlSalirDelFlujo(r, "cambio")
+  await guardarSi(sb, r.id, { estado: "revisar", remito_estado: "revisar", en_curso_desde: null, mensaje: m, paso: "cambio_despachos", cambio_avisado: c.firma, proximo_intento: null, ...mp.cambios })
+  await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: o.ref, detalle: { "Qué pasó": m, ...(mp.mensaje ? { "Materia prima": mp.mensaje } : {}) } })
+  await o.avisar(sb, "Despacho anulado o editado después de la OF", [m, ...mp.lineas, `Marca: ${r.marca}`])
   return null
 }
 
@@ -413,8 +463,24 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   if (!quedaTiempo(o.inicio, Date.now())) return { sinTiempo: true, hechas: [] }
   const cfg = await configZ1(sb)
   if (!Object.values(cfg).some((c) => llaveZ1(c))) return { hechas: [] }
+  // Materia prima de la OF (19/11): solo con su migración. Sin ella no se piden ni se escriben sus columnas
+  const conMp = await hayMigracionMp(sb)
+  const avisarMp = dep.avisarMp ?? avisarMpOf
+  const columnas = conMp ? `${COLUMNAS_REMITO}, ${COLUMNAS_MP}` : COLUMNAS_REMITO
+  /**
+   * OF viejas para regularizar (spec 3.4): lo que marca el script. Filas que NO están en curso (ya cerradas, o frenadas
+   * en "revisar" / "error") con la OF hecha y la materia prima 'pendiente'. Solo en la pasada (no con "Remitir en Zomatik"
+   * de un pedido). Una fila que el flujo cierra "a mano" o por un cambio de despachos nunca queda acá: en el mismo
+   * guardado su materia prima pasa a 'revisar' (`mpAlSalirDelFlujo`), porque la OF del robot puede sobrar.
+   */
+  const leerAtrasadas = async (): Promise<RemitoDB[]> => {
+    if (!conMp || o.pedidoId) return []
+    const { data, error } = await sb.from("zomatik_remitos").select(columnas).eq("of_mp_estado", "pendiente").eq("of_estado", "ok").in("estado", ["ok", "revisar", "error"]).order("created_at").limit(20)
+    if (error) throw error
+    return (data as unknown as RemitoDB[]) || []
+  }
   const leerRemitos = async () => {
-    let q = sb.from("zomatik_remitos").select(COLUMNAS_REMITO).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
+    let q = sb.from("zomatik_remitos").select(columnas).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
     if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
     const { data, error } = await q
     if (error) throw error
@@ -441,7 +507,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
     )
   }
   let lista = aTrabajar(data)
-  if (!lista.length && !ajustes.length) return { hechas: [] }
+  if (!lista.length && !ajustes.length && !(await leerAtrasadas()).length) return { hechas: [] }
   const quien = `z1·${o.usuario}·${o.inicio.toString(36)}`
   const { data: turno, error: et } = await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
   if (et) throw et
@@ -454,6 +520,110 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
     await sb.rpc("zomatik_robot_tomar", { p_quien: quien, p_segundos: 60 })
   }
   const hechas: ResultadoProcesoZ1["hechas"] = []
+  /**
+   * La materia prima de la OF de una fila (spec 2026-11-19, 3.1). `enFlujo`: la fila está tomada ("generando") y después
+   * siguen remitir la OF y el remito; si no, es una OF vieja marcada 'pendiente' (3.4) y de la fila solo se tocan las
+   * columnas de la materia prima y el contador `sin_stock`.
+   *   "sigue"   quedó 'ok' o 'revisar' (con su mail a Bautista y Juan): el remito del cliente no se frena;
+   *   "espera"  todavía no se pudo (listado ilegible, red, sesión): se reintenta en la próxima pasada, hasta MAX_SIN_STOCK;
+   *   "cambio"  la marca ya estaba puesta o la fila cambió: no se mandó nada.
+   * Todo guardado pide que la fila siga 'pendiente' de materia prima. La marca (`of_mp_at`) se pone ANTES de mandar y
+   * solo si no estaba: con dos procesos a la vez, manda uno solo; con la marca puesta el robot nunca manda otra vez.
+   */
+  const pasoMp = async (r: RemitoDB, nav: NavegadorNp, x: { deposito: number; ref: string; articulo: () => Promise<string>; enFlujo: boolean; alPaso?: (paso: string) => void }): Promise<"sigue" | "espera" | "cambio"> => {
+    const ahora = () => new Date().toISOString()
+    const guardarMp = async (cambios: Record<string, unknown>, sinMarca = false): Promise<boolean> => {
+      let q = sb.from("zomatik_remitos").update({ ...cambios, updated_at: ahora() } as never).eq("id", r.id).eq("of_mp_estado", "pendiente")
+      if (x.enFlujo) q = q.eq("estado", "generando")
+      if (sinMarca) q = q.is("of_mp_at", null)
+      const { data, error } = await q.select("id")
+      if (error) throw error
+      return ((data as unknown[]) || []).length > 0
+    }
+    const cambio = (m: string): "cambio" => {
+      if (x.enFlujo) throw new Cambio(m)
+      hechas.push({ id: r.id, estado: "cambió", mensaje: m })
+      return "cambio"
+    }
+    let marcaNegada = false
+    let falloBase: unknown = null
+    const alPasoMp = async (paso: string, extra?: Record<string, unknown>) => {
+      x.alPaso?.(paso)
+      await renovar()
+      if (paso !== PASO_MP) return
+      const marca = ahora()
+      let puesta = false
+      try {
+        puesta = await guardarMp({ of_mp_at: marca, of_mp_detalle: (extra?.mp as MaterialMp[] | undefined) ?? null, ...(x.enFlujo ? { paso: PASO_MP } : {}) }, true)
+      } catch (e) {
+        // No se sabe si la marca quedó: no se manda (si quedó, el próximo intento solo cuenta)
+        falloBase = e
+        throw e
+      }
+      if (!puesta) {
+        marcaNegada = true
+        throw new Cambio("La materia prima de la OF ya tenía la marca de un envío, o la fila cambió: no se mandó nada")
+      }
+      r.of_mp_at = marca
+    }
+    const desde = [String(r.fecha), r.of_foto_dia].filter((y): y is string => !!y).sort()[0]
+    const res0 = await dep.robot.descontarMpOf(nav, { codigo: r.of_codigo, numero: r.of_numero, deposito: x.deposito, desde, yaEnviado: !!r.of_mp_at }, { hoy: hoyAR(), alPaso: alPasoMp })
+    if (falloBase) throw falloBase
+    if (marcaNegada) return cambio("La materia prima de la OF ya tenía la marca de un envío, o la fila cambió: no se mandó nada")
+    const laOf = r.of_numero || "OF"
+    // "pendiente" cuenta para el mismo tope que remitir la OF y la falta de stock (sin_stock, MAX_SIN_STOCK)
+    const intentos = res0.estado === "pendiente" ? (Number(r.sin_stock) || 0) + 1 : 0
+    const base0 = (res0.mensaje || "").replace(/\s*Se reintenta\.\s*$/, "")
+    const res: ResultadoZ1 = res0.estado === "pendiente" && intentos >= MAX_SIN_STOCK
+      ? { ...res0, estado: "revisar", reintentar: false, mensaje: `${base0} Después de ${intentos} intentos no se pudo descontar la materia prima de la ${laOf}: revisala en Zomatik.` }
+      : res0.estado === "error" ? { ...res0, estado: "revisar" } : res0
+    const act = (detalle: Record<string, unknown>, action?: "crear") => actividadNp(sb, { usuario: o.usuario, ...(action ? { action } : {}), pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: x.ref, detalle })
+    if (res.estado === "ok") {
+      if (!(await guardarMp({ of_mp_estado: "ok", of_mp_mensaje: res.mensaje ?? null, sin_stock: 0, ...(res.mp ? { of_mp_detalle: res.mp } : {}), ...(r.of_mp_at ? {} : { of_mp_at: ahora() }), ...(x.enFlujo ? { paso: "mp_ok" } : {}) })))
+        return cambio(`El remito cambió mientras se descontaba la materia prima de la ${laOf}`)
+      r.of_mp_estado = "ok"
+      r.sin_stock = 0
+      if (res.yaEstaba) await act({ "Qué pasó": "Materia prima de la OF: ya estaba descontada en Zomatik (no se mandó nada)", OF: laOf })
+      else await act({ "Qué pasó": "Materia prima descontada en Zomatik", OF: laOf, "m³": r.m3, ...(res.mp ? { Materiales: textoMateriales(res.mp) } : { Detalle: "Se había mandado en un intento anterior que se cortó: el remito interno ya está en Zomatik" }) }, "crear")
+      if (!x.enFlujo) hechas.push({ id: r.id, estado: "mp_ok", mensaje: res.mensaje ?? null })
+      return "sigue"
+    }
+    if (res.estado === "revisar") {
+      if (!(await guardarMp({ of_mp_estado: "revisar", of_mp_mensaje: res.mensaje, sin_stock: 0 }))) return cambio(`El remito cambió mientras se descontaba la materia prima de la ${laOf}`)
+      r.of_mp_estado = "revisar"
+      r.sin_stock = 0
+      await act({ "Qué pasó": "Materia prima de la OF sin descontar en Zomatik", OF: laOf, Mensaje: res.mensaje, Marca: r.marca, ...(res.recorte ? { "Respuesta de Zomatik (recorte)": res.recorte } : {}) })
+      // Un mail por fila: 'revisar' no se vuelve a tomar (solo si alguien la marca 'pendiente' otra vez)
+      try {
+        const articulo = await x.articulo().catch(() => "")
+        const aviso = await avisarMp(sb, `Zomatik: materia prima sin descontar · ${laOf} · ${x.ref}`, [
+          `${x.ref} · ${r.m3} m³ · ${r.fecha}`,
+          `OF: ${laOf}`,
+          `Artículo: ${articulo || "(sin artículo)"}`,
+          `Motivo: ${res.mensaje || "(sin mensaje)"}`,
+          x.enFlujo ? "El remito del cliente no se frenó: sigue su camino." : "Es una OF que ya estaba hecha, marcada para regularizar.",
+          "El robot no la vuelve a intentar sola: revisá la materia prima de esa OF en Zomatik.",
+          `Marca: ${r.marca}`,
+          ...(res.recorte ? [`Respuesta de Zomatik (recorte): ${res.recorte}`] : []),
+        ])
+        if (!aviso.enviado) console.error("[zomatik-z1] aviso de materia prima:", aviso.motivo)
+      } catch (e) {
+        console.error("[zomatik-z1] aviso de materia prima:", (e as Error)?.message)
+      }
+      if (!x.enFlujo) hechas.push({ id: r.id, estado: "mp_revisar", mensaje: res.mensaje })
+      return "sigue"
+    }
+    // Todavía no se pudo: la fila espera (en el flujo no se remite la OF sin haber intentado la materia prima)
+    const guardo = x.enFlujo
+      ? await guardarMp({ estado: "pendiente", en_curso_desde: null, mensaje: res.mensaje, paso: PASO_MP, proximo_intento: despuesDe(10), sin_stock: intentos })
+      : await guardarMp({ of_mp_mensaje: res.mensaje, sin_stock: intentos })
+    if (!guardo) return cambio(`El remito cambió mientras se descontaba la materia prima de la ${laOf}`)
+    await act({ "Qué pasó": "Materia prima de la OF: todavía no se pudo descontar en Zomatik", OF: laOf, Mensaje: res.mensaje, Intento: `${intentos} de ${MAX_SIN_STOCK}`, ...(res.recorte ? { "Respuesta de Zomatik (recorte)": res.recorte } : {}) })
+    hechas.push({ id: r.id, estado: "pendiente", mensaje: res.mensaje })
+    return "espera"
+  }
+  /** No se puede entrar a Zomatik: no se sigue con nada más en esta pasada */
+  let sinAcceso = false
   try {
     if (ajustes.length) {
       const ra = await trabajarAjustes(sb, ajustes, { usuario: o.usuario, cfg, inicio: o.inicio, manual: !!o.pedidoId, renovar, dep: depAjuste })
@@ -596,9 +766,13 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         // `propio`: se cortó al grabar el remito del robot y ese número está en la NP. No se pisa: los dos quedan nombrados
         const cerrarAMano = async (numeros: string[], propio: string | null = null) => {
           const m = propio ? `${msjRemitoAMano(numeros)}. ${msjDosRemitos(propio, numeros)}` : msjRemitoAMano(numeros)
-          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", ...(propio ? {} : { remito_numero: numeros.join(", ") }), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null })))
+          // La OF del robot (si ya está hecha) puede sobrar: su materia prima, si no se descontó, queda 'revisar' (no se
+          // regulariza sola); si ya se descontó, el mail la nombra igual
+          const mp = mpAlSalirDelFlujo(r, "a_mano")
+          if (!(await guardarSi(sb, r.id, { estado: "ok", remito_estado: "a_mano", ...(propio ? {} : { remito_numero: numeros.join(", ") }), en_curso_desde: null, mensaje: m, paso: "remito_a_mano", ok_at: new Date().toISOString(), proximo_intento: null, ...mp.cambios })))
             throw new Cambio("El remito cambió mientras se generaba")
-          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca, ...(propio ? { "Remito del robot": propio, "Remito a mano": numeros.join(", ") } : {}) } })
+          if (mp.mensaje) r.of_mp_estado = "revisar"
+          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": m, NP: d.np?.numero ?? null, "m³": r.m3, Marca: r.marca, ...(propio ? { "Remito del robot": propio, "Remito a mano": numeros.join(", ") } : {}), ...(mp.lineas.length ? { OF: r.of_numero } : {}), ...(mp.mensaje ? { "Materia prima": mp.mensaje } : {}) } })
           hechas.push({ id: r.id, estado: "ok", mensaje: m })
           try {
             const { data: pc } = r.scheduled_dispatch_id ? await sb.from("scheduled_dispatches").select("clients(name)").eq("id", r.scheduled_dispatch_id).maybeSingle() : { data: null }
@@ -609,6 +783,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
               `Remito que ya estaba en Zomatik: ${numeros.join(", ")}`,
               "El robot no lo hizo para no duplicar: revisá que ese remito cubra estos m³.",
               ...(propio ? [msjDosRemitos(propio, numeros)] : []),
+              ...mp.lineas,
               `Marca: ${r.marca}`,
             ])
             if (!aviso.enviado) console.error("[zomatik-z1] aviso de remito a mano:", aviso.motivo)
@@ -642,11 +817,21 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
             await terminar(of, "OF")
             continue
           }
-          if (!(await guardarSi(sb, r.id, { of_estado: "ok", of_numero: of.numero, of_codigo: of.codigo, paso: "of_ok" }))) throw new Cambio(`El remito cambió mientras se generaba (la ${of.numero} quedó en Zomatik)`)
+          // La OF nace con su materia prima 'pendiente' (en el mismo guardado; sin la migración, como antes)
+          const naceMp = conMp && !r.of_mp_estado
+          if (!(await guardarSi(sb, r.id, { of_estado: "ok", of_numero: of.numero, of_codigo: of.codigo, paso: "of_ok", ...(naceMp ? { of_mp_estado: "pendiente" } : {}) }))) throw new Cambio(`El remito cambió mientras se generaba (la ${of.numero} quedó en Zomatik)`)
+          if (naceMp) r.of_mp_estado = "pendiente"
           r.of_estado = "ok"
           r.of_numero = of.numero ?? null
           r.of_codigo = of.codigo ?? null
           await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `OF en Zomatik: ${of.numero}`, "m³": r.m3 } })
+        }
+        // 1b) La materia prima de la OF (19/11), antes de remitirla: la pantalla "Composicion" que una persona pasa al dar
+        //     de alta la OF. 'ok' o 'revisar' (con su mail): se sigue, el remito del cliente no se frena. Si todavía no se
+        //     pudo, la fila espera y se reintenta. También para un despacho sin pedido (su OF descuenta igual).
+        if (conMp && r.of_mp_estado === "pendiente") {
+          const mp = await pasoMp(r, nav, { deposito, ref, articulo: async () => d.articuloNombre, enFlujo: true, alPaso: (p) => { ultimoPaso = p } })
+          if (mp !== "sigue") continue
         }
         // 2) Despacho sin pedido (sin NP): el remito (y remitir la OF) queda a mano
         if (r.tipo === "suelto") {
@@ -755,6 +940,31 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           }
           await pendienteLargo(m)
         }
+        if (esFallaDeAcceso(e) || /sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) {
+          sinAcceso = true
+          break
+        }
+      }
+    }
+    // Regularizar (spec 3.4): las OF viejas marcadas 'pendiente', de a una, con el tiempo que quede y este mismo turno.
+    // Una FIN con un solo remito interno (el del hormigón) → falta la materia prima. De la fila no se toca nada más.
+    for (const r of sinAcceso ? [] : await leerAtrasadas()) {
+      if (!quedaTiempo(o.inicio, Date.now())) break
+      const llave = llaveZ1(cfg[r.plant_id])
+      const deposito = cfg[r.plant_id]?.deposito
+      if (!llave || !deposito) continue
+      const ref = r.tipo === "suelto" ? `Despacho ${r.remitos_papel || r.marca.slice(-19)}` : `Pedido ${(r.scheduled_dispatch_id || "").slice(0, 8)}`
+      try {
+        if (!nav) {
+          nav = await dep.navegador(llave)
+          await avisarZomatikVolvio(sb, avisarError)
+        }
+        await pasoMp(r, nav, { deposito, ref, articulo: async () => (await datos(sb, r)).articuloNombre, enFlujo: false })
+      } catch (e) {
+        // Red, sesión o base: la fila queda como estaba ('pendiente' de materia prima) y la toma la próxima pasada
+        const m = errorInterno(e) ?? mensajeZomatik(e)
+        console.error("[zomatik-z1] materia prima (regularizar)", r.id, m)
+        hechas.push({ id: r.id, estado: "pendiente", mensaje: m })
         if (esFallaDeAcceso(e) || /sesi[oó]n|entrar a Zomatik|login|ZOMATIK_USER/i.test(m)) break
       }
     }
@@ -808,14 +1018,26 @@ export async function pasadaZ1(usuario: string, o: { dia?: string; sb?: SB; avis
   return { pedidos, creados, avisos }
 }
 
-type EstadoRemito = { id: string; estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso: string | null }
+type EstadoRemito = {
+  id: string; estado: string; remito_estado: string; of_numero: string | null; remito_numero: string | null; mensaje: string | null; fecha: string; paso: string | null
+  /** Materia prima de la OF (null sin la migración o en filas viejas); el motivo, solo si quedó 'revisar' */
+  of_mp_estado: string | null; of_mp_mensaje: string | null
+}
 
 export async function estadoRemitos(ids: string[], sb: SB = sbServicio()): Promise<Record<string, EstadoRemito[]>> {
   if (!ids.length) return {}
-  const { data, error } = await sb.from("zomatik_remitos").select("id, scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha, paso").in("scheduled_dispatch_id", ids).neq("estado", "anulado")
+  const base = "id, scheduled_dispatch_id, estado, remito_estado, of_numero, remito_numero, mensaje, fecha, paso"
+  const leer = (columnas: string) => sb.from("zomatik_remitos").select(columnas).in("scheduled_dispatch_id", ids).neq("estado", "anulado")
+  let { data, error } = await leer(`${base}, of_mp_estado, of_mp_mensaje`)
+  // Sin la migración de la materia prima (42703): lo de siempre
+  if (error && (error as { code?: string }).code === "42703") ({ data, error } = await leer(base))
   if (error) return {}
   const out: Record<string, EstadoRemito[]> = {}
-  for (const r of (data as any[]) || []) (out[r.scheduled_dispatch_id] ||= []).push({ id: r.id, estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha, paso: r.paso ?? null })
+  for (const r of (data as any[]) || [])
+    (out[r.scheduled_dispatch_id] ||= []).push({
+      id: r.id, estado: r.estado, remito_estado: r.remito_estado, of_numero: r.of_numero, remito_numero: r.remito_numero, mensaje: r.mensaje, fecha: r.fecha, paso: r.paso ?? null,
+      of_mp_estado: r.of_mp_estado ?? null, of_mp_mensaje: r.of_mp_estado === "revisar" ? (r.of_mp_mensaje ?? null) : null,
+    })
   return out
 }
 

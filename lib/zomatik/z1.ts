@@ -659,3 +659,149 @@ export const msjRemitoAMano = (numeros: string[]) => `Ya estaba remitido a mano 
 /** Se cortó al grabar el remito del robot (`propio`, en la NP) y además hay uno a mano: los dos quedan nombrados. */
 export const msjDosRemitos = (propio: string, numeros: string[]) => `Puede haber dos remitos: ${propio} (robot) y ${numeros.join(", ")} (a mano), revisalos. El robot no hizo otro.`
 export const MSJ_COMPROBANTES_ILEGIBLES = "No se pudieron leer los comprobantes de la NP en Zomatik (para saber si ya se remitió a mano): no se siguió. Se reintenta."
+
+// ---------------------------------------------------------------------------
+// Materia prima de la OF (docs/specs/2026-11-19-of-descuenta-materia-prima.md; capturas REALES del 19/11)
+//   Una OF hecha a mano pasa por la pantalla "Composicion" (modificar_ordenfabricacioncompo.php?codigo=N): "Continuar"
+//   crea el remito interno (RMI) de materia prima, que es lo que descuenta el stock. El robot se la salteaba.
+// ---------------------------------------------------------------------------
+
+/** Lo que descuenta un material: código de artículo de Zomatik, nombre y toneladas (el valor de `adescontar_<id>`). */
+export type MaterialMp = { codigo: string; nombre: string; toneladas: number }
+
+export type FormularioMp =
+  | { ok: true; campos: CampoForm[]; materiales: MaterialMp[]; multipart: boolean }
+  /** `sin_composicion`: el artículo no tiene composición en Zomatik. `formato`: la pantalla no es la capturada. */
+  | { ok: false; motivo: "sin_composicion" | "formato"; mensaje: string }
+
+export const MSJ_SIN_COMPOSICION = "El artículo de la OF no tiene composición en Zomatik: no hay materia prima para descontar."
+
+/**
+ * La pantalla "Composicion" de la OF `codigoOf` (REAL 19/11, `of-compo.html`): form `grabar_ordenfabricacioncompo.php`
+ * por POST, ocultos `ordenfabricacion` (= la OF) y `fparam` (VACÍO: "Continuar" no lo arma), y un `adescontar_<id interno>` por material con las
+ * toneladas a descontar (composición del artículo × cantidad de la OF). Cada fila trae código de artículo, nombre y
+ * cantidad. Falla cerrado: otro form, otra OF, un campo que no se conoce o repetido, o un valor que no es un número
+ * mayor que 0 → no se manda nada. `campos`: los de la pantalla, en su orden y sin tocar (lo que manda "Continuar").
+ */
+export function formularioMpOf(html: string, codigoOf: number): FormularioMp {
+  const mal = (m: string): FormularioMp => ({ ok: false, motivo: "formato", mensaje: `Zomatik cambió la pantalla de materia prima de la OF (${m}). No se mandó nada.` })
+  const limpio = String(html ?? "").replace(/<!--[\s\S]*?-->/g, "")
+  const forms = (limpio.match(/<form\b[\s\S]*?<\/form>/gi) || []).filter((f) => /ordenfabricacioncompo/i.test((f.match(/<form[^>]*>/i) || [""])[0]))
+  if (forms.length !== 1) return mal(forms.length ? "hay más de un formulario" : "no se abrió la pantalla Composicion")
+  const cab = (forms[0].match(/<form[^>]*>/i) || [""])[0]
+  const f = camposFormulario(limpio, /ordenfabricacioncompo/i)
+  if (!f) return mal("no se abrió la pantalla Composicion")
+  if (!/^grabar_ordenfabricacioncompo\.php$/i.test(f.action || "") || !/\bmethod\s*=\s*["']?post["'\s>]/i.test(cab)) return mal("graba en otro lado")
+  const nombres = f.orden.map((c) => c.nombre)
+  const repetido = nombres.find((n, i) => nombres.indexOf(n) !== i)
+  if (repetido) return mal(`el campo ${repetido} viene repetido`)
+  const desconocido = nombres.find((n) => n !== "ordenfabricacion" && n !== "fparam" && !/^adescontar_\d+$/.test(n))
+  if (desconocido) return mal(`trae un campo que no se conoce: ${desconocido}`)
+  if (f.campos.fparam !== "") return mal(`fparam ${"fparam" in f.campos ? "no viene vacío" : "no está"}`)
+  if (!Number.isInteger(codigoOf) || codigoOf <= 0 || f.campos.ordenfabricacion !== String(codigoOf)) return mal(`es de otra OF: ${f.campos.ordenfabricacion ?? "sin código"} y se esperaba ${codigoOf}`)
+  const aDescontar = f.orden.filter((c) => /^adescontar_\d+$/.test(c.nombre))
+  if (!aDescontar.length) return { ok: false, motivo: "sin_composicion", mensaje: MSJ_SIN_COMPOSICION }
+  const invalido = aDescontar.find((c) => !/^\d+(\.\d+)?$/.test(c.valor) || !(Number(c.valor) > 0))
+  if (invalido) return mal(`${invalido.nombre} vale "${invalido.valor}", no un número mayor que 0`)
+  // El detalle de cada material: la fila de su input (código de artículo · nombre · cantidad · input)
+  const materiales: MaterialMp[] = []
+  for (const tr of forms[0].match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []) {
+    const ids = [...tr.matchAll(/name\s*=\s*["']?(adescontar_\d+)/gi)].map((m) => m[1])
+    if (!ids.length) continue
+    const campo = aDescontar.find((c) => c.nombre === ids[0])
+    const celdas = [...tr.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => textoCelda(m[1].replace(/<input\b[^>]*>/gi, " ")))
+    const nombre = (celdas[1] ?? "").replace(/:\s*$/, "").trim()
+    if (ids.length !== 1 || !campo || !/^\d{3,}$/.test(celdas[0] ?? "") || !nombre) return mal("una fila de material no trae código de artículo y nombre")
+    materiales.push({ codigo: celdas[0], nombre, toneladas: Number(campo.valor) })
+  }
+  if (materiales.length !== aDescontar.length) return mal("los materiales no vienen uno por fila")
+  return { ok: true, campos: f.orden, materiales, multipart: esMultipart(limpio, /ordenfabricacioncompo/i) }
+}
+
+/** Un remito interno del listado: su código, "RMI 0001-00006857" sin el prefijo, la fecha y la OF a la que está ligado. */
+export type FilaRmi = { codigo: number; numero: string; fecha: string; of: string | null }
+
+const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase()
+
+/**
+ * Listado de remitos internos (listado_remitosinternos.php, REAL 19/11, `remitosinternos-listado.html`): Codigo · Fecha ·
+ * Flete · Deposito Origen · Deposito Destino · Observaciones · Remito Fisico · Recibido · OF, con una celda angosta
+ * entre columnas. La columna OF dice "OF 0001-0000NNNN" (vacía si el remito interno no es de una OF). Las columnas se
+ * ubican por el encabezado, no por su posición fija. null (falla cerrado) sin el encabezado o si una fila no tiene esa
+ * forma: con un listado que no se entiende no se puede saber si una OF ya descontó.
+ */
+export function listadoRmi(html: string): FilaRmi[] | null {
+  const filas = String(html ?? "").replace(/<!--[\s\S]*?-->/g, "").match(/<tr\b(?:(?!<tr\b)[\s\S])*?<\/tr>/gi) ?? []
+  const celdasDe = (tr: string) => [...tr.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => textoCelda(m[1]))
+  const iCab = filas.findIndex((tr) => {
+    const c = celdasDe(tr).map(sinTildes)
+    return c.includes("CODIGO") && c.includes("FECHA") && c.includes("OF")
+  })
+  if (iCab < 0) return null
+  const cab = celdasDe(filas[iCab]).map(sinTildes)
+  const [iCod, iFecha, iOf] = [cab.indexOf("CODIGO"), cab.indexOf("FECHA"), cab.indexOf("OF")]
+  const out: FilaRmi[] = []
+  const vistos = new Set<number>()
+  for (const tr of filas.slice(iCab + 1)) {
+    const cod = tr.match(/modificar_remitosinternos\.php\?codigo=(\d+)/i)?.[1]
+    if (!cod && !/\bRMI\s+\d{4}-\d{8}\b/i.test(textoCelda(tr))) continue
+    const c = celdasDe(tr)
+    const num = (c[iCod] ?? "").match(/^RMI\s+(\d{4}-\d{8})$/i)
+    const of = (c[iOf] ?? "").match(/^(?:OF\s+(\d{4}-\d{8}))?$/i)
+    if (!cod || !num || !/^\d{4}-\d{2}-\d{2}$/.test(c[iFecha] ?? "") || !of || vistos.has(Number(cod))) return null
+    vistos.add(Number(cod))
+    out.push({ codigo: Number(cod), numero: num[1], fecha: c[iFecha], of: of[1] ?? null })
+  }
+  return out
+}
+
+/**
+ * ¿Las fechas del listado vienen del más nuevo al más viejo en TODA la lista (ninguna fila más nueva que la anterior)?
+ * Es lo que se vio en las 150 filas reales (20/11). Si no, el corte del listado no dice nada: no se puede contar.
+ */
+export function rmiEnOrden(filas: FilaRmi[]): boolean {
+  return filas.every((x, i) => i === 0 || x.fecha <= filas[i - 1].fecha)
+}
+
+/**
+ * ¿El listado de remitos internos llega hasta antes de `desde` (aaaa-mm-dd)? Viene del más nuevo al más viejo y cortado
+ * (por defecto, los últimos 150): solo si viene en ese orden (`rmiEnOrden`) y la ÚLTIMA fila es anterior a `desde` se
+ * sabe que están todos los de `desde` en adelante. Sin filas, desordenado o si no llega, no se puede asegurar nada.
+ */
+export function rmiLlegaHasta(filas: FilaRmi[], desde: string): boolean {
+  return filas.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(desde) && rmiEnOrden(filas) && filas[filas.length - 1].fecha < desde
+}
+
+/** Cuántos remitos internos tiene la OF `numero` ("0001-00003447") en el listado. */
+export function rmiDeOf(filas: FilaRmi[], numero: string): number {
+  return filas.filter((x) => x.of === numero).length
+}
+
+/**
+ * ¿La OF ya tiene su remito interno de materia prima? (spec 3.1.2). Una OF hecha a mano tiene DOS remitos internos: el
+ * de materia prima (pantalla "Composicion") y el del hormigón (lo crea "remitir la OF", que la pasa a FIN).
+ *   PEN (sin remitir): 0 → falta · 1 o más → ya está.
+ *   FIN (remitida):    1 → falta · 2 o más → ya está.
+ * null = no se sabe (una FIN sin ningún remito interno, o un estado que no se conoce): nunca se manda a ciegas.
+ */
+export function tieneRmiDeMp(estadoOf: string, rmi: number): boolean | null {
+  if (!Number.isInteger(rmi) || rmi < 0) return null
+  const e = String(estadoOf ?? "").toUpperCase()
+  if (e === "PEN") return rmi >= 1
+  if (e === "FIN") return rmi === 0 ? null : rmi >= 2
+  return null
+}
+
+/**
+ * La fila se cierra sin remito del robot y su OF todavía no descontó la materia prima: no se descuenta sola (la OF del
+ * robot puede sobrar). `of`: "OF 0001-00003412".
+ */
+export const msjMpRemitoAMano = (of: string) => `El remito se hizo a mano: revisá si la ${of} del robot sobra antes de descontar`
+export const msjMpCambioDespachos = (of: string) => `Se anularon o editaron despachos después de la OF: revisá si la ${of} del robot sobra o hay que corregirla antes de descontar`
+/** Se suma si la fila ya tenía la marca de un envío que se cortó (pudo llegar a Zomatik). */
+export const MSJ_MP_ENVIO_CORTADO = " (se había mandado la materia prima y se cortó: mirá primero si ya tiene su remito interno)"
+
+/** "CCTS ARENA ESPECIAL (10000004): 0,93 t · …": el detalle de lo descontado, para Actividad. */
+export function textoMateriales(ms: MaterialMp[]): string {
+  return ms.map((m) => `${m.nombre} (${m.codigo}): ${String(Math.round(m.toneladas * 1000) / 1000).replace(".", ",")} t`).join(" · ")
+}
