@@ -22,7 +22,7 @@ import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, matrizDeTablaHtml, type Fila } from "@/lib/zomatik/parseo"
 import type { LlaveAjuste, LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import type { LlaveZ1 } from "@/lib/zomatik/z1-robot"
-import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, cuerpoAutorizarValido, rutaPermitida, rutaDeLocation, rutaEscrituraAjuste, rutaEscrituraNp, rutaEscrituraZ1, rutaLecturaNp } from "@/lib/zomatik/web"
+import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, RUTA_GRABAR_MP, cuerpoAutorizarValido, cuerpoMpValido, rutaPermitida, rutaDeLocation, rutaEscrituraAjuste, rutaEscrituraNp, rutaEscrituraZ1, rutaLecturaNp } from "@/lib/zomatik/web"
 import { camposFormulario } from "@/lib/zomatik/np"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
@@ -88,6 +88,8 @@ type InitPedido = RequestInit & {
   escrituraZ1?: boolean
   /** Z1: la OF que esta llamada puede "remitir" (remitir_ordenfabricacion.php?codigo=N): solo esa, el of_codigo de la fila. */
   ofARemitir?: number | null
+  /** Z1: la OF cuya materia prima se está descontando (pantalla "Composicion"): solo esa, el of_codigo de la fila. */
+  ofMp?: number | null
   /** Ajuste de la NP al finalizar: habilita su grupo, ATADO a esta NP (solo con la llave del ajuste, ver ajuste-servidor.ts). */
   escrituraAjuste?: number
   /** Traer una NP de Zomatik: habilita su grupo de SOLO LECTURA, ATADO a esta NP (web.ts, `rutaLecturaNp`). */
@@ -102,19 +104,24 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
   let cuerpo = init.body
   const seguir = init.redirect !== "manual" // el login lee la cookie de la respuesta, sin seguir
   for (let salto = 0; ; salto++) {
-    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo, init.ofARemitir ?? null)) && !(typeof init.escrituraAjuste === "number" && rutaEscrituraAjuste(ruta, metodo, init.escrituraAjuste)) && !(typeof init.lecturaNp === "number" && rutaLecturaNp(ruta, metodo, init.lecturaNp)))
+    if (!rutaPermitida(ruta, metodo) && !(init.escrituraNp === true && rutaEscrituraNp(ruta, metodo)) && !(init.escrituraZ1 === true && rutaEscrituraZ1(ruta, metodo, init.ofARemitir ?? null, init.ofMp ?? null)) && !(typeof init.escrituraAjuste === "number" && rutaEscrituraAjuste(ruta, metodo, init.escrituraAjuste)) && !(typeof init.lecturaNp === "number" && rutaLecturaNp(ruta, metodo, init.lecturaNp)))
       throw new ZomatikError("ruta_no_permitida", `Ruta de Zomatik no permitida: ${metodo} ${ruta.split("?")[0]}`)
     // Autorizar una NP: en el cuerpo solo "autorizar=<entero>" (nada más se puede mandar a esa ruta)
     if (ruta === RUTA_AUTORIZAR_NP) {
       const texto = typeof cuerpo === "string" ? cuerpo : cuerpo instanceof Uint8Array ? Buffer.from(cuerpo).toString("latin1") : null
       if (!cuerpoAutorizarValido(texto)) throw new ZomatikError("ruta_no_permitida", "Autorizar NP: el cuerpo tiene que ser solo autorizar=<código>")
     }
+    // Materia prima de una OF: en el cuerpo solo ordenfabricacion=<la OF de esta llamada>, fparam y adescontar_<id>
+    if (ruta.toLowerCase() === RUTA_GRABAR_MP) {
+      const texto = typeof cuerpo === "string" ? cuerpo : cuerpo instanceof Uint8Array ? Buffer.from(cuerpo).toString("latin1") : null
+      if (metodo !== "POST" || !cuerpoMpValido(texto, init.ofMp ?? null)) throw new ZomatikError("ruta_no_permitida", "Materia prima de la OF: el cuerpo tiene que ser el de esa OF (ordenfabricacion, fparam y adescontar_<id>)")
+    }
     await pausa()
     const ctrl = new AbortController()
     const corte = setTimeout(() => ctrl.abort(), init.timeoutMs && init.timeoutMs > 0 ? Math.min(init.timeoutMs, TIMEOUT_MS) : TIMEOUT_MS)
     let r: Response
     try {
-      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ofARemitir: _o, lecturaNp: _l, timeoutMs: _t, ...resto } = init
+      const { escrituraNp: _e, escrituraZ1: _z, escrituraAjuste: _a, ofARemitir: _o, ofMp: _m, lecturaNp: _l, timeoutMs: _t, ...resto } = init
       r = await fetch(`${ZOMATIK_BASE}/${ruta}`, {
         ...resto,
         method: metodo,
@@ -536,6 +543,8 @@ export async function navegadorLectura(o: { timeoutMs?: number } = {}): Promise<
  * `z1-servidor.ts` después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida) en la base.
  * "Remitir" una OF (remitir_ordenfabricacion.php?codigo=N) solo con `get(ruta, { ofARemitir: N })` en esa misma llamada:
  * el robot pasa el of_codigo de la fila; sin él, o con otro código en la ruta, se rechaza antes de salir.
+ * La materia prima de una OF (pantalla "Composicion", 19/11) igual: abrirla y mandarla solo con `{ ofMp: N }` en esa
+ * misma llamada, y el cuerpo del POST solo con esa OF (`cuerpoMpValido`).
  */
 export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
   if (!llave || llave.remitir !== true) throw new ZomatikError("ruta_no_permitida", "La OF y el remito automáticos están apagados para esta planta")
@@ -549,10 +558,10 @@ export async function navegadorZ1(llave: LlaveZ1): Promise<NavegadorNp> {
   }
   return {
     async get(ruta, opciones) {
-      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true, ofARemitir: opciones?.ofARemitir ?? null }), ruta)
+      return leer(await pedir(s.cookie, ruta, { redirect: "manual", escrituraZ1: true, ofARemitir: opciones?.ofARemitir ?? null, ofMp: opciones?.ofMp ?? null }), ruta)
     },
-    async post(ruta, cuerpo, contentType) {
-      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true }), ruta)
+    async post(ruta, cuerpo, contentType, opciones) {
+      return leer(await pedir(s.cookie, ruta, { method: "POST", headers: { "Content-Type": contentType }, body: cuerpo as any, redirect: "manual", escrituraZ1: true, ofMp: opciones?.ofMp ?? null }), ruta)
     },
     async sucursal(id) {
       return elegirSucursal(s.cookie, id)

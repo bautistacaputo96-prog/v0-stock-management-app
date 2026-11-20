@@ -119,6 +119,51 @@ export const COMPROBANTES_REMITO = ["7", "19"] as const
 
 const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
 
+/** "Continuar" de la pantalla "Composicion" de una OF: sin parámetros en la ruta; la OF va en el cuerpo. */
+export const RUTA_GRABAR_MP = "grabar_ordenfabricacioncompo.php"
+
+/** Los campos de un cuerpo multipart/form-data o urlencoded, en orden. null si no se entiende entero (nunca a medias). */
+function camposDeCuerpo(cuerpo: string): [string, string][] | null {
+  const borde = cuerpo.match(/^(--[^\r\n]+)\r\n/)?.[1]
+  if (borde) {
+    const partes = cuerpo.split(borde)
+    if (partes[0] !== "" || partes[partes.length - 1] !== "--\r\n") return null
+    const out: [string, string][] = []
+    for (const parte of partes.slice(1, -1)) {
+      const m = parte.match(/^\r\nContent-Disposition: form-data; name="([^"\r\n]*)"\r\n\r\n([\s\S]*)\r\n$/)
+      if (!m) return null
+      out.push([m[1], m[2]])
+    }
+    return out
+  }
+  if (!cuerpo) return null
+  const out: [string, string][] = []
+  for (const par of cuerpo.split("&")) {
+    const i = par.indexOf("=")
+    if (i <= 0) return null
+    const de = (t: string) => t.replace(/\+/g, " ").replace(/%([0-9a-f]{2})/gi, (_x, h: string) => String.fromCharCode(parseInt(h, 16)))
+    out.push([de(par.slice(0, i)), de(par.slice(i + 1))])
+  }
+  return out
+}
+
+/**
+ * Lo único que se le puede mandar a `grabar_ordenfabricacioncompo.php`: UNA vez `ordenfabricacion` = la OF que se está
+ * trabajando, a lo sumo un `fparam`, y uno o más `adescontar_<id>` (cada id una sola vez) con un número mayor que 0.
+ * Cualquier otro campo, otra OF o un cuerpo que no se entiende entero: no sale.
+ */
+export function cuerpoMpValido(cuerpo: string | null | undefined, ofMp: number | null | undefined): boolean {
+  if (typeof ofMp !== "number" || !Number.isInteger(ofMp) || ofMp <= 0) return false
+  const campos = camposDeCuerpo(String(cuerpo ?? ""))
+  if (!campos) return false
+  const nombres = campos.map(([k]) => k)
+  if (new Set(nombres).size !== nombres.length) return false
+  if (campos.filter(([k, v]) => k === "ordenfabricacion" && v === String(ofMp)).length !== 1) return false
+  const materiales = campos.filter(([k]) => /^adescontar_\d+$/.test(k))
+  if (!materiales.length || materiales.some(([, v]) => !/^\d+(\.\d+)?$/.test(v) || !(Number(v) > 0))) return false
+  return campos.every(([k]) => k === "ordenfabricacion" || k === "fparam" || /^adescontar_\d+$/.test(k))
+}
+
 /**
  * Rutas de la OF y el remito (spec 4.3, 4.4 y 26). La OF como el robot de Concretus (relevado en vivo el 22/10, en la
  * sucursal 17); el remito según 4.4 (SUPUESTO hasta la captura con Bautista, 26.6):
@@ -143,17 +188,29 @@ const Z1_PROHIBIDO = /[?&](fborrar|faccion|fitems|fautorizar|borrar)=/i
  *   GET  remitir_ordenfabricacion.php?codigo=N             "remitir" la OF (el lapicito de "Remitido" en el listado, REAL
  *                                                          13/11: pasa de PEN a FIN y da el stock). SOLO con `ofARemitir` = N,
  *                                                          el of_codigo de la fila; con cualquier otro código, no.
- * Nunca borrar, anular ni modificar uno existente.
+ * Materia prima de la OF (docs/specs/2026-11-19-of-descuenta-materia-prima.md, REAL 19/11), SOLO con `ofMp` = N, el
+ * of_codigo de la fila que se está trabajando, en esa misma llamada:
+ *   GET  modificar_ordenfabricacioncompo.php?codigo=N      la pantalla "Composicion" de ESA OF
+ *   POST grabar_ordenfabricacioncompo.php                  "Continuar": crea el remito interno de materia prima. El cuerpo
+ *                                                          lo controla `cuerpoMpValido` antes de salir (ordenfabricacion=N
+ *                                                          y solo fparam / adescontar_<id>)
+ *   GET  listado_remitosinternos.php / POST …?enviado=1    LECTURA: cuántos remitos internos tiene la OF
+ * Nunca borrar, anular ni modificar uno existente (ni borrar_, grabar_ o modificar_remitosinternos).
  */
-export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST", ofARemitir: number | null = null): boolean {
+export function rutaEscrituraZ1(path: string, metodo: "GET" | "POST", ofARemitir: number | null = null, ofMp: number | null = null): boolean {
   const p = path.replace(/^\/+/, "")
   if (/^remitir_ordenfabricacion\.php/i.test(p))
     return metodo === "GET" && typeof ofARemitir === "number" && Number.isInteger(ofARemitir) && ofARemitir > 0 && p.toLowerCase() === `remitir_ordenfabricacion.php?codigo=${ofARemitir}`
+  // La pantalla "Composicion": solo la de la OF que se está trabajando; abrirla por GET y "Continuar" por POST
+  if (/^(modificar|grabar)_ordenfabricacioncompo\.php/i.test(p)) {
+    if (typeof ofMp !== "number" || !Number.isInteger(ofMp) || ofMp <= 0) return false
+    return metodo === "GET" ? p.toLowerCase() === `modificar_ordenfabricacioncompo.php?codigo=${ofMp}` : p.toLowerCase() === RUTA_GRABAR_MP
+  }
   if (esRutaAutorizar(p, metodo)) return true
   if (Z1_PROHIBIDO.test(p)) return false
-  if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos)\.php\?enviado=1$/i.test(p) || /^paginar_remitos\.php(\?rnd=\d+)?$/i.test(p)
+  if (metodo === "POST") return /^grabar_(ordenfabricacion|remitos)\.php\?codigo=0$/i.test(p) || /^listado_(ordenfabricacion|remitos|remitosinternos)\.php\?enviado=1$/i.test(p) || /^paginar_remitos\.php(\?rnd=\d+)?$/i.test(p)
   if (/^modificar_ordenfabricacion\.php(\?codigo=\d+)?$/i.test(p)) return true
-  if (/^listado_(ordenfabricacion|remitos)\.php$/i.test(p)) return true
+  if (/^listado_(ordenfabricacion|remitos|remitosinternos)\.php$/i.test(p)) return true
   if (/^manage_ordenfabricacion\.php\?/i.test(p)) return /[?&]ordenfabricacion_unico=[A-Za-z0-9._-]+/.test(p) && /[?&]ordenfabricacion=0(&|$)/.test(p)
   if (/^modificar_remitos\.php\?(pedido|codigo)=\d+$/i.test(p)) return true
   // Abrir la NP para ver la marca antes de autorizarla (solo GET, no graba)
