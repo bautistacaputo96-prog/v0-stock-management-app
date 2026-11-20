@@ -18,7 +18,7 @@
 import { sbServicio } from "@/lib/auth/servidor"
 import { mensajeZomatik, navegadorAjuste } from "@/lib/zomatik/cliente"
 import {
-  COLUMNAS_EDICION, COLUMNAS_NP, PENDIENTE_LARGO_INTENTOS, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
+  COLUMNAS_EDICION, COLUMNAS_NP, PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, PENDIENTE_LARGO_INTENTOS, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
   editableDe, esFallaDeAcceso, faltaMigracionEdicion, llaveEdicion, plantasNp, sincronizarPedido, tipoDeFalla,
   type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB,
 } from "@/lib/zomatik/np-servidor"
@@ -252,9 +252,13 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
       }
       // Paso 5: errores de acá van a consola (la edición ya está "ok")
       try {
-        // Si después de editarla la NP volvió a "por autorizar", la autoriza la pasada de siempre (sinAutorizar)
-        if (porAutorizar === true)
-          await sb.from("zomatik_np").update({ paso: "sin_autorizar", mensaje: "NP sin autorizar en Zomatik (después de editarla). Se reintenta.", updated_at: new Date().toISOString() } as never).eq("id", a.np_id).eq("estado", "ok")
+        // Si después de editarla la NP volvió a "por autorizar", o subió la cantidad y no se pudo saber, deja de figurar
+        // "autorizada" y la autoriza la pasada de siempre (sinAutorizar). Solo desde "autorizada": no pisa una NP que no se
+        // autoriza sola (autorizar_revisar). Como el ajuste al finalizar
+        if (!nada && (porAutorizar === true || (porAutorizar === null && objetivo > m3Antes + TOL_AJUSTE))) {
+          const mensaje = porAutorizar ? "NP sin autorizar en Zomatik (después de editarla). Se reintenta." : "Se editó la NP: falta confirmar que siga autorizada en Zomatik. Se reintenta."
+          await sb.from("zomatik_np").update({ paso: PASO_SIN_AUTORIZAR, mensaje, updated_at: new Date().toISOString() } as never).eq("id", a.np_id).eq("estado", "ok").eq("paso", PASO_AUTORIZADA)
+        }
         // El despacho que había quedado afuera de un remito ahora entra (solo si el pedido ya empezó a remitirse)
         if (pedidoId && llaveZ1(c.cfg[a.plant_id])) {
           const { data: rs } = await sb.from("zomatik_remitos").select("id").eq("scheduled_dispatch_id", pedidoId).neq("estado", "anulado").limit(1)

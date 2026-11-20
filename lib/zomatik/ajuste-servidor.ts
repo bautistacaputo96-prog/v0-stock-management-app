@@ -445,7 +445,9 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
         }
         // Al cambiarle la cantidad, Zomatik vuelve la NP a "por autorizar" (20/11, NP 0001-00001201: sin el link REMITO y
         // sin pendientes, el remito fallaba). Si quedó así, o no se pudo saber, deja de figurar "autorizada" y Z1 la
-        // autoriza antes del remito, en esta misma pasada (autorizar una NP ya autorizada no hace nada). Como la edición
+        // autoriza antes del remito, en esta misma pasada (autorizar una NP ya autorizada no hace nada). Solo desde
+        // "autorizada": no pisa una NP que no se autoriza sola (autorizar_revisar). La edición hace lo mismo
+        // (edicion-servidor.ts), salvo que ahí "no se pudo saber" cuenta solo si la cantidad subió
         if (porAutorizar !== false) {
           const mensaje = porAutorizar ? "NP sin autorizar en Zomatik (después de ajustarla). Se reintenta." : "Se ajustó la NP: falta confirmar que siga autorizada en Zomatik. Se reintenta."
           const { error: ea } = await sb.from("zomatik_np").update({ paso: PASO_SIN_AUTORIZAR, mensaje, updated_at: new Date().toISOString() } as never).eq("id", a.np_id).eq("estado", "ok").eq("paso", PASO_AUTORIZADA)
