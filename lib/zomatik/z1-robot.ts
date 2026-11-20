@@ -13,6 +13,8 @@
  *   antes de grabar (usado: el siguiente, hasta 5; talonario terminado: "revisar" y aviso) → sucursal 18 → los
  *   comprobantes de la NP (si ya tiene un remito que no es nuestro, hecho a mano, no se graba: 10/11) → Grabar →
  *   listado por número + la marca → ok.
+ * Materia prima de la OF (19/11, `descontarMpOf`): entre la OF y remitirla, la pantalla "Composicion" que una persona
+ *   pasa al dar de alta la OF. Se cuentan los remitos internos de la OF antes y después; se manda UNA sola vez.
  * Si una respuesta no tiene la forma esperada, se frena SIN GRABAR y queda un recorte para Actividad.
  */
 import {
@@ -23,7 +25,7 @@ import {
   CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, datosClienteRemito, esItemDe, esMultipart, fparamOf, formularioOf,
   formularioRemito, itemsRemito, listaOf, listadoOf, listadoRemitos, MSJ_COMPROBANTES_ILEGIBLES, msjRemitoAMano, numeroRemitoLibre, ofNuevas, opcionDeSelect, paginadoDe,
   registrosTotal, remitosAjenos, siguienteNumeroRemito, tieneDeposito,
-  tieneTransporte, type FilaOf, type RemitoNuestro,
+  tieneTransporte, formularioMpOf, listadoRmi, rmiDeOf, rmiLlegaHasta, tieneRmiDeMp, type FilaOf, type MaterialMp, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import { MSJ_NP_NO_AJUSTADA, comprobantesDeNp } from "@/lib/zomatik/ajuste"
@@ -50,6 +52,10 @@ export type ResultadoZ1 = {
   sinStock?: boolean
   /** No se grabó: la NP ya tiene estos remitos hechos a mano (10/11). Quien llama cierra la fila como "a mano". */
   aMano?: string[]
+  /** Materia prima de la OF: lo que se mandó a descontar (artículo y toneladas de cada material) */
+  mp?: MaterialMp[]
+  /** Materia prima de la OF: no se mandó nada porque la OF ya tenía su remito interno de materia prima */
+  yaEstaba?: boolean
 }
 
 export type OpcionesZ1 = {
@@ -262,6 +268,23 @@ export type DatosRemitirOf = {
  *     sucursal, formato) o se cortó la red o la sesión. Es idempotente: si ya quedó FIN, el GET no se repite.
  * `grabado` = se mandó el GET.
  */
+/** La fila de nuestra OF en el listado; una anomalía (→ revisar) o por qué no se pudo leer (→ pendiente). */
+async function filaDeOf(nav: NavegadorNp, d: { numero: string; codigo: number; deposito: number; desde: string }, hoy: string): Promise<{ fila: FilaOf } | { anomalia: string } | { ilegible: string; recorte?: string }> {
+  const ofTexto = `OF ${d.numero}`
+  let todas: FilaOf[]
+  try {
+    todas = await listarOf(nav, d.deposito, d.desde < hoy ? d.desde : hoy, hoy)
+  } catch (e) {
+    if (e instanceof Freno) return { ilegible: `No se pudo leer el listado de OF de Zomatik: ${e.message.replace(/\s*No se (mandó nada|sigue)\.\s*$/, "")}.`, recorte: e.recorte }
+    throw e
+  }
+  const filas = todas.filter((x) => x.numero === d.numero)
+  if (!filas.length) return { anomalia: `La ${ofTexto} no aparece en el listado de OF de Zomatik (desde el ${d.desde}).` }
+  if (filas.length > 1) return { anomalia: `La ${ofTexto} figura ${filas.length} veces en el listado de OF de Zomatik.` }
+  if (filas[0].codigo !== d.codigo) return { anomalia: `La ${ofTexto} del listado de Zomatik tiene otro código (${filas[0].codigo ?? "sin link"}; el sistema tiene ${d.codigo}).` }
+  return { fila: filas[0] }
+}
+
 export async function remitirOf(nav: NavegadorNp, d: DatosRemitirOf, o: OpcionesZ1): Promise<ResultadoZ1> {
   const PASO = "remitir_of"
   const numero = String(d.numero ?? "").match(/\d{4}-\d{8}/)?.[0] ?? null
@@ -273,21 +296,7 @@ export async function remitirOf(nav: NavegadorNp, d: DatosRemitirOf, o: Opciones
     estado.paso = PASO
     if (typeof d.codigo !== "number" || !Number.isInteger(d.codigo) || d.codigo <= 0) throw dato("La OF no tiene código de Zomatik: no se puede remitir.")
     if (!numero) throw dato(`No se entiende el número de la OF ("${d.numero ?? ""}"): no se puede remitir.`)
-    /** La fila de nuestra OF en el listado; una anomalía (→ revisar) o por qué no se pudo leer (→ pendiente). */
-    const leer = async (): Promise<{ fila: FilaOf } | { anomalia: string } | { ilegible: string; recorte?: string }> => {
-      let todas: FilaOf[]
-      try {
-        todas = await listarOf(nav, d.deposito, d.desde < o.hoy ? d.desde : o.hoy, o.hoy)
-      } catch (e) {
-        if (e instanceof Freno) return { ilegible: `No se pudo leer el listado de OF de Zomatik: ${e.message.replace(/\s*No se (mandó nada|sigue)\.\s*$/, "")}.`, recorte: e.recorte }
-        throw e
-      }
-      const filas = todas.filter((x) => x.numero === numero)
-      if (!filas.length) return { anomalia: `La ${ofTexto} no aparece en el listado de OF de Zomatik (desde el ${d.desde}).` }
-      if (filas.length > 1) return { anomalia: `La ${ofTexto} figura ${filas.length} veces en el listado de OF de Zomatik.` }
-      if (filas[0].codigo !== d.codigo) return { anomalia: `La ${ofTexto} del listado de Zomatik tiene otro código (${filas[0].codigo ?? "sin link"}; el sistema tiene ${d.codigo}).` }
-      return { fila: filas[0] }
-    }
+    const leer = () => filaDeOf(nav, { numero, codigo: d.codigo as number, deposito: d.deposito, desde: d.desde }, o.hoy)
     await aRebucret(nav)
     const antes = await leer()
     if ("ilegible" in antes) return pendiente(antes.ilegible, antes.recorte)
@@ -308,6 +317,122 @@ export async function remitirOf(nav: NavegadorNp, d: DatosRemitirOf, o: Opciones
     return revisar(`La ${ofTexto} sigue PEN después de remitirla${no ? ` (Zomatik dijo: ${no})` : ""}.`, recorte(g.html), true)
   })
   // Todo "pendiente" de este paso (listado ilegible, red o sesión) cuenta para el tope, como la falta de stock
+  return res.estado === "pendiente" ? { ...res, sinStock: true } : res
+}
+
+// ---------------------------------------------------------------------------
+// Materia prima de la OF (REAL 19/11): la pantalla "Composicion", que crea el remito interno que descuenta el stock
+// ---------------------------------------------------------------------------
+
+/** El paso que se guarda ANTES de mandar la materia prima (junto con la marca `of_mp_at`, que es la que manda). */
+export const PASO_MP = "mp_of"
+
+export type DatosMpOf = {
+  /** of_codigo de la fila (la única OF cuya pantalla "Composicion" deja abrir y mandar el navegador) */
+  codigo: number | null
+  /** of_numero de la fila ("OF 0001-00003412") */
+  numero: string | null
+  deposito: number
+  /** Desde qué día se buscan la OF y sus remitos internos (el del despacho o el de la foto, el más viejo), aaaa-mm-dd */
+  desde: string
+  /** La fila ya tiene la marca de un envío anterior (pudo llegar a Zomatik): solo se cuenta, NUNCA se manda otra vez */
+  yaEnviado: boolean
+}
+
+/** Días para atrás que pide la búsqueda por fechas de remitos internos, para ver que llega antes de `desde`. */
+const MARGEN_RMI_DIAS = 7
+
+/**
+ * Cuántos remitos internos (RMI) tiene la OF en Zomatik. Solo lectura. El listado por defecto trae los últimos 150: si
+ * su última fila no es anterior a `desde`, se busca por fechas (`bus_fechacred` / `bus_fechacreh`; esa respuesta NO
+ * está capturada: se le exige lo mismo). Si tampoco llega, o algo no se entiende, "ilegible": no se sigue.
+ */
+async function contarRmi(nav: NavegadorNp, numero: string, desde: string, hoy: string): Promise<{ n: number } | { ilegible: string; recorte?: string }> {
+  const ileg = (m: string, html?: string) => ({ ilegible: `No se pudo leer el listado de remitos internos de Zomatik: ${m}.`, ...(html ? { recorte: recorte(html) } : {}) })
+  const pag = await nav.get("listado_remitosinternos.php")
+  if (sucursalDe(pag.html) !== SUCURSAL_REBUCRET) return ileg("vino de otra sucursal (otro sistema la cambió)", pag.html)
+  let filas = listadoRmi(pag.html)
+  if (!filas) return ileg("Zomatik cambió el formato", pag.html)
+  if (!rmiLlegaHasta(filas, desde)) {
+    const f = camposFormulario(pag.html, /listado_remitosinternos\.php\?enviado=1/i)
+    if (!f || !("bus_fechacred" in f.campos) || !("bus_fechacreh" in f.campos)) return ileg(`no llega hasta el ${desde} y no trae el buscador por fechas`, pag.html)
+    const campos = { ...f.campos, exportar: "0", bus_numero: "", bus_fechacred: restarDias(desde, MARGEN_RMI_DIAS), bus_fechacreh: diaSiguiente(hoy) }
+    const r = await nav.post("listado_remitosinternos.php?enviado=1", ascii(queryLatin1(Object.entries(campos))), "application/x-www-form-urlencoded")
+    if (sucursalDe(r.html) !== SUCURSAL_REBUCRET) return ileg("la búsqueda vino de otra sucursal (otro sistema la cambió)", r.html)
+    filas = listadoRmi(r.html)
+    if (!filas) return ileg("Zomatik cambió el formato de la búsqueda", r.html)
+    if (!rmiLlegaHasta(filas, desde)) return ileg(`no llega hasta el ${desde}, ni buscando por fechas`, r.html)
+  }
+  return { n: rmiDeOf(filas, numero) }
+}
+
+/**
+ * Manda "Continuar" de la pantalla "Composicion" de la OF. `campos`: lo que se manda; HOY, los que trajo la pantalla,
+ * en su orden y sin tocar (lo que hace una persona). Queda aparte para el paso siguiente (mandar el consumo real), que
+ * necesita el mapa material del sistema ↔ artículo de Zomatik (spec, sección 4).
+ */
+async function enviarMp(nav: NavegadorNp, codigoOf: number, multipart: boolean, campos: CampoForm[], boundary: string): Promise<RespuestaNav> {
+  if (multipart) {
+    const m = multipartLatin1(campos, boundary)
+    return nav.post("grabar_ordenfabricacioncompo.php", m.cuerpo, m.tipo, { ofMp: codigoOf })
+  }
+  return nav.post("grabar_ordenfabricacioncompo.php", ascii(queryLatin1(campos.map((c) => [c.nombre, c.valor]))), "application/x-www-form-urlencoded", { ofMp: codigoOf })
+}
+
+/**
+ * Descuenta la materia prima de una OF que ya existe (PEN o FIN), como una persona en la pantalla "Composicion":
+ *   1. Sucursal 18. Se cuentan los remitos internos de la OF y DESPUÉS se lee su fila en el listado de OF (en ese orden:
+ *      si alguien la remite en el medio, queda FIN con 0 y no se sabe; al revés pasaría por "ya está").
+ *   2. `tieneRmiDeMp`: ya está → ok sin mandar nada (`yaEstaba`); no se sabe → pendiente.
+ *   3. GET de la pantalla atado a ESA OF (`ofMp`) y los controles de `formularioMpOf`. Si alguno falla, "revisar" sin
+ *      mandar (sin composición: con ese texto).
+ *   4. `alPaso(PASO_MP, { mp })` ANTES del POST: quien llama pone la marca en la base en una sola sentencia y, si no la
+ *      pudo poner (otro proceso ya la puso, o la fila cambió), tira y no se manda nada.
+ *   5. POST con los mismos campos y valores de la pantalla, y se vuelve a contar: exactamente uno más → ok.
+ * NUNCA se manda dos veces: con `yaEnviado` (la marca de un intento anterior) solo se cuenta; si el remito interno no
+ * está, "revisar" (no se sabe si el envío llegó). La respuesta del POST no está capturada: no se usa para decidir.
+ * "pendiente" (listado ilegible o que no llega, otra sucursal, red o sesión) cuenta para el tope (`sinStock`).
+ * `grabado` = se mandó el POST (o pudo mandarse).
+ */
+export async function descontarMpOf(nav: NavegadorNp, d: DatosMpOf, o: OpcionesZ1): Promise<ResultadoZ1> {
+  const boundary = o.boundary || `----rebucret${Date.now().toString(36)}`
+  const numero = String(d.numero ?? "").match(/\d{4}-\d{8}/)?.[0] ?? null
+  const ofTexto = numero ? `OF ${numero}` : "OF"
+  const revisar = (m: string, corte?: string, grabado = false): ResultadoZ1 => ({ estado: "revisar", mensaje: m, paso: PASO_MP, aviso: "Materia prima de la OF sin descontar", grabado, ...(corte ? { recorte: corte } : {}) })
+  const pendiente = (m: string, corte?: string, grabado = false): ResultadoZ1 => ({ estado: "pendiente", mensaje: `${m} Se reintenta.`, paso: PASO_MP, reintentar: true, grabado, ...(corte ? { recorte: corte } : {}) })
+  const res = await ejecutar(o, async (marcar, estado) => {
+    estado.paso = PASO_MP
+    const codigo = d.codigo
+    if (typeof codigo !== "number" || !Number.isInteger(codigo) || codigo <= 0) return revisar("La OF no tiene código de Zomatik: no se puede descontar su materia prima.")
+    if (!numero) return revisar(`No se entiende el número de la OF ("${d.numero ?? ""}"): no se puede descontar su materia prima.`)
+    const desde = d.desde < o.hoy ? d.desde : o.hoy
+    await aRebucret(nav)
+    const antes = await contarRmi(nav, numero, desde, o.hoy)
+    if ("ilegible" in antes) return pendiente(antes.ilegible, antes.recorte, d.yaEnviado)
+    const of = await filaDeOf(nav, { numero, codigo, deposito: d.deposito, desde }, o.hoy)
+    if ("ilegible" in of) return pendiente(of.ilegible, of.recorte, d.yaEnviado)
+    if ("anomalia" in of) return revisar(`${of.anomalia} No se descontó la materia prima.`, undefined, d.yaEnviado)
+    const ya = tieneRmiDeMp(of.fila.estado, antes.n)
+    if (ya === null) return pendiente(`La ${ofTexto} figura ${of.fila.estado} con ${antes.n} remitos internos en Zomatik: no se puede saber si ya descontó la materia prima.`, undefined, d.yaEnviado)
+    if (ya) return { estado: "ok", mensaje: d.yaEnviado ? null : `La ${ofTexto} ya tenía su remito interno de materia prima en Zomatik: no se mandó nada.`, numero: ofTexto, codigo, paso: "mp_ok", grabado: d.yaEnviado, yaEstaba: !d.yaEnviado }
+    // Un envío anterior pudo llegar y el remito interno no está: no se sabe. Nunca un segundo envío
+    if (d.yaEnviado) return revisar(`Se mandó la materia prima de la ${ofTexto} y se cortó; el remito interno no aparece en Zomatik. No se manda otra vez (para no descontar dos veces): revisala en Zomatik.`, undefined, true)
+    const pag = await nav.get(`modificar_ordenfabricacioncompo.php?codigo=${codigo}`, { ofMp: codigo })
+    if (sucursalDe(pag.html) !== SUCURSAL_REBUCRET) return pendiente(`La pantalla de materia prima de la ${ofTexto} vino de otra sucursal (otro sistema la cambió). No se mandó nada.`, recorte(pag.html))
+    const f = formularioMpOf(pag.html, codigo)
+    if (!f.ok) return revisar(f.motivo === "sin_composicion" ? `${f.mensaje} (${ofTexto})` : f.mensaje, recorte(pag.html))
+    await aRebucret(nav)
+    // La marca, ANTES de mandar: si quien llama no la puede poner, tira y no sale nada
+    await marcar(PASO_MP, { mp: f.materiales })
+    estado.grabado = true
+    const g = await enviarMp(nav, codigo, f.multipart, f.campos, boundary)
+    const no = rechazo(g)
+    const despues = await contarRmi(nav, numero, desde, o.hoy)
+    if ("ilegible" in despues) return pendiente(`Se mandó la materia prima de la ${ofTexto}, pero no se pudo verificar: ${despues.ilegible}`, despues.recorte ?? recorte(g.html), true)
+    if (despues.n === antes.n + 1) return { estado: "ok", mensaje: null, numero: ofTexto, codigo, paso: "mp_ok", grabado: true, mp: f.materiales }
+    return revisar(`Se mandó la materia prima de la ${ofTexto} y ${despues.n === antes.n ? "el remito interno no apareció" : `sus remitos internos pasaron de ${antes.n} a ${despues.n}`} en Zomatik${no ? ` (Zomatik dijo: ${no})` : ""}. No se manda otra vez: revisala en Zomatik.`, recorte(g.html), true)
+  })
+  // Todo "pendiente" de este paso (listado ilegible, red o sesión) cuenta para el tope, como remitir la OF
   return res.estado === "pendiente" ? { ...res, sinStock: true } : res
 }
 
