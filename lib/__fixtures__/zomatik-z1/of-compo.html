@@ -1,0 +1,46 @@
+<!-- REAL 19/11/2026 (REBUCRET, sucursal 18): modificar_ordenfabricacioncompo.php?codigo=8271, la "segunda pantalla" que
+     aparece después del alta de una OF (el navegador llega por la redirección de grabar_ordenfabricacion.php?codigo=0).
+     OF de prueba de 1 m³ de un H-612 (CAN). Los valores son toneladas = composición del artículo × cantidad de la OF.
+     El botón "Continuar" llama a Validar() → document.frm_ordenfabricacion.submit(). Capturada sin confirmar. -->
+<html><head><script>
+	function Validar(){
+		var d=document.frm_ordenfabricacion
+		var error='';
+		if(error!=''){
+			alert('El formulario está incompleto o contiene errores: \n\n'+error);
+		}else{
+			d.submit();
+		}
+	}
+</script></head><body>
+<form method="post" action="" name="frm_selsuc"><select name="selsuc" onchange="this.form.submit()"><option value="17">RUTA 25 - CONCRETUS</option><option value="18" selected>REBUCRET</option></select></form>
+Composicion
+<form enctype="multipart/form-data" action="grabar_ordenfabricacioncompo.php" method="POST" name="frm_ordenfabricacion" id="frm_ordenfabricacion" onsubmit="return validar(true);">
+	<input type="hidden" name="ordenfabricacion" id="ordenfabricacion" value="8271">
+	<input type="hidden" name="fparam" id="fparam" value="">
+	<table width="700" cellpadding="2" cellspacing="1" border="0" bgcolor="#999999">
+		<tr>
+			<td width="90" class="itemformulario"> 10000004 </td>
+			<td width="250" class="itemformulario"> CCTS ARENA ESPECIAL: </td>
+			<td width="150" class="itemformulario"> 0.930: </td>
+			<td width="150" class="campoformulario"> <input type="TEXT" name="adescontar_1000013405" id="adescontar_1000013405" value="0.9300000000000" size="20" maxlength="200"> </td>
+		</tr>
+		<tr>
+			<td width="90" class="itemformulario"> 10000026 </td>
+			<td width="250" class="itemformulario"> CCTS CEMENTO GRANEL: </td>
+			<td width="150" class="itemformulario"> 0.280: </td>
+			<td width="150" class="campoformulario"> <input type="TEXT" name="adescontar_1000013403" id="adescontar_1000013403" value="0.2800000000000" size="20" maxlength="200"> </td>
+		</tr>
+		<tr>
+			<td width="90" class="itemformulario"> 10000612 </td>
+			<td width="250" class="itemformulario"> PIEDRA 6-12: </td>
+			<td width="150" class="itemformulario"> 0.950: </td>
+			<td width="150" class="campoformulario"> <input type="TEXT" name="adescontar_1000013435" id="adescontar_1000013435" value="0.9500000000000" size="20" maxlength="200"> </td>
+		</tr>
+		<tr height="41" align="center" valign="middle">
+			<td colspan="4" class="botonformulario"> <a href="#" onclick="Validar(); return false;"><img src="images/bot_continuar.gif" border="0"></a> </td>
+		</tr>
+	</table>
+	<br><br>
+</form>
+</body></html>
