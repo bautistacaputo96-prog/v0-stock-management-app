@@ -33,6 +33,8 @@ import {
   type DespachoZ1, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
+import { PASO_SIN_AUTORIZAR } from "@/lib/zomatik/np-servidor"
+import { MSJ_YA_REAUTORIZADA, PASO_REAUTORIZAR_NP, msjReautorizarNp, sinPendientesDeNp } from "@/lib/zomatik/z1"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
 import { EDICION_ABIERTA, ORIGEN_PEDIDO, PASO_ESPERANDO_AJUSTE, m3Texto } from "@/lib/zomatik/ajuste"
 
@@ -487,6 +489,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
       if (!t) continue
       // Un corte en Grabar (o después): primero se busca en Zomatik lo que pudo haber quedado (OF por la foto, remito por el número)
       const pasoAnt = t.paso_anterior || ""
+      // ¿Esta fila ya probó volver a autorizar la NP porque no venían sus pendientes? (una sola vez por fila)
+      const yaReautorizada = pasoAnt === PASO_REAUTORIZAR_NP || (r.mensaje || "").includes(MSJ_YA_REAUTORIZADA)
       const cortadoOf = /^(grabar_of|verificar_of|buscar_of)$/.test(pasoAnt) || (t.estado_anterior === "generando" && r.of_estado !== "ok" && !!r.of_foto)
       const cortadoRemito = /^(grabar_remito|verificar_remito|buscar_remito)$/.test(pasoAnt) || (t.estado_anterior === "generando" && !!r.remito_numero)
       const ref = r.tipo === "suelto" ? `Despacho ${r.remitos_papel || r.marca.slice(-19)}` : `Pedido ${(r.scheduled_dispatch_id || "").slice(0, 8)}`
@@ -712,6 +716,22 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           // Justo antes de grabar se vuelven a leer los comprobantes de la NP: cualquier remito que no sea uno de estos frena
           nuestros: await remitosNuestros(sb, r.np_id!, r.id),
         }, { hoy: hoyAR(), alPaso })
+        // Red de seguridad (20/11, NP 0001-00001201): "Continuar" no trajo los pendientes y la NP figuraba autorizada (no
+        // se miró en este intento). Zomatik la vuelve a "por autorizar" cuando se le cambia la cantidad: la NP pasa a
+        // sin_autorizar y la fila queda pendiente; la pasada siguiente la autoriza y sigue. Una sola vez por fila: si ya
+        // se probó (o se acaba de controlar la autorización), queda "error" como siempre, con su mail
+        if (sinPendientesDeNp(rm)) {
+          if (d.np.paso === PASO_AUTORIZADA && !yaReautorizada) {
+            const m = msjReautorizarNp(d.np.numero)
+            await sb.from("zomatik_np").update({ paso: PASO_SIN_AUTORIZAR, mensaje: "NP sin autorizar en Zomatik (no vinieron sus pendientes al remitir). Se reintenta.", updated_at: new Date().toISOString() } as never).eq("id", d.np.id).eq("estado", "ok").eq("paso", PASO_AUTORIZADA)
+            if (!(await guardarSi(sb, r.id, { estado: "pendiente", remito_estado: "pendiente", en_curso_desde: null, mensaje: m, paso: PASO_REAUTORIZAR_NP, proximo_intento: despuesDe(10) }))) throw new Cambio("El remito cambió mientras se generaba")
+            await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": "El remito no trajo los pendientes de la NP: se autoriza de nuevo", Mensaje: m, NP: d.np.numero, Marca: r.marca, ...(rm.recorte ? { "Respuesta de Zomatik (recorte)": rm.recorte } : {}) } })
+            hechas.push({ id: r.id, estado: "pendiente", mensaje: m })
+            continue
+          }
+          await terminar({ ...rm, mensaje: `${rm.mensaje} ${MSJ_YA_REAUTORIZADA}` }, "remito")
+          continue
+        }
         if (rm.aMano?.length) {
           await cerrarAMano(rm.aMano)
           continue

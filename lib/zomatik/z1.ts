@@ -659,3 +659,19 @@ export const msjRemitoAMano = (numeros: string[]) => `Ya estaba remitido a mano 
 /** Se cortó al grabar el remito del robot (`propio`, en la NP) y además hay uno a mano: los dos quedan nombrados. */
 export const msjDosRemitos = (propio: string, numeros: string[]) => `Puede haber dos remitos: ${propio} (robot) y ${numeros.join(", ")} (a mano), revisalos. El robot no hizo otro.`
 export const MSJ_COMPROBANTES_ILEGIBLES = "No se pudieron leer los comprobantes de la NP en Zomatik (para saber si ya se remitió a mano): no se siguió. Se reintenta."
+
+// ---------------------------------------------------------------------------
+// "Continuar" del remito sin los pendientes de la NP (20/11, NP 0001-00001201): la NP volvió a "por autorizar"
+// ---------------------------------------------------------------------------
+
+/** Lo que dice el robot (z1-robot, paso `continuar_remito`) cuando "Continuar" no trae ningún pendiente de la NP. */
+export const MSJ_SIN_PENDIENTES_NP = "no vinieron los pendientes de la NP"
+/** ¿El remito frenó porque Zomatik no trajo los pendientes de la NP? (sin autorizar, la NP no tiene remito ni pendientes) */
+export function sinPendientesDeNp(r: { estado: string; paso?: string | null; mensaje?: string | null }): boolean {
+  return r.estado === "error" && r.paso === "continuar_remito" && String(r.mensaje ?? "").includes(MSJ_SIN_PENDIENTES_NP)
+}
+/** `zomatik_remitos.paso` de la fila que espera a que la NP se autorice de nuevo. */
+export const PASO_REAUTORIZAR_NP = "reautorizar_np"
+export const msjReautorizarNp = (numero: string | null | undefined) => `Zomatik no trajo los pendientes de la ${numero || "NP"}: puede haber vuelto a "por autorizar". Se autoriza de nuevo y se reintenta.`
+/** Cierra el error cuando la NP ya se controló autorizada: con esto en la fila, el botón no da otra vuelta de autorizar. */
+export const MSJ_YA_REAUTORIZADA = "La NP está autorizada y los pendientes siguen sin venir: revisala en Zomatik."
