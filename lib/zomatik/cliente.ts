@@ -22,7 +22,7 @@ import { sbAdmin } from "@/lib/wialon"
 import { parseHtmlTable, matrizDeTablaHtml, type Fila } from "@/lib/zomatik/parseo"
 import type { LlaveAjuste, LlaveNp, NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import type { LlaveZ1 } from "@/lib/zomatik/z1-robot"
-import { ZOMATIK_WEB, LISTADOS, RUTA_AUTORIZAR_NP, RUTA_GRABAR_MP, cuerpoAutorizarValido, cuerpoMpValido, rutaPermitida, rutaDeLocation, rutaEscrituraAjuste, rutaEscrituraNp, rutaEscrituraZ1, rutaLecturaNp } from "@/lib/zomatik/web"
+import { ZOMATIK_WEB, LISTADOS, REPORTE_PRODUCCION, RUTA_AUTORIZAR_NP, RUTA_GRABAR_MP, cuerpoAutorizarValido, cuerpoMpValido, cuerpoReporteProduccionValido, rutaPermitida, rutaDeLocation, rutaEscrituraAjuste, rutaEscrituraNp, rutaEscrituraZ1, rutaLecturaNp } from "@/lib/zomatik/web"
 import { camposFormulario } from "@/lib/zomatik/np"
 
 export const ZOMATIK_BASE = ZOMATIK_WEB
@@ -115,6 +115,11 @@ async function pedir(cookie: string | null, path: string, init: InitPedido = {})
     if (ruta.toLowerCase() === RUTA_GRABAR_MP) {
       const texto = typeof cuerpo === "string" ? cuerpo : cuerpo instanceof Uint8Array ? Buffer.from(cuerpo).toString("latin1") : null
       if (metodo !== "POST" || !cuerpoMpValido(texto, init.ofMp ?? null)) throw new ZomatikError("ruta_no_permitida", "Materia prima de la OF: el cuerpo tiene que ser el de esa OF (ordenfabricacion, fparam y adescontar_<id>)")
+    }
+    // Reporte de producción (solo lectura): por POST, en el cuerpo solo la búsqueda desde una fecha (nunca exportar)
+    if (metodo === "POST" && ruta.toLowerCase() === REPORTE_PRODUCCION) {
+      const texto = typeof cuerpo === "string" ? cuerpo : cuerpo instanceof Uint8Array ? Buffer.from(cuerpo).toString("latin1") : null
+      if (!cuerpoReporteProduccionValido(texto)) throw new ZomatikError("ruta_no_permitida", "Reporte de producción: el cuerpo tiene que ser solo enviado=1&exportar=0&bus_fechad=<fecha>")
     }
     await pausa()
     const ctrl = new AbortController()
@@ -422,6 +427,33 @@ export async function fetchMatrizEnSucursal(s: ZomatikSesion, path: string, form
   if (sesionCaida(html)) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
   // Si la página trae paginado ("Siguiente", pagina=), lo que vino es solo una parte
   return { filas: matrizDeTablaHtml(html), formato: "html", paginado: /<a\b[^>]*>[^<]*siguiente|[?&]pagina=\d/i.test(html) }
+}
+
+/**
+ * Comprueba que una página de Zomatik muestre la sucursal esperada (el selector `frm_selsuc`). Tira error si no se ve o
+ * si es otra: otro sistema la cambió y lo leído puede ser de otra sucursal.
+ */
+export function exigirSucursalDePagina(html: string, sucursal: string, donde: string): void {
+  const suc = sucursalDePagina(html)
+  if (suc === null) throw new ZomatikError("formato", `No se ve la sucursal en ${donde} (¿cambió la página?)`)
+  if (suc !== sucursal) throw new ZomatikError("formato", `La sesión estaba en otra sucursal (${suc}) al leer ${donde}: otro sistema la cambió`)
+}
+
+/**
+ * FABRICA › REPORTE PRODUCCION (solo lectura): los m³ con OF de 16 días desde `desde` (AAAA-MM-DD), en HTML. Elige la
+ * sucursal, hace el POST exacto del formulario (`enviado=1&exportar=0&bus_fechad=…`) y exige que la MISMA respuesta
+ * muestre esa sucursal: si muestra otra, error "otra sucursal" (el que llama reintenta). Nunca exporta.
+ */
+export async function fetchReporteProduccion(s: ZomatikSesion, desde: string, sucursal: string = SUCURSAL_REBUCRET): Promise<string> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) throw new ZomatikError("formato", "Reporte de producción: fecha inválida")
+  if (!(await elegirSucursal(s.cookie, sucursal))) throw new ZomatikError("sesion_caida", "La sesión de Zomatik se cerró")
+  const html = await fetchText(s, REPORTE_PRODUCCION, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `enviado=1&exportar=0&bus_fechad=${desde}`,
+  })
+  exigirSucursalDePagina(html, sucursal, "el reporte de producción")
+  return html
 }
 
 /** El listado en HTML (con los links de cada fila, que el XLSX no trae). */

@@ -6,6 +6,8 @@
  *      listas de precios (listado_listas.php y el export de una lista, para el precio por m³ al programar).
  *      El 6.º es ESTAD R.COMPRA (remitos de compra de materia prima), para el control de ingresos (docs/control-ingresos-mp.md).
  *      El 7.º es INVENTARIO › MOVIMIENTOS STOCK, para el control de stock de MP (docs/control-stock-mp.md).
+ *      Aparte de los listados, FABRICA › REPORTE PRODUCCION (los m³ con OF por día), para el control del despacho contra
+ *      Zomatik (docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md): solo el GET y el POST exacto, sin export.
  *      Cualquier otra ruta (manage_*, grabar_*, generar_*, set_*, _get*…) se rechaza ANTES de salir.
  *   2. Nota de pedido (Z2, aparte): lo justo para generar y vaciar una NP como en la prueba del 22/10 (spec 23).
  *      Solo se habilita con la llave de la planta prendida (`zomatik_np_config.activo`): el cliente lo pide con
@@ -24,10 +26,24 @@ const PROHIBIDO = /(^|\/)(manage_|grabar_|generar_|set_|_get|_validar|_traer|eli
 /** Los únicos listados que se leen (buscador por GET y búsqueda/export por POST `?enviado=1`). */
 export const LISTADOS = ["listado_clientes.php", "listado_articulos.php", "reporte_remitosventa.php", "listado_proyectos.php", "listado_pedidos.php", "reporte_remitoscompra.php", "reporte_movimientosdestock.php"] as const
 
+/**
+ * FABRICA › REPORTE PRODUCCION (solo lectura, REAL 20/11): el formulario real manda `enviado=1` en el CUERPO, a la ruta
+ * sin parámetros. Se permite solo esa ruta exacta (GET y POST); el cuerpo del POST lo controla
+ * `cuerpoReporteProduccionValido` antes de salir. No está en LISTADOS: no habilita `?enviado=1` ni el export
+ * (`output/reporte_produccion.xlsx`).
+ */
+export const REPORTE_PRODUCCION = "reporte_produccion.php"
+/** Lo único que se le puede mandar: buscar (no exportar) desde una fecha. Cualquier otro campo u orden: no sale. */
+export function cuerpoReporteProduccionValido(cuerpo: string | null | undefined): boolean {
+  return /^enviado=1&exportar=0&bus_fechad=\d{4}-\d{2}-\d{2}$/.test(String(cuerpo ?? ""))
+}
+
 /** ¿Se puede pedir esta ruta en solo lectura? `metodo` POST solo para login, sucursal y buscadores (`?enviado=1`). */
 export function rutaPermitida(path: string, metodo: "GET" | "POST"): boolean {
   const p = path.replace(/^\/+/, "")
   if (PROHIBIDO.test(p)) return false
+  // El reporte de producción: la ruta exacta, sin parámetros (GET la página, POST la búsqueda con el cuerpo controlado)
+  if (p === REPORTE_PRODUCCION) return true
   const listados = LISTADOS as readonly string[]
   if (metodo === "POST") {
     if (p === "index.php?a=1" || p === "home.php") return true
