@@ -2080,3 +2080,31 @@ Migración `supabase/migrations/202611181400_zomatik_np_edicion.sql`. Motivo: La
   con saldo y va una nueva por el total.
 - **Datos ya cargados:** no cambian. Las adicionales que ya existen (Cordones 1197) quedan; prender la llave no edita
   nada solo.
+
+## 30. Tres arreglos del robot (20/11/2026) — cambia 24 (búsqueda por la marca), 26 (autorizar) y 27 (precio)
+
+Rama `fix/np-proyecto-autorizar-precio`. Sin cambios de base.
+
+1. **NP de proyecto con entrega hoy quedaba "para revisar"** (NP 1196, 1199 y 1204 del proyecto 576). En
+   `listado_pedidos.php?enviado=1`, `bus_fechah` **no incluye ese día** (lo toma a las 00:00; visto el 20/11, solo
+   lectura): con hoy..hoy no devuelve ninguna NP. La búsqueda por la marca (`porMarca`) ahora pide hasta el día
+   **siguiente** al último del rango. Es la única búsqueda de pedidos que manda fechas: las demás van por `bus_numero`.
+   Los listados de OF y de remitos ya pedían hasta mañana.
+2. **Después de cambiarle la cantidad, Zomatik vuelve la NP a "por autorizar"** (Cordones, NP 0001-00001201: quedó con
+   `Autorizar(…)` y sin REMITO, y el remito falló porque no vinieron sus pendientes).
+   - El **ajuste al finalizar** hace lo mismo que la edición: si el listado dice que quedó por autorizar, o no se pudo
+     saber, la NP pasa de `paso = autorizada` a `sin_autorizar` y Z1 la autoriza antes del remito, en la misma pasada.
+     Autorizar una NP ya autorizada no manda nada.
+   - **Red de seguridad en Z1:** si "Continuar" del remito no trae los pendientes y la NP figuraba `autorizada`, la NP
+     pasa a `sin_autorizar` y la fila queda `pendiente` (`paso = reautorizar_np`); la pasada siguiente la autoriza y
+     sigue. Una sola vez por fila: si ya se probó, o la autorización se controló en ese mismo intento, queda `error`
+     como antes, con su mail y el agregado "La NP está autorizada y los pendientes siguen sin venir".
+3. **NP en $0** (NP 0001-00001200 y NP2 0001-00002127, artículo 10090039 sin precio en la lista): con total $0 Zomatik
+   no muestra ni Autorizar ni REMITO y el remito esperaba para siempre.
+   - **Robot (NP nueva):** si el renglón quedaría en costo 0 (la lista da 0 o vacío y el pedido no trae precio puesto a
+     mano), no pide número ni graba. La NP queda en `error`: "El artículo no tiene precio en la lista de Zomatik
+     (<artículo>): cargalo en la lista o poné el precio en el pedido, y tocá «Generar NP ahora»." Avisa por el mail de
+     siempre. La **NP de proyecto no se frena**: el precio lo pone el proyecto y no hay captura real del costo que trae
+     el "Continuar" del MATERIAL (las de prueba traen 0.000).
+   - **Pantalla** (línea "Precio por m³", solo con `precios_np.editar`): si la fórmula no está en la lista y no hay
+     precio puesto, en ámbar "Sin precio en la lista: poné el precio o la NP no sale." Guardar no se bloquea.
