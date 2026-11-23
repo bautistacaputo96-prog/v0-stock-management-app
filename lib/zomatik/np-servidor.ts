@@ -30,6 +30,7 @@ import {
   edicionFija, marcaEdicion, msjEdicionPendiente, npEditable, objetivoEdicion, type EntradaEdicion, type UsoAjuste,
 } from "@/lib/zomatik/ajuste"
 import { MSJ_PRECIO_BLOQUEADO, precioBloqueado, precioValido, textoPrecio } from "@/lib/zomatik/np"
+import { MAX_ESPERA_AUTORIZAR, MSJ_NI_AUTORIZAR_NI_REMITO, intentosAutorizar, msjNiAutorizarNiRemito } from "@/lib/zomatik/np"
 import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
 import { congelarPrecio, faltaMigracionPrecio, filaPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp } from "@/lib/zomatik/precio-servidor"
 
@@ -1257,15 +1258,27 @@ export const PASO_AUTORIZADA = "autorizada"
  * Guarda el resultado de autorizar una NP "ok" (03/11). Autorizada: Actividad "NP autorizada en Zomatik". Sin
  * autorizar: queda "ok" con el aviso "NP sin autorizar en Zomatik" (paso sin_autorizar, se reintenta). Sin la marca:
  * aviso a gerenciales, no se reintenta.
+ * Tope (20/11, NP 0001-00001200 y NP2 0001-00002127 en $0): una NP que no muestra ni Autorizar ni REMITO no se arregla
+ * sola. Con `contar` (la pasada de cada 10 min) se cuenta cada intento seguido así; la cuenta va en el mensaje
+ * ("(intento 3 de 6)": `zomatik_np` no tiene otro contador libre). A los MAX_ESPERA_AUTORIZAR pasa a autorizar_revisar
+ * con el aviso a gerenciales y no se reintenta más. Sin `contar` (Z1, el botón) la cuenta se conserva.
  */
 export async function registrarAutorizacion(
   sb: SB,
-  np: { id: string; numero: string | null; marca: string; paso: string | null; scheduled_dispatch_id: string | null; plant_id?: string | null },
-  a: ResultadoAutorizar,
-  o: { usuario: string; avisar: Dependencias["avisar"] },
+  np: { id: string; numero: string | null; marca: string; paso: string | null; mensaje?: string | null; scheduled_dispatch_id: string | null; plant_id?: string | null },
+  a0: ResultadoAutorizar,
+  o: { usuario: string; avisar: Dependencias["avisar"]; contar?: boolean },
 ): Promise<void> {
   const ref = `Pedido ${(np.scheduled_dispatch_id || "").slice(0, 8)}`
   const ahora = new Date().toISOString()
+  let a = a0
+  let cuenta = ""
+  if (a0.estado === "sin_autorizar" && a0.mensaje === MSJ_NI_AUTORIZAR_NI_REMITO) {
+    if (np.paso === PASO_AUTORIZAR_REVISAR) return // ya se avisó: la mira una persona
+    const n = (np.paso === PASO_SIN_AUTORIZAR ? intentosAutorizar(np.mensaje) : 0) + (o.contar ? 1 : 0)
+    if (n >= MAX_ESPERA_AUTORIZAR) a = { estado: "revisar", mensaje: msjNiAutorizarNiRemito(np.numero), ...(a0.recorte ? { recorte: a0.recorte } : {}) }
+    else if (n > 0) cuenta = ` (intento ${n} de ${MAX_ESPERA_AUTORIZAR})`
+  }
   if (a.estado === "autorizada" || a.estado === "ya") {
     if (np.paso === PASO_AUTORIZADA) return
     await sb.from("zomatik_np").update({ paso: PASO_AUTORIZADA, ...(np.paso === PASO_SIN_AUTORIZAR || np.paso === PASO_AUTORIZAR_REVISAR ? { mensaje: null } : {}), updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
@@ -1273,7 +1286,7 @@ export async function registrarAutorizacion(
     return
   }
   const paso = a.estado === "revisar" ? PASO_AUTORIZAR_REVISAR : PASO_SIN_AUTORIZAR
-  const mensaje = a.estado === "revisar" ? a.mensaje : `NP sin autorizar en Zomatik: ${a.mensaje || "no se pudo"}. Se reintenta.`
+  const mensaje = a.estado === "revisar" ? a.mensaje : `NP sin autorizar en Zomatik: ${a.mensaje || "no se pudo"}. Se reintenta.${cuenta}`
   await sb.from("zomatik_np").update({ paso, mensaje, updated_at: ahora } as never).eq("id", np.id).eq("estado", "ok")
   if (np.paso === paso) return // ya avisado
   await actividadNp(sb, { usuario: o.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "NP sin autorizar en Zomatik", Mensaje: a.mensaje, NP: np.numero, ...(a.recorte ? { "Respuesta de Zomatik (recorte)": a.recorte } : {}) } })
@@ -1608,7 +1621,8 @@ export async function procesarNp(o: { usuario: string; pedidoId?: string | null;
       try {
         if (!ctx.nav) ctx.nav = await ctx.abrir(llave)
         const a = await (dep.autorizar ?? autorizarNp)(ctx.nav, { codigo: np.zomatik_codigo, numero: np.numero, marca: np.marca }, { latir: ctx.renovar })
-        await registrarAutorizacion(sb, np, a, { usuario: ctx.usuario, avisar: dep.avisar })
+        // La pasada cuenta los intentos (el botón, no): a los 6 seguidos sin Autorizar ni REMITO deja de reintentar
+        await registrarAutorizacion(sb, np, a, { usuario: ctx.usuario, avisar: dep.avisar, contar: !o.pedidoId })
         hechas.push({ id: np.id, estado: a.estado, mensaje: a.mensaje })
       } catch (e) {
         console.error("[zomatik-np] autorizar", (e as Error)?.message)

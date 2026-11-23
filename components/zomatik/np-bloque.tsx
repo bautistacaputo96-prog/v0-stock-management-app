@@ -456,7 +456,8 @@ function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualiza
           onChange={(e) => onPrecio({ ...precio, texto: e.target.value, tocado: true })}
         />
       </span>
-      {lista !== null ? <span className="text-muted-foreground tabular-nums">Lista: $ {textoPrecio(lista)}</span> : <span className="text-amber-700">No está en la lista de Zomatik</span>}
+      {/* Sin precio en la lista y sin uno puesto: el robot no graba la NP (quedaría en $0) */}
+      {lista !== null ? <span className="text-muted-foreground tabular-nums">Lista: $ {textoPrecio(lista)}</span> : <span className="text-amber-700">{precioValido(tipeado) ? "No está en la lista de Zomatik" : "Sin precio en la lista: poné el precio o la NP no sale."}</span>}
       <span className="cursor-help text-muted-foreground" title={ayuda}>(?)</span>
       {malo ? <span className="text-red-700">{MSJ_PRECIO_INVALIDO}</span> : dif ? <span className="text-amber-700">{dif}</span> : null}
       {lista === null && actualizar}

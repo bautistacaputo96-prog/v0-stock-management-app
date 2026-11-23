@@ -19,7 +19,7 @@
  */
 import {
   SUCURSAL_REBUCRET, alertasDe, cantidadTexto, camposFormulario, conValores, datosSecundarios, multipartLatin1, numeroNormalizado,
-  queryLatin1, recorte, tieneMarca, type CampoForm,
+  queryLatin1, recorte, tieneMarca, diaSiguiente, type CampoForm,
 } from "@/lib/zomatik/np"
 import {
   CAMPOS_OF, CAMPOS_REMITO, COMPROBANTE_OF, NOMBRE_DEPOSITO, PREFIJO_REMITO, camposSueltosRemito, datosClienteRemito, esItemDe, esMultipart, fparamOf, formularioOf,
@@ -99,11 +99,6 @@ const ascii = (s: string) => {
   const out = new Uint8Array(s.length)
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 255
   return out
-}
-const diaSiguiente = (f: string) => {
-  const d = new Date(`${f}T12:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d.toISOString().slice(0, 10)
 }
 
 async function aRebucret(nav: NavegadorNp) {
