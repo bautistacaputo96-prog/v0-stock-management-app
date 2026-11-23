@@ -482,17 +482,36 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
     if (error) throw error
     return (data as unknown as RemitoDB[]) || []
   }
-  const leerRemitos = async () => {
-    let q = sb.from("zomatik_remitos").select(columnas).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
-    if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
-    const { data, error } = await q
-    if (error) throw error
-    return data
+  /** Pedidos cuyos ajustes quedaron listos en esta pasada: sus remitos que esperaban salen ya. */
+  const listos = new Set<string>()
+  const plantasZ1 = Object.values(cfg).filter((c) => llaveZ1(c)).map((c) => c.plant_id)
+  const leerRemitos = async (): Promise<RemitoDB[]> => {
+    if (o.pedidoId) {
+      const { data, error } = await sb.from("zomatik_remitos").select(columnas).in("estado", ["pendiente", "generando", "error", "revisar"]).eq("scheduled_dispatch_id", o.pedidoId).order("created_at").limit(20)
+      if (error) throw error
+      return (data as unknown as RemitoDB[]) || []
+    }
+    // La pasada: el tope de 20 va DESPUÉS de quedarse con lo que toca ahora (las vencidas de plantas con la llave, las
+    // "generando" y las que quedaron listas en esta pasada). Cortando primero, 20 filas viejas que esperan (un ajuste sin
+    // resolver, una planta sin la llave) tapaban para siempre a las nuevas, sin aviso.
+    const ahora = new Date().toISOString()
+    const base = () => sb.from("zomatik_remitos").select(columnas).in("plant_id", plantasZ1).order("created_at").limit(20)
+    const partes = await Promise.all([
+      base().eq("estado", "pendiente").lte("proximo_intento", ahora),
+      base().eq("estado", "generando"),
+      listos.size ? base().eq("estado", "pendiente").in("scheduled_dispatch_id", [...listos]) : Promise.resolve({ data: [], error: null }),
+    ])
+    const porId = new Map<string, RemitoDB>()
+    for (const p of partes) {
+      if (p.error) throw p.error
+      for (const r of (p.data as unknown as RemitoDB[]) || []) porId.set(r.id, r)
+    }
+    return [...porId.values()].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
   }
   let data = await leerRemitos()
   // "Remitir en Zomatik" después de corregir: el "revisar" que frenó ANTES de grabar el remito (talonario terminado,
   // obra sin localidad) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
-  for (const r of (data as unknown as RemitoDB[]) || []) {
+  for (const r of data) {
     if (r.estado !== "revisar" || !o.pedidoId || !PASOS_ANTES_DE_GRABAR.includes(r.paso || "")) continue
     const { data: ok } = await sb.from("zomatik_remitos").update({ estado: "error", sin_stock: 0, updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").in("paso", PASOS_ANTES_DE_GRABAR).select("id")
     if (((ok as unknown[]) || []).length) r.estado = "error"
@@ -501,11 +520,9 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   const conAjuste = Object.values(cfg).some((c) => llaveAjuste(c))
   const depAjuste: DependenciasAjuste = { ...DEPENDENCIAS_AJUSTE, avisarError, ...(dep.ajuste || {}) }
   const ajustes = conAjuste ? await ajustesATrabajar(sb, cfg, o.pedidoId) : []
-  /** Pedidos cuyos ajustes quedaron listos en esta pasada: sus remitos que esperaban salen ya. */
-  const listos = new Set<string>()
-  const aTrabajar = (filas: unknown) => {
+  const aTrabajar = (filas: RemitoDB[]) => {
     const ahora = Date.now()
-    return ((filas as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
+    return filas.filter((r) => r.estado !== "revisar").filter((r) =>
       r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : (!!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora) || (r.estado === "pendiente" && listos.has(r.scheduled_dispatch_id || "")),
     )
   }
