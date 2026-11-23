@@ -16,7 +16,7 @@ import { Truck, Radio, Link2, RefreshCw, AlertTriangle, CheckCircle2, MapPin, Na
 import { parseISO, format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { usePermisos } from "@/lib/current-user"
-import { REFRESCO_VIVO_MS, VELOCIDAD_MOVIMIENTO, antiguedad, rumboTexto } from "@/lib/gps-vivo"
+import { REFRESCO_VIVO_MS, VELOCIDAD_MOVIMIENTO, antiguedad, rumboTexto, escaparHtml } from "@/lib/gps-vivo"
 
 type Camion = {
   unidad_id: number
@@ -154,16 +154,16 @@ export function LogisticaEnVivo() {
   }, [])
 
   const marcadores: Marcador[] = useMemo(() => [
-    ...plantas.filter((p) => p.gps_lat != null).map((p) => ({ id: `p-${p.id}`, lat: Number(p.gps_lat), lng: Number(p.gps_lng), html: iconos.planta(p.name), tamano: iconos.tamPlanta })),
-    ...obrasHoy.map((o, i) => ({ id: `o-${o.id}-${i}`, lat: Number(o.gps_lat), lng: Number(o.gps_lng), html: iconos.obra(), tamano: iconos.tamObra, ancla: iconos.anclaObra, popup: `<b>${o.name}</b><br>${o.cliente || ""}<br>${o.m3} m³ · ${format(parseISO(o.hora), "HH:mm")}` })),
+    ...plantas.filter((p) => p.gps_lat != null).map((p) => ({ id: `p-${p.id}`, lat: Number(p.gps_lat), lng: Number(p.gps_lng), html: iconos.planta(escaparHtml(p.name)), tamano: iconos.tamPlanta })),
+    ...obrasHoy.map((o, i) => ({ id: `o-${o.id}-${i}`, lat: Number(o.gps_lat), lng: Number(o.gps_lng), html: iconos.obra(), tamano: iconos.tamObra, ancla: iconos.anclaObra, popup: `<b>${escaparHtml(o.name)}</b><br>${escaparHtml(o.cliente)}<br>${escaparHtml(o.m3)} m³ · ${format(parseISO(o.hora), "HH:mm")}` })),
     ...(datos?.camiones || []).filter((c) => c.lat != null).map((c) => {
       const mov = (c.velocidad || 0) > VELOCIDAD_MOVIMIENTO
       const hora = c.ultima_posicion ? format(parseISO(c.ultima_posicion), "HH:mm:ss") : "-"
       return {
         id: `c-${c.unidad_id}`, lat: c.lat!, lng: c.lng!, encima: c.unidad_id === elegido,
-        html: iconos.camion(c.patente, ESTADOS[c.estado].color, { rumbo: c.rumbo, enMovimiento: mov, destacado: c.unidad_id === elegido }),
+        html: iconos.camion(escaparHtml(c.patente), ESTADOS[c.estado].color, { rumbo: c.rumbo, enMovimiento: mov, destacado: c.unidad_id === elegido }),
         tamano: iconos.tamCamion,
-        popup: `<b>${c.patente}</b> · ${ESTADOS[c.estado].label}${c.despacho ? `<br>${c.despacho.obra?.nombre || ""} · R ${c.despacho.remito || "-"}` : ""}`
+        popup: `<b>${escaparHtml(c.patente)}</b> · ${ESTADOS[c.estado].label}${c.despacho ? `<br>${escaparHtml(c.despacho.obra?.nombre)} · R ${escaparHtml(c.despacho.remito || "-")}` : ""}`
           + `<br>${mov ? `${c.velocidad} km/h hacia el ${rumboTexto(c.rumbo) || "?"}` : "Parado"} · posición de las ${hora}`,
       }
     }),

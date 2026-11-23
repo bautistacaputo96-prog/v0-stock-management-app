@@ -19,6 +19,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MapaBase, iconos } from "@/components/mapa-base"
+import { escaparHtml } from "@/lib/gps-vivo"
 import { parsearCoordenadas } from "@/lib/geo"
 import { difiereDelMapa, redondearCoord, textoDireccion, tieneDireccion, type DireccionMapa } from "@/lib/geo-direccion"
 import { crearTurnos } from "@/lib/turnos"
@@ -248,7 +249,7 @@ export function ObraUbicacion({ direccion, localidad, plantaId, valor, onChange,
   }
 
   const marcadores = [
-    ...(planta?.gps_lat != null ? [{ id: "planta", lat: Number(planta.gps_lat), lng: Number(planta.gps_lng), html: iconos.planta(planta.name), tamano: iconos.tamPlanta }] : []),
+    ...(planta?.gps_lat != null ? [{ id: "planta", lat: Number(planta.gps_lat), lng: Number(planta.gps_lng), html: iconos.planta(escaparHtml(planta.name)), tamano: iconos.tamPlanta }] : []),
     ...(valor.lat != null && valor.lng != null ? [{ id: "obra", lat: valor.lat, lng: valor.lng, html: iconos.obra(), arrastrable: true, tamano: iconos.tamObra, ancla: iconos.anclaObra }] : []),
   ]
 

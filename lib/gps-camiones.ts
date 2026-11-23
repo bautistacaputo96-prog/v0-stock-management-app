@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { posiciones } from "@/lib/wialon"
 import { distanciaKm, minutosEstimados } from "@/lib/geo"
 import { estadoGps } from "@/lib/gps-vivo"
+import { emparejarUnidades } from "@/lib/gps-viajes"
 
 export type CamionGps = {
   unidad_id: number | string
@@ -47,7 +48,7 @@ export async function leerPosicionesCamiones(sb: SupabaseClient, opts: { soloLec
   const inicio = inicioHoyAR(Date.now())
   const [{ data: plantas }, { data: mixers }, { data: despachos }] = await Promise.all([
     sb.from("plants").select("id, name, gps_lat, gps_lng"),
-    sb.from("mixers").select("id, license_plate, gps_unit_id"),
+    sb.from("mixers").select("id, license_plate, gps_unit_id, active"),
     sb
       .from("dispatches")
       .select("id, mixer_id, remito, quantity_m3, dispatch_date, created_at, plant_id, clients(name), construction_sites(id, name, gps_lat, gps_lng, travel_time_minutes)")
@@ -56,11 +57,15 @@ export async function leerPosicionesCamiones(sb: SupabaseClient, opts: { soloLec
       .order("dispatch_date", { ascending: false }),
   ])
 
-  const norm = (p: string) => (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
   const ahora = Date.now()
+  // Cada unidad a un solo camión, el activo primero (uno dado de baja con la misma patente no se lleva la unidad)
+  const mixerDeUnidad = new Map<string, any>()
+  for (const [mixerId, u] of emparejarUnidades(unidades, (mixers || []) as any[])) {
+    mixerDeUnidad.set(String(u.id), (mixers || []).find((m) => m.id === mixerId))
+  }
 
   const camiones = unidades.map((u) => {
-    const mixer = (mixers || []).find((m) => m.gps_unit_id === u.id || norm(m.license_plate) === norm(u.nombre))
+    const mixer = mixerDeUnidad.get(String(u.id))
     // Guardar el vínculo patente ↔ unidad la primera vez (lo hace el servidor; en el modo prueba local, no)
     if (mixer && !mixer.gps_unit_id && !soloLectura) sb.from("mixers").update({ gps_unit_id: u.id }).eq("id", mixer.id).then(() => {})
 

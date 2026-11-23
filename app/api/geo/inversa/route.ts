@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { reverse } from "@/lib/geo-osm"
 
 /**
@@ -8,6 +9,13 @@ import { reverse } from "@/lib/geo-osm"
  * Respuesta: { direccion, localidad } (null en lo que no se encontró).
  */
 export async function GET(req: Request) {
+  // Solo con sesión iniciada: estas búsquedas usan la clave paga de Google (o servicios gratuitos con límite)
+  try {
+    const s = await exigirSesion()
+    if (s.respuesta) return s.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const sp = new URL(req.url).searchParams
   const lat = Number(sp.get("lat")), lng = Number(sp.get("lng"))
   if (!sp.get("lat") || !sp.get("lng") || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {

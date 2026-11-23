@@ -10,6 +10,7 @@ import {
   aFila,
   cruzarConDespachos,
   distanciaKm,
+  emparejarUnidades,
   fechaAR,
   guardarViajesCamion,
   inicioDiaAR,
@@ -52,8 +53,6 @@ export type InformeReconstruccion = {
   ms: number
 }
 
-const norm = (p: string) => (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
-
 export async function reconstruirRango(
   desde: string,
   hasta: string,
@@ -67,7 +66,7 @@ export async function reconstruirRango(
 
   const [{ data: plantasDb, error: e1 }, { data: mixers, error: e2 }] = await Promise.all([
     sb.from("plants").select("id, gps_lat, gps_lng"),
-    sb.from("mixers").select("id, license_plate, gps_unit_id"),
+    sb.from("mixers").select("id, license_plate, gps_unit_id, active"),
   ])
   if (e1 || e2) throw e1 || e2
   const plantas = (plantasDb || [])
@@ -83,11 +82,13 @@ export async function reconstruirRango(
   if (!sid) throw new Error("El GPS no está conectado")
   try {
     const us = await unidades(sid)
+    // Cada unidad a un solo camión (si no, dos camiones con la misma unidad se llevaban los mismos viajes)
+    const unidadDe = emparejarUnidades(us, (mixers || []) as any[])
     for (const m of mixers || []) {
-      const u = us.find((x) => String(x.id) === String(m.gps_unit_id)) || us.find((x) => norm(x.nombre) === norm(m.license_plate))
+      const u = unidadDe.get(m.id)
       const fila = { patente: m.license_plate as string, unidad: u?.id ?? null, viajes: 0, conRemito: 0, sinRemito: 0, remitosSinViaje: 0, incompletos: 0 } as InformeReconstruccion["camiones"][number]
       informe.camiones.push(fila)
-      if (!u) { fila.error = "Sin unidad en el GPS"; continue }
+      if (!u) { fila.error = "Sin unidad en el GPS (o su unidad es de otro camión con la misma patente)"; continue }
       try {
         const raw = await mensajesIntervalo(sid, u.id, desdeT, Math.min(hastaT, Math.floor(Date.now() / 1000)))
         const vs = reconstruirViajes(mensajesDesdeWialon(raw), plantas, { unidad: String(u.id) }).filter(

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { obtenerLugar } from "@/lib/geo-lugares"
 
 /**
@@ -10,6 +11,13 @@ import { obtenerLugar } from "@/lib/geo-lugares"
  * direccionMapa = { direccion, localidad } para completar el formulario de la obra.
  */
 export async function GET(req: Request) {
+  // Solo con sesión iniciada: estas búsquedas usan la clave paga de Google (o servicios gratuitos con límite)
+  try {
+    const s = await exigirSesion()
+    if (s.respuesta) return s.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const sp = new URL(req.url).searchParams
   const id = (sp.get("id") || "").slice(0, 300)
   const sesion = (sp.get("sesion") || "").slice(0, 64) || null
