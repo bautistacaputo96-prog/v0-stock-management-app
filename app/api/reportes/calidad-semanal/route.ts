@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { esLlamadaDeCron } from "@/lib/cron"
+import { exigirSesion } from "@/lib/auth/servidor"
+import { puedeCon } from "@/lib/permisos"
+import { diaArgentina, diasEntre, fmtDia, limitesDias, semanaAnterior } from "@/lib/calidad"
 
 // ── Supabase (service role) ───────────────────────────────────────────────────
 function sb() {
@@ -13,23 +17,15 @@ function sb() {
 // Muestreo objetivo: 1 muestra cada 3 camiones despachados (se redondea para abajo)
 const CAMIONES_POR_MUESTRA = 3
 
-// ── Período: última semana completa (lunes a domingo) ─────────────────────────
-function ultimaSemana(now: Date) {
-  const d = new Date(now)
-  const dow = d.getDay() // 0=domingo
-  const haciaLunes = dow === 0 ? 6 : dow - 1
-  const lunesEsta = new Date(d)
-  lunesEsta.setDate(d.getDate() - haciaLunes)
-  lunesEsta.setHours(0, 0, 0, 0)
-  const desde = new Date(lunesEsta); desde.setDate(lunesEsta.getDate() - 7)
-  const hasta = new Date(lunesEsta); hasta.setDate(lunesEsta.getDate() - 1); hasta.setHours(23, 59, 59, 999)
-  return { desde, hasta }
-}
+// ── Período: última semana completa (lunes a domingo), en días de Argentina ───
+// Antes se calculaba con la hora del servidor (UTC en Vercel): la semana iba del domingo 21 h al domingo 21 h, y las
+// fechas de moldeo de los despachos de después de las 21 h salían con el día siguiente.
+const DIA = /^\d{4}-\d{2}-\d{2}$/
 
-const fmtFecha = (d: Date | string) =>
-  new Date(d).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
-const fmtCorta = (d: Date | string) =>
-  new Date(d).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })
+/** "dd/mm/yyyy" de un día "yyyy-mm-dd" o del día de Argentina de un timestamp. */
+const fmtFecha = (d: string) => fmtDia(diaArgentina(d))
+/** "dd/mm" */
+const fmtCorta = (d: string) => fmtFecha(d).slice(0, 5)
 
 // Resistencia especificada a partir del código de fórmula (H30-620-10 C -> 30)
 function resistenciaEspecificada(code: string): number | null {
@@ -39,13 +35,35 @@ function resistenciaEspecificada(code: string): number | null {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
+
+  // Antes no pedía nada: cualquiera con el link podía ver el reporte (clientes, obras, resultados) o mandarlo por mail
+  // las veces que quisiera y a cualquier dirección (?send=1&to=…). Ahora: el cron de Vercel, o alguien logueado con
+  // Laboratorio · ver. Cambiar los destinatarios (?to=) es solo a mano, logueado.
+  const esCron = esLlamadaDeCron(req)
+  if (!esCron) {
+    try {
+      const r = await exigirSesion()
+      if (r.respuesta) return r.respuesta
+      if (!puedeCon(r.sesion.usuario, "laboratorio", "ver"))
+        return NextResponse.json({ error: "El reporte de calidad pide Laboratorio · ver." }, { status: 403 })
+    } catch (e) {
+      console.error("calidad-semanal: no se pudo validar la sesión", e)
+      return NextResponse.json({ error: "No se pudo validar la sesión." }, { status: 401 })
+    }
+  } else if (searchParams.get("to")) {
+    return NextResponse.json({ error: "El cron no puede cambiar los destinatarios." }, { status: 400 })
+  }
+
   const supabase = sb()
 
-  // Período (permite override con ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD)
+  // Período (permite override con ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD), en días de Argentina
   const now = new Date()
-  const rango = ultimaSemana(now)
-  const desde = searchParams.get("desde") ? new Date(searchParams.get("desde") + "T00:00:00") : rango.desde
-  const hasta = searchParams.get("hasta") ? new Date(searchParams.get("hasta") + "T23:59:59") : rango.hasta
+  const rango = semanaAnterior(now)
+  const pDesde = searchParams.get("desde") || "", pHasta = searchParams.get("hasta") || ""
+  const desde = DIA.test(pDesde) ? pDesde : rango.desde
+  const hasta = DIA.test(pHasta) ? pHasta : rango.hasta
+  const lim = limitesDias(desde, hasta)
+  const hoy = diaArgentina(now)
 
   // ── Datos ───────────────────────────────────────────────────────────────────
   const [{ data: plants }, { data: despachos }, { data: roturas }, { data: vencidas }, { data: granulometrias }] = await Promise.all([
@@ -53,30 +71,30 @@ export async function GET(req: Request) {
     supabase
       .from("dispatches")
       .select("id, quantity_m3, sample_taken, plant_id, dispatch_date")
-      .gte("dispatch_date", desde.toISOString())
-      .lte("dispatch_date", hasta.toISOString())
+      .gte("dispatch_date", lim.gte)
+      .lte("dispatch_date", lim.lte)
       .limit(10000),
     supabase
       .from("test_cylinders")
       .select("id, dispatch_id, cylinder_number, test_age_days, strength_mpa, actual_test_date, dispatches!inner(id, sample_number, plant_id, remito, dispatch_date, extra_water_liters, actual_slump_cm, formulas(code), clients(name), construction_sites(name))")
       .not("strength_mpa", "is", null)
-      .gte("actual_test_date", desde.toISOString().slice(0, 10))
-      .lte("actual_test_date", hasta.toISOString().slice(0, 10))
+      .gte("actual_test_date", desde)
+      .lte("actual_test_date", hasta)
       .limit(10000),
     supabase
       .from("test_cylinders")
       .select("id")
       .is("actual_test_date", null)
       .eq("discarded", false)
-      .lt("scheduled_test_date", now.toISOString().slice(0, 10))
+      .lt("scheduled_test_date", hoy)
       .limit(10000),
     // Granulometrías de arena del período (módulo de finura y humedad)
     supabase
       .from("granulometria_tests")
       .select("extraction_date, fineness_modulus, moisture_percent, aggregate_type, provider, remito, plant_id, materials(name), suppliers(name)")
       .not("fineness_modulus", "is", null)
-      .gte("extraction_date", desde.toISOString().slice(0, 10))
-      .lte("extraction_date", hasta.toISOString().slice(0, 10))
+      .gte("extraction_date", desde)
+      .lte("extraction_date", hasta)
       .order("extraction_date", { ascending: false })
       .limit(1000),
   ])
@@ -121,7 +139,7 @@ export async function GET(req: Request) {
     /** Para las muestras a 28 días: las probetas que se promediaron, ej. "P2 37,7 · P3 33,1" */
     detalle?: string
   }
-  const diasEntre = (a: string, b: string) => Math.round((new Date(b.slice(0, 10) + "T12:00:00Z").getTime() - new Date(a.slice(0, 10) + "T12:00:00Z").getTime()) / 86400000)
+  // diasEntre (lib/calidad): el moldeo es el día de Argentina del despacho, no los 10 primeros caracteres en UTC
   const ensayos: Ensayo[] = (roturas || []).map((r: any) => {
     const disp = r.dispatches || {}
     const code = disp.formulas?.code || ""

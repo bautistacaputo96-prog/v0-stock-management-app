@@ -26,6 +26,9 @@ function CalidadContent() {
   
   const [plantsData, setPlantsData] = useState<Plant[]>([])
   const [initialPlantId, setInitialPlantId] = useState("all")
+  // Probetas y rotura arrancan en "Todas": antes recibían la primera planta por nombre (Canning) sin poder cambiarla,
+  // y la lista de pendientes de rotura nunca mostraba las de Hudson.
+  const [plantaProbetas, setPlantaProbetas] = useState("all")
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -99,7 +102,7 @@ function CalidadContent() {
               <CardDescription>Gestion de probetas extraidas y resultados de ensayos de compresion</CardDescription>
             </CardHeader>
             <CardContent>
-              <TestCylindersTable plants={plantsData} selectedPlantId={initialPlantId} onPlantChange={() => {}} />
+              <TestCylindersTable plants={plantsData} selectedPlantId={plantaProbetas} onPlantChange={setPlantaProbetas} />
             </CardContent>
           </Card>
           </>
@@ -115,7 +118,7 @@ function CalidadContent() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <CylinderBreakingTable plants={plantsData} selectedPlantId={initialPlantId} onPlantChange={() => {}} />
+              <CylinderBreakingTable plants={plantsData} selectedPlantId={plantaProbetas} onPlantChange={setPlantaProbetas} />
             </CardContent>
           </Card>
         )}
