@@ -55,7 +55,7 @@ Cada diferencia tiene una `clave` estable: la categoría, el tipo y los renglone
   - Si el cruce ya no la encuentra porque alguien corrigió, pasa sola a resuelta. Lo que salió de la ventana de 90 días o no se pudo controlar ese día no se resuelve.
   - Si vuelve a aparecer, se reabre; si alguien ya la había revisado, vuelve a revisada con su nota.
 - `control_mp_corridas`: cada corrida, con lo leído, el resumen, el error y el mail.
-- `control_mp_registrar`: el freno. Corre una a la vez; a mano, cada 2 min como mínimo; el cron, una vez por hora. Si el cron encuentra un "Controlar ahora" en curso, espera hasta 90 s.
+- `control_mp_registrar`: el freno. Corre una a la vez; a mano, cada 2 min como mínimo; el cron, una vez por hora. Si el cron encuentra un "Controlar ahora" en curso, espera hasta 90 s. Por eso "Controlar ahora" no corre entre las 16:00 y las 16:59 (409, como "Traer de Zomatik" y "Actualizar ahora"): un control a mano dura hasta ~4 min y el cron, que en Hobby cae en cualquier momento de esa hora, se quedaba sin turno y ese día no salía el mail (auditoría 23/11/2026).
 - Solo las usa el servidor: anon no tiene acceso. No toca `stock_entries` ni ninguna tabla existente.
 
 ## Mail (Resend)
