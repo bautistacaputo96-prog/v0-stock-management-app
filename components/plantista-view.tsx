@@ -28,6 +28,7 @@ import { useFuncionesNuevas } from "@/lib/current-user"
 import { NuevoBadge } from "@/components/nuevo-badge"
 import { GerenciadorViajes, type PedidoGerenciador } from "@/components/gerenciador-viajes"
 import { cargarViajes, pendientes, proximoViaje, regenerarViajesPedido, totalViajes, type ViajeRow } from "@/lib/viajes"
+import { cancelarPedido as cancelarPedidoAbierto } from "@/lib/programacion-acciones"
 // Fase 3: el distintivo "Suspendido" (se suspende desde la pantalla nueva; la base no deja despacharlo)
 import { textoMotivo } from "@/lib/despacho"
 
@@ -340,9 +341,10 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
     if (!puede("programacion", "borrar")) return
     const supabase = createClient()
     if (!supabase) return
-    const { error } = await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", pedido.id)
+    const { error } = await cancelarPedidoAbierto(supabase, pedido.id)
     if (error) {
-      toast({ title: "No se pudo cancelar", description: error.message, variant: "destructive" })
+      toast({ title: "No se pudo cancelar", description: error, variant: "destructive" })
+      loadData()
       return
     }
     toast({ title: "Pedido cancelado" })
