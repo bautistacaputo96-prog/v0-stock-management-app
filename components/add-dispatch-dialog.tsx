@@ -34,6 +34,7 @@ import { SearchableSelect } from "@/components/dispatch-scheduling"
 import { BuscadorCliente } from "@/components/clientes/buscador-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, choferPorCamionDelDia, type Chofer } from "@/lib/maestros"
+import { hoyLocal } from "@/lib/despacho"
 
 type Formula = {
   id: string
@@ -174,7 +175,7 @@ export function AddDispatchDialog({
     sample_taken: false,
     sample_number: "",
     actual_slump_cm: "",
-    dispatch_date: new Date().toISOString().split("T")[0],
+    dispatch_date: hoyLocal(), // no toISOString: después de las 21 h daba el día siguiente
     notes: "",
     created_by: "",
     // Fibra agregada al camión, en kg por m³
@@ -469,7 +470,7 @@ export function AddDispatchDialog({
       sample_number: "",
       actual_slump_cm: "",
       fiber_kg_per_m3: "",
-      dispatch_date: new Date().toISOString().split("T")[0],
+      dispatch_date: hoyLocal(), // no toISOString: después de las 21 h daba el día siguiente
       notes: "",
       created_by: "",
     })
