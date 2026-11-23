@@ -169,8 +169,22 @@ export function armarMail(d: {
   stockHtml?: string | null
   /** Con la importación de Zomatik prendida (desde F): sus secciones van primero y el cruce viejo queda "Antes del F". */
   importacion?: ImportacionMail | null
+  /**
+   * El control del despacho contra Zomatik (lib/control-produccion): va primero, debajo del título, en el diario y en el
+   * semanal. `asunto`: lo que se le agrega al asunto (solo con rojo). null = no va (sin su migración): el mail como antes.
+   */
+  despacho?: { html: string; asunto: string | null } | null
 }): { asunto: string; html: string } {
-  if (d.importacion) return armarMailImportacion({ ...d, importacion: d.importacion })
+  const r = d.importacion ? armarMailImportacion({ ...d, importacion: d.importacion }) : armarMailBase(d)
+  // Con una función: el bloque no se interpreta como patrón de reemplazo
+  const bloque = d.despacho?.html || ""
+  return { asunto: `${r.asunto}${d.despacho?.asunto || ""}`, html: r.html.replace(MARCA_DESPACHO, () => bloque) }
+}
+
+/** Dónde va el bloque del despacho (debajo del título); sin el bloque, no deja nada. */
+const MARCA_DESPACHO = "<!--despacho-->"
+
+function armarMailBase(d: Parameters<typeof armarMail>[0]): { asunto: string; html: string } {
   const semanal = d.tipo === "semanal"
   const n = d.nuevas.length
   const asunto = semanal
@@ -196,7 +210,7 @@ export function armarMail(d: {
       : `<p>${esc(LINEA_SIN_NUEVAS)}.</p>${link}`
   const html = `
   <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#0f172a;font-size:12px">
-    <div style="font-size:15px;margin-bottom:2px">${titulo}</div>
+    <div style="font-size:15px;margin-bottom:2px">${titulo}</div>${MARCA_DESPACHO}
     <div style="color:#64748b;margin-bottom:10px">Remitos de nuestro sistema contra Zomatik (REBUCRET, Canning y Hudson)${semanal ? " y stock de materia prima" : ""}.</div>
     ${fallo}
     ${cuerpo}
@@ -223,7 +237,7 @@ function armarMailImportacion(d: Parameters<typeof armarMail>[0] & { importacion
     ${semanal ? d.stockHtml || "" : ""}`
   const html = `
   <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#0f172a;font-size:12px">
-    <div style="font-size:15px;margin-bottom:2px">${semanal ? "Control semanal de materia prima" : "Ingresos de materia prima desde Zomatik"} · ${esc(ddmm(d.hoy))}</div>
+    <div style="font-size:15px;margin-bottom:2px">${semanal ? "Control semanal de materia prima" : "Ingresos de materia prima desde Zomatik"} · ${esc(ddmm(d.hoy))}</div>${MARCA_DESPACHO}
     <div style="color:#64748b;margin-bottom:10px">Desde el ${esc(ddmm(im.desde))} los ingresos entran solos desde Zomatik (REBUCRET, Canning y Hudson). ${semanal ? "Todo lo abierto y el stock." : "Lo nuevo desde el mail anterior."}</div>
     ${fallo}
     ${cuerpo}
