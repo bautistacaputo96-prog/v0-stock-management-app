@@ -29,7 +29,8 @@ export async function GET(req: Request) {
   const t0 = Date.now()
   if (modoPruebaLocal()) return respuestaModoLocal()
   try {
-    if (!esLlamadaDeCron(req)) return NextResponse.json({ error: "Solo el cron." }, { status: 401 })
+    // Estricto, como la pasada de la NP: sin CRON_SECRET cargado no corre (los headers de Vercel se pueden falsificar)
+    if (!process.env.CRON_SECRET || !esLlamadaDeCron(req)) return NextResponse.json({ error: "Solo el cron (con CRON_SECRET)." }, { status: 401 })
     if (enHorarioDelCron(t0)) return NextResponse.json({ ok: true, salteada: MENSAJE_HORARIO_CRON })
     const sb = sbServicio()
     const ya = await leidoHoy(sb, t0)
