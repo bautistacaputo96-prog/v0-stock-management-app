@@ -42,6 +42,7 @@ import {
 import { armarMail, esDiaSemanal, type DiferenciaMail, type ImportacionMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
+import { seccionDespachoParaMail, TOPE_DESPACHO_MAIL_MS } from "@/lib/control-produccion/servidor"
 
 /**
  * El control de stock (docs/control-stock-mp.md) va en el mismo cron: remitos → mail (con la última lectura de stock
@@ -421,6 +422,7 @@ export async function controlar(sb: SupabaseClient, opts: { corridaId: string; l
 
 /**
  * Mail del control (Bautista, 28/10/2026). Una vez por día como mucho, siempre a Juan con copia a Bautista.
+ * Arriba de todo, el control del despacho contra Zomatik (docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md).
  *   - Diario: solo las inconsistencias de remitos detectadas ese día (abiertas desde el último mail mandado, o de las
  *     últimas 24 h si nunca se mandó). Si no hay, sale igual con una línea. Sin stock.
  *   - Lunes: el semanal, que lo reemplaza: las nuevas del día, todas las abiertas y la tabla de stock.
@@ -444,7 +446,10 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   const semanal = esDiaSemanal(hoy)
   const stock = semanal ? await seccionStockParaMail(sb, hoy, null) : null
   const importacion = await importacionParaMail(sb, hoy, corte, semanal)
-  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html, importacion })
+  // El despacho contra Zomatik, arriba de todo (con la lectura de las 05:42). Nunca tira y tiene un tope de 20 s
+  // (Promise.race adentro): si no llega, una línea ámbar y el mail sale igual. Sin su migración no va
+  const despacho = await seccionDespachoParaMail(sb, hoy, { topeMs: TOPE_DESPACHO_MAIL_MS })
+  const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html, importacion, despacho })
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },

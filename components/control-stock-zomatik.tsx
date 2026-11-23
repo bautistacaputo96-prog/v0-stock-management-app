@@ -9,6 +9,7 @@ import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { enHorarioDelCron, MENSAJE_HORARIO_CRON } from "@/lib/control-stock/calculo"
+import { ControlDespachoZomatik } from "@/components/control-despacho-zomatik"
 
 type Dia = { fecha: string; entro: number; salio: number; ajustes: number; saldo: number }
 type Lado = { inicio: number; entro: number; salio: number; ajustes: number; final: number; porDia: Dia[]; porPrefijo?: Record<string, { entro: number; salio: number; n: number }> }
@@ -51,6 +52,8 @@ export function ControlStockZomatik() {
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [leyendo, setLeyendo] = useState(false)
+  // Para recargar la tarjeta del despacho después de "Actualizar ahora"
+  const [version, setVersion] = useState(0)
 
   const cargar = useCallback(async () => {
     setErr(null)
@@ -85,13 +88,17 @@ export function ControlStockZomatik() {
       const r = await fetch("/api/control-stock/actualizar", { method: "POST" })
       const j = await r.json().catch(() => ({}))
       const leidas = (j?.partes || []).filter((p: any) => p.ok).length
-      if (j?.partes) setMsg(`Zomatik: ${leidas} de ${j.partes.length} leídos.`)
+      const p = j?.produccion
+      // Sin la migración del despacho no se dice nada del reporte de producción (la tarjeta ya lo avisa)
+      const prod = !p || p.faltaMigracion ? "" : p.ok ? " Reporte de producción leído." : ` Reporte de producción: ${p.error || "no se pudo leer"}.`
+      if (j?.partes) setMsg(`Zomatik: ${leidas} de ${j.partes.length} leídos.${prod}`)
       if (j?.error) setErr(j.error)
     } catch {
       setErr("No se pudo leer Zomatik. Probá de nuevo en un rato.")
     }
     setLeyendo(false)
     cargar()
+    setVersion((v) => v + 1)
   }
 
   const horarioCron = enHorarioDelCron()
@@ -109,7 +116,7 @@ export function ControlStockZomatik() {
         {horarioCron && <span className="text-muted-foreground">{MENSAJE_HORARIO_CRON}</span>}
         <span
           className="cursor-help text-muted-foreground"
-          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia y al menos media tonelada, en el stock final o en el neto (entró − salió: una devolución no lo cambia). En gris, las filas con la lectura de Zomatik vieja. Tocá una fila para ver el detalle por día. Zomatik se lee solo todos los días, después del mail de las 16:25. Mails: todos los días a las 16:25, a Juan (con copia a Bautista), las inconsistencias de remitos detectadas ese día, o “sin inconsistencias hoy”; los lunes, en su lugar, el semanal con las nuevas, todas las abiertas y la tabla de stock."
+          title="Stock de materia prima en toneladas, nuestro sistema contra Zomatik (INVENTARIO › MOVIMIENTOS STOCK, REBUCRET). Nuestro: el stock de cada día se arma desde el stock actual, con los ingresos (cantidad del remito, sin secar), los consumos de los despachos y los recuentos o ajustes. Zomatik: RMP son compras y RMI consumos. En rojo, más de 5 % de diferencia y al menos media tonelada, en el stock final o en el neto (entró − salió: una devolución no lo cambia). En gris, las filas con la lectura de Zomatik vieja. Tocá una fila para ver el detalle por día. Zomatik se lee solo todos los días a las 5:45 y después del mail de las 16:25. Mails: todos los días a las 16:25, a Juan (con copia a Bautista), arriba el control del despacho contra Zomatik y después las inconsistencias de remitos detectadas ese día, o “sin inconsistencias hoy”; los lunes, en su lugar, el semanal con las nuevas, todas las abiertas y la tabla de stock."
         >
           (?)
         </span>
@@ -120,6 +127,8 @@ export function ControlStockZomatik() {
       </div>
       {msg && <div className="text-emerald-700">{msg}</div>}
       {err && <div className="text-red-700">{err}</div>}
+
+      <ControlDespachoZomatik version={version} />
 
       {!filas ? (
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />

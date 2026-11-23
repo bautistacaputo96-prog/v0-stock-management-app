@@ -94,3 +94,14 @@ Es compacta: `text-xs` y sin negritas.
 3. **Gracia de 2 días para "falta":** con el mail a las 16:25, ¿alcanza con 1 día? *Recomiendo* dejar 2 la primera semana.
 4. **Fecha:** se avisa "otra fecha" recién con más de 10 días. Como en Zomatik se carga hasta 9 días después, un "falta en Zomatik" de los últimos días puede ser solo atraso. ¿Subimos la gracia de 2 días? *Recomiendo* verlo con Juan después de una semana.
 5. **Diferencias resueltas a mano:** hoy solo se resuelven solas, cuando alguien corrige. *Recomiendo* que se quede así: "Revisado" alcanza para lo que no se va a corregir.
+
+## Despacho contra Zomatik, arriba del mail (20/11/2026)
+El mail diario y el semanal de los lunes (las dos variantes, con y sin importación) empiezan con el bloque "Despacho
+contra Zomatik" (`seccionDespachoParaMail`, ver docs/control-stock-mp.md y la spec del 20/11). Mismos destinatarios y
+misma hora; usa la lectura de las 05:42 (no lee Zomatik).
+- Todo bien: una línea verde. Lo que está en plazo, una línea gris más.
+- Hay diferencias: la línea roja y el detalle corto (m³ por planta, materia prima por grupo y las OF sin descontar). Al
+  asunto se le agrega " · Despacho contra Zomatik: hay diferencias".
+- Sin la lectura de hoy: "no se pudo leer Zomatik hoy" con la última lectura.
+- Sin montos. El bloque nunca rompe el mail: sin la migración `202611201500` no sale (el mail queda como antes); con
+  otro error, una línea "no se pudo controlar hoy".
