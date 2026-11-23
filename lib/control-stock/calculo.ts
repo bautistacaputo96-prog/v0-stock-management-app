@@ -210,6 +210,16 @@ export function resumenNuestro(actualKg: number, movs: MovNuestro[], desde: stri
   }
 }
 
+/**
+ * Nota del movimiento de un recuento (adjust-stock-dialog). El "Anterior/Nuevo" va primero y siempre: desde el 06/10
+ * (motivo obligatorio) la nota era solo el motivo y `nuevoDeRecuento` no encontraba el "Nuevo" (el control tomaba un
+ * recuento viejo o ninguno).
+ */
+export function notaRecuento(anteriorKg: number, nuevoKg: number, unidad: string, motivo?: string | null): string {
+  const m = String(motivo ?? "").trim()
+  return `Ajuste por recuento. Anterior: ${Math.round(anteriorKg)} ${unidad}, Nuevo: ${Math.round(nuevoKg)} ${unidad}${m ? `. Motivo: ${m}` : ""}`
+}
+
 /** "Ajuste por recuento. Anterior: 24220 kg, Nuevo: 57320 kg" → 57320. */
 export function nuevoDeRecuento(notas: unknown): number | null {
   const m = String(notas ?? "").match(/Nuevo:\s*(-?[\d.,]+)\s*kg/i)

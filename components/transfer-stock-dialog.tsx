@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast"
 import { currentUserName } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
 import { formatStock } from "@/lib/stock-format"
+import { fechaArgentina } from "@/lib/control-ingresos/cruce"
 import { ArrowLeftRight, Loader2 } from "lucide-react"
 
 type Material = { id: string; name: string; unit: string; current_stock: number; plant_id?: string }
@@ -88,7 +89,7 @@ export function TransferStockDialog({ material: materialProp, plants: plantsProp
     setGuardando(true)
     const supabase = createClient()
     const usuario = currentUserName()
-    const hoy = new Date().toISOString().slice(0, 10)
+    const hoy = fechaArgentina() // el día de Argentina (en UTC, de 21 a 24 h quedaba al día siguiente)
     const destNombre = plants.find((p) => p.id === destinoPlanta)?.name || "otra planta"
     const origNombre = origenPlanta?.name || "otra planta"
     try {
@@ -96,10 +97,15 @@ export function TransferStockDialog({ material: materialProp, plants: plantsProp
       if (e1) throw e1
       const { error: e2 } = await supabase.rpc("update_material_stock", { p_material_id: destino.id, p_quantity_change: qty })
       if (e2) throw e2
-      await supabase.from("stock_movements").insert([
+      const { error: e3 } = await supabase.from("stock_movements").insert([
         { material_id: material.id, movement_type: "transferencia", quantity_kg: -qty, reference_type: "transfer", movement_date: hoy, notes: `Transferencia a ${destNombre}${notas ? ` · ${notas}` : ""} (${usuario})` },
         { material_id: destino.id, movement_type: "transferencia", quantity_kg: qty, reference_type: "transfer", movement_date: hoy, notes: `Transferencia desde ${origNombre}${notas ? ` · ${notas}` : ""} (${usuario})` },
       ])
+      // El stock ya se movió: si el movimiento no quedó, el control de stock lo ve como "ajuste sin registro"
+      if (e3) {
+        console.error("Transferencia sin movimiento:", e3)
+        toast({ title: "Se movió el stock pero no quedó el movimiento", description: `Avisá para cargarlo a mano (${qty} ${material.unit} de ${material.name}: ${origNombre} → ${destNombre}).`, variant: "destructive" })
+      }
       await logActivity({
         action: "transferir",
         entity: "material",
@@ -108,7 +114,7 @@ export function TransferStockDialog({ material: materialProp, plants: plantsProp
         plantId: material.plant_id,
         details: { Material: material.name, Cantidad: `${qty} ${material.unit}`, De: origNombre, A: destNombre, Notas: notas || "-" },
       })
-      toast({ title: "Transferencia registrada", description: `${qty} ${material.unit} de ${material.name}: ${origNombre} → ${destNombre}` })
+      if (!e3) toast({ title: "Transferencia registrada", description: `${qty} ${material.unit} de ${material.name}: ${origNombre} → ${destNombre}` })
       onOpenChange(false)
       onDone?.()
     } catch (err: any) {
