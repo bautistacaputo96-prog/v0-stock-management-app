@@ -2124,3 +2124,22 @@ pasa por la pantalla "Composicion" (`modificar_ordenfabricacioncompo.php?codigo=
 - **Lo que no entra:** mandar el consumo real en vez de lo que propone Zomatik (`enviarMp` recibe los campos a mandar;
   hoy, los de la pantalla). Borrar o corregir un RMI: nunca.
 - **Datos ya cargados:** no cambian.
+
+## 31. Control del despacho contra Zomatik (20/11/2026) — se suma al grupo 1 (solo lectura)
+
+Spec: `docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md`. Migraciones `202611201500_control_produccion.sql` y
+`202611201510_control_produccion_cron.sql` (sin aplicar). Motivo: del 13 al 20/11 Zomatik no descontó la materia prima
+de las OF del robot (~72 t de cemento) y nadie se enteró en una semana.
+
+- **Lectura nueva:** FABRICA › REPORTE PRODUCCION. `POST reporte_produccion.php` con el cuerpo exacto
+  `enviado=1&exportar=0&bus_fechad=AAAA-MM-DD` (el formulario real manda `enviado=1` en el cuerpo, no en la ruta). Trae
+  16 días desde esa fecha, una fila por producto y depósito, con los m³ de las OF por fecha de entrega (incluye PEN).
+- **Lista cerrada (`rutaPermitida`):** `reporte_produccion.php` exacto, por GET y POST. No está en `LISTADOS`: no
+  habilita `?enviado=1` ni `output/reporte_produccion.xlsx`. El cuerpo del POST lo controla
+  `cuerpoReporteProduccionValido` en `pedir` antes de salir: con `exportar=1`, otro campo u otro orden, no sale.
+- **Sucursal:** `fetchReporteProduccion` elige la 18 y exige que la misma respuesta la muestre (`frm_selsuc`); si muestra
+  otra, error y un reintento a los 15 s.
+- **La planta** sale de la columna Depósito ("Canning" 116, "REBUCRET" 113), nunca del nombre del producto.
+- **Cuándo:** pg_cron `control-despacho-lectura`, 05:42 y 06:42 de Argentina, y "Actualizar ahora" en Control de stock.
+  Con el turno del robot.
+- **Ningún grupo de escritura cambia.** No toca `z1-*` ni el robot de las OF.

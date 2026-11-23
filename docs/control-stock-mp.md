@@ -84,3 +84,15 @@ Las filas en rojo ya no disparan ningún mail.
 3. **Otros comprobantes de Zomatik** (ajustes, remito cambio, scrap): hoy cuentan en entró o salió según su signo, y se ven por prefijo en el detalle. *Recomiendo* separarlos en una columna cuando aparezcan en la primera corrida.
 4. **Rojo:** más del 5 % y al menos 0,5 t (confirmado en la revisión).
 5. **"Sin movimientos en 10 días":** si Juan carga los consumos (RMI) en Zomatik cada más de 10 días, esa planta y material nunca se guardaría. *Recomiendo* mirar en la primera corrida cada cuánto aparecen los RMI y ajustar los 10 días.
+
+## Despacho contra Zomatik (20/11/2026)
+Spec: `docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md` (la sección 17 manda). Código: `lib/control-produccion/`.
+- **Qué compara:** los 7 días cerrados (de hoy − 7 a hoy − 1; hoy va aparte, en gris):
+  - m³ despachados (sin pruebas; OBRA PROPIA entra) contra m³ con OF del REPORTE PRODUCCION, por planta y día. Rojo con 0,5 m³ o más en la semana; lo que falta de ayer o anteayer va en ámbar.
+  - materia prima descontada **por grupo**: cemento, arenas (fina + 0/6) y piedras (toda piedra del sistema, también la 10/30, contra 6/20 + 6/12 de Zomatik). Rojo con más de 5 % y media tonelada, % sobre nuestro sistema. La arena: bien si Zomatik cae entre lo seco y lo húmedo. Material por material, solo informativo.
+  - las OF del robot sin materia prima descontada (`of_mp_estado` `revisar` o `pendiente`, o vacío desde el 20/11).
+- **Fechas del robot:** lo que el robot descontó otro día (`of_mp_at`) se pasa al día del despacho, con `of_mp_detalle`.
+- **Zomatik al día:** cada fuente vale si se leyó hoy. Si no, gris y "no se pudo leer Zomatik hoy" (nunca "todo bien").
+- **Lectura:** pg_cron `control-despacho-lectura` a las 05:42 y 06:42 (`GET /api/control-stock/actualizar`): el reporte de producción y después el stock. "Actualizar ahora" lee también el reporte, primero.
+- **Pantalla:** una tarjeta arriba de la tabla de stock (`components/control-despacho-zomatik.tsx`), por `/api/control-stock/despacho`. Mismos permisos.
+- **Tablas:** `zomatik_produccion_dia` y `zomatik_produccion_lectura` (migración `202611201500`, sin aplicar). Sin ella, la tarjeta dice que falta y la tabla de stock anda igual.
