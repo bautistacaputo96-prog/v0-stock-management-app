@@ -42,7 +42,7 @@ import {
 import { armarMail, esDiaSemanal, type DiferenciaMail, type ImportacionMail } from "@/lib/control-ingresos/mail"
 import { puedeCon, tipoDe, type UsuarioPermisos } from "@/lib/permisos"
 import { leerStockZomatik, seccionStockParaMail, type ResultadoStock } from "@/lib/control-stock/servidor"
-import { seccionDespachoParaMail } from "@/lib/control-produccion/servidor"
+import { seccionDespachoParaMail, TOPE_DESPACHO_MAIL_MS } from "@/lib/control-produccion/servidor"
 
 /**
  * El control de stock (docs/control-stock-mp.md) va en el mismo cron: remitos → mail (con la última lectura de stock
@@ -446,8 +446,9 @@ async function mandarMail(sb: SupabaseClient, hoy: string, res: ResultadoControl
   const semanal = esDiaSemanal(hoy)
   const stock = semanal ? await seccionStockParaMail(sb, hoy, null) : null
   const importacion = await importacionParaMail(sb, hoy, corte, semanal)
-  // El despacho contra Zomatik, arriba de todo (con la lectura de las 05:42; nunca tira, sin su migración no va)
-  const despacho = await seccionDespachoParaMail(sb, hoy)
+  // El despacho contra Zomatik, arriba de todo (con la lectura de las 05:42). Nunca tira y tiene un tope de 20 s
+  // (Promise.race adentro): si no llega, una línea ámbar y el mail sale igual. Sin su migración no va
+  const despacho = await seccionDespachoParaMail(sb, hoy, { topeMs: TOPE_DESPACHO_MAIL_MS })
   const { asunto, html } = armarMail({ tipo: semanal ? "semanal" : "diario", nuevas, abiertas, link: LINK_PANTALLA, hoy, falloLectura, stockHtml: stock?.html, importacion, despacho })
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",

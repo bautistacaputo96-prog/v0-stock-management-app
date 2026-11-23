@@ -4,7 +4,7 @@
  *
  * Nunca escribe en Zomatik ni en dispatches, dispatch_materials, stock_*, materials o zomatik_remitos (solo los lee).
  * Escribe solo zomatik_produccion_dia y zomatik_produccion_lectura (clave de servicio).
- * Especificación: docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md (la sección 17 manda).
+ * Especificación: docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md (la sección 18 manda).
  *
  * Mismas protecciones que el control de stock: turno del robot y la sucursal 18 confirmada en la MISMA respuesta del
  * reporte (si muestra otra, se reintenta una vez a los 15 s).
@@ -41,7 +41,8 @@ export class FaltaMigracionDespacho extends Error {
   }
 }
 /** ¿El error de Supabase es "no existe la tabla o la función" del control de despacho? */
-const faltaTabla = (e: any) => e?.code === "42P01" || e?.code === "PGRST205" || e?.code === "PGRST202" || /zomatik_produccion|control_produccion_reemplazar/i.test(String(e?.message || ""))
+/** Solo por el código (no por el texto: un 42501 "permission denied for table zomatik_produccion_dia" NO es esto). */
+const faltaTabla = (e: any) => ["42P01", "PGRST205", "PGRST202"].includes(String(e?.code ?? ""))
 
 async function todasLasFilas<T>(q: (a: number, b: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
   const out: T[] = []
@@ -159,63 +160,58 @@ export async function calcularDespacho(sb: SupabaseClient, hoy: string = fechaAr
   const { desde, hasta } = ventana(hoy)
   const desdeTs = `${desde}T03:00:00.000Z`
 
-  const [prodLectura, prod] = await Promise.all([
+  // OF del robot. Sin la migración 202611191200 (42703): sin lista y sin corrección de fechas; el resto anda
+  const sinColumnas = (e: any) => e?.code === "42703" || /of_mp_/.test(String(e?.message || ""))
+  const sinColumnasVacio = (e: any) => {
+    if (sinColumnas(e)) return [] as any[]
+    throw e
+  }
+  // Todas las consultas que no dependen de otra, juntas
+  const [prodLectura, prod, { data: cfg, error: eCfg }, { data: plantasDb, error: ePl }, despachos, movimientos, lecturas, ofsRobot, ofs] = await Promise.all([
     sb.from("zomatik_produccion_lectura").select("leido_at, error").eq("id", 1).maybeSingle(),
     todasLasFilas<any>((a, b) => sb.from("zomatik_produccion_dia").select("deposito, fecha, producto, articulo_codigo, m3, segmento").gte("fecha", desde).lte("fecha", hoy).ilike("segmento", "hormigon%").order("id").range(a, b)).catch((e) => {
       throw faltaTabla(e) ? new FaltaMigracionDespacho() : e
     }),
+    sb.from("zomatik_np_config").select("plant_id, deposito"),
+    sb.from("plants").select("id, name"),
+    // Nuestro sistema: los despachos de la ventana y de hoy, sin los de prueba (OBRA PROPIA entra)
+    todasLasFilas<any>((a, b) =>
+      sb
+        .from("dispatches")
+        .select("id, plant_id, dispatch_date, quantity_m3, is_test_dispatch, formulas(code, plant_id, zomatik_articulo_codigo, zomatik_articulo_nombre), dispatch_materials(quantity, dry_quantity, materials(name))")
+        .gte("dispatch_date", desdeTs)
+        .or("is_test_dispatch.is.null,is_test_dispatch.eq.false")
+        .order("id")
+        .range(a, b),
+    ),
+    // Zomatik: consumos (RMI) y ajustes (RS) desde el inicio de la ventana, y cuándo se leyó cada artículo
+    todasLasFilas<any>((a, b) => sb.from("zomatik_stock_movimientos").select("deposito, codigo_articulo, fecha, prefijo, comprobante, movimiento").in("prefijo", ["RMI", "RS"]).gte("fecha", desde).order("id").range(a, b)),
+    sb.from("zomatik_stock_lecturas").select("deposito, codigo_articulo, leido_at, error"),
+    todasLasFilas<any>((a, b) =>
+      sb.from("zomatik_remitos").select("plant_id, fecha, of_mp_at, of_mp_detalle").eq("of_mp_estado", "ok").not("of_mp_detalle", "is", null).gte("of_mp_at", desdeTs).order("id").range(a, b),
+    ).catch(sinColumnasVacio),
+    todasLasFilas<any>((a, b) =>
+      sb
+        .from("zomatik_remitos")
+        .select("fecha, plant_id, of_numero, m3, formula_id, of_estado, estado, of_mp_estado, of_mp_mensaje")
+        .eq("of_estado", "ok")
+        .neq("estado", "anulado")
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .order("fecha")
+        .range(a, b),
+    ).catch(sinColumnasVacio),
   ])
   if (prodLectura.error) throw faltaTabla(prodLectura.error) ? new FaltaMigracionDespacho() : prodLectura.error
-
-  const [{ data: cfg, error: eCfg }, { data: plantasDb, error: ePl }] = await Promise.all([sb.from("zomatik_np_config").select("plant_id, deposito"), sb.from("plants").select("id, name")])
   if (eCfg) throw eCfg
   if (ePl) throw ePl
+  if (lecturas.error) throw lecturas.error
   const nombre = new Map(((plantasDb as any[]) || []).map((p) => [p.id, p.name]))
   const plantas = ((cfg as any[]) || [])
     .filter((c) => c.deposito && c.plant_id && nombre.has(c.plant_id))
     .map((c) => ({ id: c.plant_id as string, nombre: String(nombre.get(c.plant_id)), deposito: Number(c.deposito) }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre))
 
-  // Nuestro sistema: los despachos de la ventana y de hoy, sin los de prueba (OBRA PROPIA entra)
-  const despachos = await todasLasFilas<any>((a, b) =>
-    sb
-      .from("dispatches")
-      .select("id, plant_id, dispatch_date, quantity_m3, is_test_dispatch, formulas(code, plant_id, zomatik_articulo_codigo, zomatik_articulo_nombre), dispatch_materials(quantity, dry_quantity, materials(name))")
-      .gte("dispatch_date", desdeTs)
-      .or("is_test_dispatch.is.null,is_test_dispatch.eq.false")
-      .order("id")
-      .range(a, b),
-  )
-
-  // Zomatik: consumos (RMI) y ajustes (RS) desde el inicio de la ventana, y cuándo se leyó cada artículo
-  const [movimientos, lecturas] = await Promise.all([
-    todasLasFilas<any>((a, b) => sb.from("zomatik_stock_movimientos").select("deposito, codigo_articulo, fecha, prefijo, comprobante, movimiento").in("prefijo", ["RMI", "RS"]).gte("fecha", desde).order("id").range(a, b)),
-    sb.from("zomatik_stock_lecturas").select("deposito, codigo_articulo, leido_at, error"),
-  ])
-  if (lecturas.error) throw lecturas.error
-
-  // OF del robot. Sin la migración 202611191200 (42703): sin lista y sin corrección de fechas; el resto anda
-  const sinColumnas = (e: any) => e?.code === "42703" || /of_mp_/.test(String(e?.message || ""))
-  const ofsRobot = await todasLasFilas<any>((a, b) =>
-    sb.from("zomatik_remitos").select("plant_id, fecha, of_mp_at, of_mp_detalle").eq("of_mp_estado", "ok").not("of_mp_detalle", "is", null).gte("of_mp_at", desdeTs).order("id").range(a, b),
-  ).catch((e) => {
-    if (sinColumnas(e)) return [] as any[]
-    throw e
-  })
-  const ofs = await todasLasFilas<any>((a, b) =>
-    sb
-      .from("zomatik_remitos")
-      .select("fecha, plant_id, of_numero, m3, formula_id, of_estado, estado, of_mp_estado, of_mp_mensaje")
-      .eq("of_estado", "ok")
-      .neq("estado", "anulado")
-      .gte("fecha", desde)
-      .lte("fecha", hasta)
-      .order("fecha")
-      .range(a, b),
-  ).catch((e) => {
-    if (sinColumnas(e)) return [] as any[]
-    throw e
-  })
   const idsFormula = [...new Set(ofs.map((o) => o.formula_id).filter(Boolean))]
   const codigoFormula = new Map<string, string>()
   if (idsFormula.length) {
@@ -250,20 +246,37 @@ export async function calcularDespacho(sb: SupabaseClient, hoy: string = fechaAr
   return armarDespacho(datos)
 }
 
+/** Tope del bloque del despacho en el mail: si no termina, el mail sale igual con una línea ámbar. */
+export const TOPE_DESPACHO_MAIL_MS = 20_000
+const lineaAmbar = (texto: string) => ({
+  html: `<div style="margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #e2e8f0"><div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px">${texto}</div></div>`,
+  asunto: null,
+})
+export const LINEA_NO_SE_PUDO_CONTROLAR = "Despacho contra Zomatik: no se pudo controlar hoy."
+export const LINEA_NO_A_TIEMPO = "Despacho contra Zomatik: no se pudo calcular a tiempo."
+
 /**
- * El bloque de arriba del mail de las 16:25 (diario y semanal). Nunca tira: sin las tablas nuevas devuelve null (el mail
- * sale como hoy); con cualquier otro error, una línea ámbar.
+ * El bloque de arriba del mail de las 16:25 (diario y semanal). Nunca tira y no tarda más de `topeMs` (20 s): sin las
+ * tablas nuevas devuelve null (el mail sale como hoy); si no termina a tiempo o con cualquier otro error (también un
+ * permiso denegado), una línea ámbar.
  */
-export async function seccionDespachoParaMail(sb: SupabaseClient, hoy: string): Promise<{ html: string; asunto: string | null } | null> {
+export async function seccionDespachoParaMail(sb: SupabaseClient, hoy: string, opts: { topeMs?: number } = {}): Promise<{ html: string; asunto: string | null } | null> {
+  let reloj: ReturnType<typeof setTimeout> | undefined
+  const tope = new Promise<"tope">((r) => {
+    reloj = setTimeout(() => r("tope"), opts.topeMs ?? TOPE_DESPACHO_MAIL_MS)
+  })
   try {
-    return seccionMailDespacho(await calcularDespacho(sb, hoy), LINK_DESPACHO)
+    const r = await Promise.race([calcularDespacho(sb, hoy), tope])
+    if (r === "tope") {
+      console.error("[control-produccion] bloque del mail: no terminó a tiempo")
+      return lineaAmbar(LINEA_NO_A_TIEMPO)
+    }
+    return seccionMailDespacho(r, LINK_DESPACHO)
   } catch (e) {
     if (e instanceof FaltaMigracionDespacho) return null
     console.error("[control-produccion] bloque del mail:", e)
-    return {
-      html: `<div style="margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #e2e8f0"><div style="background:#fef3c7;color:#78350f;padding:6px 8px;border-radius:6px">Despacho contra Zomatik: no se pudo controlar hoy.</div></div>`,
-      asunto: null,
-    }
+    return lineaAmbar(LINEA_NO_SE_PUDO_CONTROLAR)
+  } finally {
+    clearTimeout(reloj)
   }
 }
-
