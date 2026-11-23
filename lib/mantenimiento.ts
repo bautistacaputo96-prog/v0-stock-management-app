@@ -136,36 +136,110 @@ export function textoVencimiento(fecha: Date, porM3: boolean, restanM3: number |
   return `En ${d} días`
 }
 
-/** Carga todo lo que el módulo necesita para un equipo. */
+/** Tope de filas que devuelve Supabase por consulta (aunque se pida un .limit() mayor). */
+export const TOPE_FILAS = 1000
+
+/**
+ * Trae TODAS las filas de una consulta, de a páginas de 1000. Supabase corta
+ * cada respuesta en 1000 filas aunque se pida .limit(20000): sin esto los m³
+ * acumulados quedaban fijos en la suma de 1000 despachos y, pasadas las 1000
+ * órdenes, las más nuevas (las de hoy) no llegaban. `consulta` arma la consulta
+ * de un rango y tiene que tener un orden estable. Si una página falla, lanza.
+ */
+export async function traerTodas<T = any>(
+  consulta: (desde: number, hasta: number) => PromiseLike<{ data: any[] | null; error: any }>,
+): Promise<T[]> {
+  const out: T[] = []
+  for (let desde = 0; ; desde += TOPE_FILAS) {
+    const { data, error } = await consulta(desde, desde + TOPE_FILAS - 1)
+    if (error) throw error
+    out.push(...((data || []) as T[]))
+    if (!data || data.length < TOPE_FILAS) break
+  }
+  return out
+}
+
+/** Día calendario en Argentina ("yyyy-MM-dd") de un timestamp. */
+export function diaArgentina(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso))
+}
+
+export type DespachoM3 = { quantity_m3: number | string | null; dispatch_date: string | null }
+
+/**
+ * m³ acumulados de la planta y, para cada última ejecución, sus m³ "de cuando
+ * se hizo" recalculados con los despachos posteriores a ese día (hora argentina):
+ * lo que falta por m³ = frecuencia − m³ despachados desde el día siguiente.
+ * No se usa el m3_acumulado guardado en la ejecución: se grabó con la suma
+ * cortada en 1000 despachos, y "Ya estaba hecha" con fecha vieja grababa los m³ de hoy.
+ */
+export function calcularM3(despachos: DespachoM3[], ultimaPorTarea: Record<string, Ejecucion>) {
+  const dias = despachos.map((d) => ({ dia: d.dispatch_date ? diaArgentina(d.dispatch_date) : "", m3: Number(d.quantity_m3 || 0) }))
+  const m3Actual = dias.reduce((s, d) => s + d.m3, 0)
+  const ajustadas: Record<string, Ejecucion> = {}
+  for (const [id, e] of Object.entries(ultimaPorTarea)) {
+    const fecha = String(e.fecha).slice(0, 10)
+    const despues = dias.reduce((s, d) => (d.dia > fecha ? s + d.m3 : s), 0)
+    ajustadas[id] = { ...e, m3_acumulado: m3Actual - despues }
+  }
+  return { m3Actual, ultimaPorTarea: ajustadas }
+}
+
+/** La última ejecución de cada tarea (las ejecuciones vienen de la más nueva a la más vieja). */
+export function ultimaEjecucionPorTarea(ejec: Ejecucion[]): Record<string, Ejecucion> {
+  const ultima: Record<string, Ejecucion> = {}
+  for (const e of ejec) if (!ultima[e.task_id]) ultima[e.task_id] = e
+  return ultima
+}
+
+/**
+ * Carga todo lo que el módulo necesita para un equipo. Si una consulta falla,
+ * lanza: antes el error se tragaba y, sin ejecuciones, todas las tareas
+ * parecían "sin registro" y se generaban órdenes de más.
+ */
 export async function cargarDatosEquipo(supabase: SupabaseClient, equipmentId: string, plantId: string) {
-  const [{ data: tareas }, { data: ejec }, { data: desp }, { data: ordenes }] = await Promise.all([
-    supabase
-      .from("maint_tasks")
-      .select("*, maint_task_items(*), maint_task_images(*), maint_task_steps(*)")
-      .eq("equipment_id", equipmentId)
-      .eq("activo", true)
-      .order("orden"),
-    supabase.from("maint_executions").select("task_id, fecha, realizado_por, m3_acumulado").order("fecha", { ascending: false }),
-    supabase.from("dispatches").select("quantity_m3").eq("plant_id", plantId).limit(20000),
-    supabase
-      .from("maint_work_orders")
-      .select("*, maint_work_order_photos(*)")
-      .eq("equipment_id", equipmentId)
-      .order("fecha_programada")
-      .order("numero"),
+  const { data: tareas, error: errTareas } = await supabase
+    .from("maint_tasks")
+    .select("*, maint_task_items(*), maint_task_images(*), maint_task_steps(*)")
+    .eq("equipment_id", equipmentId)
+    .eq("activo", true)
+    .order("orden")
+  if (errTareas) throw errTareas
+  const idsTareas = (tareas || []).map((t: any) => t.id as string)
+
+  const [ejec, desp, ordenes] = await Promise.all([
+    idsTareas.length
+      ? traerTodas<Ejecucion>((a, b) =>
+          supabase
+            .from("maint_executions")
+            .select("task_id, fecha, realizado_por, m3_acumulado")
+            .in("task_id", idsTareas)
+            .order("fecha", { ascending: false })
+            .order("created_at", { ascending: false })
+            .order("id")
+            .range(a, b))
+      : Promise.resolve([] as Ejecucion[]),
+    traerTodas<DespachoM3>((a, b) =>
+      supabase.from("dispatches").select("quantity_m3, dispatch_date").eq("plant_id", plantId).order("id").range(a, b)),
+    traerTodas<OrdenTrabajo>((a, b) =>
+      supabase
+        .from("maint_work_orders")
+        .select("*, maint_work_order_photos(*)")
+        .eq("equipment_id", equipmentId)
+        .order("fecha_programada")
+        .order("numero")
+        .range(a, b)),
   ])
 
-  const ultimaPorTarea: Record<string, Ejecucion> = {}
-  ;(ejec || []).forEach((e: any) => {
-    if (!ultimaPorTarea[e.task_id]) ultimaPorTarea[e.task_id] = e
-  })
-  const m3Actual = (desp || []).reduce((s: number, d: any) => s + Number(d.quantity_m3 || 0), 0)
+  const { m3Actual, ultimaPorTarea } = calcularM3(desp, ultimaEjecucionPorTarea(ejec))
 
   return {
     tareas: (tareas || []) as Tarea[],
     ultimaPorTarea,
     m3Actual,
-    ordenes: (ordenes || []) as OrdenTrabajo[],
+    ordenes,
   }
 }
 
@@ -233,6 +307,70 @@ export async function subirFotoOrden(supabase: SupabaseClient, ordenId: string, 
   const { error } = await supabase.storage.from("mantenimiento").upload(path, blob, { contentType: "image/jpeg", upsert: false })
   if (error) throw error
   const { data } = supabase.storage.from("mantenimiento").getPublicUrl(path)
-  await supabase.from("maint_work_order_photos").insert({ work_order_id: ordenId, url: data.publicUrl, subida_por: usuario, comentario: comentario || null })
+  const { error: errFila } = await supabase.from("maint_work_order_photos").insert({ work_order_id: ordenId, url: data.publicUrl, subida_por: usuario, comentario: comentario || null })
+  if (errFila) throw errFila
   return data.publicUrl
+}
+
+/** Resultado de completar/empezar: "ok", ya no estaba abierta (otro la cerró), o error. */
+export type ResultadoOT = { ok: true } | { ok: false; yaCerrada?: boolean; mensaje: string }
+
+/**
+ * Completa una orden y, si es preventiva, registra la ejecución que reinicia el
+ * contador de la tarea. Solo pasa si la orden sigue abierta (si otro la completó
+ * o la canceló mientras tanto, no la pisa ni duplica la ejecución). Si la
+ * ejecución no se puede grabar, devuelve la orden a como estaba: una orden
+ * completada sin ejecución hacía que al recargar se generara otra igual.
+ */
+export async function completarOrden(
+  supabase: SupabaseClient,
+  orden: Pick<OrdenTrabajo, "id" | "task_id" | "estado" | "fecha_inicio" | "fecha_fin" | "completado_por" | "observaciones" | "pasos" | "m3_acumulado">,
+  datos: { usuario: string; obs: string; pasos: Record<string, boolean>; m3Actual: number; fechaManual?: string; ahora: Date },
+): Promise<ResultadoOT> {
+  const ahoraIso = datos.ahora.toISOString()
+  const fechaEjec = datos.fechaManual || format(datos.ahora, "yyyy-MM-dd")
+  const { data: tomadas, error } = await supabase
+    .from("maint_work_orders")
+    .update({
+      estado: "completada",
+      fecha_fin: datos.fechaManual ? `${datos.fechaManual}T12:00:00-03:00` : ahoraIso,
+      fecha_inicio: orden.fecha_inicio || ahoraIso,
+      completado_por: datos.usuario,
+      observaciones: datos.obs || null,
+      pasos: datos.pasos,
+      m3_acumulado: datos.m3Actual,
+    })
+    .eq("id", orden.id)
+    .in("estado", ["pendiente", "en_curso"])
+    .select("id")
+  if (error) return { ok: false, mensaje: error.message }
+  if (!tomadas || tomadas.length === 0) return { ok: false, yaCerrada: true, mensaje: "La orden ya estaba cerrada (la completó o canceló otra persona)." }
+
+  if (orden.task_id) {
+    const { error: errEjec } = await supabase.from("maint_executions").insert({
+      task_id: orden.task_id,
+      fecha: fechaEjec,
+      realizado_por: datos.usuario,
+      observaciones: datos.obs || (datos.fechaManual ? "Registrada como ya realizada" : null),
+      m3_acumulado: datos.m3Actual,
+      pasos: Object.keys(datos.pasos).length ? datos.pasos : null,
+    })
+    if (errEjec) {
+      // Deshacer: la orden vuelve a quedar abierta como estaba
+      await supabase
+        .from("maint_work_orders")
+        .update({
+          estado: orden.estado,
+          fecha_fin: orden.fecha_fin,
+          fecha_inicio: orden.fecha_inicio,
+          completado_por: orden.completado_por,
+          observaciones: orden.observaciones,
+          pasos: datos.pasos,
+          m3_acumulado: orden.m3_acumulado,
+        })
+        .eq("id", orden.id)
+      return { ok: false, mensaje: errEjec.message }
+    }
+  }
+  return { ok: true }
 }

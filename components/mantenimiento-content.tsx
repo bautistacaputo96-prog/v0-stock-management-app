@@ -49,16 +49,26 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
   const [loading, setLoading] = useState(true)
   const [ordenAbierta, setOrdenAbierta] = useState<OrdenTrabajo | null>(null)
   const [reportar, setReportar] = useState(false)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
   const { puede } = usePermisos() // fase 0c-1: reportar falla = mantenimiento.cargar
 
   const cargar = useCallback(async (sincronizar = false) => {
     if (!equipo) return
     const supabase = createClient()
-    let d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
-    if (sincronizar) {
-      const creadas = await sincronizarOrdenes(supabase, equipo.id, d.tareas, d.ultimaPorTarea, d.m3Actual, d.ordenes)
-      if (creadas > 0) d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
+    let d: Awaited<ReturnType<typeof cargarDatosEquipo>>
+    try {
+      d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
+      // Solo con los datos completos: con un error a medias se generaban órdenes de más
+      if (sincronizar) {
+        const creadas = await sincronizarOrdenes(supabase, equipo.id, d.tareas, d.ultimaPorTarea, d.m3Actual, d.ordenes)
+        if (creadas > 0) d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
+      }
+    } catch (e: any) {
+      setErrorCarga(e?.message || "Error desconocido")
+      setLoading(false)
+      return
     }
+    setErrorCarga(null)
     setTareas(d.tareas); setUltima(d.ultimaPorTarea); setM3(d.m3Actual); setOrdenes(d.ordenes)
     // Si hay una orden abierta en el diálogo, refrescarla con los datos nuevos
     setOrdenAbierta((prev) => (prev ? d.ordenes.find((o) => o.id === prev.id) || null : null))
@@ -107,7 +117,15 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
         {equipo.nombre} · {equipo.plants?.name} · {m3Actual.toLocaleString("es-AR", { maximumFractionDigits: 0 })} m³ acumulados
       </p>
 
-      {loading ? (
+      {errorCarga && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 flex items-center justify-between gap-3">
+          <span>No se pudieron cargar los datos de mantenimiento: {errorCarga}</span>
+          <Button size="sm" variant="outline" onClick={() => cargar(true)}>Reintentar</Button>
+        </div>
+      )}
+
+      {/* Con error no se muestran las vistas: vacías dirían "Todo al día" */}
+      {errorCarga ? null : loading ? (
         <div className="py-16 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Cargando...</div>
       ) : tab === "calendario" ? (
         <VistaCalendario ordenes={ordenes} tareas={tareas} ultimaPorTarea={ultimaPorTarea} m3Actual={m3Actual} onAbrir={setOrdenAbierta} />
