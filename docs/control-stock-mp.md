@@ -86,7 +86,7 @@ Las filas en rojo ya no disparan ningún mail.
 5. **"Sin movimientos en 10 días":** si Juan carga los consumos (RMI) en Zomatik cada más de 10 días, esa planta y material nunca se guardaría. *Recomiendo* mirar en la primera corrida cada cuánto aparecen los RMI y ajustar los 10 días.
 
 ## Despacho contra Zomatik (20/11/2026)
-Spec: `docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md` (la sección 17 manda). Código: `lib/control-produccion/`.
+Spec: `docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md` (la sección 18 manda). Código: `lib/control-produccion/`.
 - **Qué compara:** los 7 días cerrados (de hoy − 7 a hoy − 1; hoy va aparte, en gris):
   - m³ despachados (sin pruebas; OBRA PROPIA entra) contra m³ con OF del REPORTE PRODUCCION, por planta y día. Rojo con 0,5 m³ o más en la semana; lo que falta de ayer o anteayer va en ámbar.
   - materia prima descontada **por grupo**: cemento, arenas (fina + 0/6) y piedras (toda piedra del sistema, también la 10/30, contra 6/20 + 6/12 de Zomatik). Rojo con más de 5 % y media tonelada, % sobre nuestro sistema. La arena: bien si Zomatik cae entre lo seco y lo húmedo. Material por material, solo informativo.

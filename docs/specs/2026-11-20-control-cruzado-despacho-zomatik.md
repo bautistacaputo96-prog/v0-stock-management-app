@@ -483,7 +483,7 @@ Ya está: `lib/__fixtures__/control-produccion/reporte-produccion.html`.
    aparecen.
 5. **OBRA PROPIA entra en la comparación** (tiene OF como cualquier cliente). *Recomiendo* que sí.
 
-## 17. Decisiones tomadas y datos confirmados (20/11, orquestador) — mandan sobre lo anterior
+## 18. Decisiones tomadas y datos confirmados (20/11, orquestador) — mandan sobre lo anterior
 
 **Decisiones (se toman las recomendaciones):**
 1. La humedad de la arena no cuenta como diferencia: Zomatik está bien si cae entre lo seco y lo húmedo, ±5 %.

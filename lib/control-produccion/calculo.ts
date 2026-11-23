@@ -1,7 +1,7 @@
 /**
  * Control cruzado · lo despachado en nuestro sistema contra Zomatik. Funciones puras: sin red, sin base y sin React. Se
  * prueban con `npm run test:control-produccion`. Especificación: docs/specs/2026-11-20-control-cruzado-despacho-zomatik.md
- * (la sección 17 manda sobre lo anterior).
+ * (la sección 18 manda sobre lo anterior).
  *
  * Tres comparaciones sobre los 7 días cerrados (de hoy − 7 a hoy − 1; hoy nunca da color):
  *   1. m³ despachados contra m³ con OF (FABRICA › REPORTE PRODUCCION), por planta y día.
@@ -268,7 +268,7 @@ export type ClaveGrupo = "cemento" | "arenas" | "piedras"
 const codigosDe = (prefijo: string) => MATERIALES.filter((m) => m.clave.startsWith(prefijo)).map((m) => m.codigo as string)
 
 /**
- * Los grupos del semáforo (sección 17): el color va por grupo y no por material, porque las composiciones de Zomatik no
+ * Los grupos del semáforo (sección 18): el color va por grupo y no por material, porque las composiciones de Zomatik no
  * reparten los áridos igual que nuestras fórmulas (y la Piedra 10/30 no existe en la composición). `codigos`: los
  * artículos de Zomatik de cada grupo (de `MATERIALES`).
  */
