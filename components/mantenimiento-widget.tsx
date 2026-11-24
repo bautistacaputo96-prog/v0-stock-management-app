@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, Clock, Wrench, Package, ChevronRight, CheckCircle2 } from "lucide-react"
 import { differenceInCalendarDays, parseISO } from "date-fns"
 import { cn } from "@/lib/utils"
+import { traerTodas, calcularM3, ultimaEjecucionPorTarea, type Ejecucion, type DespachoM3 } from "@/lib/mantenimiento"
 
 type Pendiente = {
   id: string
@@ -48,21 +49,40 @@ export function MantenimientoWidget({ plantId }: { plantId?: string }) {
       return
     }
 
-    const [{ data: tareas }, { data: ejec }, { data: desp }] = await Promise.all([
-      supabase
-        .from("maint_tasks")
-        .select("id, titulo, componente, frecuencia_dias, frecuencia_m3, maint_task_items(item, cantidad, unidad)")
-        .in("equipment_id", equipos.map((e) => e.id))
-        .eq("activo", true),
-      supabase.from("maint_executions").select("task_id, fecha, m3_acumulado").order("fecha", { ascending: false }),
-      supabase.from("dispatches").select("quantity_m3").eq("plant_id", equipos[0].plant_id).limit(20000),
-    ])
+    const { data: tareas, error: errTareas } = await supabase
+      .from("maint_tasks")
+      .select("id, titulo, componente, frecuencia_dias, frecuencia_m3, maint_task_items(item, cantidad, unidad)")
+      .in("equipment_id", equipos.map((e) => e.id))
+      .eq("activo", true)
+    if (errTareas) {
+      console.error("MantenimientoWidget:", errTareas)
+      setPendientes([])
+      setLoading(false)
+      return
+    }
+    const ids = (tareas || []).map((t) => t.id as string)
+    let ejec: Ejecucion[] = []
+    let desp: DespachoM3[] = []
+    try {
+      // Paginado: Supabase corta en 1000 filas (las ejecuciones viejas de las tareas
+      // anuales quedaban afuera y salían "Sin registro"; los m³ quedaban fijos)
+      ;[ejec, desp] = await Promise.all([
+        ids.length
+          ? traerTodas<Ejecucion>((a, b) =>
+              supabase.from("maint_executions").select("task_id, fecha, realizado_por, m3_acumulado").in("task_id", ids)
+                .order("fecha", { ascending: false }).order("created_at", { ascending: false }).order("id").range(a, b))
+          : Promise.resolve([] as Ejecucion[]),
+        traerTodas<DespachoM3>((a, b) =>
+          supabase.from("dispatches").select("quantity_m3, dispatch_date").eq("plant_id", equipos[0].plant_id).order("id").range(a, b)),
+      ])
+    } catch (e) {
+      console.error("MantenimientoWidget:", e)
+      setPendientes([])
+      setLoading(false)
+      return
+    }
 
-    const m3Actual = (desp || []).reduce((s: number, d: any) => s + Number(d.quantity_m3 || 0), 0)
-    const ultima: Record<string, any> = {}
-    ;(ejec || []).forEach((e: any) => {
-      if (!ultima[e.task_id]) ultima[e.task_id] = e
-    })
+    const { m3Actual, ultimaPorTarea: ultima } = calcularM3(desp, ultimaEjecucionPorTarea(ejec))
 
     const lista: Pendiente[] = []
     for (const t of tareas || []) {

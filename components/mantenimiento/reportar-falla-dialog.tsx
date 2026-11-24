@@ -16,6 +16,7 @@ import { logActivity } from "@/lib/activity-log"
 import { AlertTriangle, Camera, Loader2 } from "lucide-react"
 import { COMPONENTES, subirFotoOrden } from "@/lib/mantenimiento"
 import { cn } from "@/lib/utils"
+import { format } from "date-fns"
 
 type Props = { open: boolean; equipmentId: string; onClose: () => void; onCreada: () => void }
 
@@ -49,6 +50,8 @@ export function ReportarFallaDialog({ open, equipmentId, onClose, onCreada }: Pr
       componente: componente || null,
       estado: "pendiente",
       prioridad,
+      // Día de Argentina: sin esto la base ponía CURRENT_DATE en UTC (de 21 a 24 h, mañana)
+      fecha_programada: format(new Date(), "yyyy-MM-dd"),
       asignado_a: "Braian Peralta",
       creado_por: usuario,
     }).select("id").single()
@@ -58,10 +61,12 @@ export function ReportarFallaDialog({ open, equipmentId, onClose, onCreada }: Pr
       setGuardando(false)
       return
     }
+    let fotoFallo: string | null = null
     if (foto) {
-      try { await subirFotoOrden(supabase, data.id, foto, usuario, "Foto de la falla") } catch {}
+      try { await subirFotoOrden(supabase, data.id, foto, usuario, "Foto de la falla") } catch (e: any) { fotoFallo = e?.message || "error" }
     }
-    toast({ title: "Falla reportada", description: "Le llega a Braian Peralta" })
+    if (fotoFallo) toast({ title: "Falla reportada, pero sin la foto", description: `No se pudo subir la foto (${fotoFallo}). Agregala desde la orden.`, variant: "destructive" })
+    else toast({ title: "Falla reportada", description: "Le llega a Braian Peralta" })
     logActivity({
       action: "crear",
       entity: "orden_trabajo",
