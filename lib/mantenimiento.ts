@@ -172,6 +172,41 @@ export function vencimientoConSalteo(t: Tarea, ultima: Ejecucion | undefined, sa
   return { fecha, porM3, restanM3, salteada: true }
 }
 
+/**
+ * Estado de una tarea para el cuadrito de mantenimiento del Inicio: vencida, sin registro, próxima (dentro de
+ * `diasAviso` días o del 15 % de sus m³) o null si está al día. Con una preventiva cancelada (`salteo`) usa la misma
+ * regla que la generación de órdenes: ese vencimiento quedó salteado y cuenta hasta el siguiente del plan.
+ */
+export function pendienteInicio(
+  t: Pick<Tarea, "frecuencia_dias" | "frecuencia_m3">,
+  ultima: Ejecucion | undefined,
+  salteo: Ejecucion | undefined,
+  m3Actual: number,
+  diasAviso: number,
+): { nivel: "vencida" | "proxima" | "pendiente"; texto: string } | null {
+  if (!ultima && !salteo) return { nivel: "pendiente", texto: "Sin registro" }
+  let restanDias: number | null
+  let restanM3: number | null
+  if (salteo) {
+    const tt = t as Tarea
+    const porDias = vencimientoConSalteo({ ...tt, frecuencia_m3: null }, ultima, salteo, m3Actual)
+    restanDias = t.frecuencia_dias ? differenceInCalendarDays(porDias.fecha, new Date()) : null
+    restanM3 = vencimientoConSalteo(tt, ultima, salteo, m3Actual).restanM3
+  } else {
+    restanDias = t.frecuencia_dias ? t.frecuencia_dias - differenceInCalendarDays(new Date(), parseISO(ultima!.fecha)) : null
+    restanM3 = t.frecuencia_m3 && ultima!.m3_acumulado != null ? t.frecuencia_m3 - (m3Actual - Number(ultima!.m3_acumulado)) : null
+  }
+  const pre = salteo ? "Salteada · " : ""
+  if ((restanDias !== null && restanDias < 0) || (restanM3 !== null && restanM3 < 0)) {
+    return { nivel: "vencida", texto: pre + (restanM3 !== null && restanM3 < 0 ? `Vencida por ${Math.abs(Math.round(restanM3))} m³` : `Vencida hace ${Math.abs(restanDias || 0)} d`) }
+  }
+  const pocosM3 = restanM3 !== null && restanM3 <= (t.frecuencia_m3 || 0) * 0.15
+  if ((restanDias !== null && restanDias <= diasAviso) || pocosM3) {
+    return { nivel: "proxima", texto: pre + (pocosM3 ? `En ${Math.round(restanM3!)} m³` : `En ${restanDias} días`) }
+  }
+  return null
+}
+
 export type Nivel = "vencida" | "hoy" | "proxima" | "ok"
 
 export function nivelDeFecha(fecha: Date): Nivel {
