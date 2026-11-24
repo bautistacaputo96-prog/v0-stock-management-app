@@ -102,3 +102,13 @@ export function estadoGps(e: EntradaEstado): EstadoGps {
   }
   return e.minutosDesdeSalida != null && e.minutosDesdeSalida > e.idaMin + 15 ? "volviendo" : "hacia_obra"
 }
+
+const ENTIDADES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }
+/**
+ * Texto cargado por la gente (nombre de obra, cliente, remito) o por B-Track (nombre de la unidad) para meter en el
+ * HTML de los marcadores y popups del mapa. Sin escapar, una obra llamada `<img src=x onerror=…>` corría código en
+ * la sesión de quien abría Logística › En vivo.
+ */
+export function escaparHtml(x: unknown): string {
+  return String(x ?? "").replace(/[&<>"']/g, (c) => ENTIDADES[c])
+}

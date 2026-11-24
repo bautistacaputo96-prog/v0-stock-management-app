@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { buscarOsm } from "@/lib/geo-osm"
 
 /**
@@ -6,6 +7,13 @@ import { buscarOsm } from "@/lib/geo-osm"
  * zona de influencia de Canning y Hudson (OpenStreetMap: ver lib/geo-osm.ts).
  */
 export async function GET(req: Request) {
+  // Solo con sesión iniciada: estas búsquedas usan la clave paga de Google (o servicios gratuitos con límite)
+  try {
+    const s = await exigirSesion()
+    if (s.respuesta) return s.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const q = (new URL(req.url).searchParams.get("q") || "").trim()
   if (q.length < 3) return NextResponse.json({ resultados: [] })
   try {

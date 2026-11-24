@@ -50,3 +50,47 @@ export function parsearCoordenadas(texto: string): LatLng | null {
   }
   return null
 }
+
+/** google.com, google.com.ar, google.de, google.co.uk… */
+const DOMINIO_GOOGLE = /^google\.(com|[a-z]{2}|com\.[a-z]{2}|co\.[a-z]{2})$/
+
+function urlWeb(texto: string): URL | null {
+  try {
+    const u = new URL((texto || "").trim())
+    if ((u.protocol !== "https:" && u.protocol !== "http:") || u.username || u.password || u.port) return null
+    return u
+  } catch {
+    return null
+  }
+}
+
+/** El host es de Google (cualquier subdominio de google.<país>) o de sus links cortos. */
+function hostDeGoogle(host: string): boolean {
+  const h = host.toLowerCase()
+  if (h === "goo.gl" || h === "maps.app.goo.gl" || h === "g.co") return true
+  const partes = h.split(".")
+  for (let k = 0; k < partes.length - 1; k++) if (DOMINIO_GOOGLE.test(partes.slice(k).join("."))) return true
+  return false
+}
+
+/**
+ * ¿Es un link de Google Maps que /api/geo/link puede abrir? Se mira el host real (antes una expresión sobre el
+ * texto dejaba pasar maps.google.otro-sitio.com y el servidor iba a buscar ese sitio).
+ */
+export function esLinkDeGoogleMaps(texto: string): boolean {
+  const u = urlWeb(texto)
+  if (!u) return false
+  const h = u.hostname.toLowerCase(), p = u.pathname.toLowerCase()
+  if (h === "maps.app.goo.gl") return true
+  if (h === "goo.gl") return p.startsWith("/maps")
+  if (h === "g.co") return p.startsWith("/kgs")
+  if (h.startsWith("maps.") && DOMINIO_GOOGLE.test(h.slice(5))) return true
+  const sinWww = h.startsWith("www.") ? h.slice(4) : h
+  return DOMINIO_GOOGLE.test(sinWww) && p.startsWith("/maps")
+}
+
+/** Una redirección de un link de Google Maps se sigue solo si va a otro sitio de Google. */
+export function esRedireccionDeGoogle(texto: string): boolean {
+  const u = urlWeb(texto)
+  return !!u && hostDeGoogle(u.hostname)
+}
