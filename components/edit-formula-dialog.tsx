@@ -15,7 +15,7 @@ import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { logCambio } from "@/lib/activity-log"
 import { CampoMotivo, motivoValido } from "@/components/motivo"
-import { usePermisos } from "@/lib/current-user"
+import { usePermisos, currentUserName } from "@/lib/current-user"
 import { CamposNombre, codigoDe, type ValorNombre } from "@/components/formulas/campos-nombre"
 import { PARTES_VACIAS, interpretarNombre } from "@/lib/formulas-nombre"
 import { materialRepetido } from "@/lib/pantallas"
@@ -159,9 +159,6 @@ export function EditFormulaDialog({
     try {
       const supabase = createClient()
 
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser()
-
       // Update formula
       const { error: formulaError } = await supabase
         .from("formulas")
@@ -171,7 +168,8 @@ export function EditFormulaDialog({
           description: formData.description || null,
           yield_m3: Number.parseFloat(formData.yield_m3),
           updated_at: new Date().toISOString(),
-          updated_by: user?.email || null,
+          // Antes: el mail de Supabase Auth, que nadie usa (siempre quedaba vacío). Fase 0c-2: la persona en sesión
+          updated_by: currentUserName(),
         })
         .eq("id", formula.id)
 

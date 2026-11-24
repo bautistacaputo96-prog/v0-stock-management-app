@@ -20,6 +20,7 @@ import {
   type SeccionClave,
   type Tipo,
 } from "@/lib/permisos"
+import { olvidarTokenBase } from "@/lib/supabase/client"
 
 export type CurrentUser = {
   id: string
@@ -67,6 +68,8 @@ export function setCurrentUser(user: Omit<CurrentUser, "role"> | CurrentUser) {
   const u = armarUsuario(user)
   if (!u) return
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
+  // Fase 0c-2: entró, cambió de contraseña o se refrescó la sesión: el próximo pedido a la base usa un token nuevo
+  olvidarTokenBase()
   window.dispatchEvent(new Event(EVENTO_USUARIO))
 }
 
@@ -75,6 +78,7 @@ export function clearCurrentUser() {
   window.localStorage.removeItem(STORAGE_KEY)
   // Restos del login viejo (contraseña compartida)
   window.localStorage.removeItem("rebucret-auth")
+  olvidarTokenBase()
   window.dispatchEvent(new Event(EVENTO_USUARIO))
 }
 
