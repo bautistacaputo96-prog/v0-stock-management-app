@@ -1,4 +1,5 @@
 import { createClient as crearCliente } from "@supabase/supabase-js"
+import { unstable_rethrow } from "next/navigation"
 import { sesionActual } from "@/lib/auth/servidor"
 import { tokenBaseParaSesion } from "@/lib/auth/token-base"
 
@@ -23,6 +24,8 @@ export async function createClient() {
       token = t.token
     }
   } catch (e) {
+    // Lo que usa Next para saber que la página es dinámica (cookies) tiene que seguir de largo
+    unstable_rethrow(e)
     // Sin SESION_SECRETO o sin clave de servicio: sigue con la clave pública (el login avisa lo que falta)
     console.warn("[supabase/server] sin token de sesión:", (e as Error)?.message || e)
   }
