@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { ObraUbicacion, DireccionDelMapa, type UbicacionObra } from "@/components/obra-ubicacion"
 import { completarVacios, usarDelMapa, normalizarLocalidad, FALTA_LOCALIDAD, type DireccionMapa } from "@/lib/geo-direccion"
@@ -149,6 +149,9 @@ export function ClientsManagement() {
   const [sinCuit, setSinCuit] = useState(false)
   const [motivoAlta, setMotivoAlta] = useState("")
   const [motivo, setMotivo] = useState("")
+  // Doble toque en Guardar: dos altas del mismo cliente u obra (dos llamadas antes de que se cierre el diálogo)
+  const [guardando, setGuardando] = useState(false)
+  const enCurso = useRef(false)
   const { toast } = useToast()
 
   const [clientForm, setClientForm] = useState({ ...EMPTY_CLIENT_FORM })
@@ -202,6 +205,18 @@ export function ClientsManagement() {
   )
 
   async function handleSaveClient(desc: string[] = descartados) {
+    if (enCurso.current) return
+    enCurso.current = true
+    setGuardando(true)
+    try {
+      await guardarCliente(desc)
+    } finally {
+      enCurso.current = false
+      setGuardando(false)
+    }
+  }
+
+  async function guardarCliente(desc: string[]) {
     if (editingClient ? !puede("clientes", "editar") : !puede("clientes", "cargar")) return
     if (!editingClient) return altaNueva(desc)
     if (editingClient && !motivoValido(motivo)) {
@@ -337,6 +352,18 @@ export function ClientsManagement() {
   }
 
   async function handleSaveSite() {
+    if (enCurso.current) return
+    enCurso.current = true
+    setGuardando(true)
+    try {
+      await guardarObra()
+    } finally {
+      enCurso.current = false
+      setGuardando(false)
+    }
+  }
+
+  async function guardarObra() {
     if (!selectedClient) return
     if (editingSite ? !puede("clientes", "editar") : !puede("clientes", "cargar")) return
     if (editingSite && !motivoValido(motivo)) {
@@ -805,7 +832,7 @@ export function ClientsManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsClientDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={() => handleSaveClient()} disabled={!clientForm.razon_social || (!!editingClient && (!clientForm.cuit || !motivoValido(motivo))) || (!editingClient && !clientForm.cuit && !sinCuit)}>
+            <Button onClick={() => handleSaveClient()} disabled={guardando || !clientForm.razon_social || (!!editingClient && (!clientForm.cuit || !motivoValido(motivo))) || (!editingClient && !clientForm.cuit && !sinCuit)}>
               {editingClient ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>
@@ -918,7 +945,7 @@ export function ClientsManagement() {
           {editingSite && <CampoMotivo value={motivo} onChange={setMotivo} id="motivo-obra" ejemplo="Ej: el cliente pasó otra dirección" />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsSiteDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveSite} disabled={!siteForm.name || !siteForm.address || (!!editingSite && !motivoValido(motivo))}>
+            <Button onClick={handleSaveSite} disabled={guardando || !siteForm.name || !siteForm.address || (!!editingSite && !motivoValido(motivo))}>
               {editingSite ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>

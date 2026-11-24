@@ -49,8 +49,13 @@ export function DeleteFormulaDialog({
         supabase.from("dispatches").select("id", { count: "exact", head: true }).eq("formula_id", formula.id),
         supabase.from("scheduled_dispatches").select("id", { count: "exact", head: true }).eq("formula_id", formula.id),
       ])
-      const dispCount = dispRes.count || 0
-      const schedCount = schedRes.count || 0
+      // Si no se pudo contar, no se borra: la base borra en cascada los despachos de la fórmula (dispatches.formula_id
+      // ON DELETE CASCADE) y una falla de red acá contaba como "0 despachos".
+      if (dispRes.error || schedRes.error || dispRes.count == null || schedRes.count == null) {
+        throw new Error("No se pudo controlar si la fórmula tiene despachos. Probá de nuevo.")
+      }
+      const dispCount = dispRes.count
+      const schedCount = schedRes.count
 
       if (dispCount > 0 || schedCount > 0) {
         toast({
@@ -65,8 +70,8 @@ export function DeleteFormulaDialog({
       // Copia de la receta para Actividad y el mail (fase 0c-1)
       const { data: receta } = await supabase.from("formula_materials").select("quantity, materials(name, unit)").eq("formula_id", formula.id)
 
-      // Borrar primero los materiales de la fórmula (FK), luego la fórmula
-      await supabase.from("formula_materials").delete().eq("formula_id", formula.id)
+      // Los materiales se borran solos con la fórmula (formula_materials ON DELETE CASCADE), en la misma operación:
+      // borrarlos antes dejaba la fórmula sin composición si después fallaba el borrado de la fórmula.
       const { error } = await supabase.from("formulas").delete().eq("id", formula.id)
 
       if (error) throw error

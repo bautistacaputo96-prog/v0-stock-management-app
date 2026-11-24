@@ -18,6 +18,7 @@ import { CampoMotivo, motivoValido } from "@/components/motivo"
 import { usePermisos } from "@/lib/current-user"
 import { CamposNombre, codigoDe, type ValorNombre } from "@/components/formulas/campos-nombre"
 import { PARTES_VACIAS, interpretarNombre } from "@/lib/formulas-nombre"
+import { materialRepetido } from "@/lib/pantallas"
 
 type Material = {
   id: string
@@ -140,6 +141,19 @@ export function EditFormulaDialog({
       return
     }
 
+    // El mismo material dos veces (o el agua elegida también abajo): la base rechaza la segunda fila y, como la
+    // composición se borra antes de volver a grabarla, la fórmula quedaba sin materiales.
+    const aguaVa = !!waterMaterialId && Number.parseFloat(waterQuantity) > 0
+    const repetido = materialRepetido([...formulaMaterials.map((m) => m.material_id), ...(aguaVa ? [waterMaterialId] : [])])
+    if (repetido) {
+      toast({
+        variant: "destructive",
+        title: "Material repetido",
+        description: `${materials.find((m) => m.id === repetido)?.name || "Un material"} está dos veces: dejalo una sola vez con la cantidad total.`,
+      })
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -188,7 +202,18 @@ export function EditFormulaDialog({
         })),
       )
 
-      if (materialsError) throw materialsError
+      if (materialsError) {
+        // La composición vieja ya se borró: se vuelve a poner para no dejar la fórmula sin materiales (el despacho
+        // con esa fórmula no descontaría stock).
+        const { error: errorVuelta } = await supabase.from("formula_materials").insert(
+          formula.formula_materials.map((fm) => ({ formula_id: formula.id, material_id: fm.materials.id, quantity: Number(fm.quantity) })),
+        )
+        throw new Error(
+          errorVuelta
+            ? `No se pudo grabar la composición y la fórmula quedó SIN materiales: avisá antes de despachar con ${codigo} (${materialsError.message})`
+            : `No se pudo grabar la composición; quedó la de antes (${materialsError.message})`,
+        )
+      }
 
       // Fase 0c-1: Actividad con materiales y cantidades antes → después
       const nombreMat = (id: string) => materials.find((m) => m.id === id)?.name || "?"

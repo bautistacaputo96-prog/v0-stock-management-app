@@ -1,7 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { todasLasFilas } from "@/lib/gps-viajes"
+import { agruparProduccion, rangoDiasAR, type FilaProduccion } from "@/lib/pantallas"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -37,68 +39,47 @@ export default function ProductionReport({ plants, formulas, mixers }: Productio
   const [selectedPlants, setSelectedPlants] = useState<string[]>([])
   const [selectedFormulas, setSelectedFormulas] = useState<string[]>([])
   const [selectedMixers, setSelectedMixers] = useState<string[]>([])
-  const [reportData, setReportData] = useState<any[]>([])
+  const [filas, setFilas] = useState<FilaProduccion[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [groupBy, setGroupBy] = useState<"plant" | "formula" | "mixer">("plant")
 
+  // Se agrupa al mostrar: cambiar "Agrupar por" después de generar ya no deja el gráfico con la agrupación anterior.
+  const reportData = useMemo(() => (filas ? agruparProduccion(filas, groupBy, plants) : []), [filas, groupBy, plants])
+
   const generateReport = async () => {
     setLoading(true)
+    setError(null)
     const supabase = createClient()
+    // Días de Argentina: "2026-11-30" solo era 00:00 UTC (el último día quedaba afuera y entraban las 21–24 h del día
+    // anterior al inicio).
+    const rango = rangoDiasAR(startDate, endDate)
 
-    let query = supabase
-      .from("dispatches")
-      .select(`
-        id,
-        dispatch_date,
-        quantity_m3,
-        formula_id,
-        mixer_id,
-        formulas!inner(code, plant_id, plants!inner(name)),
-        mixers(license_plate)
-      `)
-      .eq("is_test_dispatch", false)
-      .not("quantity_m3", "is", null)
-
-    if (startDate) query = query.gte("dispatch_date", startDate)
-    if (endDate) query = query.lte("dispatch_date", endDate)
-    // Por la planta que despachó, no por la de la fórmula: una planta puede
-    // despachar con fórmulas cargadas en la otra.
-    if (selectedPlants.length > 0) query = query.in("plant_id", selectedPlants)
-    if (selectedFormulas.length > 0) query = query.in("formula_id", selectedFormulas)
-    if (selectedMixers.length > 0) query = query.in("mixer_id", selectedMixers)
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error("[v0] Error loading production report:", error)
+    try {
+      // De a 1000 filas: PostgREST corta ahí y el informe de un año (o sin fechas) sumaba solo 1000 despachos.
+      const data = await todasLasFilas<any>((desde, hasta) => {
+        let query = supabase
+          .from("dispatches")
+          .select("id, dispatch_date, quantity_m3, formula_id, mixer_id, plant_id, formulas(code, plant_id), mixers(license_plate)")
+          .eq("is_test_dispatch", false)
+          .not("quantity_m3", "is", null)
+        if (rango.desde) query = query.gte("dispatch_date", rango.desde)
+        if (rango.hasta) query = query.lte("dispatch_date", rango.hasta)
+        // Por la planta que despachó, no por la de la fórmula: una planta puede
+        // despachar con fórmulas cargadas en la otra.
+        if (selectedPlants.length > 0) query = query.in("plant_id", selectedPlants)
+        if (selectedFormulas.length > 0) query = query.in("formula_id", selectedFormulas)
+        if (selectedMixers.length > 0) query = query.in("mixer_id", selectedMixers)
+        return query.order("id").range(desde, hasta)
+      })
+      setFilas(data as FilaProduccion[])
+    } catch (e: any) {
+      console.error("[informes] Error loading production report:", e)
+      setFilas(null)
+      setError(e?.message || "No se pudo generar el informe")
+    } finally {
       setLoading(false)
-      return
     }
-
-    // Group data based on selection
-    const grouped: Record<string, number> = {}
-
-    data?.forEach((dispatch: any) => {
-      let key = ""
-      if (groupBy === "plant") {
-        key = dispatch.formulas?.plants?.name || "Sin planta"
-      } else if (groupBy === "formula") {
-        key = dispatch.formulas?.code || "Sin fórmula"
-      } else if (groupBy === "mixer") {
-        key = dispatch.mixers?.license_plate || "Sin camión"
-      }
-
-      if (!grouped[key]) grouped[key] = 0
-      grouped[key] += Number.parseFloat(dispatch.quantity_m3 || 0)
-    })
-
-    const chartData = Object.entries(grouped).map(([name, volume]) => ({
-      name,
-      volumen: Number.parseFloat(volume.toFixed(2)),
-    }))
-
-    setReportData(chartData)
-    setLoading(false)
   }
 
   return (
@@ -212,6 +193,9 @@ export default function ProductionReport({ plants, formulas, mixers }: Productio
       <Button onClick={generateReport} disabled={loading} className="w-full">
         {loading ? "Generando..." : "Generar Informe"}
       </Button>
+
+      {error && <p className="text-sm text-red-700">No se pudo generar el informe: {error}</p>}
+      {filas && filas.length === 0 && <p className="text-sm text-muted-foreground">No hay despachos con esos filtros.</p>}
 
       {/* Chart */}
       {reportData.length > 0 && (
