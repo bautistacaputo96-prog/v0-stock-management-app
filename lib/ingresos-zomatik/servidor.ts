@@ -15,7 +15,7 @@ import { leerZomatikCompras, type ResultadoLectura } from "@/lib/control-ingreso
 import { textoError } from "@/lib/zomatik/lectura"
 import { enviarMail } from "@/lib/mail-servidor"
 import { esArenaFina } from "@/lib/ingresos/muestras"
-import { desdeVentana, fechaArgentina, sumarDias, ddmm, MARGEN_DIAS } from "@/lib/control-ingresos/cruce"
+import { desdeVentana, fechaArgentina, materialZomatik, sumarDias, ddmm, MARGEN_DIAS } from "@/lib/control-ingresos/cruce"
 import { avisarErrorZomatik, avisarFallaAcceso, avisarZomatikVolvio, esFallaDeAcceso } from "@/lib/zomatik/np-servidor"
 import {
   claveRemito,
@@ -29,8 +29,10 @@ import {
   unidadMaterial,
   CLAVE_DENSIDADES,
   CLAVE_INTERRUPTOR,
+  EMPAREJAR_MISMO_REMITO_DIAS,
   MANUALES_ANTES_DE_F_DIAS,
   TIPOS_IMPORTABLES,
+  numeroCompleto,
   type Accion,
   type EntradaPlan,
   type FilaCopia,
@@ -141,9 +143,40 @@ async function cargarEntrada(sb: SB, i: Interruptor, dias: string[], densidades:
   ])
   for (const r of [mats, provs, mps, fletes, plantas]) if (r.error) throw r.error
   const set = new Set(diasF)
+  const leidas = filas.filter((f) => set.has(f.fecha))
+  // Manuales anteriores a F − 10 con el mismo remito completo que un renglón de MP todavía sin resolver (Zomatik a
+  // veces fecha el remito semanas después). Se buscan por el número; el plan se queda con los de remito completo igual.
+  const resueltas = new Set(vinculos.filter((v) => v.estado !== "pendiente").map((v) => v.clave))
+  const completos = new Set<string>()
+  for (const f of leidas) {
+    const n = numeroCompleto(f.remito)
+    const k = claveRemito(f.remito, f.codigo_articulo, f.articulo)
+    if (n && n.includes("-") && k && !resueltas.has(k) && materialZomatik(f.articulo, f.codigo_articulo)) completos.add(n)
+  }
+  const numeros = [...new Set([...completos].map((n) => n.split("-")[1]))].sort()
+  const viejos: any[] = []
+  if (numeros.length) {
+    const desdeViejos = sumarDias(diasF[0], -EMPAREJAR_MISMO_REMITO_DIAS)
+    for (let i = 0; i < numeros.length; i += 40) {
+      const tanda = numeros.slice(i, i + 40)
+      viejos.push(
+        ...(await todas<any>((a, b) =>
+          sb
+            .from("stock_entries")
+            .select("id, entry_date, material_id, quantity, remito, origen, anulado_at, materials(plant_id)")
+            .gte("entry_date", `${desdeViejos}T03:00:00.000Z`)
+            .lt("entry_date", `${piso}T03:00:00.000Z`)
+            .or(tanda.map((n) => `remito.ilike.*${n}*`).join(","))
+            .order("id")
+            .range(a, b),
+        )),
+      )
+    }
+  }
+  const yaEstan = new Set(manuales.map((m) => m.id))
+  const conMismoRemito = viejos.filter((m) => !yaEstan.has(m.id) && completos.has(numeroCompleto(m.remito) || ""))
   return {
-    filas: filas
-      .filter((f) => set.has(f.fecha))
+    filas: leidas
       .map(
         (f): FilaCopia => ({
           orden: Number(f.id),
@@ -169,7 +202,7 @@ async function cargarEntrada(sb: SB, i: Interruptor, dias: string[], densidades:
         rechazados: v.rechazados || [],
       }),
     ),
-    manuales: manuales
+    manuales: [...manuales, ...conMismoRemito]
       .filter((m) => m.origen !== "zomatik" && !m.anulado_at)
       .map((m) => ({ id: m.id, fecha: fechaArgentina(m.entry_date), material_id: m.material_id, plant_id: m.materials?.plant_id ?? null, quantity: Number(m.quantity) || 0, remito: m.remito ?? null })),
     materiales: (mats.data as any[]) || [],

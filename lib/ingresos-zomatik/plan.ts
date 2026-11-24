@@ -4,7 +4,8 @@
  * (con las respuestas de Bautista del 05/11, que mandan) y la ficha docs/ingresos-mp-zomatik.md.
  *
  * Entra: los renglones de la copia de Zomatik (zomatik_remitos_compra) de los días leídos enteros en esta pasada, los
- * vínculos ya guardados (zomatik_ingresos_mp), los ingresos cargados a mano desde F − 10 días y los maestros.
+ * vínculos ya guardados (zomatik_ingresos_mp), los ingresos cargados a mano desde F − 10 días (y los anteriores con el
+ * mismo remito completo que un renglón) y los maestros.
  * Sale: la lista de acciones que aplica `mp_zomatik_aplicar` en la base (altas, emparejados, correcciones,
  * anulaciones, cambios de planta, pendientes). Correr el plan sobre lo ya aplicado da 0 acciones.
  *
@@ -44,6 +45,12 @@ export const ESPERA_ANULAR_MS = 2 * 3600_000
 export const MANUALES_ANTES_DE_F_DIAS = 10
 /** Mismo número, mismo material y planta: hasta ±10 días es el mismo camión. */
 export const EMPAREJAR_DIAS = 10
+/**
+ * Mismo remito completo (punto de venta + número), material y planta: hasta ±60 días es el mismo camión, aunque el
+ * manual sea anterior a F − 10 (Zomatik a veces fecha el remito semanas después: RMP 0002-02744369, 13/11 en Zomatik y
+ * 29/10 a mano).
+ */
+export const EMPAREJAR_MISMO_REMITO_DIAS = 60
 /** Rangos por renglón. Fuera de rango: "Cantidad rara". */
 export const RANGO_T = { min: 1, max: 60 }
 export const RANGO_LITROS = { min: 1, max: 40_000 }
@@ -189,7 +196,7 @@ export function kgDeZomatik(t: number): { ok: true; kg: number } | { ok: false; 
 }
 
 export type Problema = { codigo: CodigoMotivo; motivo: string }
-export type CodigoMotivo = "sin_numero" | "repetido" | "sin_deposito" | "material" | "cantidad" | "tachos" | "unidad" | "densidad" | "dudoso" | "borrado" | "ya_no_esta" | "antes_de_f"
+export type CodigoMotivo = "sin_numero" | "repetido" | "sin_deposito" | "material" | "cantidad" | "tachos" | "unidad" | "densidad" | "dudoso" | "varios_manuales" | "borrado" | "ya_no_esta" | "antes_de_f"
 
 /**
  * Cantidad de Zomatik en la unidad del material de Rebucret (lo que va a `stock_entries.quantity`).
@@ -346,7 +353,10 @@ export type EntradaPlan = {
   /** Días leídos enteros en esta pasada (AAAA-MM-DD). Solo en esos días puede "faltar" un remito. */
   diasLeidos: string[]
   vinculos: Vinculo[]
-  /** Ingresos a mano (origen nulo o manual), sin anular, desde F − 10 días. Los ya vinculados se descartan solos. */
+  /**
+   * Ingresos a mano (origen nulo o manual), sin anular, desde F − 10 días, más los anteriores (hasta 60 días antes del
+   * renglón) con el mismo remito completo que algún renglón leído. Los ya vinculados se descartan solos.
+   */
   manuales: Manual[]
   materiales: MaterialMP[]
   proveedores: Proveedor[]
@@ -764,9 +774,11 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
     if (Object.keys(vin).length) acciones.push({ tipo: "actualizar", clave: a.clave, texto: `${ref(a)}: datos actualizados (${Object.keys(vin).join(", ")})`, vinculo: vin, ...(Object.keys(ing).length ? { ingreso: ing } : {}) })
   }
 
-  // 4. Emparejamiento con los cargados a mano (desde F − 10 días, sin vincular)
+  // 4. Emparejamiento con los cargados a mano (desde F − 10 días, sin vincular; `sueltos` también los anteriores, que
+  //    solo se emparejan por el remito completo en 4.b')
   const piso = sumarDias(F, -MANUALES_ANTES_DE_F_DIAS)
-  const libres = e.manuales.filter((m) => m.fecha >= piso && !vinculadas.has(m.id))
+  const sueltos = e.manuales.filter((m) => !vinculadas.has(m.id))
+  const libres = sueltos.filter((m) => m.fecha >= piso)
   const tomados = new Set<string>()
   const enT = (a: Analisis) => TIPOS_TONELADAS.includes(a.material?.tipo || "") || enToneladas(a.mat)
   const emparejar = (a: Analisis, m: Manual) => {
@@ -819,7 +831,7 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
   for (const a of nuevos) {
     const v = vinc.get(a.clave)
     if (v?.resolucion === "mismo" && v.candidato_id) {
-      const m = libres.find((x) => x.id === v.candidato_id && !tomados.has(x.id))
+      const m = sueltos.find((x) => x.id === v.candidato_id && !tomados.has(x.id))
       if (m) emparejar(a, m)
       else pendiente(a, { codigo: "dudoso", motivo: "El ingreso a mano elegido ya no está: elegí de nuevo" }, null, true)
       continue
@@ -849,6 +861,29 @@ export function planImportacion(e: EntradaPlan): ResultadoPlan {
     if (resueltos.has(a) || tomados.has(m.id)) continue
     resueltos.add(a)
     emparejar(a, m)
+  }
+  // 4.b' Seguro con la fecha lejos: mismo remito completo (punto de venta + número), mismo material y planta, hasta
+  //      ±60 días (también antes de F − 10). Antes de F se empareja sin tocar el manual, desde F como en 4.b. Con más
+  //      de un manual así no se elige: queda pendiente (no se da de alta).
+  for (const a of restantes) {
+    if (resueltos.has(a)) continue
+    const n = numeroCompleto(a.fila.remito)
+    if (!n || !n.includes("-")) continue
+    const cands = sueltos
+      .filter(
+        (m) =>
+          !tomados.has(m.id) &&
+          !excluido(a, m) &&
+          m.material_id === a.material!.id &&
+          m.plant_id === a.datos.plant_id &&
+          numeroCompleto(m.remito) === n &&
+          Math.abs(diasEntre(m.fecha, a.fila.fecha)) <= EMPAREJAR_MISMO_REMITO_DIAS,
+      )
+      .sort((x, y) => (x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : x.id < y.id ? -1 : 1))
+    if (!cands.length) continue
+    resueltos.add(a)
+    if (cands.length === 1) emparejar(a, cands[0])
+    else pendiente(a, { codigo: "varios_manuales", motivo: `Hay ${cands.length} ingresos a mano con este remito (${cands.map((m) => ddmm(m.fecha)).join(", ")})` })
   }
   // 4.c Dudoso: mismo número en otro material o planta, o el mismo camión con el número mal escrito (como el paso 3 de
   //     cruzar(): mismo material, ±10 días, mismas toneladas). No se importa hasta que alguien elija.
@@ -983,6 +1018,8 @@ export function textoMotivo(codigo: string | null | undefined, motivo: string | 
   switch (codigo) {
     case "dudoso":
       return { motivo: m, queHacer: "Elegí: es el mismo / son distintos" }
+    case "varios_manuales":
+      return { motivo: m, queHacer: "Eliminá el ingreso a mano repetido (se empareja con el que quede) o descartalo" }
     case "repetido":
       return { motivo: m, queHacer: "Corregilo en Zomatik (se importó uno solo)" }
     case "sin_numero":

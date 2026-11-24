@@ -39,6 +39,12 @@ Mismo turno del robot y sucursal 18 confirmada (la lectura es `leerZomatikCompra
   manual del dd/mm?", que se resuelve con "Es el mismo" / "Son distintos" / "Descartar" (lo aplica la próxima pasada).
   "Es el mismo" con un manual de otra planta u otro material (desde F): se anula el manual con asiento y entra donde
   dice Zomatik, como un cambio de planta.
+- **Mismo remito completo con la fecha lejos** (24/11, RMP 0002-02744369: Zomatik lo fechó 13/11 y a mano está el
+  29/10): si el número completo (punto de venta + número), el material y la planta coinciden, se empareja hasta ±60 días,
+  aunque el manual sea anterior a F − 10 (la pasada busca esos manuales viejos por los números leídos). Antes de F sin
+  tocar el manual; desde F como siempre. Con dos o más manuales así no se elige: pendiente "Hay N ingresos a mano con
+  este remito (dd/mm, dd/mm)" (eliminar el repetido o descartar). Lo parcial (sin punto de venta, otra planta u otro
+  material) sigue igual: "¿Mismo camión…?" solo hasta ±10 días; más lejos, alta.
 - **Corrección**: el ingreso toma la cantidad nueva y queda un asiento `correccion_ingreso` en `stock_movements`.
   **Anulación**: si falta en dos lecturas completas separadas 2 h, cantidad 0 + `anulado_at` (no se borra). Cambio de
   depósito: anula en la planta vieja y da de alta en la nueva.
@@ -80,7 +86,7 @@ Mismo turno del robot y sucursal 18 confirmada (la lectura es `leerZomatikCompra
 - Sin las migraciones la app anda como antes (la carga manual, la edición y el Excel prueban sin las columnas nuevas).
 
 ## Pruebas
-`npm run test:ingresos-zomatik` (23, criterios 1–16 y 19, con `lib/__fixtures__/ingresos-zomatik/lecturas.json`),
+`npm run test:ingresos-zomatik` (27, criterios 1–16 y 19, con `lib/__fixtures__/ingresos-zomatik/lecturas.json`),
 `test:control-ingresos`, `test:control-stock`.
 
 ## Decisiones
