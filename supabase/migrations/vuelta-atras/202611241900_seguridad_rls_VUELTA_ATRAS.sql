@@ -3,7 +3,8 @@
 -- subcarpeta): no se corre al reconstruir la base.
 --
 -- Qué hace (deja la base como antes de la B, con los permisos que la B guardó en el esquema rebucret_respaldo):
---   1. Las funciones del motor dejan de pedir permiso: rebucret_exigir() devuelve siempre true y rebucret_usuario()
+--   1. Las funciones del motor dejan de pedir permiso: rebucret_exigir() y rebucret_exigir_sesion() devuelven siempre
+--      true y rebucret_usuario()
 --      devuelve lo que manda el navegador (las líneas que agregó la B quedan, pero no hacen nada).
 --   2. Se borran las reglas de la B y se vuelven a crear las de antes (cargas y puestos "leer todo"; fotos).
 --   3. Se apaga la RLS en las tablas donde antes estaba apagada.
@@ -26,6 +27,10 @@ $previo$;
 
 -- 1. Funciones sin control
 CREATE OR REPLACE FUNCTION public.rebucret_exigir(VARIADIC p_permisos text[])
+RETURNS boolean LANGUAGE sql STABLE SET search_path = public, pg_temp
+AS $$ SELECT true $$;
+
+CREATE OR REPLACE FUNCTION public.rebucret_exigir_sesion()
 RETURNS boolean LANGUAGE sql STABLE SET search_path = public, pg_temp
 AS $$ SELECT true $$;
 
@@ -125,6 +130,8 @@ DROP TRIGGER IF EXISTS trg_rebucret_pedido_creado_por ON public.scheduled_dispat
 -- 6. Permisos por defecto de Supabase
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
 

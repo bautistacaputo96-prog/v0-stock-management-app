@@ -84,7 +84,9 @@ Reglas para toda migración nueva (las controla `npm run test:seguridad`):
    - escribir (si la escribe el navegador): `… FOR INSERT TO authenticated WITH CHECK ((SELECT public.rebucret_permiso('seccion.cargar')))`
      (y `FOR UPDATE … USING (…) WITH CHECK (…)` / `FOR DELETE … USING (…)` con el permiso que corresponda);
    - si solo la usa el servidor (clave de servicio): RLS prendida y ninguna regla.
-   Nunca `GRANT … TO anon`.
+   Nunca `GRANT … TO anon`. Desde la B, una tabla nueva **no le da nada por defecto a `authenticated`**: si la usa el
+   navegador, `GRANT SELECT` (y `INSERT, UPDATE, DELETE` si escribe) `ON public.x TO authenticated` (y `USAGE` de su
+   secuencia si tiene), además de las reglas.
 2. **Función que escribe y llama el navegador** (`SECURITY DEFINER`): primera línea del `DECLARE`
    `v_permiso_0c2 boolean := public.rebucret_exigir('seccion.accion');` y el usuario con
    `public.rebucret_usuario(p_usuario)`. Las 10 del motor (`registrar_despacho`, `editar_despacho`, …) ya lo tienen:

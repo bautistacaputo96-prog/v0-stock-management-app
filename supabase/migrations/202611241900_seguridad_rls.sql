@@ -7,7 +7,8 @@
 --      "tokenAceptado": true (entrando como gerencial);
 --   3. Concretus ya lee por /api/concretus/lectura (docs/migracion-loop/concretus-lectura.md);
 --   4. se probó en BEGIN … ROLLBACK con scripts/probar-seguridad-rls.mjs.
--- Antes de esto, que se hayan corrido las migraciones anteriores de la carpeta (202611231200 … 202611241800).
+-- Antes de esto, que se hayan corrido las migraciones anteriores de la carpeta (202611231200, 202611231500,
+-- 202611231600, 202611231700, 202611241200 y 202611241800): si falta alguna, esta migración frena con el nombre.
 --
 -- Qué hace:
 --   0. Frena si hay alguna tabla de `public` que no esté clasificada abajo (una tabla nueva tiene que decidir quién
@@ -74,7 +75,7 @@ SELECT unnest(ARRAY[
 UNION ALL
 SELECT unnest(ARRAY[
   'alertas_stock', 'app_user_credenciales', 'client_alias', 'control_mp_corridas', 'control_mp_diferencias',
-  'gps_reconstrucciones', 'ingreso_intentos', 'integraciones', 'zomatik_clientes', 'zomatik_ingresos_mp',
+  'gps_reconstrucciones', 'ingreso_intentos', 'integraciones', 'sesiones_cerradas', 'zomatik_clientes', 'zomatik_ingresos_mp',
   'zomatik_lista_precios', 'zomatik_listas', 'zomatik_np_ajustes', 'zomatik_np_config', 'zomatik_np_pedido',
   'zomatik_np_pendientes', 'zomatik_np_precio', 'zomatik_np_uso', 'zomatik_pedido_borrar', 'zomatik_produccion_dia',
   'zomatik_produccion_lectura', 'zomatik_proyecto_movimientos', 'zomatik_proyectos', 'zomatik_remito_despachos',
@@ -102,6 +103,47 @@ BEGIN
   END IF;
 END
 $clasificar$;
+
+-- Migraciones anteriores que tienen que estar corridas (la B parte de las funciones y permisos que dejan).
+-- En una segunda corrida de la B, la de la 202611231700 ya se cumple igual (la B hace lo mismo).
+DO $previas$
+DECLARE
+  v_falta text[] := ARRAY[]::text[];
+BEGIN
+  -- 202611231200: borrar un ingreso respeta el recuento posterior (marca: v_corrige)
+  IF to_regprocedure('public.decrease_stock_after_entry_delete()') IS NULL
+     OR position('v_corrige' IN pg_get_functiondef('public.decrease_stock_after_entry_delete()'::regprocedure)) = 0 THEN
+    v_falta := v_falta || '202611231200_ingreso_borrado_recuento.sql';
+  END IF;
+  -- 202611231500: editar_despacho corre las probetas (marca: probetas_corridas)
+  IF to_regprocedure('public.editar_despacho(uuid, jsonb)') IS NULL
+     OR position('probetas_corridas' IN pg_get_functiondef('public.editar_despacho(uuid, jsonb)'::regprocedure)) = 0 THEN
+    v_falta := v_falta || '202611231500_editar_despacho_probetas_super.sql';
+  END IF;
+  -- 202611231600: estado del pedido por cantidad
+  IF to_regprocedure('public._pedido_estado_por_cantidad()') IS NULL THEN
+    v_falta := v_falta || '202611231600_pedido_estado_por_cantidad.sql';
+  END IF;
+  -- 202611231700: app_users sin mail/permisos para la clave pública y Actividad sin borrar
+  IF has_column_privilege('authenticated', 'public.app_users', 'email', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.activity_log', 'DELETE') THEN
+    v_falta := v_falta || '202611231700_sesion_app_users_activity_log.sql';
+  END IF;
+  -- 202611241200: borrar una fórmula no borra sus despachos (clave con ON DELETE RESTRICT)
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'public.dispatches'::regclass AND conname = 'dispatches_formula_id_fkey'
+                   AND confdeltype = 'r') THEN
+    v_falta := v_falta || '202611241200_formula_sin_borrar_despachos.sql';
+  END IF;
+  -- 202611241800 (A): freno de intentos y sesiones cerradas
+  IF to_regprocedure('public.ingreso_reservar(uuid, text)') IS NULL OR to_regclass('public.sesiones_cerradas') IS NULL THEN
+    v_falta := v_falta || '202611241800_seguridad_intentos_y_avisos.sql';
+  END IF;
+  IF cardinality(v_falta) > 0 THEN
+    RAISE EXCEPTION 'Antes de esta migración hay que correr: %', array_to_string(v_falta, ', ');
+  END IF;
+END
+$previas$;
 
 -- Respaldo (solo la primera vez: si se corre dos veces, no se pisa con lo ya restringido)
 DO $respaldo$
@@ -171,6 +213,8 @@ AS $$
     AND c.clave_hash IS NOT NULL
     AND c.debe_cambiar IS NOT TRUE
     AND c.sesion_version::text = coalesce(auth.jwt() ->> 'v', '')
+    -- "Salir" en ese equipo (tabla sesiones_cerradas): su token ya no vale
+    AND NOT EXISTS (SELECT 1 FROM public.sesiones_cerradas x WHERE x.sid = auth.jwt() ->> 's')
 $$;
 
 CREATE OR REPLACE FUNCTION public.rebucret_sesion_ok()
@@ -226,6 +270,27 @@ BEGIN
 END;
 $$;
 
+-- Para funciones que solo leen y llama el navegador: pide una sesión válida (cualquier permiso).
+CREATE OR REPLACE FUNCTION public.rebucret_exigir_sesion()
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_rol text := nullif(auth.jwt() ->> 'role', '');
+BEGIN
+  IF v_rol IS NULL OR v_rol = 'service_role' THEN
+    RETURN true;
+  END IF;
+  IF v_rol = 'authenticated' AND public.rebucret_sesion_ok() THEN
+    RETURN true;
+  END IF;
+  RAISE EXCEPTION 'Tu sesión se cerró. Entrá de nuevo.' USING ERRCODE = '42501';
+END;
+$$;
+
 -- Con sesión, el nombre de la sesión (lo que mande el navegador no cuenta). Si no, el que vino.
 CREATE OR REPLACE FUNCTION public.rebucret_usuario(p_usuario text)
 RETURNS text
@@ -252,6 +317,7 @@ REVOKE ALL ON FUNCTION public._rebucret_usuario_sesion() FROM PUBLIC, anon, auth
 REVOKE ALL ON FUNCTION public.rebucret_sesion_ok() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.rebucret_permiso(text[]) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.rebucret_exigir(text[]) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.rebucret_exigir_sesion() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.rebucret_usuario(text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.rebucret_normalizar_nombre(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.rebucret_sesion_id() TO authenticated, service_role;
@@ -259,6 +325,7 @@ GRANT EXECUTE ON FUNCTION public._rebucret_usuario_sesion() TO service_role;
 GRANT EXECUTE ON FUNCTION public.rebucret_sesion_ok() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.rebucret_permiso(text[]) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.rebucret_exigir(text[]) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.rebucret_exigir_sesion() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.rebucret_usuario(text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.rebucret_normalizar_nombre(text) TO authenticated, service_role;
 
@@ -288,7 +355,9 @@ BEGIN
       ('suspender_pedido',          'p_usuario', ARRAY['despacho.cargar', 'programacion.cargar', 'programacion.editar']),
       ('reabrir_pedido',            'p_usuario', ARRAY['despacho.cargar', 'programacion.cargar', 'programacion.editar']),
       ('guardar_viajes_pedido',     'p_usuario', ARRAY['programacion.cargar', 'programacion.editar', 'despacho.cargar']),
-      ('guardar_reparto_dia',       'p_usuario', ARRAY['programacion.editar', 'despacho.cargar'])
+      ('guardar_reparto_dia',       'p_usuario', ARRAY['programacion.editar', 'despacho.cargar']),
+      -- Solo lee (tipo de remito R/X); la usa el navegador al despachar: alcanza con una sesión válida
+      ('remito_tipo_para',          '-',         ARRAY[]::text[])
     ) AS t(nombre, usuario, permisos)
   LOOP
     SELECT count(*) INTO v_n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -299,7 +368,7 @@ BEGIN
     SELECT pg_get_functiondef(p.oid) INTO v_def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = g.nombre;
 
-    IF position('rebucret_exigir(' IN v_def) > 0 THEN
+    IF position('v_permiso_0c2' IN v_def) > 0 THEN
       RAISE NOTICE '%: ya tiene la guarda (se saltea)', g.nombre;
       CONTINUE;
     END IF;
@@ -310,24 +379,27 @@ BEGIN
     v_paso1 := regexp_replace(
       v_def,
       E'AS \\$function\\$\\s*\\nDECLARE\\n',
-      E'AS $function$\nDECLARE\n  v_permiso_0c2 boolean := public.rebucret_exigir('
-        || (SELECT string_agg(quote_literal(x), ', ') FROM unnest(g.permisos) AS x)
-        || E'); -- fase 0c-2: permiso de la sesión (no sacar)\n');
+      E'AS $function$\nDECLARE\n  v_permiso_0c2 boolean := '
+        || CASE WHEN cardinality(g.permisos) = 0 THEN 'public.rebucret_exigir_sesion()'
+                ELSE 'public.rebucret_exigir(' || (SELECT string_agg(quote_literal(x), ', ') FROM unnest(g.permisos) AS x) || ')' END
+        || E'; -- fase 0c-2: permiso de la sesión (no sacar)\n');
     IF v_paso1 = v_def THEN
       RAISE EXCEPTION '%: no se encontró el DECLARE del principio', g.nombre;
     END IF;
 
-    IF g.usuario = 'p_usuario' THEN
+    IF g.usuario = '-' THEN
+      v_paso2 := v_paso1;   -- no toma usuario
+    ELSIF g.usuario = 'p_usuario' THEN
       v_paso2 := regexp_replace(v_paso1, 'coalesce\(p_usuario, ''''\)', 'coalesce(public.rebucret_usuario(p_usuario), '''')');
     ELSE
       v_paso2 := regexp_replace(v_paso1, 'coalesce\(p->>''usuario'', ''''\)', 'coalesce(public.rebucret_usuario(p->>''usuario''), '''')');
     END IF;
-    IF v_paso2 = v_paso1 THEN
+    IF v_paso2 = v_paso1 AND g.usuario <> '-' THEN
       RAISE EXCEPTION '%: no se encontró dónde toma el usuario', g.nombre;
     END IF;
 
     EXECUTE v_paso2;   -- CREATE OR REPLACE: conserva dueño y permisos
-    RAISE NOTICE '%: guarda agregada (%)', g.nombre, array_to_string(g.permisos, ' o ');
+    RAISE NOTICE '%: guarda agregada (%)', g.nombre, coalesce(nullif(array_to_string(g.permisos, ' o '), ''), 'sesión válida');
   END LOOP;
 END
 $guardas$;
@@ -534,6 +606,8 @@ CREATE POLICY rls_agregar_sistema ON public.maint_work_orders FOR INSERT TO auth
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM anon, PUBLIC;
+-- cemento_para_replanteo: el navegador no la usa (solo el servidor de Zomatik, con la clave de servicio)
+REVOKE EXECUTE ON FUNCTION public.cemento_para_replanteo(uuid, uuid) FROM authenticated;
 
 -- authenticated: las de la clase C no se tocan (no tienen GRANT); app_users solo id, name, active (como la
 -- 202611231700); activity_log sin cambiar ni borrar.
@@ -541,11 +615,15 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_users FROM authenticated;
 REVOKE SELECT ON public.app_users FROM authenticated;
 GRANT SELECT (id, name, active) ON public.app_users TO authenticated;
 REVOKE UPDATE, DELETE, TRUNCATE ON public.activity_log FROM authenticated;
-REVOKE ALL ON public.app_user_credenciales, public.integraciones, public.alertas_stock, public.ingreso_intentos FROM authenticated;
+REVOKE ALL ON public.app_user_credenciales, public.integraciones, public.alertas_stock, public.ingreso_intentos,
+  public.sesiones_cerradas FROM authenticated;
 
--- Lo que se cree de ahora en más en public no le da nada a la clave pública
+-- Lo que se cree de ahora en más en public no le da nada a la clave pública, y a una sesión tampoco "todo":
+-- cada tabla nueva da los GRANT que necesita (ver supabase/migrations/README.md)
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 

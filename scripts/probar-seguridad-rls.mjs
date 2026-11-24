@@ -129,6 +129,15 @@ async function main() {
       control("token de otro emisor (Supabase Auth) no ve nada", r.ok && r.r[0].n === 0, r.error || String(r.r?.[0]?.n))
       r = await como("authenticated", t, () => q("SELECT count(*) FROM app_user_credenciales"))
       control("nadie con sesión lee las contraseñas", !r.ok, r.error)
+      r = await como("authenticated", { ...t, s: "sesion-de-prueba-cerrada" }, async () => {
+        await q("RESET ROLE")
+        await q("INSERT INTO sesiones_cerradas (sid, user_id) VALUES ('sesion-de-prueba-cerrada', $1)", [con.id])
+        await q("SET LOCAL ROLE authenticated")
+        return q("SELECT count(*)::int n FROM dispatches")
+      })
+      control("una sesión cerrada con Salir no ve nada", r.ok && r.r[0].n === 0, r.error || String(r.r?.[0]?.n))
+      r = await como("anon", { role: "anon" }, () => q("SELECT public.remito_tipo_para(NULL, NULL, NULL, NULL)"))
+      control("anon no llama remito_tipo_para", !r.ok, r.error)
     }
 
     // operario de mantenimiento
@@ -153,8 +162,8 @@ async function main() {
 
     // Guardas puestas
     const guardas = await q(`SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND position('rebucret_exigir(' in pg_get_functiondef(p.oid)) > 0 AND p.proname <> 'rebucret_exigir'`)
-    control("10 funciones del motor con control", guardas.length === 10, guardas.map((x) => x.proname).join(", "))
+      WHERE n.nspname = 'public' AND position('v_permiso_0c2' in pg_get_functiondef(p.oid)) > 0`)
+    control("11 funciones con control (10 del motor + remito_tipo_para)", guardas.length === 11, guardas.map((x) => x.proname).join(", "))
 
     // Vuelta atrás
     await q(fs.readFileSync(new URL("vuelta-atras/202611241900_seguridad_rls_VUELTA_ATRAS.sql", MIG), "utf8").replace(/^BEGIN;\s*$/m, "").replace(/^COMMIT;\s*$/m, ""))
