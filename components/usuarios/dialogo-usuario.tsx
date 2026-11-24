@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Loader2, KeyRound, UserX, UserCheck } from "lucide-react"
+import { Loader2, KeyRound, UserX, UserCheck, Unlock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -129,6 +129,20 @@ export function DialogoUsuario({
     }
   }
 
+  async function desbloquear() {
+    setError(null)
+    setGuardando(true)
+    try {
+      await llamar(`/api/usuarios/${usuario!.id}/desbloquear`, "POST")
+      onGuardado(`${usuario!.name} ya puede volver a probar su contraseña.`)
+      onOpenChange(false)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setGuardando(false)
+    }
+  }
+
   async function cambiarActivo(activo: boolean) {
     setError(null)
     setGuardando(true)
@@ -145,6 +159,9 @@ export function DialogoUsuario({
   }
 
   const difs = diferenciasConPlantilla(tipo, permisos)
+  // Fase 0c-2: a quien todavía no tiene contraseña propia se le da una provisoria (mismo blanqueo, otro nombre)
+  const sinPropia = !nuevo && (usuario!.estadoClave === "primer ingreso pendiente" || usuario!.estadoClave === "sin contraseña")
+  const textoBlanqueo = sinPropia ? "Dar contraseña provisoria" : "Blanquear contraseña"
 
   return (
     <>
@@ -155,7 +172,7 @@ export function DialogoUsuario({
             {!nuevo && (
               <DialogDescription>
                 Contraseña: {usuario!.estadoClave}
-                {usuario!.bloqueado ? " · bloqueado por intentos fallidos" : ""}
+                {usuario!.bloqueado ? " · frenado por intentos fallidos" : ""}
                 {!usuario!.active ? " · dado de baja" : ""}
               </DialogDescription>
             )}
@@ -164,8 +181,9 @@ export function DialogoUsuario({
           {blanqueo ? (
             <div className="space-y-4">
               <p className="text-sm">
-                Escribí una contraseña inicial para {usuario!.name}. Se cierran sus sesiones abiertas y al entrar la va a tener
-                que cambiar.
+                {sinPropia
+                  ? `Escribí una contraseña provisoria para ${usuario!.name} y pasásela en persona. Al entrar la va a tener que cambiar. Desde ahí ya no entra con la contraseña de siempre.`
+                  : `Escribí una contraseña inicial para ${usuario!.name}. Se cierran sus sesiones abiertas y al entrar la va a tener que cambiar.`}
               </p>
               <CampoClave id="blanqueo-1" label="Contraseña inicial" value={clave} onChange={setClave} autoComplete="new-password" autoFocus />
               <CampoClave id="blanqueo-2" label="Repetila" value={clave2} onChange={setClave2} autoComplete="new-password" />
@@ -173,7 +191,7 @@ export function DialogoUsuario({
               <DialogFooter className="gap-2">
                 <Button variant="outline" onClick={() => setBlanqueo(false)} disabled={guardando}>Volver</Button>
                 <Button onClick={blanquear} disabled={guardando}>
-                  {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Blanquear contraseña"}
+                  {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : textoBlanqueo}
                 </Button>
               </DialogFooter>
             </div>
@@ -236,8 +254,14 @@ export function DialogoUsuario({
                   <div className="flex gap-2 flex-wrap">
                     <Button type="button" variant="outline" onClick={() => { setClave(""); setClave2(""); setError(null); setBlanqueo(true) }} disabled={guardando}>
                       <KeyRound className="h-4 w-4 mr-2" />
-                      Blanquear contraseña
+                      {textoBlanqueo}
                     </Button>
+                    {usuario!.bloqueado && (
+                      <Button type="button" variant="outline" onClick={desbloquear} disabled={guardando}>
+                        <Unlock className="h-4 w-4 mr-2" />
+                        Desbloquear
+                      </Button>
+                    )}
                     {usuario!.active ? (
                       usuario!.id !== yo && (
                         <Button type="button" variant="outline" className="text-destructive" onClick={() => setConfirmarBaja(true)} disabled={guardando}>

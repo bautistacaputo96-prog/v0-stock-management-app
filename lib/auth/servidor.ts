@@ -12,6 +12,7 @@ import { cookies } from "next/headers"
 import { sbAdmin } from "@/lib/wialon"
 import { firmarSesion, leerSesion, SinSecretoError, DURACION_SESION_MS, type DatosSesion } from "@/lib/auth/token"
 import { normalizarPermisos, normalizarNombre, tipoDe, type Permisos, type Tipo } from "@/lib/permisos"
+import { esperaDePersona, VENTANA_MIN, type FilaIntento } from "@/lib/auth/intentos"
 
 export const NOMBRE_COOKIE = "rebucret_sesion"
 
@@ -107,7 +108,7 @@ export function estadoClave(c: FilaCredencial | null | undefined): EstadoClave {
 }
 
 /** Fila de la pantalla Usuarios (solo gerenciales). Nunca lleva el hash. */
-export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null | undefined, ahora: number = Date.now()) {
+export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null | undefined, intentos: FilaIntento[] = [], ahora: number = Date.now()) {
   return {
     id: u.id,
     name: u.name,
@@ -118,10 +119,34 @@ export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null |
     veFuncionesNuevas: u.ve_funciones_nuevas === true,
     estadoClave: estadoClave(c),
     ultimoIngreso: c?.ultimo_ingreso_at || null,
-    bloqueado: false, // sin bloqueo por intentos desde el 04/11/2026
+    // Fase 0c-2: freno por intentos por persona y lugar (tabla ingreso_intentos), no el bloqueado_hasta viejo
+    bloqueado: esperaDePersona(intentos, u.id, ahora) > 0,
     permisosActualizadosAt: u.permisos_actualizados_at || null,
     permisosActualizadosPor: u.permisos_actualizados_por || null,
   }
+}
+
+/** Intentos de ingreso de los últimos 15 minutos (freno del login). Sin la migración 202611241800: lista vacía. */
+export async function leerIntentosRecientes(ahora: number = Date.now()): Promise<FilaIntento[]> {
+  const { data, error } = await sbServicio()
+    .from("ingreso_intentos")
+    .select("user_id, ip, creado_at")
+    .gte("creado_at", new Date(ahora - VENTANA_MIN * 60000).toISOString())
+  if (error) {
+    console.warn("[sesion] no se pudieron leer los intentos de ingreso:", error.message)
+    return []
+  }
+  return (data as FilaIntento[] | null) || []
+}
+
+/** Borra los intentos de ingreso de una persona (Desbloquear, blanqueo). Devuelve cuántos borró; sin la migración, 0. */
+export async function desbloquearIngreso(userId: string): Promise<number> {
+  const { data, error } = await sbServicio().rpc("ingreso_desbloquear", { p_user_id: userId })
+  if (error) {
+    console.warn("[sesion] no se pudo desbloquear el ingreso:", error.message)
+    return 0
+  }
+  return Number(data) || 0
 }
 
 export async function leerUsuario(id: string): Promise<FilaUsuario | null> {
