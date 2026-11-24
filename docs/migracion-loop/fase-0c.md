@@ -941,3 +941,44 @@ Lectura propia nueva: `GET https://www.produccionrebucret.com/api/concretus/lect
 | Una rama futura reemplaza una función del motor y pierde la línea del permiso | Prueba automática (`npm run test:seguridad`) sobre las migraciones nuevas + nota en el README |
 | Tabla nueva sin RLS | `anon` ya no recibe permisos por defecto; prueba automática |
 | Concretus no se actualizó antes de la B | Su WhatsApp sale sin despachos: se corre la vuelta atrás o se apura el cambio (paso 4 antes del 5) |
+
+### 0c-2 · Hecho (24/11/2026) — rama `fix/seguridad-rls`, sin push
+
+**Qué se hizo:** todo lo de la especificación de arriba. Archivos nuevos: `lib/auth/jwt-supabase.ts`,
+`lib/auth/token-base.ts`, `lib/auth/intentos.ts`, `lib/concretus-lectura.ts`, `app/api/sesion/token/route.ts`,
+`app/api/sesion/token/probar/route.ts`, `app/api/usuarios/[id]/desbloquear/route.ts`, `app/api/concretus/lectura/route.ts`,
+`scripts/probar-seguridad-rls.mjs`, `lib/__tests__/seguridad.test.mjs` (`npm run test:seguridad`), migraciones
+`202611241800` (A), `202611241900` (B), `202611242000` (C) y `vuelta-atras/202611241900_…_VUELTA_ATRAS.sql`.
+
+**Desvíos y decisiones del obrero**
+1. **El token no lleva tipo ni permisos** (el pedido lo sugería): la base los lee en el momento. Así un cambio en
+   Usuarios vale enseguida y una baja o un blanqueo cortan el token sin esperar a que venza (8 h).
+2. **El token lleva `iss = "rebucret"`** y la base solo acepta ese: un usuario de Supabase Auth (si alguien se
+   registrara con la clave pública) no sirve para nada.
+3. **El servidor prueba el token contra la base antes de repartirlo.** Si `SUPABASE_JWT_SECRET` está mal, no se
+   reparten tokens y todo sigue con la clave pública: cargar mal la variable no rompe el sistema.
+4. **Concretus usa el secreto que ya tiene** (`REPARTO_RESUMEN_SECRET` / `REBUCRET_RESUMEN_SECRET`) en vez de una
+   variable nueva: es el mismo sistema leyendo lo mismo (resúmenes del día, sin datos fiscales).
+5. **Freno de intentos por persona + lugar** (no solo por persona), por lo que pasó el 04/11.
+6. **La B frena entera** si hay una tabla sin clasificar o una función del motor con otra forma: mejor no correr que
+   correr a medias.
+
+**Cómo se probó**
+- `npm run test:seguridad` (15 pruebas): token (firma, adulterado, vencido, sin secreto), freno (IP, mensaje,
+  límites iguales a la migración, pantalla Usuarios), Concretus (fechas, columnas, sin pruebas ni cancelados) y
+  controles sobre las migraciones: todo permiso usado existe en `lib/permisos.ts`; toda tabla está clasificada; las
+  migraciones posteriores prenden la RLS y conservan el control en las funciones del motor; **toda escritura del
+  navegador tiene su regla** (se probó que la prueba falla si se saca una regla).
+- Todos los `test:*` del repo pasan. `tsc`: los mismos 16 errores viejos que la base, ninguno nuevo.
+- Consultas de solo lectura contra producción: la inyección de la guarda en las 10 funciones del motor encuentra
+  exactamente un lugar en cada una (`pg_get_functiondef` del 24/11); la lógica de `rebucret_permiso` da lo mismo que
+  `puedeCon` para gerencial (con un permiso sacado a mano), operario y consulta; el cálculo de espera del freno.
+- **No se corrió ninguna migración** (ni en `BEGIN … ROLLBACK`): en esta sesión solo se permitían consultas de
+  catálogo. Falta correr `scripts/probar-seguridad-rls.mjs` con el OK de Bautista (lo hace la sesión principal).
+- No se probó en el navegador.
+
+**Pendientes**
+- Correr `scripts/probar-seguridad-rls.mjs` (paso 5 del orden de publicación).
+- Después de la B, que un operario y un consulta recorran sus pantallas (Despacho, Programación, Materia prima,
+  Calidad, Mantenimiento) y confirmar "no se pierde nada".
+- Recomendado: en Supabase → Authentication, apagar "Allow new users to sign up" (Supabase Auth no se usa).
