@@ -102,6 +102,8 @@ Permisos iniciales por persona: los de la tabla de arriba, más Titan con Manten
 - El interruptor "funciones nuevas" de la Fase 2 se administra desde la misma pantalla Usuarios.
 
 ### 0c-2 · Seguridad real en la base
+> **24/11/2026:** se cambió el enfoque: **sin Supabase Auth**. La sesión de la 0c-1 (cookie firmada) le pide al servidor un permiso corto para la base (token). Detalle completo en "0c-2 · Especificación técnica", al final.
+
 - Login con **Supabase Auth**, con la sesión validada en el servidor.
 - **RLS** en todas las tablas: leer requiere estar logueado; escribir según el tipo y el área del usuario (en los datos del token). Las funciones del motor (despacho, viajes) verifican el permiso adentro.
 - **Rutas de API protegidas:**
@@ -774,3 +776,168 @@ Pruebas de los ajustes:
 5. Merge al final del día; al abrir, todos ven el login (el caché viejo no vale como sesión) y entran con la de siempre la primera vez. Mensaje al grupo de 14.5.
 6. A la semana (o cuando estén todos): "Cerrar el ingreso con la contraseña común".
 
+
+## 0c-2 · Especificación técnica (24/11/2026)
+
+Estado: **escrita e implementada en la rama `fix/seguridad-rls`** (base `fix/auditoria-codigo`). Migraciones escritas y **sin aplicar**. Cierra la fila "sesión/permisos" de `docs/auditoria-codigo/ESTADO.md`.
+
+### 1. Objetivo
+Que la seguridad deje de ser "lo que se ve en pantalla":
+1. **La base no le contesta a la clave pública.** Hoy cualquiera que copie la clave del JS del sitio lee clientes y CUIT, o borra despachos (35 tablas sin RLS con permiso total para `anon`). Después de la 0c-2: sin sesión no se lee ni se escribe nada; con sesión se lee todo y se escribe según los permisos de la persona.
+2. **Freno a la adivinación de contraseñas** (la lista de nombres del login es pública): 5 intentos mal → 15 minutos de espera.
+3. **Se termina la contraseña común "de siempre"** sin dejar a nadie afuera.
+4. Las rutas de API que quedaron abiertas piden sesión o secreto.
+
+### 2. Decisión de enfoque: sin Supabase Auth
+- La 0c-1 ya tiene sesión propia, firmada en el servidor (`rebucret_sesion`). Pasar a Supabase Auth obligaba a crear usuarios en otro sistema, migrar contraseñas y rehacer el login.
+- En cambio: con la sesión de la 0c-1, el servidor le da al navegador un **token** (un "pase" corto para la base), firmado con el secreto JWT del proyecto de Supabase. La base lo reconoce como `authenticated` y sabe **quién es** (`sub` = id del usuario).
+- **Los permisos no viajan en el token: la base los lee en el momento** de `app_users` (mismo `tipo` y `permisos` que usa `puede()`). Así:
+  - un cambio de permisos desde Usuarios vale **en el acto** (no hay que esperar que venza el token);
+  - una baja, un blanqueo o un cambio de contraseña (`sesion_version + 1`) **cortan el token en el acto** (el token lleva `v` = versión de sesión y la base la compara).
+- Token: `{ aud: "authenticated", role: "authenticated", sub, v, iat, exp, iss: "rebucret" }`, HS256, dura **8 horas** (un turno) y el navegador lo renueva cuando le queda menos de 1 hora. Si el servidor no responde (corte de Vercel), el token sigue sirviendo hasta que vence.
+- Variable nueva: **`SUPABASE_JWT_SECRET`** (Supabase → Project Settings → API / JWT Keys → "Legacy JWT secret"). Solo servidor. Nunca se imprime ni va al navegador.
+
+### 3. Piezas del servidor y del navegador
+| Archivo | Qué hace |
+|---|---|
+| `lib/auth/jwt-supabase.ts` | Pura (sin imports del proyecto). `firmarTokenBase({sub, v}, secreto, ahora)` y `leerTokenBase` (para las pruebas). |
+| `GET /api/sesion/token` | Con sesión (y contraseña ya elegida): `{token, segundos}`. Sin `SUPABASE_JWT_SECRET`, o si la base rechaza el token (secreto mal copiado): `{token: null, motivo}` y el navegador sigue con la clave pública (funciona igual mientras no se corra la migración de RLS). Sin sesión: 401. |
+| `GET /api/sesion/token/probar` | Solo gerencial. Dice si la variable está cargada y si la base acepta el token (`tokenAceptado: true`). **Es el control antes de correr la migración de RLS.** |
+| `lib/supabase/client.ts` | Cliente único del navegador con `accessToken`: pide el token, lo guarda en memoria, lo renueva antes de que venza. `olvidarTokenBase()` al entrar, salir o cambiar de contraseña. |
+| `lib/supabase/server.ts` | Las páginas que leen en el servidor (Inicio, Despacho, Programación, Historial, Informes, Mantenimiento, Carga) usan el token de la sesión de la cookie. Sin sesión, la clave pública (después de la RLS, vacío: el login vuelve a pedir la página con `router.refresh()` al entrar). |
+| `components/login-gate.tsx` | Al entrar (o al elegir la contraseña) hace `router.refresh()` para que las páginas del servidor se vuelvan a leer con la sesión. |
+
+### 4. Inventario de tablas y permisos para escribir
+Leer: **cualquier sesión válida** (todos ven todo, como define la 0c). Escribir: **al menos uno** de los permisos de la columna (gerencial puede todo). Revisado archivo por archivo (`.from("tabla").insert/update/upsert/delete` del navegador y las funciones que llama).
+
+**A. Las lee y escribe el navegador**
+| Tabla | Agregar (INSERT) | Cambiar (UPDATE) | Borrar (DELETE) | Quién escribe |
+|---|---|---|---|---|
+| `activity_log` | cualquier sesión (el nombre lo pone la base) | — | — | `logActivity`, `logCambio` |
+| `carriers`, `suppliers` | materia_prima.cargar | materia_prima.editar | materia_prima.borrar | alta rápida en ingreso; Proveedores |
+| `material_suppliers` | materia_prima.cargar/editar, formulas.cargar | materia_prima.editar | materia_prima.editar/borrar | Proveedores |
+| `clients` | clientes.cargar | clientes.cargar/editar/borrar | clientes.borrar | Clientes y obras (completar CUIT = cargar) |
+| `construction_sites` | clientes.cargar | clientes.cargar/editar/borrar, programacion.cargar/editar (ubicar la obra al programar) | clientes.borrar | Clientes, Semana |
+| `daily_stockpile_humidity` | materia_prima.cargar | materia_prima.cargar | — | humedad del acopio |
+| `dispatches` | — (solo `registrar_despacho`) | historial.cargar/editar, laboratorio.cargar/editar, despacho.cargar (muestra en la carga) | — (solo `anular_despacho`) | Historial, probetas |
+| `formulas` | formulas.cargar | formulas.editar | formulas.borrar; formulas.cargar solo si todavía no tiene materiales (deshacer un alta que falló) | Fórmulas |
+| `formula_materials` | formulas.cargar/editar | formulas.editar | formulas.editar/borrar | Fórmulas |
+| `granulometria_tests` | laboratorio.cargar, materia_prima.cargar (muestra del ingreso) | laboratorio.cargar/editar | laboratorio.borrar | Laboratorio, ingreso |
+| `granulometria_sieve_results` | laboratorio.cargar/editar | laboratorio.editar | laboratorio.cargar/editar (se reemplazan al corregir) | Laboratorio |
+| `humidity_excess_log` | materia_prima.cargar/editar | materia_prima.cargar/editar | materia_prima.cargar/editar/borrar | ingreso, "Marcar acreditado" |
+| `maint_executions`, `maint_work_order_photos` | mantenimiento.cargar | — | — | OT |
+| `maint_work_orders` | mantenimiento.cargar; cualquier sesión si `creado_por = 'Sistema'` (generación automática, "corre para todos") | mantenimiento.cargar/borrar | — | Mantenimiento |
+| `materials` | formulas.cargar | recuentos.cargar, materia_prima.cargar/editar/borrar, formulas.cargar/editar | formulas.borrar | Ajustar, ingresos, materiales |
+| `mixers` | flota.cargar | flota.editar/borrar, despacho.cargar (estado "Entregado") | flota.borrar | Camiones, Despacho |
+| `choferes`, `empresas_bombeo` | flota.cargar | flota.editar/borrar | — | Camiones |
+| `plants` | — | programacion.editar (tiempos de la planta) | — | vista Día |
+| `press_calibrations` | laboratorio.cargar | laboratorio.cargar | — | Calibración |
+| `scheduled_dispatches` | programacion.cargar | programacion.editar/borrar, historial.editar, despacho.cargar; **programacion.cargar solo en sus pedidos** (`created_by` = su nombre, como `puedeAjustarPedido`) | programacion.borrar, historial.borrar | Semana, Día, Despacho, Historial |
+| `stock_entries` | materia_prima.cargar | materia_prima.cargar/editar, laboratorio.cargar/editar | materia_prima.borrar | ingresos, granulometría |
+| `stock_movements` | recuentos.cargar, materia_prima.cargar/editar/borrar | — | — | Ajustar, Mover |
+| `test_cylinders` | historial.cargar, laboratorio.cargar, despacho.cargar | laboratorio.cargar/editar/borrar | laboratorio.borrar | muestra, rotura, probetas |
+| `traslados_plantas` | programacion.editar | programacion.editar | — | reparto de camiones |
+| storage `mantenimiento` (fotos) | mantenimiento.cargar | — | — | foto de la OT (leer es público, como hoy) |
+
+**B. El navegador solo las lee** (las escribe el servidor con la clave de servicio o una función de la base): `alertas_carga`, `amanecer_camiones`, `app_users` (solo `id, name, active`), `armado_mail`, `cargas`, `cargas_agua_extra`, `cargas_eventos`, `cargas_materiales`, `dispatch_materials`, `dispatch_status_log`, `maint_equipment`, `maint_task_images`, `maint_task_items`, `maint_task_steps`, `maint_tasks`, `manual_material_withdrawals`, `manual_withdrawal_items`, `puesto_recetas`, `puesto_salidas`, `puestos_carga`, `recetas_planta`, `remito_tipo_dia`, `reparto_camiones`, `stockpile_cubications`, `viajes`, `viajes_gps`, `zomatik_articulos`, `zomatik_lecturas`, `zomatik_np`, `zomatik_np_excepciones`, `zomatik_remitos`. Las vistas `cargas_tiempos` y `recetas_planta_actual` ya son `security_invoker`: respetan la RLS de sus tablas.
+
+**C. Solo el servidor** (RLS prendida sin reglas: ni la clave pública ni una sesión las ven): `alertas_stock`, `app_user_credenciales`, `client_alias`, `control_mp_corridas`, `control_mp_diferencias`, `gps_reconstrucciones`, `ingreso_intentos` (nueva), `integraciones` y las `zomatik_*` que no están en B.
+
+**Lo que la RLS no distingue** (queda en la pantalla, como en la 0c-1): dentro de una misma tabla, qué columnas se tocan. Ejemplo: quien tiene `laboratorio.cargar` puede cambiar una probeta (necesita cargar la rotura), aunque "corregir" sea `laboratorio.editar`. La base frena a quien **no tiene nada que ver** con esa tabla (un consulta no escribe nada; Braian solo toca mantenimiento; David solo laboratorio).
+
+### 5. Funciones de la base
+**Ayudantes nuevos** (`SECURITY DEFINER`, `search_path` fijo):
+- `rebucret_sesion_ok()`: el token es de una persona activa, con su contraseña ya elegida y la misma `sesion_version`.
+- `rebucret_permiso(VARIADIC text[])`: `'seccion.accion'`; gerencial = todo; si no, `permisos -> seccion ->> accion = 'true'` (igual que `puedeCon`).
+- `rebucret_exigir(VARIADIC text[])`: para las funciones que escriben. Sin token (SQL directo, pg_cron) o con la clave de servicio: pasa. Con sesión: pide el permiso. Con la clave pública: "Sin permiso".
+- `rebucret_usuario(p_usuario)`: con sesión, **el nombre de la sesión** (ignora lo que mande el navegador); si no, el que vino.
+
+**Funciones que escriben y se llaman desde el navegador** (todas `SECURITY DEFINER`): la migración les agrega, sin tocar el resto del código, una línea al principio que pide el permiso, y cambia el usuario por el de la sesión.
+| Función | Permiso (alcanza uno) |
+|---|---|
+| `registrar_despacho` | despacho.cargar |
+| `editar_despacho`, `ajustar_material_despacho` | historial.editar |
+| `anular_despacho` | historial.borrar |
+| `camion_volvio` | despacho.cargar, programacion.editar |
+| `finalizar_pedido` | despacho.cargar, programacion.editar |
+| `suspender_pedido`, `reabrir_pedido` | despacho.cargar, programacion.cargar, programacion.editar |
+| `guardar_viajes_pedido` | programacion.cargar, programacion.editar, despacho.cargar |
+| `guardar_reparto_dia` | programacion.editar, despacho.cargar |
+
+Se hace leyendo la definición vigente (`pg_get_functiondef`) al correr la migración, así no pisa los cambios de otras ramas. Si una función no tiene la forma esperada, la migración se frena entera.
+
+**Regla para el futuro** (también en `supabase/migrations/README.md` y en una prueba automática): toda migración que reemplace una de esas funciones tiene que conservar la línea `rebucret_exigir`, y toda tabla nueva tiene que prender la RLS.
+
+**Usuario de Actividad:** trigger en `activity_log` (antes de agregar) y en `scheduled_dispatches.created_by` (al crear): si quien escribe es el navegador con sesión, el nombre es el de la sesión.
+
+**Triggers que escribían "como el navegador"** (`update_stock_after_entry`, `decrease_stock_after_entry_delete`, `update_material_stockpile_humidity`, `create_test_cylinders_for_dispatch`, `_viajes_pedido_cerrado` y los de solo-fila): pasan a `SECURITY DEFINER`, así un ingreso de materia prima sigue moviendo el stock aunque la persona no tenga permiso de editar materiales a mano.
+
+**Permisos (GRANT):** `anon` se queda sin nada (tablas, secuencias y funciones) y sin permisos por defecto para lo que se cree después. `authenticated` mantiene los GRANT de hoy (la RLS decide). `app_users`: solo `id, name, active`.
+
+### 6. Rutas de API
+| Ruta | Antes | Después |
+|---|---|---|
+| `/api/remito/[id]` | abierta (datos fiscales por id) | con sesión |
+| `/api/alertas/stock-cero` | abierta | `Authorization: Bearer CRON_SECRET` (el cron de Vercel ya lo manda; el trigger de la base lo manda desde el Vault, migración A) |
+| `GET /api/zomatik/leer` | cron o gerencial con un link | solo cron; el botón "Actualizar" sigue con POST |
+| Crons sin `CRON_SECRET` | se reconocían por headers falsificables | **no pasan** (y queda un error en el log) |
+| `/api/concretus/lectura` (nueva) | — | lectura para Concretus, con el mismo secreto que ya usa para el reparto (`REPARTO_RESUMEN_SECRET`) |
+
+### 7. Login: freno por intentos (decisión del 04/11 revisada)
+El 04/11 se sacó el bloqueo de la cuenta (5 errores → 10 min) porque un error ajeno podía dejar afuera a la persona. Ahora se cuenta **por persona y por equipo (IP)**:
+| Se cuenta | Límite en 15 minutos |
+|---|---|
+| Misma persona desde el mismo lugar | 5 |
+| Misma persona desde cualquier lugar | 10 |
+| Mismo lugar, cualquier persona | 20 (la tablet y los celulares de la planta salen por la misma IP) |
+- Pasado el límite: "Demasiados intentos. Esperá N minutos y probá de nuevo." No se verifica la contraseña mientras dura.
+- El intento se reserva **antes** de verificar (función `ingreso_reservar`, con candado): mandar 100 pedidos juntos no da 100 intentos.
+- Entrar bien borra los errores de esa persona en ese lugar.
+- Un gerencial lo destraba desde Usuarios: "Desbloquear" (o al dar contraseña provisoria).
+- Sin la migración A aplicada, el login anda igual que hoy (sin freno) y lo dice en el log.
+
+### 8. Contraseña común
+- Hoy (24/11) queda **1 persona** con "primer ingreso pendiente" (`permite_clave_comun` sin contraseña propia).
+- En Usuarios, a quien está pendiente se le ofrece **"Dar contraseña provisoria"** (es el blanqueo de siempre: la cambia al entrar).
+- **Apagado definitivo** (paso aparte, cuando todos tengan la suya): migración `202611242000_apagar_clave_comun.sql`: pone `permite_clave_comun = false` para todos y agrega una regla en la base que impide volver a prenderla. Desde ahí la común no sirve para nadie, aunque el código todavía la conozca (solo para no dejar elegirla como contraseña nueva).
+
+### 9. Concretus
+Concretus (repo aparte) lee hoy, con la clave pública y desde su servidor:
+- `lib/rebucret.ts`: `dispatches` (m³, cliente, obra, fórmula, fecha, prueba), `scheduled_dispatches` (m³, hora, urgente, estado, cliente, obra, fórmula) y los nombres de `clients`, `construction_sites`, `formulas`;
+- `app/api/remito/[id]/route.ts`: **una copia vieja del remito** que lee todo el cliente (CUIT, domicilio fiscal) por id, **abierta**. Recomendación: borrarla (el remito vive en Rebucret).
+
+Lectura propia nueva: `GET https://www.produccionrebucret.com/api/concretus/lectura?tipo=despachos|programacion&desde=<ISO>&hasta=<ISO>` con `Authorization: Bearer <REBUCRET_RESUMEN_SECRET>` (el mismo valor que ya usa para `/api/reparto/resumen`). Devuelve solo esas columnas más `cliente`, `obra` y `formula` (nombres). Rango máximo 3 días. Sin escribir nada. Cambio exacto en `docs/migracion-loop/concretus-lectura.md`.
+
+### 10. Orden de publicación (nada se rompe si un paso se demora)
+1. **Unir la rama y publicar.** El código anda con o sin RLS: sin `SUPABASE_JWT_SECRET` usa la clave pública como hoy.
+2. **Migración A** (`202611241800_seguridad_intentos_y_avisos.sql`), en cualquier momento: freno de intentos + el aviso de stock en cero con secreto.
+3. **Bautista carga `SUPABASE_JWT_SECRET`** en Vercel (Production y Preview) y vuelve a publicar. Entra como gerencial a `/api/sesion/token/probar`: tiene que decir `"tokenAceptado": true`. Si dice otra cosa, el sistema sigue andando con la clave pública (el servidor no reparte tokens que la base rechaza).
+4. **Concretus** pasa a la lectura nueva (y se borra su copia del remito). Se controla que llegue el WhatsApp del día siguiente.
+5. **Una noche sin despachos: migración B** (`202611241900_seguridad_rls.sql`). Antes, la sesión principal la prueba en `BEGIN … ROLLBACK` con `scripts/probar-seguridad-rls.mjs`. Después: entrar como operario y como consulta y recorrer las pantallas.
+6. **Cuando todos tengan su contraseña:** migración C (`202611242000_apagar_clave_comun.sql`).
+
+**Vuelta atrás:** `supabase/migrations/vuelta-atras/202611241900_seguridad_rls_VUELTA_ATRAS.sql` deja la base como antes de B (RLS apagada donde no estaba, permisos de `anon` como hoy, funciones sin control). El código no hace falta revertirlo: con la clave pública otra vez abierta, anda igual. Para A, el freno se apaga solo si se borra `ingreso_reservar` (el código sigue sin freno).
+
+### 11. Criterios de aceptación
+1. Con la clave pública sola (sin token) no se lee **ninguna** tabla de `public` ni se puede llamar ninguna función que escriba (prueba: `SET ROLE anon` en `BEGIN … ROLLBACK`).
+2. Con un token de **consulta** (Joaquín) se lee todo y no se puede agregar, cambiar ni borrar nada; `registrar_despacho` y `anular_despacho` dicen "Sin permiso".
+3. Con un token de **operario** solo se escribe en las tablas de sus áreas; Felipe (programacion.cargar sin editar) no puede cambiar un pedido ajeno por la API.
+4. Un gerencial puede todo. Un cambio de permisos desde Usuarios vale en la siguiente consulta, sin volver a entrar.
+5. Una baja o un blanqueo cortan el token en el acto (`sesion_version`).
+6. En Actividad el nombre es el de la sesión aunque el navegador mande otro, también en las funciones del despacho (`p_usuario`).
+7. Login: al 6.º intento mal en 15 minutos (misma persona, mismo lugar) dice "Esperá N minutos"; entrar bien limpia; un gerencial lo destraba.
+8. `/api/remito/[id]` sin sesión: 401. `/api/alertas/stock-cero` sin secreto: 401. `GET /api/zomatik/leer` con sesión y sin cron: 405. Crons sin `CRON_SECRET`: 401.
+9. El WhatsApp diario de Concretus sigue llegando, con la lectura nueva.
+10. **No se pierde nada:** cada persona sigue haciendo lo que hace hoy desde sus pantallas (lista de la sección 4).
+11. Antes de la migración B, con o sin `SUPABASE_JWT_SECRET`, todo anda como hoy.
+
+### 12. Riesgos
+| Riesgo | Cómo se cubre |
+|---|---|
+| Una pantalla escribe en una tabla con un permiso que no está en la sección 4 → "new row violates row-level security policy" | Inventario archivo por archivo; prueba en `BEGIN … ROLLBACK`; vuelta atrás lista; un gerencial nunca queda frenado |
+| Secreto JWT mal copiado | El servidor prueba el token contra la base antes de repartirlo; `/api/sesion/token/probar` |
+| El proyecto de Supabase ya no acepta el "Legacy JWT secret" (claves nuevas asimétricas) | Se ve en el paso 3 (`tokenAceptado: false`): no se corre la B hasta resolverlo |
+| Vercel caído más de 8 horas | El token vence y las pantallas se ven vacías hasta que vuelva (hoy, sin servidor, igual no se puede entrar) |
+| Una rama futura reemplaza una función del motor y pierde la línea del permiso | Prueba automática (`npm run test:seguridad`) sobre las migraciones nuevas + nota en el README |
+| Tabla nueva sin RLS | `anon` ya no recibe permisos por defecto; prueba automática |
+| Concretus no se actualizó antes de la B | Su WhatsApp sale sin despachos: se corre la vuelta atrás o se apura el cambio (paso 4 antes del 5) |
