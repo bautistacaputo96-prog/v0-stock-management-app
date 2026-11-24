@@ -37,6 +37,25 @@ export function duracion(min: number): string {
 export const m3txt = (x: number | null | undefined) => Number(x || 0).toLocaleString("es-AR", { maximumFractionDigits: 1 })
 
 // ---------------------------------------------------------------------------
+// Fechas en hora de Argentina (auditoría 23/11/2026)
+// ---------------------------------------------------------------------------
+export const ZONA_AR = "America/Argentina/Buenos_Aires"
+/** "22/11/2026" en hora de Argentina, corra donde corra (el servidor de Vercel está en UTC: un despacho de las 21:30
+ *  salía con la fecha del día siguiente en el remito impreso). */
+export function fechaAR(x: string | number | Date): string {
+  return new Date(x).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: ZONA_AR })
+}
+/** Filtro de días (yyyy-mm-dd) para una columna timestamptz: de 00:00 a 23:59:59 de Argentina. Sin el -03:00 la
+ *  base toma la hora en UTC y los despachos de 21 a 24 h quedan en el día siguiente. */
+export function rangoDiasAR(desde: string, hasta: string): { desde: string; hasta: string } {
+  return { desde: `${desde}T00:00:00-03:00`, hasta: `${hasta}T23:59:59.999-03:00` }
+}
+/** Hoy (yyyy-mm-dd) en la hora de la compu, no en UTC (toISOString después de las 21 h da mañana). */
+export function hoyLocal(ahora: Date = new Date()): string {
+  return `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}-${String(ahora.getDate()).padStart(2, "0")}`
+}
+
+// ---------------------------------------------------------------------------
 // Motivos (los mismos códigos que el CHECK de la base)
 // ---------------------------------------------------------------------------
 export type MotivoTipo = "lluvia" | "obra_no_lista" | "falla_bomba" | "falla_camion" | "falla" | "falta_material" | "pedido_cliente" | "obra_pidio_menos" | "otro"

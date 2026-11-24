@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import * as fs from "fs"
 import * as path from "path"
-import { tipoPorNumero } from "@/lib/despacho"
+import { fechaAR, tipoPorNumero } from "@/lib/despacho"
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 function sb() {
@@ -67,9 +67,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const m = (mixer   as any) || {}
 
   const dateRaw = row.dispatch_date || row.scheduled_arrival_time
-  const fecha   = new Date(dateRaw).toLocaleDateString("es-AR", {
-    day: "2-digit", month: "2-digit", year: "numeric"
-  })
+  // En hora de Argentina: el servidor corre en UTC y un despacho de las 21:30 salía con la fecha de mañana
+  const fecha   = fechaAR(dateRaw)
 
   // Exactamente lo cargado: 2,5 queda "2,5", 8 queda "8" (sin redondear ni decimales de más)
   const m3           = Number(row.quantity_m3 || 0).toLocaleString("es-AR", { maximumFractionDigits: 2 })

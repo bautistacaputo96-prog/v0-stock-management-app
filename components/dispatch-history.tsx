@@ -26,6 +26,7 @@ import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/moti
 import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
+import { rangoDiasAR } from "@/lib/despacho"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
 type Plant = { id: string; name: string }
@@ -245,8 +246,9 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       // "*" (y el pedido con "*") para que las columnas de la fase 1 (chofer_id, finalidad) vengan
       // cuando la migración está aplicada, sin romper la consulta si todavía no lo está.
       .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
-      .gte("dispatch_date", `${dateFrom}T00:00:00`)
-      .lte("dispatch_date", `${dateTo}T23:59:59`)
+      // Días de Argentina (sin el -03:00 la base los toma en UTC y los despachos de 21 a 24 h caían en el día siguiente)
+      .gte("dispatch_date", rangoDiasAR(dateFrom, dateTo).desde)
+      .lte("dispatch_date", rangoDiasAR(dateFrom, dateTo).hasta)
       .order("dispatch_date", { ascending: false })
       .limit(10000)
     if (selectedPlant !== ALL_PLANTS) manualQuery = manualQuery.eq("plant_id", selectedPlant)
