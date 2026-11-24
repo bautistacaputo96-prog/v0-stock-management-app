@@ -55,6 +55,9 @@ export function EditGranulometriaDialog({
   const [allSuppliers, setAllSuppliers] = useState<Record<string, Supplier[]>>({})
   const [filteredSuppliers, setFilteredSuppliers] = useState<Supplier[]>([])
   const [moisturePercent, setMoisturePercent] = useState<number | null>(null)
+  // Peso húmedo del ensayo: el que se cargó al darlo de alta (el alta deja poner cualquiera). Antes se forzaba 500 g
+  // y al corregir cualquier dato se recalculaba la humedad con 500 (y si el seco pasaba de 500, quedaba en 0 %).
+  const [pesoHumedo, setPesoHumedo] = useState<number>(WET_SAMPLE_WEIGHT)
   const [remitoError, setRemitoError] = useState<string>("")
 
   const [formData, setFormData] = useState({
@@ -187,6 +190,7 @@ export function EditGranulometriaDialog({
         : new Date().toISOString().split("T")[0]
       const testDate = testData.test_date ? String(testData.test_date).split("T")[0] : ""
 
+      setPesoHumedo(Number(testData.sample_weight_grams) > 0 ? Number(testData.sample_weight_grams) : WET_SAMPLE_WEIGHT)
       setMotivo("")
       setAntes({ mf: testData.fineness_modulus ?? null, remito: testData.remito || "", humedad: testData.moisture_percent ?? null })
       setFormData({
@@ -228,13 +232,13 @@ export function EditGranulometriaDialog({
   // Calculate moisture percentage
   useEffect(() => {
     const dryWeight = Number.parseFloat(formData.dry_weight_grams)
-    if (dryWeight && dryWeight > 0 && dryWeight < WET_SAMPLE_WEIGHT) {
-      const moisture = ((WET_SAMPLE_WEIGHT - dryWeight) / dryWeight) * 100
+    if (dryWeight && dryWeight > 0 && dryWeight < pesoHumedo) {
+      const moisture = ((pesoHumedo - dryWeight) / dryWeight) * 100
       setMoisturePercent(moisture)
     } else {
       setMoisturePercent(null)
     }
-  }, [formData.dry_weight_grams])
+  }, [formData.dry_weight_grams, pesoHumedo])
 
   const handleSieveChange = (sieve: string, value: string) => {
     setSieveData((prev) => ({ ...prev, [sieve]: value }))
@@ -359,7 +363,7 @@ export function EditGranulometriaDialog({
           test_date: formData.test_date || null,
           provider: selectedSupplier?.name || "",
           aggregate_type: selectedMaterial?.name || "",
-          sample_weight_grams: WET_SAMPLE_WEIGHT,
+          sample_weight_grams: pesoHumedo,
           dry_weight_grams: dryWeight,
           moisture_percent: moisture,
           fineness_modulus: finenessModulus,
@@ -531,7 +535,7 @@ export function EditGranulometriaDialog({
 
             <div className="space-y-2">
               <Label htmlFor="sample_weight">Peso Muestra Humeda (g)</Label>
-              <Input id="sample_weight" type="number" value={WET_SAMPLE_WEIGHT} disabled className="bg-muted" />
+              <Input id="sample_weight" type="number" value={pesoHumedo} disabled className="bg-muted" />
             </div>
 
             <div className="space-y-2">

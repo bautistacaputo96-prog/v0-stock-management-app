@@ -15,6 +15,8 @@ import { toast } from "@/hooks/use-toast"
 import { usePermisos } from "@/lib/current-user"
 import { logDeletion } from "@/lib/activity-log"
 import { ConfirmarConMotivo } from "@/components/motivo"
+import { resistenciaDeFormula } from "@/lib/calidad"
+import { todasLasFilas } from "@/lib/gps-viajes"
 
 function safeFormatDate(dateStr: string | null | undefined, formatStr: string = "dd/MM/yyyy"): string {
   if (!dateStr) return "-"
@@ -86,6 +88,7 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
     try {
       const supabase = createClient()
 
+      const armar = () => {
       let query = supabase
         .from("test_cylinders")
         .select(`
@@ -112,28 +115,27 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
           )
         `)
         .order("actual_test_date", { ascending: false, nullsFirst: false })
+        .order("id")
 
       // Filter by completed vs pending
       if (filterStatus === "completed") {
         query = query.not("actual_test_date", "is", null).not("strength_mpa", "is", null)
       } else if (filterStatus === "pending") {
-        query = query.is("actual_test_date", null)
+        // Las descartadas no se van a romper: no son pendientes
+        query = query.is("actual_test_date", null).eq("discarded", false)
+      }
+      return query
       }
 
-      const { data, error } = await query.limit(10000)
-
-      if (error) {
-        console.error("[v0] Error loading results:", error)
-        setLoading(false)
-        return
-      }
+      // PostgREST devuelve como mucho 1000 filas por consulta (el .limit(10000) no lo pasaba): se pagina
+      const data = await todasLasFilas((a, b) => armar().range(a, b))
 
       // Parse and map data
       const mappedResults: BreakingResult[] = (data || []).map((item: any) => {
-        // Parse formula description for expected strength and slump
-        const formulaDesc = item.dispatches?.formulas?.description || ""
-        const strengthMatch = formulaDesc.match(/H-?(\d+)/i)
-        const expectedStrength = strengthMatch ? parseInt(strengthMatch[1]) : null
+        // Resistencia especificada: la clase H del código (H30-620-15 B (CAN) → 30), como el reporte semanal y el
+        // análisis. Antes salía solo de la descripción, que casi nunca la tiene: no se marcaba cumple / no cumple.
+        const f = item.dispatches?.formulas
+        const expectedStrength = resistenciaDeFormula(f?.code, f?.name, f?.description)
         
         // Parse slump from formula name/code
         const slumpMatch = (item.dispatches?.formulas?.name || "").match(/(\d+)\s*cm/i)
@@ -260,6 +262,8 @@ export function BreakingResultsTable({ plants, selectedPlantId, onPlantChange }:
   const getStrengthStatus = (result: BreakingResult) => {
     if (!result.strength_mpa) return "pending"
     if (!result.expected_strength) return "unknown"
+    // A 7 días es informativo (se espera ~65–70 % de f'c): no se pinta de rojo una probeta normal
+    if (result.test_age_days < 28) return "unknown"
     // 90% of expected strength is acceptable
     if (result.strength_mpa >= result.expected_strength * 0.9) return "passed"
     return "failed"

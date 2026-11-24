@@ -16,6 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { usePermisos } from "@/lib/current-user"
 import { logDeletion } from "@/lib/activity-log"
 import { ConfirmarConMotivo } from "@/components/motivo"
+import { todasLasFilas } from "@/lib/gps-viajes"
 
 interface TestCylinder {
   id: string
@@ -82,11 +83,15 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
     setLoading(true)
     const supabase = createClient()
 
-    let query = supabase
+    // Con una planta elegida, el filtro va con !inner: sin eso PostgREST no saca las probetas de la otra planta,
+    // solo les vacía la fórmula (salían con fórmula y planta "-").
+    const inner = selectedPlantId !== "all" ? "!inner" : ""
+    const armar = () => {
+      let query = supabase
       .from("test_cylinders")
       .select(`
         *,
-        dispatch:dispatches(
+        dispatch:dispatches${inner}(
           remito,
           dispatch_date,
           sample_number,
@@ -97,18 +102,28 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
           formula_id,
           client:clients(name),
           construction_site:construction_sites(name),
-          formula:formulas(code, name, plant_id),
+          formula:formulas${inner}(code, name, plant_id),
           plant:formulas(plant_id)
         )
       `)
       .order("scheduled_test_date", { ascending: false })
-      .limit(10000)
+      .order("id")
 
-    if (selectedPlantId !== "all") {
-      query = query.eq("dispatch.formula.plant_id", selectedPlantId)
+      if (selectedPlantId !== "all") {
+        query = query.eq("dispatch.formula.plant_id", selectedPlantId)
+      }
+      return query
     }
 
-    const { data, error } = await query
+    // PostgREST devuelve como mucho 1000 filas por consulta (el .limit(10000) no lo pasaba): se pagina
+    let data: any[] | null = null
+    let error: unknown = null
+    try {
+      data = await todasLasFilas((a, b) => armar().range(a, b))
+    } catch (e) {
+      error = e
+      console.error("Error loading test cylinders:", e)
+    }
 
     if (!error && data) {
       let filtered = data as any[]
@@ -466,7 +481,8 @@ export function TestCylindersTable({ plants, selectedPlantId, onPlantChange }: T
           </SelectContent>
         </Select>
 
-        <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
+        {/* Antes le pasaba props que el filtro no tiene (dateRange/onDateRangeChange): "Aplicar" no hacía nada */}
+        <DateRangeFilter onFilterChange={(desde, hasta) => setDateRange({ from: desde || "", to: hasta || "" })} />
 
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

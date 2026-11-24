@@ -59,7 +59,8 @@ export default async function DashboardPage() {
     .order("entry_date", { ascending: false })
     .limit(20)
 
-  // Get test cylinders
+  // Get test cylinders. Las más nuevas primero: PostgREST corta en 1000 filas y en orden ascendente se quedaba con
+  // las 1000 más viejas (el panel de calidad y los próximos ensayos salían vacíos al pasar de 1000 probetas).
   const { data: testCylinders } = await supabase
     .from("test_cylinders")
     .select(`
@@ -69,7 +70,7 @@ export default async function DashboardPage() {
         formulas (id, name, code)
       )
     `)
-    .order("scheduled_test_date", { ascending: true })
+    .order("scheduled_test_date", { ascending: false })
 
   // Get formulas with materials for consumption calculation
   const { data: formulas } = await supabase

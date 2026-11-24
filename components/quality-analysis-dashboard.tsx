@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { todasLasFilas } from "@/lib/gps-viajes"
+import { limitesHistograma } from "@/lib/calidad"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
@@ -179,8 +181,9 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
         return
       }
 
-  // Load test cylinders with dispatch info
-  let cylindersQuery = supabase
+  // Load test cylinders with dispatch info. PostgREST corta en 1000 filas: sin paginar, el desvío y el f'cr
+  // salían solo de las últimas 1000 probetas rotas aunque el rango fuera de 5 años.
+  const cylindersQuery = () => supabase
     .from("test_cylinders")
     .select(`
       *,
@@ -204,21 +207,29 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
     `)
     .not("strength_mpa", "is", null)
     .order("actual_test_date", { ascending: false })
+    .order("id")
 
       // Load granulometria tests
-      let granulometriaQuery = supabase
-        .from("granulometria_tests")
-        .select("*")
-        .not("fineness_modulus", "is", null)
-        .order("extraction_date", { ascending: false })
-
-      if (selectedPlantId !== "all") {
-        granulometriaQuery = granulometriaQuery.eq("plant_id", selectedPlantId)
+      const granulometriaQuery = () => {
+        let q = supabase
+          .from("granulometria_tests")
+          .select("*")
+          .not("fineness_modulus", "is", null)
+          .order("extraction_date", { ascending: false })
+          .order("id")
+        if (selectedPlantId !== "all") q = q.eq("plant_id", selectedPlantId)
+        return q
       }
 
       const [cylindersResult, granulometriaResult] = await Promise.all([
-        cylindersQuery,
-        granulometriaQuery,
+        todasLasFilas((a, b) => cylindersQuery().range(a, b)).then((data) => ({ data }), (error) => {
+          console.error("Error cargando probetas:", error)
+          return { data: null }
+        }),
+        todasLasFilas((a, b) => granulometriaQuery().range(a, b)).then((data) => ({ data }), (error) => {
+          console.error("Error cargando granulometrías:", error)
+          return { data: null }
+        }),
       ])
 
       if (cylindersResult.data) {
@@ -515,9 +526,10 @@ export function QualityAnalysisDashboard({ plants, selectedPlantId: initialPlant
     if (results28Days.length === 0) return []
     
     const strengths = results28Days.map(r => r.strength)
-    const min = Math.floor(Math.min(...strengths) / 2) * 2
-    const max = Math.ceil(Math.max(...strengths) / 2) * 2
     const binSize = 2 // 2 MPa bins
+    // Antes el máximo se redondeaba para arriba: un resultado justo en el borde (ej. 30,0) quedaba afuera del último
+    // intervalo [28, 30) y no aparecía en el histograma.
+    const { min, max } = limitesHistograma(strengths, binSize)!
     const bins: { range: string; count: number; midpoint: number; belowFc: boolean; gaussian: number }[] = []
     
     // Calculate mean and std for Gaussian

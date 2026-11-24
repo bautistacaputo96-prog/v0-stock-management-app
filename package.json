@@ -24,6 +24,7 @@
     "test:zomatik-ajuste": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-ajuste.test.mjs",
     "test:zomatik-edicion": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-edicion.test.mjs",
     "test:programacion": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/programacion-pedidos.test.mjs",
+    "test:calidad": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/calidad.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/calidad.test.mjs",
     "test:geo": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/geo-direccion.test.mjs"
   },
   "dependencies": {

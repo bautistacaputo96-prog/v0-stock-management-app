@@ -15,6 +15,7 @@ import { ChevronLeft, ChevronRight, Beaker, CalendarDays } from "lucide-react"
 import { format, startOfMonth, endOfMonth, addMonths, subMonths, startOfWeek, isSameMonth, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { porLotes, todasLasFilas } from "@/lib/gps-viajes"
 
 const CAMIONES_POR_MUESTRA = 3
 
@@ -44,15 +45,26 @@ export function MuestreoResumen({ plants }: { plants: { id: string; name: string
     ;(async () => {
       setLoading(true)
       const supabase = createClient()
-      const [{ data: desp }, { data: probetas }] = await Promise.all([
-        supabase
-          .from("dispatches")
-          .select("id, plant_id, quantity_m3, dispatch_date, is_test_dispatch")
-          .gte("dispatch_date", `${rango.from}T00:00:00-03:00`)
-          .lte("dispatch_date", `${rango.to}T23:59:59-03:00`)
-          .limit(10000),
-        supabase.from("test_cylinders").select("dispatch_id").limit(20000),
-      ])
+      // PostgREST corta en 1000 filas aunque se pida más: antes traía 1000 probetas cualquiera de toda la historia
+      // y las muestras del período salían de menos. Ahora: los despachos del período (paginados) y solo sus probetas.
+      let desp: any[] = [], probetas: any[] = []
+      try {
+        desp = await todasLasFilas((a, b) =>
+          supabase
+            .from("dispatches")
+            .select("id, plant_id, quantity_m3, dispatch_date, is_test_dispatch")
+            .gte("dispatch_date", `${rango.from}T00:00:00-03:00`)
+            .lte("dispatch_date", `${rango.to}T23:59:59-03:00`)
+            .order("id")
+            .range(a, b),
+        )
+        probetas = await porLotes(desp.map((d: any) => d.id), (lote) =>
+          // lotes de 200 despachos: 3 probetas cada uno quedan por debajo de las 1000 filas
+          supabase.from("test_cylinders").select("dispatch_id").in("dispatch_id", lote),
+        )
+      } catch (e) {
+        console.error("Error cargando el muestreo:", e)
+      }
       if (!vivo) return
       const conMuestra = new Set((probetas || []).map((p: any) => p.dispatch_id))
       const nombre: Record<string, string> = {}

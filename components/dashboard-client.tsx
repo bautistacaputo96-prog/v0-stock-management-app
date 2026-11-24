@@ -466,7 +466,7 @@ export function DashboardClient({
       if (c.actual_test_date) return false
       const scheduled = new Date(c.scheduled_test_date)
       return scheduled >= now && scheduled <= in3Days
-    })
+    }).sort((a, b) => a.scheduled_test_date.localeCompare(b.scheduled_test_date)) // llegan de la más nueva a la más vieja
 
     return {
       tested,
