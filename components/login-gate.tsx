@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getCurrentUser, setCurrentUser, clearCurrentUser } from "@/lib/current-user"
+import { olvidarTokenBase } from "@/lib/supabase/client"
 import { CampoClave, ElegirClave } from "@/components/elegir-clave"
 
 /**
@@ -151,6 +152,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
         setError(d?.error || "No se pudo entrar. Probá de nuevo.")
         return
       }
+      olvidarTokenBase() // sesión nueva: token nuevo
       setCurrentUser(d.usuario)
       setClave("")
       setAviso(null)

@@ -67,9 +67,11 @@ export function setCurrentUser(user: Omit<CurrentUser, "role"> | CurrentUser) {
   if (typeof window === "undefined") return
   const u = armarUsuario(user)
   if (!u) return
+  const antes = getCurrentUser()?.id
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
-  // Fase 0c-2: entró, cambió de contraseña o se refrescó la sesión: el próximo pedido a la base usa un token nuevo
-  olvidarTokenBase()
+  // Fase 0c-2: si cambió la persona, el próximo pedido a la base pide un token nuevo. El refresco de cada 15 minutos
+  // (misma persona) no lo toca: el token vigente sirve. Entrar y cambiar la contraseña lo olvidan aparte.
+  if (antes !== u.id) olvidarTokenBase()
   window.dispatchEvent(new Event(EVENTO_USUARIO))
 }
 

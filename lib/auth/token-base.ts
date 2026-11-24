@@ -73,5 +73,5 @@ export async function tokenBaseParaSesion(s: Sesion, ahora: number = Date.now())
   if (!cred || !Number.isInteger(cred.sesion_version)) return { token: null, motivo: "sin_version" }
   const prueba = await probarSecreto(secreto, s.usuario.id, cred.sesion_version, ahora)
   if (prueba.aceptado === false) return { token: null, motivo: "jwt_rechazado" }
-  return { token: firmarTokenBase({ sub: s.usuario.id, v: cred.sesion_version }, secreto, ahora), segundos: DURACION_TOKEN_S }
+  return { token: firmarTokenBase({ sub: s.usuario.id, v: cred.sesion_version, s: s.datos?.s }, secreto, ahora), segundos: DURACION_TOKEN_S }
 }

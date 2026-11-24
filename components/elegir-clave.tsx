@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { setCurrentUser, clearCurrentUser } from "@/lib/current-user"
+import { olvidarTokenBase } from "@/lib/supabase/client"
 
 /** Campo de contraseña con "ojito" para verla. No pone mayúsculas solas: las contraseñas las distinguen. */
 export function CampoClave({
@@ -85,6 +86,8 @@ function FormularioClave({ pedirActual, onListo, extra }: { pedirActual: boolean
         setError(d?.error || "No se pudo guardar. Probá de nuevo.")
         return
       }
+      // Fase 0c-2: la contraseña nueva sube la versión de sesión: el token de antes ya no vale
+      olvidarTokenBase()
       if (d?.usuario) setCurrentUser(d.usuario)
       onListo()
     } catch {

@@ -15,7 +15,8 @@ import { createHmac, timingSafeEqual } from "crypto"
 export const DURACION_TOKEN_S = 8 * 60 * 60
 export const RENOVAR_TOKEN_SI_QUEDAN_S = 60 * 60
 
-export type DatosToken = { sub: string; v: number }
+/** `s`: id de la sesión del equipo (cookie). "Salir" la anota en sesiones_cerradas y la base deja de aceptar el token. */
+export type DatosToken = { sub: string; v: number; s?: string }
 
 export type ClaimsToken = {
   aud: "authenticated"
@@ -23,6 +24,7 @@ export type ClaimsToken = {
   iss: "rebucret"
   sub: string
   v: number
+  s?: string
   iat: number
   exp: number
 }
@@ -48,6 +50,7 @@ export function firmarTokenBase(datos: DatosToken, secreto: string, ahoraMs: num
   if (!Number.isInteger(datos.v)) throw new Error("Falta la versión de sesión del token")
   const iat = Math.floor(ahoraMs / 1000)
   const claims: ClaimsToken = { aud: "authenticated", role: "authenticated", iss: "rebucret", sub: datos.sub, v: datos.v, iat, exp: iat + duracionS }
+  if (typeof datos.s === "string" && datos.s) claims.s = datos.s
   const cabecera = b64url(Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })))
   const cuerpo = b64url(Buffer.from(JSON.stringify(claims)))
   const firma = b64url(createHmac("sha256", secreto).update(`${cabecera}.${cuerpo}`).digest())
