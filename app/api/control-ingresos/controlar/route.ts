@@ -4,7 +4,10 @@
  *   GET  cron diario de Vercel, 16:25 de Argentina (19:25 UTC; Hobby puede correrlo hasta las 16:59): lee Zomatik
  *        (incluye lo cargado ese día), cruza y manda el mail a Juan Oreguy con copia a Bautista (si hay diferencias
  *        abiertas; una vez por día). Si hay un "Controlar ahora" en curso, espera hasta 90 s.
- *   POST botón "Controlar ahora" (gerencial o materia_prima.editar): lee Zomatik y cruza, sin mail.
+ *   POST botón "Controlar ahora" (gerencial o materia_prima.editar): lee Zomatik y cruza, sin mail. Entre las 16:00 y
+ *        las 16:59 no corre (409), como "Traer de Zomatik" y "Actualizar ahora": el cron cae en algún momento de esa hora
+ *        (Hobby) y solo espera 90 s; un "Controlar ahora" largo (la lectura llega a 220 s) lo dejaba sin turno y ese día
+ *        no salía el mail.
  *
  * Freno en la base (control_mp_registrar): uno a la vez, a mano cada 2 min, el cron una vez por hora. Solo lee de
  * Zomatik (lista cerrada) y nunca escribe en stock_entries. Docs: docs/control-ingresos-mp.md.
@@ -13,6 +16,7 @@ import { NextResponse } from "next/server"
 import { exigirSesion, modoPruebaLocal, respuestaModoLocal, respuestaError, sbServicio } from "@/lib/auth/servidor"
 import { esLlamadaDeCron } from "@/lib/cron"
 import { controlar, puedeControlar } from "@/lib/control-ingresos/servidor"
+import { enHorarioDelCron, MENSAJE_HORARIO_CRON } from "@/lib/control-stock/calculo"
 
 export const dynamic = "force-dynamic"
 // Como Concretus con este mismo listado en Hobby (Fluid compute): la lectura termina a los 220 s (servidor.ts)
@@ -46,6 +50,8 @@ export async function GET(req: Request) {
 export async function POST() {
   const t0 = Date.now()
   if (modoPruebaLocal()) return respuestaModoLocal()
+  // La hora del cron: el control lo hace él (con mail). Antes de la sesión: no lee nada
+  if (enHorarioDelCron(t0)) return NextResponse.json({ error: `${MENSAJE_HORARIO_CRON}.` }, { status: 409 })
   try {
     const r = await exigirSesion()
     if (r.respuesta) return r.respuesta
