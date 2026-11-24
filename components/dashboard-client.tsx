@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { MantenimientoWidget } from "@/components/mantenimiento-widget"
+import { diasTranscurridos, enMeses, fechaLocal } from "@/lib/pantallas"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -77,6 +78,8 @@ interface Dispatch {
   client_id: string
   /** Planta que despachó. Puede faltar en despachos muy viejos. */
   plant_id?: string | null
+  /** Despacho por árido / salida manual de materiales: descuenta stock pero no es hormigón */
+  is_test_dispatch?: boolean | null
   formulas: {
     id: string
     code: string
@@ -277,27 +280,32 @@ export function DashboardClient({
       : recentEntries.filter((e) => e.materials?.plant_id === selectedPlant)
   }, [recentEntries, selectedPlant])
 
+  // Para los m³: sin los despachos por árido (is_test_dispatch), que sí cuentan para el consumo de materiales
+  const hormigon = useMemo(() => filteredDispatches.filter((d) => !d.is_test_dispatch), [filteredDispatches])
+  // Sin meses tildados vale el mes en curso (lo mismo que dateRangeStart/End)
+  const mesesElegidos = useMemo(
+    () => (selectedMonths.length ? selectedMonths : [`${currentYear}-${currentMonth}`]),
+    [selectedMonths, currentYear, currentMonth],
+  )
+
   // Calculate KPIs
   const kpis = useMemo(() => {
     const now = new Date()
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-    // Today's dispatches
-    const todayDispatches = filteredDispatches.filter(
+    // Today's dispatches (los m³ son de hormigón: sin los despachos por árido, como el Informe de producción)
+    const todayDispatches = hormigon.filter(
       (d) => new Date(d.dispatch_date) >= startOfToday
     )
     const m3Today = todayDispatches.reduce((sum, d) => sum + (d.quantity_m3 || 0), 0)
     const dispatchCountToday = todayDispatches.length
 
-    // Selected period dispatches
-    const periodDispatches = filteredDispatches.filter((d) => {
-      const date = new Date(d.dispatch_date)
-      return date >= dateRangeStart && date <= dateRangeEnd
-    })
+    // Selected period dispatches: solo los meses tildados (antes, de agosto y noviembre sumaba también septiembre y octubre)
+    const periodDispatches = hormigon.filter((d) => enMeses(d.dispatch_date, mesesElegidos))
     const m3Period = periodDispatches.reduce((sum, d) => sum + (d.quantity_m3 || 0), 0)
 
-    // Calculate days in selected period
-    const daysInPeriod = Math.ceil((dateRangeEnd.getTime() - dateRangeStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // Días ya transcurridos de esos meses (antes, el mes entero: el día 5 el promedio salía 6 veces más bajo)
+    const daysInPeriod = diasTranscurridos(mesesElegidos, now)
     const dailyAverage = daysInPeriod > 0 ? m3Period / daysInPeriod : 0
 
     // Critical stock count
@@ -311,7 +319,7 @@ export function DashboardClient({
       criticalStockCount,
       daysInPeriod,
     }
-  }, [filteredDispatches, filteredMaterials, dateRangeStart, dateRangeEnd])
+  }, [hormigon, filteredMaterials, mesesElegidos])
 
   // Stock alerts with days remaining
   const stockAlerts = useMemo(() => {
@@ -355,12 +363,12 @@ export function DashboardClient({
     // Group by date
     const byDate: Record<string, { date: string; m3: number; count: number }> = {}
 
-    filteredDispatches
+    hormigon
       .filter((d) => new Date(d.dispatch_date) >= last30Days)
       .forEach((d) => {
-        // Extract date directly from string to avoid timezone issues
-        // Format from DB: "2026-04-13 12:00:00+00" or "2026-04-13T12:00:00"
-        const dateStr = String(d.dispatch_date).substring(0, 10) // Gets "2026-04-13"
+        // Día de la hora local, como los días del eje (cortar el texto de la base daba el día UTC: un despacho de
+        // las 21:30 caía en el día siguiente)
+        const dateStr = fechaLocal(d.dispatch_date)
         if (!byDate[dateStr]) {
           byDate[dateStr] = { date: dateStr, m3: 0, count: 0 }
         }
@@ -387,17 +395,14 @@ export function DashboardClient({
     }
 
     return result
-  }, [filteredDispatches])
+  }, [hormigon])
 
   // Formula distribution
   const formulaDistribution = useMemo(() => {
   const byFormula: Record<string, { name: string; m3: number; count: number }> = {}
   
-  filteredDispatches
-  .filter((d) => {
-    const date = new Date(d.dispatch_date)
-    return date >= dateRangeStart && date <= dateRangeEnd
-  })
+  hormigon
+  .filter((d) => enMeses(d.dispatch_date, mesesElegidos))
       .forEach((d) => {
         const formulaName = d.formulas?.code || "Sin fórmula"
         if (!byFormula[formulaName]) {
@@ -415,17 +420,14 @@ export function DashboardClient({
         percentage: total > 0 ? (f.m3 / total) * 100 : 0,
       }))
       .sort((a, b) => b.m3 - a.m3)
-  }, [filteredDispatches])
+  }, [hormigon, mesesElegidos]) // antes sin el período: la torta quedaba con el mes de la primera carga
 
   // Top clients
   const topClients = useMemo(() => {
   const byClient: Record<string, { name: string; m3: number; count: number; obra: string }> = {}
   
-  filteredDispatches
-  .filter((d) => {
-    const date = new Date(d.dispatch_date)
-    return date >= dateRangeStart && date <= dateRangeEnd
-  })
+  hormigon
+  .filter((d) => enMeses(d.dispatch_date, mesesElegidos))
       .forEach((d) => {
         const clientName = d.clients?.name || d.client || "Sin cliente"
         if (!byClient[clientName]) {
@@ -443,7 +445,7 @@ export function DashboardClient({
     return Object.values(byClient)
 .sort((a, b) => b.m3 - a.m3)
   .slice(0, 8)
-  }, [filteredDispatches, dateRangeStart, dateRangeEnd])
+  }, [hormigon, mesesElegidos])
 
   // Quality panel data
   const qualityData = useMemo(() => {

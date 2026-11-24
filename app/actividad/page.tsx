@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 import { esGerencial } from "@/lib/current-user"
+import { todasLasFilas } from "@/lib/gps-viajes"
+import { fechaLocal, rangoDiasAR } from "@/lib/pantallas"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +65,10 @@ export default function ActividadPage() {
   const [actionFilter, setActionFilter] = useState("all")
   const [entityFilter, setEntityFilter] = useState("all")
   const [search, setSearch] = useState("")
+  // Desde qué día se trae (por defecto, los últimos 30). Antes: los últimos 1000 movimientos sin aviso (unas semanas):
+  // buscar un remito o un borrado más viejo daba "Sin movimientos".
+  const [desde, setDesde] = useState(() => fechaLocal(Date.now() - 30 * 86400000))
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
 
   useEffect(() => {
     setAllowed(esGerencial())
@@ -70,17 +76,26 @@ export default function ActividadPage() {
 
   useEffect(() => {
     if (allowed) load()
-  }, [allowed])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed, desde])
 
   async function load() {
     setLoading(true)
+    setErrorCarga(null)
     const supabase = createClient()
-    const { data } = await supabase
-      .from("activity_log")
-      .select("id, user_name, action, entity, reference, details, created_at")
-      .order("created_at", { ascending: false })
-      .limit(1000)
-    setRows(data || [])
+    const inicio = rangoDiasAR(desde, "").desde
+    try {
+      const data = await todasLasFilas<LogRow>((a, b) => {
+        let q = supabase
+          .from("activity_log")
+          .select("id, user_name, action, entity, reference, details, created_at")
+        if (inicio) q = q.gte("created_at", inicio)
+        return q.order("created_at", { ascending: false }).order("id").range(a, b)
+      })
+      setRows(data)
+    } catch (e: any) {
+      setErrorCarga(e?.message || "No se pudo leer la actividad")
+    }
     setLoading(false)
   }
 
@@ -122,7 +137,7 @@ export default function ActividadPage() {
     ws["!cols"] = [{ wch: 18 }, { wch: 22 }, { wch: 10 }, { wch: 22 }, { wch: 14 }, { wch: 60 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, "Actividad")
-    XLSX.writeFile(wb, `actividad_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, `actividad_${fechaLocal(Date.now())}.xlsx`)
   }
 
   if (allowed === null) return null
@@ -193,6 +208,10 @@ export default function ActividadPage() {
             {entidades.map((e) => <SelectItem key={e} value={e}>{ENTIDADES[e] || e}</SelectItem>)}
           </SelectContent>
         </Select>
+        <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          Desde
+          <Input type="date" value={desde} max={fechaLocal(Date.now())} onChange={(e) => e.target.value && setDesde(e.target.value)} className="w-[150px]" />
+        </label>
         <Input
           placeholder="Buscar remito, material..."
           value={search}
@@ -200,6 +219,8 @@ export default function ActividadPage() {
           className="w-[220px]"
         />
       </div>
+
+      {errorCarga && <p className="text-sm text-red-700">No se pudo leer la actividad: {errorCarga}</p>}
 
       <Card>
         <CardHeader className="pb-3">
