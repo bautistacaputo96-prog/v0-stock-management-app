@@ -44,6 +44,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
 
   const [tareas, setTareas] = useState<Tarea[]>([])
   const [ultimaPorTarea, setUltima] = useState<Record<string, Ejecucion>>({})
+  const [salteoPorTarea, setSalteo] = useState<Record<string, Ejecucion>>({})
   const [m3Actual, setM3] = useState(0)
   const [ordenes, setOrdenes] = useState<OrdenTrabajo[]>([])
   const [loading, setLoading] = useState(true)
@@ -60,7 +61,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
       // Solo con los datos completos: con un error a medias se generaban órdenes de más
       if (sincronizar) {
-        const creadas = await sincronizarOrdenes(supabase, equipo.id, d.tareas, d.ultimaPorTarea, d.m3Actual, d.ordenes)
+        const creadas = await sincronizarOrdenes(supabase, equipo.id, d.tareas, d.ultimaPorTarea, d.m3Actual, d.ordenes, d.salteoPorTarea)
         if (creadas > 0) d = await cargarDatosEquipo(supabase, equipo.id, equipo.plant_id)
       }
     } catch (e: any) {
@@ -69,7 +70,7 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       return
     }
     setErrorCarga(null)
-    setTareas(d.tareas); setUltima(d.ultimaPorTarea); setM3(d.m3Actual); setOrdenes(d.ordenes)
+    setTareas(d.tareas); setUltima(d.ultimaPorTarea); setSalteo(d.salteoPorTarea); setM3(d.m3Actual); setOrdenes(d.ordenes)
     // Si hay una orden abierta en el diálogo, refrescarla con los datos nuevos
     setOrdenAbierta((prev) => (prev ? d.ordenes.find((o) => o.id === prev.id) || null : null))
     setLoading(false)
@@ -128,9 +129,9 @@ export function MantenimientoContent({ equipos }: { equipos: Equipo[] }) {
       {errorCarga ? null : loading ? (
         <div className="py-16 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Cargando...</div>
       ) : tab === "calendario" ? (
-        <VistaCalendario ordenes={ordenes} tareas={tareas} ultimaPorTarea={ultimaPorTarea} m3Actual={m3Actual} onAbrir={setOrdenAbierta} />
+        <VistaCalendario ordenes={ordenes} tareas={tareas} ultimaPorTarea={ultimaPorTarea} salteoPorTarea={salteoPorTarea} m3Actual={m3Actual} onAbrir={setOrdenAbierta} />
       ) : tab === "planta" ? (
-        <VistaPlanta tareas={tareas} ultimaPorTarea={ultimaPorTarea} m3Actual={m3Actual} ordenes={ordenes} onAbrir={setOrdenAbierta} />
+        <VistaPlanta tareas={tareas} ultimaPorTarea={ultimaPorTarea} salteoPorTarea={salteoPorTarea} m3Actual={m3Actual} ordenes={ordenes} onAbrir={setOrdenAbierta} />
       ) : tab === "historial" ? (
         <VistaHistorial ordenes={ordenes} onAbrir={setOrdenAbierta} />
       ) : (

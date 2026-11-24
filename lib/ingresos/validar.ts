@@ -2,11 +2,12 @@
  * Controles de un ingreso de materia prima cargado a mano (diálogo "Registrar Ingreso" y "Editar Ingreso" del historial).
  * Funciones puras: se prueban con `npm run test:ingresos-zomatik`.
  */
-import { claveMaterial, enToneladas, normalizarRemito } from "@/lib/control-ingresos/cruce"
+import { KG_SOSPECHOSO, claveMaterial, enToneladas, faltaPorToneladas, normalizarRemito } from "@/lib/control-ingresos/cruce"
 import { mismoRemitoCompleto, numeroCompleto } from "@/lib/ingresos-zomatik/plan"
 
-/** Un árido o el cemento con menos de esto en kg seguramente se cargó en toneladas (32,76 en vez de 32760). */
-export const KG_SOSPECHOSO = 200
+/** Un árido o el cemento con menos de esto en kg seguramente se cargó en toneladas (32,76 en vez de 32760). El mismo
+ *  límite que usa el control de ingresos para avisar "probable carga en toneladas". */
+export { KG_SOSPECHOSO }
 
 /** ¿El material viene en camiones de toneladas? (áridos y cemento) */
 export const vaEnToneladas = (m: { name: string; tipo?: string | null } | null | undefined) =>
@@ -15,6 +16,21 @@ export const vaEnToneladas = (m: { name: string; tipo?: string | null } | null |
 /** ¿La cantidad (kg) parece cargada en toneladas? Áridos y cemento con más de 0 y menos de 200 kg. */
 export const pareceToneladas = (m: { name: string; tipo?: string | null } | null | undefined, kg: number) =>
   vaEnToneladas(m) && kg > 0 && kg < KG_SOSPECHOSO
+
+/**
+ * Aviso de un ingreso que parece cargado en toneladas (alta, edición e historial): el mismo texto que el control de
+ * ingresos. null si no parece.
+ */
+export function avisoToneladas(m: { name: string; tipo?: string | null } | null | undefined, kg: number): { titulo: string; texto: string; kg: number } | null {
+  if (!pareceToneladas(m, kg)) return null
+  const t = kg.toLocaleString("es-AR", { maximumFractionDigits: 2 })
+  const enKg = Math.round(kg * 1000 * 100) / 100
+  return {
+    titulo: "¿Son toneladas?",
+    texto: `${t} t = ${enKg.toLocaleString("es-AR")} kg. La cantidad va en kg: si queda así, al stock le faltan ${Math.round(faltaPorToneladas(kg)).toLocaleString("es-AR")} kg.`,
+    kg: enKg,
+  }
+}
 
 /** Un ingreso ya cargado (de cualquier planta) para buscar el remito repetido. */
 export type IngresoCargado = { id: string; remito: string | null; origen?: string | null; material: string | null; plant_id?: string | null }

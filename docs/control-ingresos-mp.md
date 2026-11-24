@@ -7,7 +7,7 @@ Todos los días, cruzar los remitos de ingreso de materia prima (arena, piedras,
 
 ## Datos
 - **Nuestro:** `stock_entries.original_quantity` (el peso del remito, antes de la humedad), `remito`, fecha en hora de Argentina, planta del material, proveedor y transportista. Solo se lee.
-  - Ojo: la pantalla dice "Cantidad (kg)", pero desde el 17/10 hay 20 ingresos cargados en toneladas (32,76 en vez de 32760). Para el cruce, menos de 200 se toma como toneladas. El stock de esos ingresos quedó mal (ver Preguntas).
+  - Ojo: la pantalla dice "Cantidad (kg)", pero desde el 17/10 hay 20 ingresos cargados en toneladas (32,76 en vez de 32760). Para el cruce, menos de 200 se toma como toneladas, pero no en silencio: desde el 24/11 cada uno sale como diferencia "Probable carga en toneladas — al stock le faltan X kg" (en "no coincide", con su par de Zomatik si lo tiene) hasta que alguien lo corrige a kg. El stock de esos ingresos quedó mal (ver Preguntas).
 - **Zomatik:** `reporte_remitoscompra.php`, que entra en la lista cerrada de `lib/zomatik/web.ts` como solo lectura. Se lee por tramos de 32 días: primero los que tienen días nunca leídos y después los de lectura más vieja. En cada tramo:
   - Canning (depósito 116), Hudson (113) y todos los depósitos; lo que está solo en "todos" se cargó en otro depósito y queda sin planta;
   - se elige la sucursal 18 y se confirma en la página **antes y después** de cada export (zomatik.md 23.3). También se rechaza el tramo si Canning y Hudson vienen vacíos y "todos" trae renglones cuya columna Depósito es Canning o REBUCRET. **El nombre del artículo no sirve para esto:** REBUCRET también usa artículos "CCTS" (visto el 28/10). Ante un rechazo por sucursal, se reintenta una vez a los 15 s;

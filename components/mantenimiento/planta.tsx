@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { ArrowLeftRight, Cog, Wind, Warehouse, Scale, Droplets, FlaskConical, Zap, Settings2, AlertTriangle, CheckCircle2, Package, Clock, History, Eye, Truck } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { cn } from "@/lib/utils"
-import { COMPONENTES, proximoVencimiento, nivelDeFecha, textoVencimiento, etiquetaFrecuencia, type Tarea, type Ejecucion, type OrdenTrabajo } from "@/lib/mantenimiento"
+import { COMPONENTES, vencimientoConSalteo, nivelDeFecha, textoVencimiento, etiquetaFrecuencia, type Tarea, type Ejecucion, type OrdenTrabajo } from "@/lib/mantenimiento"
 
 const ICONOS: Record<string, any> = {
   conveyor: ArrowLeftRight, screw: Settings2, gear: Cog, air: Wind, hopper: Warehouse,
@@ -21,18 +21,20 @@ const ICONOS: Record<string, any> = {
 type Props = {
   tareas: Tarea[]
   ultimaPorTarea: Record<string, Ejecucion>
+  /** Preventivas canceladas: ese vencimiento quedó salteado */
+  salteoPorTarea?: Record<string, Ejecucion>
   m3Actual: number
   ordenes: OrdenTrabajo[]
   onAbrir: (o: OrdenTrabajo) => void
 }
 
-export function VistaPlanta({ tareas, ultimaPorTarea, m3Actual, ordenes, onAbrir }: Props) {
+export function VistaPlanta({ tareas, ultimaPorTarea, salteoPorTarea = {}, m3Actual, ordenes, onAbrir }: Props) {
   const [sel, setSel] = useState<string | null>(null)
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
 
   const porComponente = Object.keys(COMPONENTES).map((nombre) => {
     const ts = tareas.filter((t) => t.componente === nombre)
-    const estados = ts.map((t) => nivelDeFecha(proximoVencimiento(t, ultimaPorTarea[t.id], m3Actual).fecha))
+    const estados = ts.map((t) => nivelDeFecha(vencimientoConSalteo(t, ultimaPorTarea[t.id], salteoPorTarea[t.id], m3Actual).fecha))
     const vencidas = estados.filter((e) => e === "vencida" || e === "hoy").length
     const repuestos = new Set(ts.flatMap((t) => t.maint_task_items.map((i) => i.item))).size
     const fallas = ordenes.filter((o) => o.componente === nombre && o.tipo === "correctiva" && (o.estado === "pendiente" || o.estado === "en_curso")).length
@@ -120,7 +122,8 @@ export function VistaPlanta({ tareas, ultimaPorTarea, m3Actual, ordenes, onAbrir
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Qué hay que hacerle</p>
                 <div className="rounded-lg border divide-y">
                   {[...comp.tareas].sort((a, b) => (a.frecuencia_dias || 0) - (b.frecuencia_dias || 0)).map((t) => {
-                    const v = proximoVencimiento(t, ultimaPorTarea[t.id], m3Actual)
+                    const v = vencimientoConSalteo(t, ultimaPorTarea[t.id], salteoPorTarea[t.id], m3Actual)
+                    const salteo = salteoPorTarea[t.id]
                     const n = nivelDeFecha(v.fecha)
                     const u = ultimaPorTarea[t.id]
                     return (
@@ -131,6 +134,11 @@ export function VistaPlanta({ tareas, ultimaPorTarea, m3Actual, ordenes, onAbrir
                           <p className="text-xs text-muted-foreground">{u ? `Última: ${format(parseISO(u.fecha), "d/M/yy")}${u.realizado_por ? ` · ${u.realizado_por}` : ""}` : "Nunca registrada"}{t.asignado_default && ` · ${t.asignado_default}`}</p>
                         </div>
                         <span className={cn("text-xs whitespace-nowrap", n === "vencida" || n === "hoy" ? "text-red-600 font-medium" : n === "proxima" ? "text-amber-600" : "text-muted-foreground")}>
+                          {v.salteada && salteo && (
+                            <span className="mr-1 text-muted-foreground" title={`Se canceló el ${format(parseISO(salteo.fecha), "d/M/yy")}${salteo.realizado_por ? ` (${salteo.realizado_por})` : ""}: no se hizo. La próxima sale según el plan.`}>
+                              Salteada ·
+                            </span>
+                          )}
                           {textoVencimiento(v.fecha, v.porM3, v.restanM3)}
                         </span>
                       </div>

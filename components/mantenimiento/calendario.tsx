@@ -15,7 +15,7 @@ import {
 } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
-import { proximoVencimiento, etiquetaFrecuencia, type OrdenTrabajo, type Tarea, type Ejecucion } from "@/lib/mantenimiento"
+import { vencimientoConSalteo, etiquetaFrecuencia, type OrdenTrabajo, type Tarea, type Ejecucion } from "@/lib/mantenimiento"
 
 type Evento = {
   key: string
@@ -31,11 +31,13 @@ type Props = {
   ordenes: OrdenTrabajo[]
   tareas: Tarea[]
   ultimaPorTarea: Record<string, Ejecucion>
+  /** Preventivas canceladas: ese vencimiento quedó salteado */
+  salteoPorTarea?: Record<string, Ejecucion>
   m3Actual: number
   onAbrir: (o: OrdenTrabajo) => void
 }
 
-export function VistaCalendario({ ordenes, tareas, ultimaPorTarea, m3Actual, onAbrir }: Props) {
+export function VistaCalendario({ ordenes, tareas, ultimaPorTarea, salteoPorTarea = {}, m3Actual, onAbrir }: Props) {
   const [mes, setMes] = useState(startOfMonth(new Date()))
   const [diaSel, setDiaSel] = useState<Date>(startOfDay(new Date()))
 
@@ -64,7 +66,7 @@ export function VistaCalendario({ ordenes, tareas, ultimaPorTarea, m3Actual, onA
     for (const t of tareas) {
       // Las diarias son rutina del plantista: proyectarlas taparía todo el mes
       if (!t.frecuencia_dias || t.frecuencia_dias <= 1) continue
-      let { fecha } = proximoVencimiento(t, ultimaPorTarea[t.id], m3Actual)
+      let { fecha } = vencimientoConSalteo(t, ultimaPorTarea[t.id], salteoPorTarea[t.id], m3Actual)
       // Si ya tiene orden abierta, la próxima proyección arranca después de esa
       if (conOrdenAbierta.has(t.id)) fecha = addDays(fecha, t.frecuencia_dias)
       // Nunca proyectar al pasado
@@ -79,7 +81,7 @@ export function VistaCalendario({ ordenes, tareas, ultimaPorTarea, m3Actual, onA
       }
     }
     return lista
-  }, [ordenes, tareas, ultimaPorTarea, m3Actual, mes])
+  }, [ordenes, tareas, ultimaPorTarea, salteoPorTarea, m3Actual, mes])
 
   const dias = eachDayOfInterval({ start: startOfWeek(startOfMonth(mes), { weekStartsOn: 1 }), end: endOfWeek(endOfMonth(mes), { weekStartsOn: 1 }) })
   const eventosDe = (d: Date) => eventos.filter((e) => isSameDay(e.fecha, d))

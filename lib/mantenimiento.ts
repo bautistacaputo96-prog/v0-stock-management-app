@@ -8,6 +8,9 @@
  *    las completa. También puede crear órdenes correctivas ("se rompió X").
  *  - Al completar una orden preventiva se registra una EJECUCIÓN
  *    (maint_executions), que es lo que reinicia el contador de la tarea.
+ *  - CANCELAR una preventiva no registra ejecución (no se hizo): ese vencimiento
+ *    queda SALTEADO. No se vuelve a generar; la próxima sale en el vencimiento
+ *    siguiente del plan (ver `vencimientoConSalteo`).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -115,6 +118,58 @@ export function proximoVencimiento(t: Tarea, ultima: Ejecucion | undefined, m3Ac
     }
   }
   return { fecha, porM3, restanM3 }
+}
+
+/**
+ * Preventivas canceladas que saltean un vencimiento: por tarea, la última cancelada que es posterior a su última
+ * ejecución (fecha programada después de la ejecución, o la tarea nunca se hizo). Se devuelve como una "ejecución"
+ * de mentira con el día de la cancelación (hora argentina), para contar desde ahí los m³ con `calcularM3`. NO es una
+ * ejecución: no cambia la "Última" que se muestra ni el historial.
+ */
+export function salteosPorTarea(ordenes: OrdenTrabajo[], ultimaPorTarea: Record<string, Ejecucion>): Record<string, Ejecucion> {
+  const out: Record<string, Ejecucion> = {}
+  for (const o of ordenes) {
+    if (o.estado !== "cancelada" || o.tipo !== "preventiva" || !o.task_id) continue
+    const ultima = ultimaPorTarea[o.task_id]
+    if (ultima && String(o.fecha_programada).slice(0, 10) <= String(ultima.fecha).slice(0, 10)) continue
+    const dia = o.fecha_fin ? diaArgentina(o.fecha_fin) : String(o.fecha_programada).slice(0, 10)
+    const ya = out[o.task_id]
+    if (!ya || dia > ya.fecha) out[o.task_id] = { task_id: o.task_id, fecha: dia, realizado_por: o.completado_por, m3_acumulado: null }
+  }
+  return out
+}
+
+/**
+ * Cuándo vence una tarea teniendo en cuenta una preventiva cancelada (`salteo`, de `salteosPorTarea` con los m³
+ * de `calcularM3`). Sin salteo, igual que `proximoVencimiento`. Con salteo:
+ *  - por días: el primer vencimiento del plan (última ejecución + n × frecuencia) DESPUÉS del día de la cancelación.
+ *    Si nunca se hizo, la cancelación + frecuencia. Ej.: mensual, vencía el 01/11, se canceló el 05/11 → 01/12.
+ *  - por m³: los m³ se cuentan desde el día de la cancelación.
+ * La cancelada no finge que se hizo: la "Última" sigue siendo la ejecución real.
+ */
+export function vencimientoConSalteo(t: Tarea, ultima: Ejecucion | undefined, salteo: Ejecucion | undefined, m3Actual: number): { fecha: Date; porM3: boolean; restanM3: number | null; salteada: boolean } {
+  if (!salteo) return { ...proximoVencimiento(t, ultima, m3Actual), salteada: false }
+  const hoy = startOfDay(new Date())
+  const dia = startOfDay(parseISO(salteo.fecha))
+  let fecha: Date
+  if (t.frecuencia_dias) {
+    const f = t.frecuencia_dias
+    const base = ultima ? addDays(startOfDay(parseISO(ultima.fecha)), f) : addDays(dia, f)
+    const pasados = differenceInCalendarDays(dia, base)
+    fecha = pasados >= 0 ? addDays(base, (Math.floor(pasados / f) + 1) * f) : base
+  } else {
+    fecha = addDays(hoy, 3650)
+  }
+  let porM3 = false
+  let restanM3: number | null = null
+  if (t.frecuencia_m3 && salteo.m3_acumulado != null) {
+    restanM3 = t.frecuencia_m3 - (m3Actual - Number(salteo.m3_acumulado))
+    if (restanM3 <= 0 && fecha > hoy) {
+      fecha = hoy
+      porM3 = true
+    }
+  }
+  return { fecha, porM3, restanM3, salteada: true }
 }
 
 export type Nivel = "vencida" | "hoy" | "proxima" | "ok"
@@ -233,11 +288,15 @@ export async function cargarDatosEquipo(supabase: SupabaseClient, equipmentId: s
         .range(a, b)),
   ])
 
-  const { m3Actual, ultimaPorTarea } = calcularM3(desp, ultimaEjecucionPorTarea(ejec))
+  const ultimas = ultimaEjecucionPorTarea(ejec)
+  const { m3Actual, ultimaPorTarea } = calcularM3(desp, ultimas)
+  // Preventivas canceladas: con los m³ despachados desde el día de la cancelación
+  const salteoPorTarea = calcularM3(desp, salteosPorTarea(ordenes, ultimas)).ultimaPorTarea
 
   return {
     tareas: (tareas || []) as Tarea[],
     ultimaPorTarea,
+    salteoPorTarea,
     m3Actual,
     ordenes,
   }
@@ -246,6 +305,8 @@ export async function cargarDatosEquipo(supabase: SupabaseClient, equipmentId: s
 /**
  * Genera las órdenes preventivas que faltan: una por cada tarea que ya venció
  * o vence hoy y no tiene una orden abierta. Es idempotente.
+ * Una preventiva cancelada saltea ese vencimiento (`salteoPorTarea`): antes, al
+ * recargar se volvía a generar la misma orden y cancelar no servía.
  * Devuelve cuántas creó.
  */
 export async function sincronizarOrdenes(
@@ -255,6 +316,7 @@ export async function sincronizarOrdenes(
   ultimaPorTarea: Record<string, Ejecucion>,
   m3Actual: number,
   ordenes: OrdenTrabajo[],
+  salteoPorTarea: Record<string, Ejecucion> = {},
 ): Promise<number> {
   const abiertas = new Set(ordenes.filter((o) => o.estado === "pendiente" || o.estado === "en_curso").map((o) => o.task_id))
   const hoy = startOfDay(new Date())
@@ -262,7 +324,7 @@ export async function sincronizarOrdenes(
 
   for (const t of tareas) {
     if (abiertas.has(t.id)) continue
-    const { fecha } = proximoVencimiento(t, ultimaPorTarea[t.id], m3Actual)
+    const { fecha } = vencimientoConSalteo(t, ultimaPorTarea[t.id], salteoPorTarea[t.id], m3Actual)
     if (fecha > hoy) continue
     nuevas.push({
       equipment_id: equipmentId,

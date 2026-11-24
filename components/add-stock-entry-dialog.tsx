@@ -28,7 +28,7 @@ import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
 import { claveMaterial, fechaArgentina, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
 import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
-import { KG_SOSPECHOSO, remitoRepetido, vaEnToneladas } from "@/lib/ingresos/validar"
+import { avisoToneladas, remitoRepetido } from "@/lib/ingresos/validar"
 import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
 import { usePermisos } from "@/lib/current-user"
 
@@ -172,11 +172,12 @@ export function AddStockEntryDialog({
     }
 
     const cantidad = Number.parseFloat(formData.quantity)
-    if (vaEnToneladas(selectedMaterial) && cantidad > 0 && cantidad < KG_SOSPECHOSO && !kgConfirmados) {
+    const avisoT = avisoToneladas(selectedMaterial, cantidad)
+    if (avisoT && !kgConfirmados) {
       toast({
         variant: "destructive",
-        title: "Revisá la cantidad",
-        description: `¿Son toneladas? ${cantidad.toLocaleString("es-AR")} t = ${(cantidad * 1000).toLocaleString("es-AR")} kg. Tocá "Pasar a kg" o confirmá que son kg.`,
+        title: avisoT.titulo,
+        description: `${avisoT.texto} Tocá "Pasar a kg" o confirmá que son kg.`,
       })
       return
     }
@@ -570,20 +571,20 @@ export function AddStockEntryDialog({
                 required
               />
               {(() => {
-                const c = Number.parseFloat(formData.quantity)
-                if (!vaEnToneladas(selectedMaterial) || !(c > 0 && c < KG_SOSPECHOSO) || kgConfirmados) return null
+                const aviso = avisoToneladas(selectedMaterial, Number.parseFloat(formData.quantity))
+                if (!aviso || kgConfirmados) return null
                 return (
                   <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     <span>
-                      ¿Son toneladas? {c.toLocaleString("es-AR", { maximumFractionDigits: 2 })} t = {(c * 1000).toLocaleString("es-AR")} kg
+                      {aviso.titulo} {aviso.texto}
                     </span>
                     <Button
                       type="button"
                       size="sm"
                       className="h-6 px-2 text-xs"
                       onClick={() => {
-                        setFormData({ ...formData, quantity: String(Math.round(c * 1000 * 100) / 100) })
+                        setFormData({ ...formData, quantity: String(aviso.kg) })
                         setKgConfirmados(false)
                       }}
                     >

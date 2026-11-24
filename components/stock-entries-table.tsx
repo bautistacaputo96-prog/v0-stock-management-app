@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2, FlaskConical } from "lucide-react"
+import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2, FlaskConical, AlertTriangle } from "lucide-react"
 import { ViewGranulometriaDialog } from "./view-granulometria-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -17,7 +17,7 @@ import { usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { IngresoMuestrasDialog } from "@/components/ingreso-muestras-dialog"
 import { esArenaFina } from "@/lib/ingresos/muestras"
-import { pareceToneladas } from "@/lib/ingresos/validar"
+import { avisoToneladas } from "@/lib/ingresos/validar"
 
 type Material = {
   id: string
@@ -199,11 +199,12 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
     }
     const quantityDiff = newQuantity - oldQuantity
     // Mismo aviso que al cargar: un árido o el cemento con menos de 200 kg seguramente se escribió en toneladas
-    if (Math.abs(quantityDiff) > 0.0001 && pareceToneladas(editingEntry.materials, newQuantity) && kgEditConfirmados !== newQuantity) {
+    const avisoT = avisoToneladas(editingEntry.materials, newQuantity)
+    if (Math.abs(quantityDiff) > 0.0001 && avisoT && kgEditConfirmados !== newQuantity) {
       setKgEditConfirmados(newQuantity)
       toast({
-        title: "¿Son toneladas?",
-        description: `${newQuantity.toLocaleString("es-AR")} t = ${(newQuantity * 1000).toLocaleString("es-AR")} kg. La cantidad va en kg. Si de verdad son kg, tocá Guardar de nuevo.`,
+        title: avisoT.titulo,
+        description: `${avisoT.texto} Si de verdad son kg, tocá Guardar de nuevo.`,
         variant: "destructive",
       })
       setSaving(false)
@@ -423,6 +424,15 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                       <div className="font-mono text-green-600 font-semibold">
                         +{entry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                       </div>
+                      {(() => {
+                        const aviso = avisoToneladas(entry.materials, Number(entry.original_quantity ?? entry.quantity))
+                        if (!aviso || entry.anulado_at) return null
+                        return (
+                          <Badge variant="outline" className="mt-0.5 cursor-help border-amber-400 text-[10px] font-normal text-amber-700" title={aviso.texto}>
+                            <AlertTriangle className="mr-1 h-3 w-3" />¿toneladas?
+                          </Badge>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell>{entry.suppliers?.name || entry.supplier || "-"}</TableCell>
                     <TableCell>{entry.remito || "-"}</TableCell>
@@ -572,6 +582,26 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                   <div className="space-y-2">
                     <Label>Cantidad ({editingEntry.materials.unit})</Label>
                     <Input type="number" step="0.01" value={editQuantity} onChange={(e) => setEditQuantity(e.target.value)} />
+                    {(() => {
+                      // El mismo aviso que al cargar y que el control de ingresos ("probable carga en toneladas")
+                      const c = parseFloat(editQuantity)
+                      const aviso = avisoToneladas(editingEntry.materials, c)
+                      if (!aviso || kgEditConfirmados === c) return null
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>
+                            {aviso.titulo} {aviso.texto}
+                          </span>
+                          <Button type="button" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditQuantity(String(aviso.kg))}>
+                            Pasar a kg
+                          </Button>
+                          <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setKgEditConfirmados(c)}>
+                            No, son kg
+                          </Button>
+                        </div>
+                      )
+                    })()}
                     <p className="text-xs text-muted-foreground">Si cambias la cantidad, el stock se ajustara automaticamente.</p>
                   </div>
                   <div className="space-y-2">
