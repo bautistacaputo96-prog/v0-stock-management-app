@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { verificarClave, esClaveComun } from "@/lib/auth/clave"
 import { decidirIngreso, errorTrasIntentoFallido, ERROR_INCORRECTO } from "@/lib/auth/ingreso"
 import { exigirSecreto } from "@/lib/auth/token"
+import { ipDelPedido, leerReserva, errorDemasiadosIntentos } from "@/lib/auth/intentos"
 import {
   sbServicio,
   leerUsuario,
@@ -21,6 +22,10 @@ export const dynamic = "force-dynamic"
  * (registrar_ingreso_fallido / registrar_ingreso_ok): varios pedidos al mismo tiempo cuentan todos, y si
  * la cuenta se bloqueó mientras se verificaba la contraseña, no entra.
  * Body: {usuarioId, clave}. Nunca devuelve ni registra la contraseña.
+ *
+ * Fase 0c-2 · Freno por intentos (lib/auth/intentos.ts): antes de verificar, `ingreso_reservar` dice si esta persona
+ * (y este lugar) todavía puede probar, y anota el intento. Entrar bien lo borra (`ingreso_exitoso`). Sin la
+ * migración 202611241800 aplicada, sigue sin freno (como hasta ahora) y lo avisa en el log.
  */
 export async function POST(req: Request) {
   if (modoPruebaLocal()) return respuestaModoLocal()
@@ -31,6 +36,13 @@ export async function POST(req: Request) {
     const clave = typeof body?.clave === "string" ? body.clave : ""
     if (!usuarioId || !clave) return NextResponse.json({ error: "Elegí tu nombre y poné tu contraseña." }, { status: 400 })
     if (!/^[0-9a-f-]{36}$/i.test(usuarioId)) return NextResponse.json({ error: ERROR_INCORRECTO }, { status: 401 })
+
+    // Freno por intentos: se reserva el intento ANTES de mirar la contraseña
+    const ip = ipDelPedido(req.headers)
+    const { data: dReserva, error: eReserva } = await sbServicio().rpc("ingreso_reservar", { p_user_id: usuarioId, p_ip: ip })
+    const reserva = leerReserva(dReserva, eReserva)
+    if (reserva.sinFreno) console.warn("[ingresar] sin freno por intentos:", reserva.motivo)
+    else if (!reserva.permitido) return NextResponse.json({ error: errorDemasiadosIntentos(reserva.esperaSeg) }, { status: 429 })
 
     const usuario = await leerUsuario(usuarioId)
     const credencial = usuario ? await leerCredencial(usuarioId) : null
@@ -64,6 +76,12 @@ export async function POST(req: Request) {
         .update({ intentos_fallidos: 0, bloqueado_hasta: null, ultimo_ingreso_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("user_id", usuarioId)
       if (eLimpia) throw eLimpia
+    }
+
+    // Entró bien: se borran sus intentos desde este lugar (si falla, no frena el ingreso)
+    if (!reserva.sinFreno) {
+      const { error: eExito } = await sbServicio().rpc("ingreso_exitoso", { p_user_id: usuarioId, p_ip: ip })
+      if (eExito) console.error("[ingresar] no se pudieron borrar los intentos:", eExito.message)
     }
 
     const res = NextResponse.json({ usuario: usuarioParaElNavegador(usuario), debeCambiarClave: r.debeCambiar })

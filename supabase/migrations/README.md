@@ -70,3 +70,27 @@ node scripts/volcar-esquema.mjs /tmp/esquema.sql   # foto actual, para comparar
 **No volver a generar `000000000000_esquema_base.sql` encima de sí mismo.** Para saber si la base de producción
 se corrió de lo que dice el repo (un cambio hecho a mano en el panel de Supabase), volcar a otro archivo y
 comparar contra la foto más las migraciones posteriores.
+
+## Seguridad en la base (fase 0c-2, desde la migración `202611241900_seguridad_rls.sql`)
+
+Después de esa migración **la clave pública (anon) no puede nada** y el navegador habla con la base con el token de
+la sesión (`authenticated`). Las reglas (RLS) leen los permisos de la persona en el momento con
+`rebucret_permiso('seccion.accion', …)`. Detalle en `docs/migracion-loop/fase-0c.md`, "0c-2 · Especificación técnica".
+
+Reglas para toda migración nueva (las controla `npm run test:seguridad`):
+
+1. **Tabla nueva en `public`:** `ALTER TABLE … ENABLE ROW LEVEL SECURITY` en la misma migración, y sus reglas:
+   - leer (si la lee el navegador): `CREATE POLICY rls_leer ON public.x FOR SELECT TO authenticated USING ((SELECT public.rebucret_sesion_ok()));`
+   - escribir (si la escribe el navegador): `… FOR INSERT TO authenticated WITH CHECK ((SELECT public.rebucret_permiso('seccion.cargar')))`
+     (y `FOR UPDATE … USING (…) WITH CHECK (…)` / `FOR DELETE … USING (…)` con el permiso que corresponda);
+   - si solo la usa el servidor (clave de servicio): RLS prendida y ninguna regla.
+   Nunca `GRANT … TO anon`. Desde la B, una tabla nueva **no le da nada por defecto a `authenticated`**: si la usa el
+   navegador, `GRANT SELECT` (y `INSERT, UPDATE, DELETE` si escribe) `ON public.x TO authenticated` (y `USAGE` de su
+   secuencia si tiene), además de las reglas.
+2. **Función que escribe y llama el navegador** (`SECURITY DEFINER`): primera línea del `DECLARE`
+   `v_permiso_0c2 boolean := public.rebucret_exigir('seccion.accion');` y el usuario con
+   `public.rebucret_usuario(p_usuario)`. Las 10 del motor (`registrar_despacho`, `editar_despacho`, …) ya lo tienen:
+   **si se reemplaza una, partir de `pg_get_functiondef` de producción** (que ya trae esas líneas) y no sacarlas.
+3. Toda escritura nueva desde el navegador (`.from("x").insert/update/upsert/delete`) necesita su regla: si no, la
+   prueba `test:seguridad` falla y en producción la base contesta "new row violates row-level security policy".
+4. La vuelta atrás de la 0c-2 está en `vuelta-atras/` (no es parte de la lista: no se corre al reconstruir).

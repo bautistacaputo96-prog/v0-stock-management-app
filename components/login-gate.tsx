@@ -1,12 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Lock, Loader2, WifiOff, RefreshCw, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getCurrentUser, setCurrentUser, clearCurrentUser } from "@/lib/current-user"
+import { olvidarTokenBase } from "@/lib/supabase/client"
 import { CampoClave, ElegirClave } from "@/components/elegir-clave"
 
 /**
@@ -42,6 +44,9 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
   const [entrando, setEntrando] = useState(false)
   const estadoRef = useRef<Estado>("cargando")
   estadoRef.current = estado
+  const router = useRouter()
+  /** La página se armó en el servidor sin sesión (se mostró el login): al entrar se vuelve a pedir con la sesión. */
+  const armadaSinSesion = useRef(false)
 
   const cargarNombres = useCallback(async () => {
     try {
@@ -60,6 +65,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
 
   const irAlLogin = useCallback(
     (mensaje: string | null) => {
+      armadaSinSesion.current = true
       clearCurrentUser()
       setAviso(mensaje)
       setClave("")
@@ -117,6 +123,16 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(t)
   }, [estado, sinConexion, revisar])
 
+  /**
+   * Fase 0c-2: las páginas que leen en el servidor (Inicio, Despacho, Programación…) se armaron sin sesión mientras
+   * se mostraba el login. Con la RLS prendida eso viene vacío: al entrar se vuelven a pedir, ya con la sesión.
+   */
+  function volverAPedirLaPagina() {
+    if (!armadaSinSesion.current) return
+    armadaSinSesion.current = false
+    router.refresh()
+  }
+
   async function ingresar(e: React.FormEvent) {
     e.preventDefault()
     if (!usuarioId) return setError("Elegí tu nombre para continuar.")
@@ -136,10 +152,12 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
         setError(d?.error || "No se pudo entrar. Probá de nuevo.")
         return
       }
+      olvidarTokenBase() // sesión nueva: token nuevo
       setCurrentUser(d.usuario)
       setClave("")
       setAviso(null)
       setEstado(d.debeCambiarClave ? "elegir" : "dentro")
+      if (!d.debeCambiarClave) volverAPedirLaPagina()
     } catch {
       setError("Sin conexión con el servidor. Probá de nuevo en un rato.")
     } finally {
@@ -186,7 +204,17 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
   }
 
   if (estado === "elegir") {
-    return <ElegirClave nombre={getCurrentUser()?.name || ""} onListo={() => setEstado("dentro")} />
+    return (
+      <ElegirClave
+        nombre={getCurrentUser()?.name || ""}
+        onListo={() => {
+          setEstado("dentro")
+          // Con la contraseña recién elegida recién hay token para la base
+          armadaSinSesion.current = true
+          volverAPedirLaPagina()
+        }}
+      />
+    )
   }
 
   if (estado === "dentro") {

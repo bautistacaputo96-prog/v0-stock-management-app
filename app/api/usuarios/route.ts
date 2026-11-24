@@ -8,6 +8,7 @@ import {
   modoPruebaLocal,
   respuestaModoLocal,
   respuestaError,
+  leerIntentosRecientes,
   COLUMNAS_USUARIO,
   COLUMNAS_CREDENCIAL,
   type FilaUsuario,
@@ -23,14 +24,15 @@ export async function GET() {
     const r = await exigirGerencial()
     if (r.respuesta) return r.respuesta
     const sb = sbServicio()
-    const [us, cs] = await Promise.all([
+    const [us, cs, intentos] = await Promise.all([
       sb.from("app_users").select(COLUMNAS_USUARIO).order("name"),
       sb.from("app_user_credenciales").select(COLUMNAS_CREDENCIAL),
+      leerIntentosRecientes(),
     ])
     if (us.error) throw us.error
     if (cs.error) throw cs.error
     const porId = new Map(((cs.data as FilaCredencial[] | null) || []).map((c) => [c.user_id, c]))
-    const lista = ((us.data as FilaUsuario[] | null) || []).map((u) => usuarioParaLaPantalla(u, porId.get(u.id)))
+    const lista = ((us.data as FilaUsuario[] | null) || []).map((u) => usuarioParaLaPantalla(u, porId.get(u.id), intentos))
     const res = NextResponse.json({ usuarios: lista, yo: r.sesion.usuario.id, modoPruebaLocal: r.sesion.local || undefined })
     res.headers.set("Cache-Control", "no-store")
     return res

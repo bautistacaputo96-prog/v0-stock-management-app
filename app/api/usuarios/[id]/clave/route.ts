@@ -10,6 +10,7 @@ import {
   modoPruebaLocal,
   respuestaModoLocal,
   respuestaError,
+  desbloquearIngreso,
   COLUMNAS_CREDENCIAL,
   type FilaCredencial,
 } from "@/lib/auth/servidor"
@@ -19,6 +20,7 @@ export const dynamic = "force-dynamic"
 /**
  * Fase 0c-1 · Blanqueo de contraseña (solo gerenciales). Body: {claveInicial}.
  * La persona entra con esa y tiene que elegir la suya. Desbloquea y cierra sus sesiones abiertas.
+ * Es también la "contraseña provisoria" para quien todavía entraba con la contraseña común (fase 0c-2).
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (modoPruebaLocal()) return respuestaModoLocal()
@@ -51,6 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     const { data, error } = await sbServicio().from("app_user_credenciales").upsert(fila, { onConflict: "user_id" }).select(COLUMNAS_CREDENCIAL).single()
     if (error) throw error
+    await desbloquearIngreso(id) // fase 0c-2: borra los intentos fallidos (freno del login)
 
     await registrarActividad({
       usuario: yo.name,

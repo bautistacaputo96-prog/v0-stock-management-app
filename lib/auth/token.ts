@@ -2,14 +2,16 @@
  * Sesión firmada (fase 0c-1). SOLO servidor.
  *
  * El valor de la cookie es base64url(json).base64url(hmacSHA256) con `SESION_SECRETO`.
- * Contenido: { u: id del usuario, v: sesion_version, e: vencimiento (ms) }. Sin nombre ni permisos: los
- * permisos se leen de la base en cada `GET /api/sesion`.
+ * Contenido: { u: id del usuario, v: sesion_version, e: vencimiento (ms), s: id de esta sesión }. Sin nombre ni
+ * permisos: los permisos se leen de la base en cada `GET /api/sesion`.
+ * `s` (fase 0c-2): identifica la sesión de ESTE equipo, para que "Salir" la corte (y su token para la base) sin
+ * cerrar las de los otros equipos de la persona. Las cookies viejas no lo tienen (siguen valiendo).
  *
  * Sin imports de otros archivos del proyecto (se prueba con `node --test`).
  */
 import { createHmac, timingSafeEqual } from "crypto"
 
-export type DatosSesion = { u: string; v: number; e: number }
+export type DatosSesion = { u: string; v: number; e: number; s?: string }
 
 export const DURACION_SESION_MS = 30 * 24 * 60 * 60 * 1000
 /** Se renueva sola cuando le quedan menos de 15 días. */
@@ -50,7 +52,9 @@ function firma(cuerpo: string, clave: string): Buffer {
 
 export function firmarSesion(datos: DatosSesion): string {
   const clave = secreto()
-  const cuerpo = b64url(Buffer.from(JSON.stringify({ u: datos.u, v: datos.v, e: datos.e })))
+  const contenido: DatosSesion = { u: datos.u, v: datos.v, e: datos.e }
+  if (typeof datos.s === "string" && datos.s) contenido.s = datos.s
+  const cuerpo = b64url(Buffer.from(JSON.stringify(contenido)))
   return `${cuerpo}.${b64url(firma(cuerpo, clave))}`
 }
 
@@ -67,7 +71,9 @@ export function leerSesion(valor: string | null | undefined, ahora: number = Dat
     const d = JSON.parse(desdeB64url(partes[0]).toString("utf8"))
     if (!d || typeof d.u !== "string" || !d.u || !Number.isInteger(d.v) || typeof d.e !== "number") return null
     if (d.e <= ahora) return null
-    return { u: d.u, v: d.v, e: d.e }
+    const out: DatosSesion = { u: d.u, v: d.v, e: d.e }
+    if (typeof d.s === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(d.s)) out.s = d.s
+    return out
   } catch {
     return null
   }
