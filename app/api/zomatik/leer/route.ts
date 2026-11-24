@@ -1,8 +1,10 @@
 /**
  * Zomatik Z0 · Lectura de Zomatik (solo lectura): clientes, artículos, proyectos con su remitido y NP pendientes.
  *
- *   GET  /api/zomatik/leer   cron diario de Vercel (03:30 en Argentina), o un gerencial con sesión
+ *   GET  /api/zomatik/leer   SOLO el cron diario de Vercel (03:30 en Argentina)
  *   POST /api/zomatik/leer   botón "Actualizar" (solo gerenciales)
+ *
+ * Fase 0c-2: el GET ya no acepta la sesión de un gerencial (un link que le hicieran abrir corría el robot).
  *
  * Las llamadas del cron pasan sin sesión: con CRON_SECRET en Vercel, solo con `Authorization: Bearer …`; sin él,
  * por el header x-vercel-cron como /api/gps/reconstruir (lib/cron.ts). El resto pide sesión de gerencial.
@@ -48,9 +50,7 @@ export async function GET(req: Request) {
   if (modoPruebaLocal()) return respuestaModoLocal()
   try {
     if (esLlamadaDeCron(req)) return await correr("cron", null)
-    const r = await exigirGerencial()
-    if (r.respuesta) return r.respuesta
-    return await correr("manual", r.sesion.usuario.name)
+    return NextResponse.json({ ok: false, error: "Para leer Zomatik usá el botón Actualizar." }, { status: 405 })
   } catch (e) {
     return respuestaError(e)
   }

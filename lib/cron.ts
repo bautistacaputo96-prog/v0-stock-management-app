@@ -1,15 +1,18 @@
 /**
- * ¿La llamada viene del cron de Vercel?
- *   - Con CRON_SECRET cargado en Vercel: solo si trae `Authorization: Bearer <CRON_SECRET>` (Vercel lo manda solo).
- *   - Sin CRON_SECRET: como hasta ahora, por el header x-vercel-cron o el user-agent vercel-cron (se pueden
- *     falsificar: por eso las rutas igual tienen freno).
+ * ¿La llamada viene del cron de Vercel (o de pg_cron con el mismo secreto)?
+ *   - Solo si trae `Authorization: Bearer <CRON_SECRET>` (Vercel lo manda solo cuando la variable está cargada).
+ *   - Sin CRON_SECRET: NO (fase 0c-2). Antes se aceptaba el header x-vercel-cron o el user-agent vercel-cron, que
+ *     cualquiera puede mandar. Queda un error en el log para que se note que falta la variable.
  *
  * Sin imports (lo usa también lib/armado-dia.ts, que va al navegador; se prueba con `node --test`).
  */
 export function esLlamadaDeCron(req: Request): boolean {
   const secreto = process.env.CRON_SECRET
   if (secreto) return igualSeguro(req.headers.get("authorization"), `Bearer ${secreto}`)
-  return req.headers.has("x-vercel-cron") || /vercel-cron/i.test(req.headers.get("user-agent") || "")
+  if (req.headers.has("x-vercel-cron") || /vercel-cron/i.test(req.headers.get("user-agent") || "")) {
+    console.error("[cron] falta CRON_SECRET en Vercel: la llamada del cron se rechaza")
+  }
+  return false
 }
 
 /**

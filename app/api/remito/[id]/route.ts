@@ -4,6 +4,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import * as fs from "fs"
 import * as path from "path"
 import { fechaAR, tipoPorNumero } from "@/lib/despacho"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
 function sb() {
@@ -28,6 +29,14 @@ function loadTemplate(name: string): Buffer {
 
 // ══════════════════════════════════════════════════════════════════════════════
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Fase 0c-2: el remito tiene datos fiscales del cliente (CUIT, domicilio): solo con sesión. Se abre desde el
+  // sistema en otra pestaña, así que la cookie viaja sola.
+  try {
+    const r = await exigirSesion()
+    if (r.respuesta) return r.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const { id } = await params
   const { searchParams } = new URL(req.url)
   const doc = searchParams.get("doc") // "control" | "fiscal" | null (preview)
