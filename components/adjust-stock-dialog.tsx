@@ -1,6 +1,8 @@
 "use client"
 
 import { formatStock } from "@/lib/stock-format"
+import { notaRecuento } from "@/lib/control-stock/calculo"
+import { fechaArgentina } from "@/lib/control-ingresos/cruce"
 
 import type React from "react"
 
@@ -75,7 +77,9 @@ export function AdjustStockDialog({
       const humidity = material.stockpile_humidity ?? 0
       const dryStock = material.requires_humidity_control ? newStock / (1 + humidity / 100) : newStock
 
-      const { error: updateError } = await supabase
+      // Solo si el stock sigue siendo el que se ve en pantalla: si entre que se abrió la pantalla y ahora hubo un
+      // despacho, un ingreso o una transferencia, pisarlo borraría ese movimiento y la diferencia quedaría mal.
+      const { data: actualizado, error: updateError } = await supabase
         .from("materials")
         .update({
           current_stock: newStock,
@@ -83,17 +87,30 @@ export function AdjustStockDialog({
           updated_at: new Date().toISOString(),
         })
         .eq("id", material.id)
+        .eq("current_stock", currentStock)
+        .select("id")
 
       if (updateError) throw updateError
+      if (!actualizado?.length) {
+        toast({
+          variant: "destructive",
+          title: "El stock cambió mientras tanto",
+          description: "Hubo un despacho, un ingreso o una transferencia. No se guardó: abrí el ajuste de nuevo (ya con el stock al día) y cargá el recuento.",
+        })
+        onOpenChange(false)
+        onSuccess?.()
+        return
+      }
 
-      // Registrar el ajuste como movimiento para trazabilidad
+      // Registrar el ajuste como movimiento para trazabilidad. El "Anterior/Nuevo" va siempre (adelante, antes del
+      // motivo): el control de stock lee el "Nuevo" del último recuento (lib/control-stock, nuevoDeRecuento).
       const { error: movementError } = await supabase.from("stock_movements").insert({
         material_id: material.id,
         quantity_kg: difference,
         movement_type: "ajuste",
-        movement_date: new Date().toISOString().substring(0, 10),
+        movement_date: fechaArgentina(), // el día de Argentina (en UTC, de 21 a 24 h quedaba al día siguiente)
         reference_type: "recuento",
-        notes: notes.trim() || `Ajuste por recuento. Anterior: ${Math.round(currentStock)} ${material.unit}, Nuevo: ${Math.round(newStock)} ${material.unit}`,
+        notes: notaRecuento(currentStock, newStock, material.unit, notes),
       })
 
       if (movementError) throw movementError

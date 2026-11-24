@@ -26,20 +26,14 @@ import { useToast } from "@/hooks/use-toast"
 import { AddSupplierDialog } from "./add-supplier-dialog"
 import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
-import { claveMaterial, enToneladas, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
-import { TIPOS_IMPORTABLES, mismoRemitoCompleto } from "@/lib/ingresos-zomatik/plan"
+import { claveMaterial, fechaArgentina, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
+import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
+import { KG_SOSPECHOSO, remitoRepetido, vaEnToneladas } from "@/lib/ingresos/validar"
 import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
 import { usePermisos } from "@/lib/current-user"
 
 const HUMIDITY_TOLERANCE = 3.0 // 3% tolerance
 const WET_SAMPLE_WEIGHT = 500 // Fixed wet sample weight in grams
-/** Un árido o el cemento con menos de esto en kg seguramente se cargó en toneladas (32,76 en vez de 32760). */
-const KG_SOSPECHOSO = 200
-
-/** ¿El material viene en camiones de toneladas? (áridos y cemento) */
-const vaEnToneladas = (m: { name: string; tipo?: string | null } | undefined) =>
-  !!m && (["arido_fino", "arido_grueso", "cemento"].includes(m.tipo || "") || enToneladas(claveMaterial(m.name)))
-
 /** ¿Entra solo desde Zomatik? (áridos, cemento, aditivos y fibra: docs/ingresos-mp-zomatik.md, 3.7) */
 const entraDeZomatik = (m: { name: string; tipo?: string | null } | undefined) => !!m && (TIPOS_IMPORTABLES.includes(m.tipo || "") || claveMaterial(m.name) !== null)
 
@@ -84,6 +78,8 @@ export function AddStockEntryDialog({
   const [drySampleWeight, setDrySampleWeight] = useState("")
   /** La persona confirmó que la cantidad chica está bien en kg (se vuelve a preguntar si cambia la cantidad). */
   const [kgConfirmados, setKgConfirmados] = useState(false)
+  /** Remito que la persona confirmó que es otro camión (mismo número, a uno le falta el punto de venta). */
+  const [remitoConfirmado, setRemitoConfirmado] = useState("")
   const [formData, setFormData] = useState({
     material_id: "",
     quantity: "",
@@ -93,7 +89,7 @@ export function AddStockEntryDialog({
     humidity_percentage: "",
     sample_taken_granulometry: "",
     notes: "",
-    entry_date: new Date().toISOString().slice(0, 10),
+    entry_date: fechaArgentina(), // el día de Argentina (en UTC, de 21 a 24 h salía mañana)
   })
   const router = useRouter()
   const { toast } = useToast()
@@ -230,31 +226,51 @@ export function AddStockEntryDialog({
 
     try {
       const supabase = createClient()
-      // ¿Ese remito ya está cargado? Mismo material, ±30 días, sin anular. Si entró desde Zomatik (número normalizado):
-      // "Ese remito ya entró desde Zomatik". Si hay otro con el mismo remito completo (punto de venta + número), de
-      // cualquier origen: "Ya hay un ingreso con ese remito". Sin la migración (no hay origen ni anulado_at), solo lo segundo.
+      // ¿Ese remito ya está cargado? Mismo material (por nombre, en cualquier planta: un camión no descarga en las
+      // dos), ±30 días, sin anular. Se buscan por número (sin punto de venta ni ceros) y se comparan acá
+      // (lib/ingresos/validar.ts): si entró desde Zomatik o es el mismo remito completo, no se carga; si es el mismo
+      // número y a uno le falta el punto de venta, se pregunta. Sin la migración (no hay origen ni anulado_at), igual.
       const nro = normalizarRemito(formData.remito)
-      if (nro) {
+      if (nro && selectedMaterial) {
         const buscar = (conColumnasNuevas: boolean) => {
           let q = supabase
             .from("stock_entries")
-            .select(conColumnasNuevas ? "id, remito, origen" : "id, remito")
-            .eq("material_id", formData.material_id)
+            .select(conColumnasNuevas ? "id, remito, origen, materials(name, plant_id)" : "id, remito, materials(name, plant_id)")
+            .ilike("remito", `%${nro}%`)
             .gte("entry_date", `${sumarDias(formData.entry_date, -30)}T00:00:00`)
             .lte("entry_date", `${sumarDias(formData.entry_date, 30)}T23:59:59`)
+            .limit(200)
           if (conColumnasNuevas) q = q.is("anulado_at", null)
           return q
         }
         let { data: yaEstan, error: eYa } = await buscar(true)
         if (eYa) ({ data: yaEstan, error: eYa } = await buscar(false))
-        const filas = eYa ? [] : ((yaEstan as any[]) || [])
-        if (filas.some((x) => x.origen === "zomatik" && normalizarRemito(x.remito) === nro)) {
-          toast({ variant: "destructive", title: "Ese remito ya entró desde Zomatik", description: "No se carga dos veces. Buscalo en el historial." })
+        const filas = (eYa ? [] : ((yaEstan as any[]) || [])).map((x) => ({
+          id: x.id,
+          remito: x.remito,
+          origen: x.origen ?? null,
+          material: x.materials?.name ?? null,
+          plant_id: x.materials?.plant_id ?? null,
+        }))
+        const rep = remitoRepetido(formData.remito, selectedMaterial, filas)
+        const dondeRep = rep?.otraPlanta ? " (en la otra planta)" : ""
+        if (rep?.tipo === "zomatik") {
+          toast({ variant: "destructive", title: `Ese remito ya entró desde Zomatik${dondeRep}`, description: "No se carga dos veces. Buscalo en el historial." })
           setLoading(false)
           return
         }
-        if (filas.some((x) => mismoRemitoCompleto(x.remito, formData.remito))) {
-          toast({ variant: "destructive", title: "Ya hay un ingreso con ese remito", description: "Mismo material y remito en los últimos 30 días. Buscalo en el historial." })
+        if (rep?.tipo === "mismo") {
+          toast({ variant: "destructive", title: `Ya hay un ingreso con ese remito${dondeRep}`, description: `Mismo material y remito (${rep.fila.remito}) en los últimos 30 días. Buscalo en el historial.` })
+          setLoading(false)
+          return
+        }
+        if (rep?.tipo === "parecido" && remitoConfirmado !== formData.remito.trim()) {
+          setRemitoConfirmado(formData.remito.trim())
+          toast({
+            variant: "destructive",
+            title: `¿Es el mismo remito que ${rep.fila.remito}${dondeRep}?`,
+            description: "Mismo material y mismo número en los últimos 30 días. Si es otro camión, tocá Registrar de nuevo.",
+          })
           setLoading(false)
           return
         }
@@ -353,9 +369,10 @@ export function AddStockEntryDialog({
         humidity_percentage: "",
         sample_taken_granulometry: "",
         notes: "",
-        entry_date: new Date().toISOString().slice(0, 10),
+        entry_date: fechaArgentina(), // el día de Argentina (en UTC, de 21 a 24 h salía mañana)
       })
       setKgConfirmados(false)
+      setRemitoConfirmado("")
       setOpen(false)
       router.refresh()
       onSuccess?.()
