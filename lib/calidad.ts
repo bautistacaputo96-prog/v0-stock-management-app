@@ -120,3 +120,30 @@ export function limitesHistograma(valores: number[], ancho = 2): { min: number; 
   const max = Math.floor(Math.max(...valores) / ancho) * ancho + ancho
   return { min, max }
 }
+
+export type ProbetaResumen = { test_age_days: number; strength_mpa?: number | null; clase: number | null }
+
+/**
+ * Panel de calidad del Inicio. Aprobada/rechazada solo a 28 días contra la clase de la fórmula (H30 → 30 MPa), como
+ * Resultados y el reporte semanal (antes: 21 MPa fijo, con las de 7 días incluidas). Las de 7 días van aparte, como
+ * promedio en % de la clase. Las de fórmulas sin clase no cuentan para el porcentaje.
+ */
+export function resumenCalidad(probetas: ProbetaResumen[]) {
+  const rotas = probetas.filter((p) => p.strength_mpa != null && Number.isFinite(Number(p.strength_mpa)))
+  const de28 = rotas.filter((p) => p.test_age_days >= 28)
+  const conClase28 = de28.filter((p) => p.clase != null && p.clase > 0)
+  const aprobadas = conClase28.filter((p) => Number(p.strength_mpa) >= (p.clase as number)).length
+  const rechazadas = conClase28.length - aprobadas
+  const de7 = rotas.filter((p) => p.test_age_days < 28)
+  const pct7 = de7.filter((p) => p.clase != null && p.clase > 0).map((p) => (Number(p.strength_mpa) / (p.clase as number)) * 100)
+  return {
+    ensayadas28: conClase28.length,
+    aprobadas,
+    rechazadas,
+    pctAprobadas: conClase28.length ? (aprobadas / conClase28.length) * 100 : 0,
+    pctRechazadas: conClase28.length ? (rechazadas / conClase28.length) * 100 : 0,
+    sinClase: de28.length - conClase28.length + (de7.length - pct7.length),
+    ensayadas7: de7.length,
+    promedio7: pct7.length ? pct7.reduce((a, b) => a + b, 0) / pct7.length : null,
+  }
+}

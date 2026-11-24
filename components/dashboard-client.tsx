@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { MantenimientoWidget } from "@/components/mantenimiento-widget"
 import { diasTranscurridos, enMeses, fechaLocal } from "@/lib/pantallas"
+import { diasHasta, fechaDeDia, fmtDia, resistenciaDeFormula, resumenCalidad } from "@/lib/calidad"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -121,7 +122,7 @@ interface TestCylinder {
   strength_mpa?: number
   dispatches: {
     id: string
-    formulas: { id: string; name: string; code: string }
+    formulas: { id: string; name: string; code: string; description?: string | null }
   }
 }
 
@@ -449,33 +450,28 @@ export function DashboardClient({
 
   // Quality panel data
   const qualityData = useMemo(() => {
-    const now = new Date()
-    const in3Days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000)
-
-    // Filter cylinders for selected period
+    // Probetas rotas en el período (actual_test_date es "yyyy-mm-dd": medianoche local, no UTC)
     const periodCylinders = testCylinders.filter((c) => {
-      if (!c.actual_test_date) return false
-      const date = new Date(c.actual_test_date)
-      return date >= dateRangeStart && date <= dateRangeEnd
+      const date = fechaDeDia(c.actual_test_date)
+      return date !== null && date >= dateRangeStart && date <= dateRangeEnd
     })
-
-    const tested = periodCylinders.filter((c) => c.strength_mpa !== null).length
-    const passed = periodCylinders.filter((c) => c.strength_mpa && c.strength_mpa >= 21).length // Assuming 21 MPa as minimum
-    const failed = tested - passed
+    const resumen = resumenCalidad(
+      periodCylinders.map((c) => ({
+        test_age_days: c.test_age_days,
+        strength_mpa: c.strength_mpa,
+        clase: resistenciaDeFormula(c.dispatches?.formulas?.code, c.dispatches?.formulas?.name, c.dispatches?.formulas?.description),
+      })),
+    )
 
     // Upcoming tests
     const upcoming = testCylinders.filter((c) => {
       if (c.actual_test_date) return false
-      const scheduled = new Date(c.scheduled_test_date)
-      return scheduled >= now && scheduled <= in3Days
+      const faltan = diasHasta(c.scheduled_test_date)
+      return faltan !== null && faltan >= 0 && faltan <= 3
     }).sort((a, b) => a.scheduled_test_date.localeCompare(b.scheduled_test_date)) // llegan de la más nueva a la más vieja
 
     return {
-      tested,
-      passed,
-      failed,
-      passRate: tested > 0 ? (passed / tested) * 100 : 0,
-      failRate: tested > 0 ? (failed / tested) * 100 : 0,
+      ...resumen,
       upcoming,
     }
   }, [testCylinders, dateRangeStart, dateRangeEnd])
@@ -909,20 +905,26 @@ export function DashboardClient({
               <CardDescription className="text-xs">Resumen de probetas del mes</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="grid grid-cols-3 gap-4 mb-2">
                 <div className="text-center p-3 rounded-lg bg-muted/50">
-                  <p className="text-2xl font-bold">{qualityData.tested}</p>
-                  <p className="text-xs text-muted-foreground">Ensayadas</p>
+                  <p className="text-2xl font-bold">{qualityData.ensayadas28}</p>
+                  <p className="text-xs text-muted-foreground">Ensayadas a 28 d</p>
                 </div>
                 <div className="text-center p-3 rounded-lg bg-green-50 dark:bg-green-950/20">
-                  <p className="text-2xl font-bold text-green-600">{qualityData.passRate.toFixed(0)}%</p>
-                  <p className="text-xs text-muted-foreground">Aprobadas</p>
+                  <p className="text-2xl font-bold text-green-600">{qualityData.pctAprobadas.toFixed(0)}%</p>
+                  <p className="text-xs text-muted-foreground">Llegan a la clase</p>
                 </div>
                 <div className="text-center p-3 rounded-lg bg-red-50 dark:bg-red-950/20">
-                  <p className="text-2xl font-bold text-red-600">{qualityData.failRate.toFixed(0)}%</p>
-                  <p className="text-xs text-muted-foreground">Rechazadas</p>
+                  <p className="text-2xl font-bold text-red-600">{qualityData.pctRechazadas.toFixed(0)}%</p>
+                  <p className="text-xs text-muted-foreground">No llegan</p>
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                {qualityData.ensayadas7 > 0
+                  ? `7 días: ${qualityData.ensayadas7} probetas${qualityData.promedio7 !== null ? `, promedio ${qualityData.promedio7.toFixed(0)} % de la clase` : ""}`
+                  : "7 días: sin probetas en el período"}
+                {qualityData.sinClase > 0 ? ` · ${qualityData.sinClase} sin clase (fórmula sin H)` : ""}
+              </p>
 
               {qualityData.upcoming.length > 0 && (
                 <div>
@@ -934,7 +936,7 @@ export function DashboardClient({
                     {qualityData.upcoming.map((c) => (
                       <div key={c.id} className="flex items-center justify-between text-sm p-2 rounded bg-amber-50 dark:bg-amber-950/20">
                         <span>{c.dispatches?.formulas?.code} - Prob. #{c.cylinder_number}</span>
-                        <Badge variant="outline">{new Date(c.scheduled_test_date).toLocaleDateString("es-AR")}</Badge>
+                        <Badge variant="outline">{fmtDia(c.scheduled_test_date)}</Badge>
                       </div>
                     ))}
                   </div>

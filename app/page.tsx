@@ -75,7 +75,7 @@ export default async function DashboardPage() {
       *,
       dispatches (
         id,
-        formulas (id, name, code)
+        formulas (id, name, code, description)
       )
     `)
     .order("scheduled_test_date", { ascending: false })
