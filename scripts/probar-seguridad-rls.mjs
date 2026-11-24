@@ -41,7 +41,8 @@ const cliente = new pg.Client({
   ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 15_000,
 })
-const q = async (sql, params = []) => (await cliente.query(sql, params)).rows
+// Sin parámetros va por el protocolo simple (deja correr varias sentencias juntas, como un archivo de migración)
+const q = async (sql, params) => (params && params.length ? await cliente.query(sql, params) : await cliente.query(sql)).rows
 
 let ok = 0
 let mal = 0
@@ -96,7 +97,8 @@ async function main() {
     const ger = gente.find((x) => x.tipo === "gerencial")
     const con = gente.find((x) => x.tipo === "consulta")
     const ope = gente.find((x) => x.tipo === "operario" && x.permisos?.mantenimiento?.cargar === true && x.permisos?.clientes?.cargar !== true)
-    control("hay un gerencial, un consulta y un operario de mantenimiento para probar", !!(ger && con && ope), [ger?.name, con?.name, ope?.name].join(" / "))
+    control("hay un gerencial y un operario de mantenimiento para probar", !!(ger && ope), [ger?.name, ope?.name].join(" / "))
+    if (!con) console.log("(no hay ningún consulta con contraseña propia: se saltean las pruebas de consulta)")
 
     // anon
     let r = await como("anon", { role: "anon" }, () => q("SELECT count(*) FROM dispatches"))

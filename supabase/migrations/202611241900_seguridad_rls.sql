@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS rebucret_respaldo.funciones_previas_0c2 (firma text P
 
 -- Clasificación (ver la especificación, punto 4). A: lee y escribe el navegador. B: el navegador solo lee.
 -- C: solo el servidor.
+DROP TABLE IF EXISTS pg_temp._clasif_0c2;
 CREATE TEMP TABLE _clasif_0c2 (tabla text PRIMARY KEY, clase char(1) NOT NULL) ON COMMIT DROP;
 INSERT INTO _clasif_0c2 (tabla, clase)
 SELECT unnest(ARRAY[
