@@ -9,10 +9,11 @@
  */
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
+import { randomBytes } from "crypto"
 import { sbAdmin } from "@/lib/wialon"
 import { firmarSesion, leerSesion, SinSecretoError, DURACION_SESION_MS, type DatosSesion } from "@/lib/auth/token"
 import { normalizarPermisos, normalizarNombre, tipoDe, type Permisos, type Tipo } from "@/lib/permisos"
-import { esperaDePersona, VENTANA_MIN, type FilaIntento } from "@/lib/auth/intentos"
+import { bloqueoDePersona, textoBloqueo, VENTANA_MIN, type FilaIntento } from "@/lib/auth/intentos"
 
 export const NOMBRE_COOKIE = "rebucret_sesion"
 
@@ -119,8 +120,9 @@ export function usuarioParaLaPantalla(u: FilaUsuario, c: FilaCredencial | null |
     veFuncionesNuevas: u.ve_funciones_nuevas === true,
     estadoClave: estadoClave(c),
     ultimoIngreso: c?.ultimo_ingreso_at || null,
-    // Fase 0c-2: freno por intentos por persona y lugar (tabla ingreso_intentos), no el bloqueado_hasta viejo
-    bloqueado: esperaDePersona(intentos, u.id, ahora) > 0,
+    // Fase 0c-2: freno por intentos por persona+lugar o por lugar (tabla ingreso_intentos), no el bloqueado_hasta viejo
+    bloqueado: bloqueoDePersona(intentos, u.id, ahora).segundos > 0,
+    bloqueo: textoBloqueo(bloqueoDePersona(intentos, u.id, ahora)),
     permisosActualizadosAt: u.permisos_actualizados_at || null,
     permisosActualizadosPor: u.permisos_actualizados_por || null,
   }
@@ -182,6 +184,7 @@ export async function sesionActual(): Promise<Sesion | null> {
   const [usuario, credencial] = await Promise.all([leerUsuario(datos.u), leerCredencial(datos.u)])
   if (!usuario || usuario.active === false) return null
   if (!credencial || credencial.sesion_version !== datos.v) return null
+  if (datos.s && (await sesionCerrada(datos.s))) return null
   return { usuario, credencial, datos, local: false }
 }
 
@@ -215,9 +218,37 @@ export async function exigirGerencial(): Promise<Exigido> {
   return r
 }
 
-export function ponerCookieSesion(res: NextResponse, usuarioId: string, version: number, ahora: number = Date.now()) {
+/** Id nuevo para la sesión de un equipo (va en la cookie y en el token para la base). */
+export function nuevoIdSesion(): string {
+  return randomBytes(18).toString("base64url")
+}
+
+/**
+ * Fase 0c-2 · ¿Esta sesión se cerró con "Salir"? (tabla sesiones_cerradas, migración 202611241800). Sin la tabla
+ * (migración sin aplicar), no: como antes, "Salir" solo borra la cookie.
+ */
+export async function sesionCerrada(sid: string): Promise<boolean> {
+  const { data, error } = await sbServicio().from("sesiones_cerradas").select("sid").eq("sid", sid).maybeSingle()
+  if (error) return false
+  return !!data
+}
+
+/** Fase 0c-2 · "Salir": anota la sesión de este equipo como cerrada (la cookie y su token dejan de valer). */
+export async function cerrarSesion(sid: string, userId: string): Promise<boolean> {
+  const sb = sbServicio()
+  const { error } = await sb.from("sesiones_cerradas").upsert({ sid, user_id: userId }, { onConflict: "sid" })
+  if (error) {
+    console.warn("[sesion] no se pudo anotar la sesión cerrada:", error.message)
+    return false
+  }
+  // Las de más de 31 días ya vencieron solas (la cookie dura 30): no hace falta guardarlas
+  await sb.from("sesiones_cerradas").delete().lt("cerrada_at", new Date(Date.now() - 31 * 86400000).toISOString())
+  return true
+}
+
+export function ponerCookieSesion(res: NextResponse, usuarioId: string, version: number, ahora: number = Date.now(), sid: string = nuevoIdSesion()) {
   const e = ahora + DURACION_SESION_MS
-  res.cookies.set(NOMBRE_COOKIE, firmarSesion({ u: usuarioId, v: version, e }), {
+  res.cookies.set(NOMBRE_COOKIE, firmarSesion({ u: usuarioId, v: version, e, s: sid }), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",

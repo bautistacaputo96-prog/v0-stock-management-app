@@ -1,26 +1,36 @@
--- Fase 0c-2 · Migración A (24/11/2026) · NO APLICADA. Se puede correr en cualquier momento, antes o después de
--- publicar la rama fix/seguridad-rls (el código anda con o sin ella). Especificación: docs/migracion-loop/fase-0c.md,
--- "0c-2 · Especificación técnica", puntos 6 y 7.
+-- Fase 0c-2 · Migración A (24/11/2026) · NO APLICADA. Se corre ANTES de publicar la rama fix/seguridad-rls: la ruta
+-- nueva de /api/alertas/stock-cero pide el secreto que esta migración hace mandar al trigger (si se publica antes,
+-- los avisos en el momento dan 401 hasta correrla; el cron diario los manda igual).
+-- Con el código de hoy (main) es segura: la tabla y las funciones nuevas nadie las usa todavía, y el header de más
+-- que manda el trigger la ruta vieja lo ignora. Especificación: docs/migracion-loop/fase-0c.md,
+-- "0c-2 · Especificación técnica", puntos 6, 7 y 10.
 --
 -- Qué hace:
 -- 1. Freno a la adivinación de contraseñas en el login: tabla `ingreso_intentos` (solo el servidor la ve) y tres
 --    funciones que usa POST /api/sesion/ingresar con la clave de servicio:
 --      ingreso_reservar(user, ip)   → antes de verificar la contraseña: ¿puede probar? Si puede, anota el intento.
---                                     Límites en 15 minutos: misma persona y mismo lugar 5, misma persona 10, mismo
---                                     lugar 20. Con candado (pg_advisory_xact_lock): pedidos en paralelo cuentan todos.
+--                                     Límites en 15 minutos: misma persona y mismo lugar 5; mismo lugar (cualquier
+--                                     persona) 50. NO hay límite por persona sola: los ids son públicos y alguien de
+--                                     afuera podría frenar al plantista (lo que se sacó el 04/11/2026).
+--                                     Con candado (pg_advisory_xact_lock): pedidos en paralelo cuentan todos.
 --      ingreso_exitoso(user, ip)    → entró bien: borra los intentos de esa persona en ese lugar.
---      ingreso_desbloquear(user)    → un gerencial lo destraba desde Usuarios (y al dar contraseña provisoria).
+--      ingreso_desbloquear(user)    → un gerencial lo destraba desde Usuarios (y al dar contraseña provisoria):
+--                                     borra sus intentos y los de los lugares (IP) desde donde probó.
 --    Se guardan solo id de usuario, IP y hora. Nunca la contraseña. Lo de más de un día se borra solo.
 -- 2. Aviso de stock en cero: el trigger de `materials` llama a /api/alertas/stock-cero con el secreto del cron
 --    (el mismo `cron_secret` del Vault que ya usan las pasadas de pg_cron). La ruta, desde la rama
 --    fix/seguridad-rls, pide ese secreto. Mandar el header de más a la versión vieja de la ruta no cambia nada.
 --
--- Qué pasa con los datos ya cargados: nada. Tabla nueva vacía; el trigger hace lo mismo que antes más un header.
+-- 3. Tabla `sesiones_cerradas`: "Salir" anota la sesión de ese equipo y desde la migración B la base deja de aceptar
+--    su token (sin cerrar las sesiones de la persona en otros equipos). Solo el servidor la ve.
+--
+-- Qué pasa con los datos ya cargados: nada. Tablas nuevas vacías; el trigger hace lo mismo que antes más un header.
 --
 -- Vuelta atrás:
 --   DROP FUNCTION IF EXISTS public.ingreso_reservar(uuid, text), public.ingreso_exitoso(uuid, text),
 --     public.ingreso_desbloquear(uuid), public._ingreso_espera(integer, timestamptz[]);
 --   DROP TABLE IF EXISTS public.ingreso_intentos;   -- el login sigue andando, sin freno
+--   (sesiones_cerradas: no borrarla si ya se corrió la B, que la lee; sin la B se puede borrar)
 --   (el trigger con el header se puede dejar: sin la rama nueva el header se ignora)
 
 BEGIN;
@@ -74,8 +84,8 @@ BEGIN
 
   DELETE FROM public.ingreso_intentos WHERE creado_at < now() - interval '1 day';
 
-  -- Mismo lugar, cualquier persona: 20
-  v_espera := greatest(v_espera, public._ingreso_espera(20, ARRAY(
+  -- Mismo lugar, cualquier persona: 50 (la planta sale a internet por una sola IP: tiene que ser alto)
+  v_espera := greatest(v_espera, public._ingreso_espera(50, ARRAY(
     SELECT creado_at FROM public.ingreso_intentos WHERE ip = v_ip AND creado_at >= v_desde ORDER BY creado_at DESC)));
 
   IF p_user_id IS NOT NULL THEN
@@ -83,10 +93,6 @@ BEGIN
     v_espera := greatest(v_espera, public._ingreso_espera(5, ARRAY(
       SELECT creado_at FROM public.ingreso_intentos
       WHERE user_id = p_user_id AND ip = v_ip AND creado_at >= v_desde ORDER BY creado_at DESC)));
-    -- Misma persona, cualquier lugar: 10
-    v_espera := greatest(v_espera, public._ingreso_espera(10, ARRAY(
-      SELECT creado_at FROM public.ingreso_intentos
-      WHERE user_id = p_user_id AND creado_at >= v_desde ORDER BY creado_at DESC)));
   END IF;
 
   IF v_espera > 0 THEN
@@ -116,7 +122,12 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  WITH b AS (DELETE FROM public.ingreso_intentos WHERE user_id = p_user_id RETURNING 1)
+  -- Sus intentos y los de los lugares (IP) desde donde probó: si la planta quedó frenada por IP, también se destraba
+  WITH b AS (
+    DELETE FROM public.ingreso_intentos
+    WHERE user_id = p_user_id
+       OR ip IN (SELECT i.ip FROM public.ingreso_intentos i WHERE i.user_id = p_user_id)
+    RETURNING 1)
   SELECT count(*)::integer FROM b
 $$;
 
@@ -128,6 +139,19 @@ GRANT EXECUTE ON FUNCTION public._ingreso_espera(integer, timestamptz[]) TO serv
 GRANT EXECUTE ON FUNCTION public.ingreso_reservar(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.ingreso_exitoso(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.ingreso_desbloquear(uuid) TO service_role;
+
+-- ── 1b. Sesiones cerradas con "Salir" ──────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.sesiones_cerradas (
+  sid        text PRIMARY KEY,           -- id de la sesión del equipo (va en la cookie y en el token)
+  user_id    uuid,
+  cerrada_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sesiones_cerradas_at_idx ON public.sesiones_cerradas (cerrada_at);
+COMMENT ON TABLE public.sesiones_cerradas IS
+  'Fase 0c-2: sesiones cerradas con Salir (su cookie y su token para la base dejan de valer). Solo el servidor.';
+ALTER TABLE public.sesiones_cerradas ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.sesiones_cerradas FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.sesiones_cerradas TO service_role;
 
 -- ── 2. Aviso de stock en cero con el secreto del cron ─────────────────────────────────────────────────────────
 -- Igual que la versión de 202610051930 (pg_get_functiondef de producción del 24/11/2026), más el header

@@ -130,7 +130,7 @@ export function PantallaUsuarios() {
             <span className="font-semibold">{u.name}</span>
             <Badge variant="outline" className={COLOR_TIPO[u.tipo]}>{NOMBRE_TIPO[u.tipo]}</Badge>
             {u.id === yo && <span className="text-xs text-muted-foreground">(vos)</span>}
-            {u.bloqueado && <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300"><Lock className="h-3 w-3 mr-1" />bloqueado</Badge>}
+            {u.bloqueado && <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300" title={u.bloqueo || undefined}><Lock className="h-3 w-3 mr-1" />{u.bloqueo?.includes("IP") ? "frenado (su conexión)" : "bloqueado"}</Badge>}
           </div>
           <p className="text-xs text-muted-foreground">
             {u.tipo === "gerencial" ? (sin.length ? "Puede todo, salvo lo de abajo" : "Puede todo") : carga.length ? `Carga en: ${carga.join(", ")}` : "No carga nada"}

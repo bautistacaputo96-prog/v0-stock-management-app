@@ -23,6 +23,8 @@ export type UsuarioPantalla = {
   estadoClave: "propia" | "tiene que cambiarla" | "primer ingreso pendiente" | "sin contraseña"
   ultimoIngreso: string | null
   bloqueado: boolean
+  /** Fase 0c-2: por qué está frenado (por persona o por su conexión/IP). */
+  bloqueo?: string | null
 }
 
 const EXPLICACION_TIPO: Record<Tipo, string> = {
@@ -172,7 +174,7 @@ export function DialogoUsuario({
             {!nuevo && (
               <DialogDescription>
                 Contraseña: {usuario!.estadoClave}
-                {usuario!.bloqueado ? " · frenado por intentos fallidos" : ""}
+                {usuario!.bloqueado ? ` · ${usuario!.bloqueo || "frenado por intentos fallidos"}` : ""}
                 {!usuario!.active ? " · dado de baja" : ""}
               </DialogDescription>
             )}
