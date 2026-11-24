@@ -38,6 +38,7 @@ import { parametrosDePlanta, type Parametros } from "@/lib/planificador"
 import { cargarViajes, generarViajes, chocaEnBoca, horariosSinChoque, regenerarViajesPedido, cambiosQueRearman, totalViajes, descarga8De, type ViajeRow, type OtroPedido, type PedidoParaViajes } from "@/lib/viajes"
 // Tiempos reales del GPS (con el interruptor): docs/migracion-loop/tiempos-gps-programacion.md
 import { parametrosConGps, conTiemposGps, tiemposDelPedido, textoFuente, textoViajesGps, textoDescargaObra, m3ParaSugerir, type FuenteTiempo } from "@/lib/viajes"
+import { cancelarPedido, errorCantidadPedido } from "@/lib/programacion-acciones"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ObraUbicacion, type UbicacionObra } from "@/components/obra-ubicacion"
 import { NpBloque } from "@/components/zomatik/np-bloque"
@@ -676,6 +677,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       toast({ title: "Falta el método de descarga", description: "Elegí si el pedido va con bomba o directo. Define cuánto tarda cada camión en obra.", variant: "destructive" })
       return
     }
+    const errorM3 = errorCantidadPedido(parseFloat(form.quantity_m3), editingDispatch)
+    if (errorM3) {
+      toast({ title: "Revisá los m³", description: errorM3, variant: "destructive" })
+      return
+    }
     // R o X obligatorio (Bautista, 06/11/2026): define si la NP es NP o NP2 y el remito. Por defecto, el de la obra o el cliente
     if (!(form.remito_tipo || selectedSite?.remito_tipo || selectedClient?.remito_tipo)) {
       toast({ title: "Falta elegir R o X", description: "Elegí si el remito va con factura (R) o sin factura (X).", variant: "destructive" })
@@ -866,7 +872,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         const motivos = editingDispatch
           ? cambiosQueRearman(editingDispatch as unknown as PedidoParaViajes, {
               scheduled_arrival_time: arrivalTime, quantity_m3: parseFloat(form.quantity_m3), metodo_descarga: form.metodo_descarga || null,
-              construction_site_id: form.construction_site_id, ...(datosFase2 as Partial<PedidoParaViajes>),
+              construction_site_id: form.construction_site_id, plant_id: plantToUse, ...(datosFase2 as Partial<PedidoParaViajes>),
             })
           : []
         const debe = editingDispatch ? motivos.length > 0 || (ve && !viajesPorPedido[pedidoId]?.length) : ve
@@ -955,9 +961,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   async function cancelDispatch(dispatch: ScheduledDispatch, motivoCancelado: string, npsZomatik: NpFila[] = [], decision: DecisionNpCancelar | null = null) {
     if (!puede("programacion", "borrar")) return
     const supabase = createClient()
-    const { error } = await supabase.from("scheduled_dispatches").update({ status: "cancelled" }).eq("id", dispatch.id)
+    const { error } = await cancelarPedido(supabase, dispatch.id)
     if (error) {
-      toast({ title: "Error", description: "No se pudo cancelar", variant: "destructive" })
+      toast({ title: "No se pudo cancelar", description: error, variant: "destructive" })
+      loadData()
     } else {
       toast({ title: "Despacho cancelado" })
       // Zomatik: lo que no llegó a Zomatik se anula; la NP en Zomatik queda pendiente o se vacía, según se eligió
@@ -1921,7 +1928,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           <DialogFooter className="gap-2 sm:items-center">
             {/* 5. Decir qué falta */}
             {!soloLectura && faltaPedido.length > 0 && <span className="mr-auto text-[12px] font-medium text-amber-700">Falta: {faltaPedido.join(", ")}</span>}
-            {editingDispatch && editingDispatch.status !== "cancelled" && puede("programacion", "borrar") && (
+            {editingDispatch && !["cancelled", "completed"].includes(editingDispatch.status) && puede("programacion", "borrar") && (
               <Button variant="destructive" size="sm" onClick={() => { setCancelar(editingDispatch); setIsDialogOpen(false) }}>
                 Cancelar pedido
               </Button>

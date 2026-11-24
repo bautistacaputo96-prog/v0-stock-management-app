@@ -406,6 +406,8 @@ export function cambiosQueRearman(antes: Partial<PedidoParaViajes>, despues: Par
   if ("quantity_m3" in despues && num(antes.quantity_m3) !== num(despues.quantity_m3)) out.push("cantidad")
   if ("metodo_descarga" in despues && (antes.metodo_descarga || null) !== (despues.metodo_descarga || null)) out.push("método de descarga")
   if ("construction_site_id" in despues && (antes.construction_site_id || null) !== (despues.construction_site_id || null)) out.push("obra")
+  // Otra planta: otros tiempos de carga y descarga, otra ida (la del GPS es por planta) y la planta de cada viaje
+  if ("plant_id" in despues && (antes.plant_id || null) !== (despues.plant_id || null)) out.push("planta")
   if ("m3_por_viaje" in despues && num(antes.m3_por_viaje, 8) !== num(despues.m3_por_viaje, 8)) out.push("m³ por camión")
   if ("espaciado_min" in despues && num(antes.espaciado_min) !== num(despues.espaciado_min)) out.push("minutos entre camiones")
   if ("viaje_min" in despues && num(antes.viaje_min) !== num(despues.viaje_min)) out.push("minutos de viaje")

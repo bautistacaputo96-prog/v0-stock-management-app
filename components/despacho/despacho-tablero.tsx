@@ -31,6 +31,7 @@ import { cargarChoferes, cargarEmpresasBombeo, type Chofer, type EmpresaBombeo }
 import { parametrosDePlanta, PARAMETROS_BASE } from "@/lib/planificador"
 import { cargarTiemposGps, type TiemposGps } from "@/lib/gps-viajes"
 import { ajustarAHora, cargarViajes, guardarViajes, regenerarViajesPedido, viajeMinDe, type ViajeRow } from "@/lib/viajes"
+import { cancelarPedido } from "@/lib/programacion-acciones"
 import {
   camionPropuesto, contadoresDia, duracion, estadoCamion, vistoFueraDePlanta, hhmm, m3txt, ordenCamion, puntualidadPrimerCamion, textoFuenteEstado,
   textoMotivo, viajesDelDia, viajesEnPausa, viajesPendientes, TIPO_TEXTO, numeroImpreso,
@@ -611,8 +612,9 @@ export function DespachoTablero({ plants, onPantallaVieja }: { plants: Planta[];
   async function hacerCancelar(tipo: MotivoTipo, detalle: string) {
     if (!cancelar || !puedeCancelar) return null
     const p = cancelar
-    const { error } = await createClient().from("scheduled_dispatches").update({ status: "cancelled", cierre_motivo_tipo: tipo, cierre_motivo: detalle } as any).eq("id", p.id)
-    if (error) return error.message
+    // Solo si sigue abierto (una pantalla vieja no cancela un pedido que mientras tanto se completó)
+    const { error } = await cancelarPedido(createClient(), p.id, { cierre_motivo_tipo: tipo, cierre_motivo: detalle })
+    if (error) { cargar(); return error }
     // Sin mail: el pedido no se borra (como en la pantalla de siempre)
     logActivity({
       action: "editar", entity: "pedido", entityId: p.id, reference: `${p.clients?.name || "-"} · ${p.construction_sites?.name || "-"}`, plantId: p.plant_id,
