@@ -1033,7 +1033,8 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           )}
           {/* Zomatik Z2: "Generar NP ahora" (pedido con la NP pendiente o con error). Con cargar o editar, como la ruta */}
           {/* También con un cambio de la NP esperando (pendiente o en error): lo hace ya, sin esperar los 2 min (spec 2026-11-18) */}
-          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && !["cancelled", "completed"].includes(d.status) && (!np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") || tieneEdicionPorHacer(np.porPedido[d.id])) && (
+          {/* Pedido completo sin NP (25/11: H40 de La Tercera con la NP en error por falta de precio): también, si no tiene ninguna NP hecha */}
+          {puedeVincular && np.porPedido[d.id]?.activo && np.porPedido[d.id]?.entra && d.status !== "cancelled" && (!np.porPedido[d.id]?.nps.some((x) => x.estado === "ok" || x.estado === "generando") || (d.status !== "completed" && tieneEdicionPorHacer(np.porPedido[d.id]))) && (
             <DropdownMenuItem onClick={() => generarAhora(d)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Generar NP ahora
