@@ -136,6 +136,8 @@ export type PrecioNp = {
   numero_np?: string | null
   proyecto_precio_m3?: number | null
   aviso?: string | null
+  /** Con la llave de la fibra (spec 2026-11-25): el artículo y su precio por kg en la lista (null = no está). */
+  fibra?: { articulo: number; nombre: string; precio_kg: number | null } | null
 }
 
 /** El precio por m³ de la NP para la línea del formulario. null si no respondió (o no hay permiso): la línea no aparece. */

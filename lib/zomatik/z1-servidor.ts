@@ -39,7 +39,7 @@ import {
   type DespachoZ1, type MaterialMp, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
-import { PASO_SIN_AUTORIZAR } from "@/lib/zomatik/np-servidor"
+import { PASO_SIN_AUTORIZAR, fibraDe, plantasNp } from "@/lib/zomatik/np-servidor"
 import { MAX_ESPERA_AUTORIZAR, MSJ_NI_AUTORIZAR_NI_REMITO, msjNiAutorizarNiRemito } from "@/lib/zomatik/np"
 import { MSJ_YA_REAUTORIZADA, PASO_REAUTORIZAR_NP, msjReautorizarNp, sinPendientesDeNp } from "@/lib/zomatik/z1"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
@@ -454,6 +454,43 @@ async function datos(sb: SB, r: RemitoDB) {
     obra: obra?.name ?? null,
     // La obra no tiene columna de lote: va su nombre (como lo cargan hoy cuando no es barrio)
     entrega: entregaRemito(obra ? { nombre: obra.name, direccion: obra.address, localidad: obra.localidad } : null),
+  }
+}
+
+/**
+ * La fibra que se cargó de verdad en los camiones de un remito (spec 2026-11-25): por cada despacho del remito, sus kg de
+ * fibra (dispatch_materials, material tipo 'fibra') en proporción a los m³ que van en este remito (un despacho partido
+ * entre dos NP va en dos remitos). Solo con la llave de la fibra de la planta; si no, null (el remito como siempre).
+ * Si no se puede leer, null y el remito sale como siempre (nunca frena el hormigón).
+ */
+async function fibraParaRemito(sb: SB, r: { id: string; plant_id: string }): Promise<{ codigo: number; nombre: string; kg: number } | null> {
+  try {
+    const cfg = fibraDe((await plantasNp(sb))[r.plant_id])
+    if (!cfg) return null
+    const { data: links, error: e1 } = await sb.from("zomatik_remito_despachos").select("dispatch_id, m3").eq("remito_id", r.id)
+    if (e1) throw e1
+    const ls = (links as { dispatch_id: string; m3: number | string }[]) || []
+    if (!ls.length) return null
+    const ids = ls.map((l) => l.dispatch_id)
+    const [{ data: ds, error: e2 }, { data: dm, error: e3 }, { data: art }] = await Promise.all([
+      sb.from("dispatches").select("id, quantity_m3").in("id", ids),
+      sb.from("dispatch_materials").select("dispatch_id, quantity, materials(tipo)").in("dispatch_id", ids),
+      sb.from("zomatik_articulos").select("nombre").eq("codigo", cfg.articulo).maybeSingle(),
+    ])
+    if (e2 || e3) throw e2 || e3
+    const m3De = new Map(((ds as { id: string; quantity_m3: number | string | null }[]) || []).map((d) => [d.id, Number(d.quantity_m3) || 0]))
+    const fibraDe_ = new Map<string, number>()
+    for (const x of (dm as { dispatch_id: string; quantity: number | string | null; materials?: { tipo?: string | null } | null }[]) || [])
+      if (x.materials?.tipo === "fibra") fibraDe_.set(x.dispatch_id, (fibraDe_.get(x.dispatch_id) || 0) + (Number(x.quantity) || 0))
+    let kg = 0
+    for (const l of ls) {
+      const total = m3De.get(l.dispatch_id) || 0
+      if (total > 0) kg += ((fibraDe_.get(l.dispatch_id) || 0) * Number(l.m3)) / total
+    }
+    return { codigo: cfg.articulo, nombre: (art as { nombre?: string } | null)?.nombre || "MACRO FIBRA", kg: Math.round(kg * 1000) / 1000 }
+  } catch (e) {
+    console.error("[zomatik-z1] fibra del remito", r.id, (e as Error)?.message)
+    return null
   }
 }
 
@@ -936,6 +973,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           pendienteEsperado: gate.espera ? null : gate.pendienteEsperado,
           // Justo antes de grabar se vuelven a leer los comprobantes de la NP: cualquier remito que no sea uno de estos frena
           nuestros: await remitosNuestros(sb, r.np_id!, r.id),
+          fibra: await fibraParaRemito(sb, r),
         }, { hoy: hoyAR(), alPaso })
         // Red de seguridad (20/11, NP 0001-00001201): "Continuar" no trajo los pendientes y la NP figuraba autorizada (no
         // se miró en este intento). Zomatik la vuelve a "por autorizar" cuando se le cambia la cantidad: la NP pasa a
@@ -968,7 +1006,13 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           continue
         }
         await guardarSi(sb, r.id, { estado: "ok", remito_estado: "ok", remito_numero: rm.numero, remito_codigo: rm.codigo, en_curso_desde: null, mensaje: null, paso: "ok", ok_at: new Date().toISOString(), proximo_intento: null })
-        await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `Remito en Zomatik: ${rm.numero}`, "m³": r.m3, Camiones: r.patentes } })
+        await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `Remito en Zomatik: ${rm.numero}`, "m³": r.m3, Camiones: r.patentes, ...(rm.fibraKg ? { Fibra: `${String(rm.fibraKg).replace(".", ",")} kg` } : {}) } })
+        // La fibra que no entró en el remito (spec 2026-11-25): el remito salió igual; Actividad y un aviso a Bautista
+        if (rm.fibraAviso) {
+          await actividadNp(sb, { usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": "Remito sin toda la fibra", Mensaje: rm.fibraAviso, Remito: rm.numero, NP: d.np.numero, Marca: r.marca } })
+          const av = await avisarError(sb, `Remito sin toda la fibra · ${rm.numero || ref}`, [`${ref} · ${r.m3} m³ · ${r.fecha}${r.patentes ? ` · ${r.patentes}` : ""}`, rm.fibraAviso, `NP: ${d.np.numero || "?"}`, `Marca: ${r.marca}`])
+          if (!av.enviado) console.error("[zomatik-z1] aviso de la fibra:", av.motivo)
+        }
         hechas.push({ id: r.id, estado: "ok", mensaje: rm.numero ?? null })
       } catch (e) {
         if (e instanceof Cambio) {

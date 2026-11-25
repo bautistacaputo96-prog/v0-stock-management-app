@@ -20,9 +20,10 @@ import { mensajeZomatik, navegadorAjuste } from "@/lib/zomatik/cliente"
 import {
   COLUMNAS_EDICION, COLUMNAS_NP, PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, PENDIENTE_LARGO_INTENTOS, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
   editableDe, esFallaDeAcceso, faltaMigracionEdicion, llaveEdicion, plantasNp, sincronizarPedido, tipoDeFalla,
-  type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB,
+  type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB, fibraDeLaNp, guardarFibraNp,
 } from "@/lib/zomatik/np-servidor"
 import { ajustarCantidadNp, totalesDeAjuste as totalesDe, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
+import { fibraObjetivo } from "@/lib/fibra"
 import { hoyAR, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
 import {
@@ -310,10 +311,13 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
     const llave = llaveEdicion(planta)
     if (!llave) return await cerrar("pendiente", "La edición de la NP está apagada en la planta.")
     const art = await articuloDeNp(sb, np)
+    // La NP lleva fibra (spec 2026-11-25): queda en proporción a los m³ nuevos
+    const fibra = await fibraDeLaNp(sb, np)
     const nav = await c.dep.navegador(llave, np.zomatik_codigo!)
     await c.alAbrir()
     const res = await c.dep.robot.ajustarCantidadNp(nav, {
       codigo: np.zomatik_codigo!, numero: np.numero, marca: np.marca, articuloCodigo: art.codigo, articuloNombre: art.nombre, m3Np, objetivo, cortado,
+      ...(fibra ? { fibra: { codigo: fibra.codigo, nombre: fibra.nombre, kgNp: fibra.kgNp, kgObjetivo: fibraObjetivo(fibra.kgNp, m3Np, objetivo) } } : {}),
     }, {
       hoy: hoyAR(),
       alPaso: async (paso) => {
@@ -327,6 +331,7 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
     if (res.estado === "ok") {
       // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
       if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("La edición cambió mientras se trabajaba")
+      if (fibra && res.fibraKg !== undefined && res.fibraKg !== null) await guardarFibraNp(sb, np.id, res.fibraKg)
       return await aplicar(objetivo, m3Uso, m3Np, res.porAutorizar ?? null)
     }
     const cant = res.leido ?? m3Np

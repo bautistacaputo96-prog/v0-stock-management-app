@@ -23,6 +23,26 @@ export const MSJ_SIN_PRECIO = "El artículo no tiene precio en la lista de Zomat
 export const msjSinPrecio = (articulo: string | null | undefined) =>
   `${MSJ_SIN_PRECIO}${articulo ? ` (${articulo})` : ""}. Avisale a Juan: hay que cargarlo en la lista, o un gerencial pone el precio en el pedido. Después, «Generar NP ahora».`
 
+// ── Fibra en la NP (docs/specs/2026-11-25-fibra-en-np.md) ──
+
+/** Comienzo del mensaje cuando falta el precio de la fibra (para reconocerlo). */
+export const MSJ_SIN_PRECIO_FIBRA = "Falta el precio de"
+/**
+ * La lista con que sale la NP no tiene precio para la fibra en la copia de Zomatik (zomatik_lista_precios). Lo más
+ * común (25/11): el artículo tiene "Exportar en Lista de Precios: No" y no sale en el export. Sin montos.
+ */
+export const msjSinPrecioFibra = (articulo: string, lista: string | null | undefined) =>
+  `${MSJ_SIN_PRECIO_FIBRA} ${articulo || "la fibra"} en la lista${lista ? ` ${lista}` : ""}. En Zomatik, en la ficha de ${articulo || "la fibra"}, poné «Exportar en Lista de Precios: Sí» (y que tenga precio en la lista); después tocá «Actualizar» en el precio del pedido y «Generar NP ahora».`
+/** La fibra del pedido supera el tope: la NP no la manda nunca (FIBRA_MAX_KG_M3, lib/fibra.ts). */
+export const msjFibraFueraDeTope = (kgM3: number, tope: number) =>
+  `La fibra del pedido (${String(Math.round(kgM3 * 1000) / 1000).replace(".", ",")} kg/m³) supera el tope de ${tope} kg/m³: no se manda a Zomatik. Corregí la fibra en el pedido y tocá «Generar NP ahora».`
+export const msjFibraSinArticulo = (codigo: number) =>
+  `El artículo de la fibra (${codigo}) no está en la copia de artículos de Zomatik. Tocá «Actualizar desde Zomatik» en Vínculos y después «Generar NP ahora».`
+export const msjProyectoSinFibra = (articulo: string) =>
+  `El proyecto no tiene ${articulo || "la fibra"} y el pedido lleva fibra. Agregala al proyecto en Zomatik (o sacá la fibra del pedido) y tocá «Generar NP ahora».`
+export const msjProyectoPocaFibra = (articulo: string, queda: number, kg: number) =>
+  `Al proyecto le quedan ${String(queda).replace(".", ",")} kg de ${articulo || "fibra"} y el pedido necesita ${String(kg).replace(".", ",")} kg. Agrandá la fibra del proyecto en Zomatik o mandá el resto a una NP nueva.`
+
 /**
  * Lo que dice `autorizarNp` cuando la fila de la NP no trae ni el ícono Autorizar ni el link REMITO (quedó en $0, ya
  * está remitida…). No se arregla sola: después de MAX_ESPERA_AUTORIZAR intentos seguidos así se deja de reintentar.
@@ -475,6 +495,18 @@ export function fparamDe(renglones: Renglon[]): string {
 /** Cantidad con punto y hasta 3 decimales ("7.5"), como la toma el formulario. */
 export function cantidadTexto(m3: number): string {
   return String(Math.round(Number(m3) * 1000) / 1000)
+}
+
+/** Subtotal neto de los renglones (costo × cantidad), para ver que el total del listado quedó en proporción. */
+export function subtotalRenglones(rs: { costo: string; cantidad: string }[]): number | null {
+  let t = 0
+  for (const r of rs) {
+    const c = numeroZomatik(r.costo)
+    const q = numeroZomatik(r.cantidad)
+    if (c === null || q === null) return null
+    t += c * q
+  }
+  return t
 }
 
 /** Cambia la cantidad de un renglón (en el renglón y en sus campos). */

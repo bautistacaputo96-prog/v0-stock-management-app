@@ -21,6 +21,8 @@ import {
   PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, actividadNp, avisarAjusteNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso, tipoDeFalla,
   type AvisarFn,
 } from "@/lib/zomatik/np-servidor"
+import { fibraDeLaNp, guardarFibraNp } from "@/lib/zomatik/np-servidor"
+import { fibraObjetivo } from "@/lib/fibra"
 import { ajustarCantidadNp, totalesDeAjuste, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
 import { comprobanteDeNumero, esNpTraida, hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
@@ -353,6 +355,8 @@ async function datosAjuste(sb: SB, a: AjusteDB) {
   const pd = ped as { status?: string; clients?: { name?: string } | null; construction_sites?: { name?: string } | null } | null
   return {
     np: x,
+    // La NP lleva fibra (spec 2026-11-25): el robot la deja en proporción a los m³
+    fibra: x ? await fibraDeLaNp(sb, x) : null,
     articuloCodigo: codArt,
     articuloNombre: (art as { nombre?: string } | null)?.nombre || (f as { zomatik_articulo_nombre?: string } | null)?.zomatik_articulo_nombre || "",
     status: pd?.status ?? null,
@@ -527,6 +531,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       const res = await o.dep.robot.ajustarCantidadNp(nav, {
         codigo: d.np.zomatik_codigo, numero: d.np.numero, marca: d.np.marca, articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre,
         m3Np, objetivo, cortado, ...(d.traida ? { traida: d.traida } : {}),
+        ...(d.fibra ? { fibra: { codigo: d.fibra.codigo, nombre: d.fibra.nombre, kgNp: d.fibra.kgNp, kgObjetivo: fibraObjetivo(d.fibra.kgNp, m3Np, objetivo) } } : {}),
       }, {
         hoy: hoyAR(),
         alPaso: async (paso) => {
@@ -538,6 +543,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       if (res.estado === "ok") {
         // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
         if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("El ajuste cambió mientras se trabajaba")
+        if (d.fibra && res.fibraKg !== undefined && res.fibraKg !== null) await guardarFibraNp(sb, a.np_id, res.fibraKg)
         await aplicar(objetivo, m3Np, res.porAutorizar ?? null)
         continue
       }

@@ -26,6 +26,8 @@ import {
   conCosto, precioValido, MSJ_PRECIO_DISTINTO, MSJ_PRECIO_SIN_CONTROL, esLaNpTraida, textoOpcionElegida, tieneMarcaDelSistema, type NpLeidaTraer,
 } from "@/lib/zomatik/np"
 import { MSJ_NI_AUTORIZAR_NI_REMITO, diaSiguiente, msjSinPrecio } from "@/lib/zomatik/np"
+import { msjFibraFueraDeTope, msjFibraSinArticulo, msjProyectoPocaFibra, msjProyectoSinFibra, msjSinPrecioFibra, subtotalRenglones } from "@/lib/zomatik/np"
+import { FIBRA_MAX_KG_M3, fibraValida, kgDeFibra } from "@/lib/fibra"
 import { RUTA_AUTORIZAR_NP } from "@/lib/zomatik/web"
 import { MSJ_FACTURA_NO_SE_SABE, TOL_AJUSTE, comprobantesDeNp, facturaDeNp, m3Texto, msjFacturaContradice, msjNpCambio, msjZomatikNoDejo, rechazoPorFactura, totalProporcional, type Comprobantes } from "@/lib/zomatik/ajuste"
 
@@ -79,7 +81,17 @@ export type DatosNp = {
   /** Precio NETO por m³ para el renglón de la NP nueva (puesto a mano o el congelado de la primera NP). Sin él, el de
    *  la lista (el Grabar es el de siempre). En la NP de proyecto no se usa nunca. */
   precioM3?: number | null
+  /**
+   * Fibra del pedido (docs/specs/2026-11-25-fibra-en-np.md). Solo con la llave `fibra_activo` y un pedido con fibra.
+   * Sin esto, la NP lleva solo el hormigón (como siempre). `kgM3` es la del pedido; `kg` = kgM3 × m³ de ESTA NP.
+   * `precios`: el precio NETO por kg de la copia de las listas (zomatik_lista_precios), por código de lista: el robot
+   * usa el de la lista con que sale la NP. En la NP de proyecto manda el precio del proyecto.
+   */
+  fibra?: FibraNp | null
 }
+
+/** La fibra que va en la NP: el artículo (código visible y el de sistema para agregarlo) y los kg. */
+export type FibraNp = { codigo: number; codigoSistema: number | null; nombre: string; kgM3: number; kg: number; precios: Record<string, number> }
 
 /** Sin vendedor de quien programa ni del cliente/proyecto: no se genera. */
 const SIN_VENDEDOR = "La NP no tiene vendedor: cargale el vendedor de Zomatik a quien programa (Vínculos con Zomatik) o al cliente en Zomatik."
@@ -110,6 +122,10 @@ export type ResultadoNp = {
   precioGrabado?: number | null
   /** NP de proyecto: el costo que trajo el renglón del MATERIAL (solo para mostrar). */
   precioProyecto?: number | null
+  /** kg de fibra que lleva la NP grabada (null = sin renglón de fibra). */
+  fibraKg?: number | null
+  /** Precio por kg de la fibra con que salió (de la lista o del proyecto), para Actividad. */
+  fibraPrecio?: number | null
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
@@ -363,7 +379,8 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
       await marcar("buscar_marca")
       const x = await dondeQuedo(nav, d, o.hoy, latir)
       if (x.estado === "esta") {
-        const r = encontrada(x, paso)
+        // Se grabó con los mismos datos de ahora: si llevaba fibra, la NP la tiene (el ajuste lo controla antes de tocarla)
+        const r = { ...encontrada(x, paso), fibraKg: d.fibra ? d.fibra.kg : null }
         if (d.tipo !== "nueva" || r.estado !== "ok" || !r.codigo) return r
         // Con precio: se controla. Sin precio: se lee el costo grabado (para congelarlo y para Actividad)
         if (precioValido(d.precioM3)) return await controlarPrecio(nav, { ...r, precio: d.precioM3 }, d, azar)
@@ -379,6 +396,8 @@ export async function generarNp(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot):
     if (!(d.m3 > 0)) throw dato("El pedido no tiene m³.")
     if (d.tipo === "nueva" && !d.comprobante) throw dato("Falta el tipo de remito (R o X): define si es NP o NP2.")
     if (d.tipo === "proyecto" && !d.proyectoCodigo) throw dato("Falta elegir el proyecto.")
+    // La fibra nunca sale fuera del tope (Bautista 25/11: había pedidos con 800 kg/m³)
+    if (d.fibra && (!fibraValida(d.fibra.kgM3) || !(d.fibra.kg > 0))) throw dato(msjFibraFueraDeTope(d.fibra.kgM3, FIBRA_MAX_KG_M3))
 
     const r = d.tipo === "nueva" ? await nueva(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir) : await deProyecto(nav, d, o, azar, boundary, marcar, () => (grabado = true), latir)
     return d.tipo === "nueva" && precioValido(d.precioM3) && r.estado === "ok" && r.codigo ? await controlarPrecio(nav, r, d, azar) : r
@@ -429,15 +448,39 @@ async function nueva(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: () =>
   const base: [string, string][] = [["fcliente", String(d.clienteCodigo)], ["facopio", ""], ["forigen", "1"]]
   await manage(nav, c, [...base, ["flista", c.idlista]], null, azar)
   await marcar("articulo")
-  const det = await manage(nav, c, [...base, ["fparam", ""], ["farticulo", String(d.articuloCodigoSistema)], ["flista", c.idlista]], null, azar)
+  let det = await manage(nav, c, [...base, ["fparam", ""], ["farticulo", String(d.articuloCodigoSistema)], ["flista", c.idlista]], null, azar)
   // El renglón del artículo se reconoce por el código visible (o el nombre), no por codigo<id> (id del renglón)
-  const art = det.renglones.filter((r) => esRenglonDe(r, { codigo: d.articuloCodigo, nombre: d.articuloNombre }))
+  const delPedido = { codigo: d.articuloCodigo, nombre: d.articuloNombre }
+  const art = det.renglones.filter((r) => esRenglonDe(r, delPedido))
   if (art.length !== 1 || det.renglones.length !== 1) throw formato(det.renglones.length ? "el detalle trajo otros renglones" : "no se agregó el artículo", det.html)
   // Con precio (puesto a mano o el de la primera NP): el renglón con ese costo. Sin precio: el Grabar de siempre
-  const rs = [precioValido(d.precioM3) ? conCosto(conCantidad(art[0], d.m3), d.precioM3) : conCantidad(art[0], d.m3)]
+  const hormigon = (r: Renglon) => (precioValido(d.precioM3) ? conCosto(conCantidad(r, d.m3), d.precioM3) : conCantidad(r, d.m3))
+  let rs = [hormigon(art[0])]
   // Sin precio: la lista no lo tiene (costo 0 o vacío) y el pedido no trae uno puesto a mano. No se pide número ni se graba
   if (!((numeroZomatik(rs[0].costo) ?? 0) > 0)) throw dato(msjSinPrecio(d.articuloNombre || art[0].nombreArticulo))
-  const extra = { precio: numeroZomatik(rs[0].costo), lista: { codigo: ll.lista.codigo, nombre: ll.lista.nombre } }
+  let fibraExtra: { fibraKg: number; fibraPrecio: number } | null = null
+
+  // Fibra (spec 2026-11-25): un segundo renglón con los kg y el precio por kg de la copia de la lista con que sale la NP.
+  // Se agrega como "agregar artículo" del navegador, con el renglón del hormigón ya cargado en fparam; después se
+  // vuelven a poner cantidad y costo en los dos (por si Zomatik rearma el borrador con lo que trae por defecto)
+  if (d.fibra) {
+    const fb = d.fibra
+    const precioF = fb.precios[String(ll.lista.codigo)]
+    if (!precioValido(precioF)) throw dato(msjSinPrecioFibra(fb.nombre, ll.lista.nombre))
+    if (!fb.codigoSistema) throw dato(msjFibraSinArticulo(fb.codigo))
+    await marcar("fibra")
+    det = await manage(nav, c, [...base, ["fparam", fparamDe(rs)], ["farticulo", String(fb.codigoSistema)], ["flista", c.idlista]], null, azar)
+    const artFibra = { codigo: fb.codigo, nombre: fb.nombre }
+    const h = det.renglones.filter((r) => esRenglonDe(r, delPedido))
+    const f2 = det.renglones.filter((r) => esRenglonDe(r, artFibra))
+    if (det.renglones.length !== 2 || h.length !== 1 || f2.length !== 1) throw formato(`al agregar ${fb.nombre} el detalle trajo ${det.renglones.length} renglones`, det.html)
+    rs = det.renglones.map((r) => (r === h[0] ? hormigon(r) : conCosto(conCantidad(r, fb.kg), precioF)))
+    const hh = rs.find((r) => esRenglonDe(r, delPedido))!
+    if (!((numeroZomatik(hh.costo) ?? 0) > 0)) throw dato(msjSinPrecio(d.articuloNombre || hh.nombreArticulo))
+    fibraExtra = { fibraKg: fb.kg, fibraPrecio: precioF }
+  }
+  const delHormigon = rs.find((r) => esRenglonDe(r, delPedido))!
+  const extra = { precio: numeroZomatik(delHormigon.costo), lista: { codigo: ll.lista.codigo, nombre: ll.lista.nombre }, fibraKg: fibraExtra?.fibraKg ?? null, ...(fibraExtra ? { fibraPrecio: fibraExtra.fibraPrecio } : {}) }
 
   // Número: sucursal REBUCRET justo antes, y tiene que ser de su serie (23.3 a y b)
   await marcar("numero")
@@ -505,19 +548,31 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   const disponible = numeroZomatik(mio[0].cantidad)
   if (disponible !== null && d.m3 > disponible + 0.001)
     return { estado: "error", mensaje: `Al proyecto le quedan ${cantidadTexto(disponible).replace(".", ",")} m³ y el pedido es de ${cantidadTexto(d.m3).replace(".", ",")} m³. Bajá los m³ o mandá el resto a una NP nueva.`, paso: "continuar", disponible, reintentar: false }
+  // Fibra (spec 2026-11-25): va el renglón de la fibra DEL PROYECTO, con su precio. Si el proyecto no la tiene, no se
+  // agrega de la lista (a confirmar si Zomatik lo deja en una NP de proyecto): la NP queda en error con el motivo
+  const artFibra = d.fibra ? { codigo: d.fibra.codigo, nombre: d.fibra.nombre } : null
+  if (d.fibra && artFibra) {
+    const deFibra = rs.filter((r) => esRenglonDe(r, artFibra))
+    if (deFibra.length !== 1) throw dato(msjProyectoSinFibra(d.fibra.nombre))
+    const quedaF = numeroZomatik(deFibra[0].cantidad)
+    if (quedaF !== null && d.fibra.kg > quedaF + 0.001) return { estado: "error", mensaje: msjProyectoPocaFibra(d.fibra.nombre, quedaF, d.fibra.kg), paso: "continuar", disponible, reintentar: false }
+  }
+  const seQueda = (r: Renglon) => esRenglonDe(r, delPedido) || (!!artFibra && esRenglonDe(r, artFibra))
 
   // Los otros renglones del proyecto no van en la NP del día
-  for (const otro of rs.filter((r) => r !== mio[0])) {
+  for (const otro of rs.filter((r) => !seQueda(r))) {
     if (!otro.borrar) throw formato("un renglón del proyecto no se puede sacar")
     await marcar("sacar_renglon")
     det = await manage(nav, c, [...base.slice(0, 3), ["fparam", fparamDe(rs)], ["fborrar", otro.borrar]], d.proyectoCodigo, azar)
     rs = det.renglones
   }
   const elegido = rs.filter((r) => esRenglonDe(r, delPedido))
-  if (elegido.length !== 1 || rs.length !== 1) throw formato("el detalle del proyecto quedó raro", det.html)
+  const fibraElegida = artFibra ? rs.filter((r) => esRenglonDe(r, artFibra)) : []
+  if (elegido.length !== 1 || (artFibra && fibraElegida.length !== 1) || rs.length !== 1 + fibraElegida.length) throw formato("el detalle del proyecto quedó raro", det.html)
   // El precio lo pone el proyecto: el renglón no se toca (solo se anota para mostrarlo)
-  rs = [conCantidad(elegido[0], d.m3)]
+  rs = rs.map((r) => (r === elegido[0] ? conCantidad(r, d.m3) : conCantidad(r, d.fibra!.kg)))
   const precioProyecto = numeroZomatik(elegido[0].costo)
+  const fibraProy = d.fibra ? { fibraKg: d.fibra.kg, fibraPrecio: numeroZomatik(fibraElegida[0].costo) } : { fibraKg: null }
 
   // El número: el campo trae el del PROYECTO (0001-00000030); el navegador lo pisa al cargar la página con
   // GetNumeroFactura() (_getnumerofactura.php con el comprobante del formulario). Grabado con el del proyecto, Zomatik
@@ -541,7 +596,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   // El número lo asigna Zomatik al grabar: se busca por la marca entre las NP de hoy del cliente
   await marcar("verificar")
   const x = await dondeQuedo(nav, d, o.hoy, latir)
-  if (x.estado === "esta") return { ...encontrada(x, "verificar", disponible), precioProyecto }
+  if (x.estado === "esta") return { ...encontrada(x, "verificar", disponible), precioProyecto, ...fibraProy }
   if (x.estado === "dudosa") return dudosa(x, "verificar", disponible)
   if (no) return { estado: "error", mensaje: `Zomatik no aceptó la NP: ${no}`, paso: "grabar", disponible, reintentar: false, grabado: false, recorte: respuestaGrabar(g) }
   // Zomatik no dijo que no, pero la NP no está: lo que respondió queda en Actividad para saber qué pasó
@@ -756,6 +811,12 @@ export type DatosAjuste = {
   cortado: boolean
   /** NP traída de Zomatik (sin nuestra marca): se reconoce por su número y su cliente (esLaNpTraida) */
   traida?: { clienteCodigo: number; numero: string; comprobante: "15" | "16" }
+  /**
+   * La NP tiene renglón de fibra (spec 2026-11-25; solo si `zomatik_np.fibra_kg` no es nulo): `kgNp` lo que el sistema
+   * cree que tiene y `kgObjetivo` lo que tiene que quedar (en proporción a los m³). Sin esto, la NP tiene que tener UN
+   * renglón (como siempre).
+   */
+  fibra?: { codigo: number; nombre: string; kgNp: number; kgObjetivo: number } | null
 }
 
 export type ResultadoAjusteNp = {
@@ -775,6 +836,8 @@ export type ResultadoAjusteNp = {
   yaEstaba?: boolean
   grabado?: boolean
   recorte?: string
+  /** Con "ok" y fibra: los kg de fibra que quedaron en la NP. */
+  fibraKg?: number | null
   /**
    * Con "ok": la fila de la NP en el listado (la que se leyó al verificar) tiene el ícono Autorizar (solo lectura,
    * `autorizacionEnListado`). null = no se pudo saber. La autoriza la pasada de siempre (spec 2026-11-18, 5.2 paso 5).
@@ -800,6 +863,11 @@ export type LecturaAjuste = {
   form: NonNullable<ReturnType<typeof camposFormulario>>
   accion: string
   renglon: Renglon
+  /** Todos los renglones (el del hormigón y, si la NP lleva fibra, el de la fibra), en el orden de la página. */
+  renglones: Renglon[]
+  /** El renglón de la fibra (null si la NP no lleva) y su cantidad en kg. */
+  fibraRenglon: Renglon | null
+  fibraCantidad: number | null
   det: Detalle | null
   cantidad: number
   fila: { total: number | null; estado: string; porAutorizar: boolean | null } | null
@@ -821,7 +889,7 @@ async function filaNp(nav: NavegadorNp, d: { codigo: number; numero: string | nu
  * detalle se carga como la página (manage_pedidos.php con pedidos=N y su pedidos_unico). Lo que no se reconoce: "revisar"
  * (o "error" si la página cambió de forma), sin grabar nada.
  */
-export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "codigo" | "numero" | "marca" | "articuloCodigo" | "articuloNombre" | "traida">, o: { azar?: () => number } = {}): Promise<LecturaAjuste> {
+export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "codigo" | "numero" | "marca" | "articuloCodigo" | "articuloNombre" | "traida" | "fibra">, o: { azar?: () => number } = {}): Promise<LecturaAjuste> {
   const azar = o.azar || (() => Math.floor(Math.random() * 345343))
   if (!Number.isInteger(d.codigo) || d.codigo <= 0) throw new Corte("revisar", "No se sabe el código de la NP en Zomatik: ajustala a mano.")
   if (!d.numero) throw new Corte("revisar", "No se sabe el número de la NP: ajustala a mano.")
@@ -841,13 +909,20 @@ export async function leerNpParaAjuste(nav: NavegadorNp, d: Pick<DatosAjuste, "c
   const leido = { det, renglones: det.renglones, valido: esDetalle(det.html) }
   const html = det.html
   if (!leido.valido) throw new Corte("revisar", "No se pudo leer el detalle de la NP. No se tocó: revisala.", false, html)
-  if (leido.renglones.length !== 1) throw new Corte("revisar", `La NP tiene ${leido.renglones.length} renglones: no se toca. Revisala en Zomatik.`, false, html)
-  const r = leido.renglones[0]
+  // Con fibra (spec 2026-11-25): el del hormigón y el de la fibra; sin fibra, uno solo (como siempre)
+  const artF = d.fibra ? { codigo: d.fibra.codigo, nombre: d.fibra.nombre } : null
+  const fibras = artF ? leido.renglones.filter((x) => esRenglonDe(x, artF)) : []
+  if (artF && fibras.length !== 1) throw new Corte("revisar", leido.renglones.length === 1 ? `La NP no tiene el renglón de ${d.fibra!.nombre} que el sistema esperaba: no se toca. Revisala en Zomatik.` : `La NP tiene ${leido.renglones.length} renglones: no se toca. Revisala en Zomatik.`, false, html)
+  if (leido.renglones.length !== 1 + fibras.length) throw new Corte("revisar", `La NP tiene ${leido.renglones.length} renglones: no se toca. Revisala en Zomatik.`, false, html)
+  const r = leido.renglones.find((x) => !fibras.includes(x))!
   const art = { codigo: d.articuloCodigo, nombre: d.articuloNombre }
   if ((art.codigo || art.nombre) && !esRenglonDe(r, art)) throw new Corte("revisar", `El renglón de la NP no es ${d.articuloNombre || "el artículo del pedido"}: no se toca. Revisala en Zomatik.`, false, html)
   const cantidad = numeroZomatik(r.cantidad)
   if (cantidad === null || !(cantidad > 0)) throw new Corte("revisar", "No se pudo leer la cantidad de la NP. No se tocó: revisala.", false, html)
-  return { pagina: a, form: a.form, accion, renglon: r, det: leido.det, cantidad, fila: await filaNp(nav, d) }
+  const fibraRenglon = fibras[0] ?? null
+  const fibraCantidad = fibraRenglon ? numeroZomatik(fibraRenglon.cantidad) : null
+  if (fibraRenglon && (fibraCantidad === null || fibraCantidad < 0)) throw new Corte("revisar", `No se pudo leer la cantidad de ${d.fibra!.nombre} de la NP. No se tocó: revisala.`, false, html)
+  return { pagina: a, form: a.form, accion, renglon: r, renglones: leido.renglones, fibraRenglon, fibraCantidad, det: leido.det, cantidad, fila: await filaNp(nav, d) }
 }
 
 /** Los comprobantes de la NP (señal B, solo lectura). null si no se pudieron leer: entonces decide solo el detalle. */
@@ -880,15 +955,24 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     await o.alPaso?.(p)
   }
   const igual = (a: number, b: number) => Math.abs(a - b) <= TOL_AJUSTE
+  const fb = d.fibra ?? null
+  /** ¿La lectura ya está en el objetivo? (el hormigón y, si lleva, la fibra) */
+  const enObjetivo = (x: { cantidad: number; fibraCantidad: number | null }) => igual(x.cantidad, d.objetivo) && (!fb || (x.fibraCantidad !== null && igual(x.fibraCantidad, fb.kgObjetivo)))
+  const fibraOk = fb ? { fibraKg: fb.kgObjetivo } : {}
   let leidoAntes: number | null = null
   try {
     if (!(d.objetivo > 0)) return { estado: "revisar", mensaje: "La NP quedaría en 0 m³: no se toca (la decide una persona).", paso }
+    // La fibra: nunca en 0 (sacar el renglón lo decide una persona) ni fuera del tope (Bautista 25/11)
+    if (fb && !(fb.kgObjetivo > 0)) return { estado: "revisar", mensaje: `La NP quedaría sin ${fb.nombre}: no se toca. Sacala a mano en Zomatik si corresponde.`, paso }
+    if (fb && !fibraValida(fb.kgObjetivo / d.objetivo)) return { estado: "revisar", mensaje: msjFibraFueraDeTope(fb.kgObjetivo / d.objetivo, FIBRA_MAX_KG_M3), paso }
     await marcar("leer_np")
     const l = await leerNpParaAjuste(nav, d, { azar })
     leidoAntes = l.cantidad
     // Un corte anterior en el Grabar: lo que dice Zomatik ahora manda
-    if (d.cortado && igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true, porAutorizar: l.fila?.porAutorizar ?? null }
+    if (d.cortado && enObjetivo(l)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalDespues: l.fila?.total ?? null, yaEstaba: true, porAutorizar: l.fila?.porAutorizar ?? null, ...fibraOk }
     if (!igual(l.cantidad, d.m3Np)) return { estado: "revisar", mensaje: msjNpCambio(l.cantidad, d.m3Np), paso, leido: l.cantidad }
+    if (fb && l.fibraCantidad !== null && !igual(l.fibraCantidad, fb.kgNp))
+      return { estado: "revisar", mensaje: `La fibra de la NP cambió en Zomatik (tiene ${m3Texto(l.fibraCantidad)} kg y el sistema esperaba ${m3Texto(fb.kgNp)}). No se tocó: revisala.`, paso, leido: l.cantidad }
     await marcar("leer_factura")
     const f = facturaDeNp({ detalleHtml: l.det?.html ?? null, renglon: l.renglon, filaEstado: l.fila?.estado ?? null, comprobantes: await comprobantesNp(nav, d.codigo, azar) })
     if (f.estado === "con") return { estado: "con_factura", mensaje: null, paso, leido: l.cantidad, facturaTexto: f.motivo, facturaNumero: f.numero ?? null }
@@ -897,11 +981,14 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     // El total grabado de antes (para ver que quedó en proporción): sin la fila del listado no se sigue
     if (!l.fila || l.fila.total === null) return { estado: "revisar", mensaje: `No se encontró la ${d.numero} en el listado de pedidos de REBUCRET. No se tocó: revisala.`, paso, leido: l.cantidad }
     const totalAntes = l.fila.total
-    if (igual(l.cantidad, d.objetivo)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true, porAutorizar: l.fila.porAutorizar }
+    if (enObjetivo(l)) return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: totalAntes, yaEstaba: true, porAutorizar: l.fila.porAutorizar, ...fibraOk }
 
     await marcar("decidir")
     await marcar("editar_detalle")
-    const rs = [conCantidad(l.renglon, d.objetivo)]
+    // El hormigón en el objetivo y, si lleva, la fibra en sus kg (los demás campos como están)
+    const rs = l.renglones.map((r) => (r === l.renglon ? conCantidad(r, d.objetivo) : r === l.fibraRenglon && fb ? conCantidad(r, fb.kgObjetivo) : r))
+    // Para ver que el total quedó en proporción: con un renglón, las cantidades (como siempre); con fibra, los subtotales
+    const [baseAntes, baseDespues] = l.fibraRenglon ? [subtotalRenglones(l.renglones) ?? 0, subtotalRenglones(rs) ?? 0] : [l.cantidad, d.objetivo]
     await marcar("grabar_np")
     grabado = true
     await aRebucret(nav)
@@ -917,14 +1004,14 @@ export async function ajustarCantidadNp(nav: NavegadorNp, d: DatosAjuste, o: Opc
     } catch (e) {
       if (!(e instanceof Corte)) throw e
     }
-    if (v && igual(v.cantidad, d.objetivo)) {
+    if (v && enObjetivo(v)) {
       const despues = v.fila?.total ?? null
-      if (despues !== null && totalProporcional(totalAntes, l.cantidad, despues, d.objetivo))
-        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, porAutorizar: v.fila?.porAutorizar ?? null }
+      if (despues !== null && totalProporcional(totalAntes, baseAntes, despues, baseDespues))
+        return { estado: "ok", mensaje: null, paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, porAutorizar: v.fila?.porAutorizar ?? null, ...fibraOk }
       // Sin montos en el mensaje (lo ve Programación y Despacho): los totales van en totalAntes / totalDespues (Actividad y mail)
       return { estado: "revisar", mensaje: msjTotalNoCerro(d.objetivo), paso, leido: l.cantidad, totalAntes, totalDespues: despues, grabado: true, recorte: recorte(g.html) }
     }
-    if (v && igual(v.cantidad, l.cantidad)) {
+    if (v && igual(v.cantidad, l.cantidad) && (!fb || v.fibraCantidad === l.fibraCantidad)) {
       if (no && rechazoPorFactura(no)) return { estado: "con_factura", mensaje: null, paso: "grabar_np", leido: l.cantidad, facturaTexto: `Zomatik contestó: ${no}`, recorte: recorte(g.html) }
       if (no) return { estado: "error", mensaje: msjZomatikNoDejo(no), paso: "grabar_np", leido: l.cantidad, recorte: recorte(g.html) }
       return { estado: "revisar", mensaje: `Se grabó pero la NP sigue en ${m3Texto(l.cantidad)} m³. Revisala en Zomatik.`, paso, leido: l.cantidad, grabado: true, recorte: recorte(g.html) }
