@@ -28,7 +28,8 @@ import { AddCarrierDialog } from "./add-carrier-dialog"
 import { Card, CardContent } from "@/components/ui/card"
 import { claveMaterial, fechaArgentina, normalizarRemito, sumarDias } from "@/lib/control-ingresos/cruce"
 import { TIPOS_IMPORTABLES } from "@/lib/ingresos-zomatik/plan"
-import { avisoToneladas, remitoRepetido } from "@/lib/ingresos/validar"
+import { avisoCantidadRara, avisoToneladas, remitoRepetido, type IngresoPrevio } from "@/lib/ingresos/validar"
+import { ultimosIngresos } from "@/lib/ingresos/historial"
 import { crearMuestraGranulometria, grabarExcedente, insertarIngresoManual, moverStockSeco } from "@/lib/ingresos/muestras"
 import { usePermisos } from "@/lib/current-user"
 
@@ -80,6 +81,12 @@ export function AddStockEntryDialog({
   const [kgConfirmados, setKgConfirmados] = useState(false)
   /** Remito que la persona confirmó que es otro camión (mismo número, a uno le falta el punto de venta). */
   const [remitoConfirmado, setRemitoConfirmado] = useState("")
+  /** Últimos ingresos del material elegido, para el aviso de cantidad rara (lib/ingresos/validar.ts). */
+  const [historial, setHistorial] = useState<IngresoPrevio[]>([])
+  /** Cantidad muy distinta a los últimos ingresos que la persona confirmó ("Sí, es correcto"). */
+  const [cantidadConfirmada, setCantidadConfirmada] = useState<number | null>(null)
+  /** Mientras se escribe la cantidad no se muestra el aviso de cantidad rara (saltaría con cada número). */
+  const [escribiendoCantidad, setEscribiendoCantidad] = useState(false)
   const [formData, setFormData] = useState({
     material_id: "",
     quantity: "",
@@ -123,6 +130,16 @@ export function AddStockEntryDialog({
     }
 
     loadSuppliers()
+  }, [formData.material_id])
+
+  useEffect(() => {
+    setHistorial([])
+    if (!formData.material_id) return
+    let vivo = true
+    ultimosIngresos(createClient() as any, formData.material_id).then((h) => vivo && setHistorial(h))
+    return () => {
+      vivo = false
+    }
   }, [formData.material_id])
 
   useEffect(() => {
@@ -178,6 +195,16 @@ export function AddStockEntryDialog({
         variant: "destructive",
         title: avisoT.titulo,
         description: `${avisoT.texto} Tocá "Pasar a kg" o confirmá que son kg.`,
+      })
+      return
+    }
+    // Muy distinta a los últimos ingresos del material (si aplica el de toneladas, ese va primero y este no salta)
+    const avisoR = avisoCantidadRara(selectedMaterial, cantidad, historial, formData.supplier_id)
+    if (avisoR && cantidadConfirmada !== cantidad) {
+      toast({
+        variant: "destructive",
+        title: avisoR.titulo,
+        description: `${avisoR.texto} Tocá "Sí, es correcto" o corregí la cantidad.`,
       })
       return
     }
@@ -374,6 +401,7 @@ export function AddStockEntryDialog({
       })
       setKgConfirmados(false)
       setRemitoConfirmado("")
+      setCantidadConfirmada(null)
       setOpen(false)
       router.refresh()
       onSuccess?.()
@@ -567,6 +595,8 @@ export function AddStockEntryDialog({
                   setFormData({ ...formData, quantity: e.target.value })
                   setKgConfirmados(false)
                 }}
+                onFocus={() => setEscribiendoCantidad(true)}
+                onBlur={() => setEscribiendoCantidad(false)}
                 placeholder="0"
                 required
               />
@@ -592,6 +622,35 @@ export function AddStockEntryDialog({
                     </Button>
                     <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setKgConfirmados(true)}>
                       No, son kg
+                    </Button>
+                  </div>
+                )
+              })()}
+              {(() => {
+                const c = Number.parseFloat(formData.quantity)
+                const aviso = avisoCantidadRara(selectedMaterial, c, historial, formData.supplier_id)
+                if (!aviso || escribiendoCantidad || cantidadConfirmada === c) return null
+                return (
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    <span>
+                      <strong>{aviso.titulo}</strong> {aviso.texto}
+                    </span>
+                    <Button type="button" size="sm" className="h-6 px-2 text-xs" onClick={() => setCantidadConfirmada(c)}>
+                      Sí, es correcto
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => {
+                        const input = document.getElementById("quantity") as HTMLInputElement | null
+                        input?.focus()
+                        input?.select()
+                      }}
+                    >
+                      Corregir
                     </Button>
                   </div>
                 )

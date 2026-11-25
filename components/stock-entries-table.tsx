@@ -17,7 +17,8 @@ import { usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { IngresoMuestrasDialog } from "@/components/ingreso-muestras-dialog"
 import { esArenaFina } from "@/lib/ingresos/muestras"
-import { avisoToneladas } from "@/lib/ingresos/validar"
+import { avisoCantidadRara, avisoToneladas, type IngresoPrevio } from "@/lib/ingresos/validar"
+import { ultimosIngresos } from "@/lib/ingresos/historial"
 
 type Material = {
   id: string
@@ -70,6 +71,12 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   const [saving, setSaving] = useState(false)
   /** Cantidad chica (¿toneladas?) que la persona confirmó que son kg al editar: se guarda con el segundo toque. */
   const [kgEditConfirmados, setKgEditConfirmados] = useState<number | null>(null)
+  /** Últimos ingresos del material del ingreso que se edita (sin él), para el aviso de cantidad rara. */
+  const [historialEdit, setHistorialEdit] = useState<IngresoPrevio[]>([])
+  /** Cantidad muy distinta a los últimos ingresos que la persona confirmó ("Sí, es correcto") al editar. */
+  const [cantidadEditConfirmada, setCantidadEditConfirmada] = useState<number | null>(null)
+  /** Mientras se escribe la cantidad no se muestra el aviso de cantidad rara. */
+  const [escribiendoEdit, setEscribiendoEdit] = useState(false)
   const { toast } = useToast()
   // Fase 0c-1: editar y borrar ingresos según el permiso, con motivo
   const { puede } = usePermisos()
@@ -105,6 +112,23 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       vivo = false
     }
   }, [idsClave])
+
+  // Historial del material del ingreso que se edita (lo de Zomatik no cambia de cantidad acá: no hace falta)
+  const idEditando = editingEntry && editingEntry.origen !== "zomatik" ? editingEntry.id : null
+  const materialEditando = editingEntry ? editingEntry.material_id || editingEntry.materials?.id : null
+  useEffect(() => {
+    setHistorialEdit([])
+    if (!idEditando || !materialEditando) return
+    let vivo = true
+    ultimosIngresos(createClient() as any, materialEditando, { excluirId: idEditando }).then((h) => vivo && setHistorialEdit(h))
+    return () => {
+      vivo = false
+    }
+  }, [idEditando, materialEditando])
+
+  /** Aviso de cantidad rara al editar: solo si se cambió la cantidad. */
+  const avisoRaraEdit = (e: StockEntry, c: number) =>
+    Math.abs(c - e.quantity) > 0.0001 ? avisoCantidadRara(e.materials, c, historialEdit, e.supplier_id) : null
 
   async function handleDelete(motivoBorrado: string) {
     if (!deleteEntry || !puedeBorrar) return
@@ -205,6 +229,17 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       toast({
         title: avisoT.titulo,
         description: `${avisoT.texto} Si de verdad son kg, tocá Guardar de nuevo.`,
+        variant: "destructive",
+      })
+      setSaving(false)
+      return
+    }
+    // Muy distinta a los últimos ingresos del material (si aplica el de toneladas, ese va primero y este no salta)
+    const avisoR = avisoRaraEdit(editingEntry, newQuantity)
+    if (avisoR && cantidadEditConfirmada !== newQuantity) {
+      toast({
+        title: avisoR.titulo,
+        description: `${avisoR.texto} Tocá "Sí, es correcto" o corregí la cantidad.`,
         variant: "destructive",
       })
       setSaving(false)
@@ -331,6 +366,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   function openEdit(entry: StockEntry) {
     setMotivo("")
     setKgEditConfirmados(null)
+    setCantidadEditConfirmada(null)
     setEditingEntry(entry)
     setEditQuantity(entry.quantity.toString())
     setEditRemito(entry.remito || "")
@@ -581,7 +617,15 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                   </div>
                   <div className="space-y-2">
                     <Label>Cantidad ({editingEntry.materials.unit})</Label>
-                    <Input type="number" step="0.01" value={editQuantity} onChange={(e) => setEditQuantity(e.target.value)} />
+                    <Input
+                      id="edit-quantity"
+                      type="number"
+                      step="0.01"
+                      value={editQuantity}
+                      onChange={(e) => setEditQuantity(e.target.value)}
+                      onFocus={() => setEscribiendoEdit(true)}
+                      onBlur={() => setEscribiendoEdit(false)}
+                    />
                     {(() => {
                       // El mismo aviso que al cargar y que el control de ingresos ("probable carga en toneladas")
                       const c = parseFloat(editQuantity)
@@ -598,6 +642,35 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                           </Button>
                           <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setKgEditConfirmados(c)}>
                             No, son kg
+                          </Button>
+                        </div>
+                      )
+                    })()}
+                    {(() => {
+                      const c = parseFloat(editQuantity)
+                      const aviso = avisoRaraEdit(editingEntry, c)
+                      if (!aviso || escribiendoEdit || cantidadEditConfirmada === c) return null
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>
+                            <strong>{aviso.titulo}</strong> {aviso.texto}
+                          </span>
+                          <Button type="button" size="sm" className="h-6 px-2 text-xs" onClick={() => setCantidadEditConfirmada(c)}>
+                            Sí, es correcto
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => {
+                              const input = document.getElementById("edit-quantity") as HTMLInputElement | null
+                              input?.focus()
+                              input?.select()
+                            }}
+                          >
+                            Corregir
                           </Button>
                         </div>
                       )
