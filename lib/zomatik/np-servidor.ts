@@ -33,7 +33,7 @@ import { MSJ_PRECIO_BLOQUEADO, precioBloqueado, precioValido, textoPrecio } from
 import { MAX_ESPERA_AUTORIZAR, MSJ_NI_AUTORIZAR_NI_REMITO, intentosAutorizar, msjNiAutorizarNiRemito } from "@/lib/zomatik/np"
 import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
 import { congelarPrecio, faltaMigracionPrecio, filaPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp, preciosFibra } from "@/lib/zomatik/precio-servidor"
-import { kgDeFibra, textoKg } from "@/lib/fibra"
+import { kgDeFibra, kgFibraDeMateriales, objetivoFibra, textoKg } from "@/lib/fibra"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -633,7 +633,7 @@ const distinto = (a: number | null | undefined, b: number | null | undefined) =>
  * crea "pendiente" (2 min). 23505 = otro proceso la creó: se relee. Devuelve cuántas creó o cambió.
  */
 async function aplicarEdiciones(
-  sb: SB, ped: PedidoDB, editar: { uso_id: string; np_id: string; m3_uso: number }[], usoPlan: UsoPlan[], ajustes: FilaEdicionDB[], usuario: string,
+  sb: SB, ped: PedidoDB, editar: { uso_id: string; np_id: string; m3_uso: number; porFibra?: boolean }[], usoPlan: UsoPlan[], ajustes: FilaEdicionDB[], usuario: string,
   log: (d: Record<string, unknown>, action?: "crear" | "editar") => Promise<void>,
 ): Promise<{ editadas: number; ultima: { numero: string | null; m3: number } | null }> {
   let editadas = 0
@@ -661,7 +661,7 @@ async function aplicarEdiciones(
         }
         break
       }
-      if (!distinto(o.m3_objetivo, np.m3) && !distinto(e.m3_uso, u.m3)) break
+      if (!distinto(o.m3_objetivo, np.m3) && !distinto(e.m3_uso, u.m3) && !e.porFibra) break
       const k = filas.filter((a) => a.scheduled_dispatch_id === ped.id && esEdicion(a)).length + 1
       const marca = marcaEdicion(ped.id, np, k)
       const { error } = await sb.from("zomatik_np_ajustes").insert({
@@ -683,6 +683,29 @@ async function aplicarEdiciones(
   }
   return { editadas, ultima }
 }
+
+/**
+ * Las NP del pedido a editar SOLO por la fibra (spec 2026-11-25): las que tienen fibra (`fibra_kg`), se pueden editar,
+ * no tienen ya una edición por m³ y cuya fibra objetivo (`fibraParaAjuste`) no es la que tienen. Nunca corta.
+ */
+async function edicionesPorFibra(sb: SB, ped: PedidoDB, usoPlan: UsoPlan[], yaEditar: { np_id: string }[]): Promise<{ uso_id: string; np_id: string; m3_uso: number; porFibra: true }[]> {
+  const out: { uso_id: string; np_id: string; m3_uso: number; porFibra: true }[] = []
+  for (const u of usoPlan) {
+    if (!u.editable || u.edicion?.fija || u.np.estado !== "ok" || yaEditar.some((e) => e.np_id === u.np.id)) continue
+    try {
+      const f0 = await fibraDeLaNp(sb, u.np as FilaNpDB)
+      if (!f0?.kgNp) continue // sin fibra: no se le agrega (lo avisa el despacho)
+      const o = objetivoEdicion({ ...(await datosObjetivo(sb, u.np.id, ped.id)), m3Uso: u.m3 })
+      if (!o.ok) continue
+      if (fibraCambia(await fibraParaAjuste(sb, u.np as FilaNpDB, { pedidoId: ped.id, m3Objetivo: o.m3_objetivo, m3Despachado: o.m3_despachado })))
+        out.push({ uso_id: u.uso_id, np_id: u.np.id, m3_uso: r3m(u.m3), porFibra: true })
+    } catch (e) {
+      console.error("[zomatik-np] edición por la fibra", ped.id, (e as Error)?.message)
+    }
+  }
+  return out
+}
+const r3m = (n: number) => Math.round(Number(n) * 1000) / 1000
 
 /**
  * Las ediciones abiertas del pedido que el plan ya no pide (volvió a los m³ de antes, se canceló, se desvinculó la NP
@@ -933,12 +956,16 @@ export async function sincronizarPedido(pedidoId: string, usuario: string, elecc
   // Editar la NP en Zomatik en vez de una NP adicional o de dejar saldo (spec 2026-11-18): queda "pendiente" 2 min
   let editadas = 0
   let edicion: { numero: string | null; m3: number } | null = null
-  if (conEdicion && !incompleto && plan.editar.length) ({ editadas, ultima: edicion } = await aplicarEdiciones(sb, ped, plan.editar, usoPlan, ctxEd.ajustes!, usuario, log))
+  // Cambió solo la fibra del pedido (Bautista 25/11, spec 2026-11-25 3.5): la NP con fibra también se edita, con la misma
+  // llave y el mismo camino que un cambio de m³
+  const editarFibra = conEdicion && !incompleto && ped.status !== "cancelled" ? await edicionesPorFibra(sb, ped, usoPlan, plan.editar) : []
+  const aEditar = [...plan.editar, ...editarFibra]
+  if (conEdicion && !incompleto && aEditar.length) ({ editadas, ultima: edicion } = await aplicarEdiciones(sb, ped, aEditar, usoPlan, ctxEd.ajustes!, usuario, log))
   // Las ediciones abiertas que el plan ya no pide se anulan (salvo las fijas). Un pedido completo no: lo resuelve el robot
   // (con el ajuste al finalizar prendido se anula; si no, termina igual)
   if (!incompleto && ped.status !== "completed") {
     try {
-      await anularEdicionesSobrantes(sb, ped, new Set(conEdicion ? plan.editar.map((e) => e.np_id) : []), log)
+      await anularEdicionesSobrantes(sb, ped, new Set(conEdicion ? aEditar.map((e) => e.np_id) : []), log)
     } catch (e) {
       // No rompe el guardado del pedido: la próxima sincronización lo vuelve a intentar
       console.error("[zomatik-np] anular ediciones", ped.id, (e as Error)?.message)
@@ -1381,29 +1408,89 @@ function detalleFibra(r: ResultadoNp, f: DatosNp["fibra"]): Record<string, unkno
 }
 
 /**
- * La fibra de una NP ya grabada, para el ajuste y la edición (null = la NP no tiene renglón de fibra, como todas las de
- * antes). Se lee aparte: sin la migración no existe `fibra_kg` y la NP sigue como siempre. El artículo, el de la planta
- * aunque la llave de la fibra se haya apagado después (la NP ya lo tiene).
+ * La fibra de una NP ya grabada, para el ajuste y la edición: el artículo (el de la planta, aunque la llave de la fibra
+ * se haya apagado después) y los kg que el sistema cree que tiene (`kgNp`, null = sin fibra). null si no se sabe el
+ * artículo. Se lee aparte: sin la migración no existe `fibra_kg` y la NP sigue como siempre.
  */
-export async function fibraDeLaNp(sb: SB, np: { id: string; plant_id?: string | null }): Promise<{ codigo: number; nombre: string; kgNp: number } | null> {
+export async function fibraDeLaNp(sb: SB, np: { id: string; plant_id?: string | null }): Promise<{ codigo: number; nombre: string; kgNp: number | null } | null> {
   const { data, error } = await sb.from("zomatik_np").select("fibra_kg").eq("id", np.id).maybeSingle()
   if (error) return null
-  const kg = (data as { fibra_kg?: number | string | null } | null)?.fibra_kg
-  if (kg === null || kg === undefined || !(Number(kg) >= 0)) return null
-  const { data: c } = np.plant_id ? await sb.from("zomatik_np_config").select("fibra_articulo").eq("plant_id", np.plant_id).maybeSingle() : { data: null }
-  const codigo = Number((c as { fibra_articulo?: number | null } | null)?.fibra_articulo) || 0
+  const kg = Number((data as { fibra_kg?: number | string | null } | null)?.fibra_kg)
+  const { data: c, error: ec } = np.plant_id ? await sb.from("zomatik_np_config").select("fibra_articulo").eq("plant_id", np.plant_id).maybeSingle() : { data: null, error: null }
+  const codigo = ec ? 0 : Number((c as { fibra_articulo?: number | null } | null)?.fibra_articulo) || 0
   if (!codigo) return null
   const { data: a } = await sb.from("zomatik_articulos").select("nombre").eq("codigo", codigo).maybeSingle()
-  return { codigo, nombre: (a as { nombre?: string } | null)?.nombre || "MACRO FIBRA", kgNp: Number(kg) }
+  return { codigo, nombre: (a as { nombre?: string } | null)?.nombre || "MACRO FIBRA", kgNp: kg > 0 ? kg : null }
 }
 
-/** Guarda los kg de fibra que quedaron en la NP (zomatik_np.fibra_kg). Nunca corta: sin la migración solo lo anota. */
+/** La fibra para el robot del ajuste / la edición (`DatosAjuste.fibra`). `kgObjetivo` null = la fibra no se toca. */
+export type FibraAjuste = { codigo: number; nombre: string; kgNp: number | null; kgObjetivo: number | null }
+
+/**
+ * La fibra que tiene que quedar en una NP que se ajusta o se edita (spec 2026-11-25, 3.5, `objetivoFibra`): la cargada
+ * de verdad en los camiones del pedido (dispatch_materials, material tipo fibra) que le tocan a la NP, más la
+ * dosificación de ahora por los m³ que faltan, nunca menos de lo ya remitido. Solo si la NP tiene fibra (`fibra_kg`):
+ * a una NP sin fibra no se le agrega (eso lo avisa el despacho). Si no se puede calcular, la fibra no se toca.
+ */
+export async function fibraParaAjuste(sb: SB, np: { id: string; plant_id?: string | null }, o: { pedidoId: string | null; m3Objetivo: number; m3Despachado: number }): Promise<FibraAjuste | null> {
+  const f = await fibraDeLaNp(sb, np)
+  if (!f) return null
+  if (f.kgNp === null || !o.pedidoId) return { ...f, kgObjetivo: null }
+  try {
+    const [{ data: ped, error: e1 }, { data: ds, error: e2 }, { data: rms, error: e3 }] = await Promise.all([
+      sb.from("scheduled_dispatches").select("fiber_kg_per_m3").eq("id", o.pedidoId).maybeSingle(),
+      sb.from("dispatches").select("quantity_m3, is_test_dispatch, dispatch_materials(quantity, materials(tipo))").eq("scheduled_dispatch_id", o.pedidoId),
+      sb.from("zomatik_remitos").select("fibra_kg").eq("np_id", np.id).eq("remito_estado", "ok"),
+    ])
+    if (e1 || e2 || e3) throw e1 || e2 || e3
+    type D = { quantity_m3: number | string | null; is_test_dispatch?: boolean | null; dispatch_materials?: { quantity?: number | string | null; materials?: { tipo?: string | null } | null }[] | null }
+    const vivos = ((ds as D[]) || []).filter((d) => !d.is_test_dispatch)
+    return {
+      ...f,
+      kgObjetivo: objetivoFibra({
+        kgM3: Number((ped as { fiber_kg_per_m3?: number | null } | null)?.fiber_kg_per_m3) || 0,
+        m3Objetivo: o.m3Objetivo,
+        m3Despachado: o.m3Despachado,
+        fibraPedido: vivos.reduce((t, d) => t + kgFibraDeMateriales(d.dispatch_materials), 0),
+        m3Pedido: vivos.reduce((t, d) => t + (Number(d.quantity_m3) || 0), 0),
+        fibraRemitida: ((rms as { fibra_kg?: number | string | null }[]) || []).reduce((t, r) => t + (Number(r.fibra_kg) || 0), 0),
+      }),
+    }
+  } catch (e) {
+    console.error("[zomatik-np] fibra para ajustar", np.id, (e as Error)?.message)
+    return { ...f, kgObjetivo: null }
+  }
+}
+
+/** ¿Hay que cambiar la fibra de la NP? */
+export const fibraCambia = (f: FibraAjuste | null | undefined) => !!f && f.kgObjetivo !== null && Math.abs(f.kgObjetivo - (f.kgNp ?? 0)) > TOL_AJUSTE
+
+/** Guarda los kg de fibra que quedaron en la NP (zomatik_np.fibra_kg; 0 = sin fibra = nulo). Nunca corta. */
 export async function guardarFibraNp(sb: SB, npId: string, kg: number | null): Promise<void> {
   try {
-    const { error } = await sb.from("zomatik_np").update({ fibra_kg: kg } as never).eq("id", npId)
+    const { error } = await sb.from("zomatik_np").update({ fibra_kg: kg !== null && kg > 0 ? Math.round(kg * 1000) / 1000 : null } as never).eq("id", npId)
     if (error) console.error("[zomatik-np] fibra de la NP:", error.message)
   } catch (e) {
     console.error("[zomatik-np] fibra de la NP:", (e as Error)?.message)
+  }
+}
+
+/**
+ * Un problema con la fibra de una NP (spec 2026-11-25): Actividad y mail a Bautista UNA sola vez por NP
+ * (`zomatik_np.fibra_aviso_at`, se marca antes de avisar). Nunca corta.
+ */
+export async function avisarFibraNp(sb: SB, avisar: AvisarFn, o: { npId: string; numero: string | null; marca: string; usuario: string; pedidoId: string | null; plantId: string | null; titulo: string; mensaje: string; lineas?: string[] }): Promise<boolean> {
+  try {
+    const { data, error } = await sb.from("zomatik_np").update({ fibra_aviso_at: new Date().toISOString() } as never).eq("id", o.npId).is("fibra_aviso_at", null).select("id")
+    if (error || !((data as unknown[]) || []).length) return false
+    const ref = `Pedido ${(o.pedidoId || "").slice(0, 8)}`
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: ref, detalle: { "Qué pasó": o.titulo, Mensaje: o.mensaje, NP: o.numero, Marca: o.marca } })
+    const r = await avisar(sb, `${o.titulo} · ${o.numero || ref}`, [ref, o.mensaje, ...(o.lineas || []), `NP: ${o.numero || "?"}`, `Marca: ${o.marca}`, "Este aviso llega una sola vez por NP."])
+    if (!r.enviado) console.error("[zomatik-np] aviso de la fibra:", r.motivo)
+    return true
+  } catch (e) {
+    console.error("[zomatik-np] aviso de la fibra", o.npId, (e as Error)?.message)
+    return false
   }
 }
 
@@ -2003,6 +2090,8 @@ export type EstadoPedidoNp = {
   activo: boolean
   /** La llave de la edición de la NP de la planta del pedido (spec 2026-11-18). */
   editar: boolean
+  /** La llave de la fibra de la planta (spec 2026-11-25): con ella, el despacho avisa si la NP no tiene la fibra. */
+  fibra?: boolean
   modo: ModoNp
   /** El pedido entra en la NP automática (cargado después de prender la llave). */
   entra: boolean
@@ -2010,7 +2099,7 @@ export type EstadoPedidoNp = {
    * Las NP que usa el pedido (con los m³ que reserva de cada una, lo libre de la NP y si es traída de Zomatik). Con la
    * llave de la edición: si se puede editar cuando el pedido cambia y su última edición (spec 2026-11-18).
    */
-  nps: (FilaNpDB & { m3_uso: number; libre: number; traida: boolean; editable?: boolean; edicion?: EdicionNpEstado | null })[]
+  nps: (FilaNpDB & { m3_uso: number; libre: number; traida: boolean; editable?: boolean; edicion?: EdicionNpEstado | null; fibra_kg?: number | null })[]
   /** El pedido está cancelado o completo: sus NP con saldo van a "NP con saldo". */
   cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
@@ -2050,6 +2139,12 @@ export async function estadoPedidos(ids: string[], sb: SB = sbServicio()): Promi
       return { ajustes: null, activos: new Map<string, Set<string>>() }
     }),
   ])
+  // La fibra de cada NP (spec 2026-11-25): aparte, así sin la migración la pantalla sigue igual (sin el dato)
+  const fibraKg = new Map<string, number | null>()
+  if (nps.length && Object.values(plantas).some((p) => !!fibraDe(p))) {
+    const { data: fk, error: efk } = await sb.from("zomatik_np").select("id, fibra_kg").in("id", nps.map((x) => x.id))
+    if (!efk) for (const x of (fk as { id: string; fibra_kg: number | string | null }[]) || []) fibraKg.set(x.id, Number(x.fibra_kg) > 0 ? Number(x.fibra_kg) : null)
+  }
   const num = (n: number | null) => (n === null || n === undefined ? null : Number(n))
   const ultimaEdicion = (npId: string, pedidoId: string): EdicionNpEstado | null => {
     const a = (ctxEd.ajustes || []).filter((x) => x.np_id === npId && x.scheduled_dispatch_id === pedidoId && esEdicion(x) && x.estado !== "anulado").sort((x, y) => y.created_at.localeCompare(x.created_at))[0]
@@ -2064,7 +2159,7 @@ export async function estadoPedidos(ids: string[], sb: SB = sbServicio()): Promi
       .map((u) => {
         const x = nps.find((n) => n.id === u.np_id)
         if (!x) return null
-        const base = { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca) }
+        const base = { ...x, m3_uso: Number(u.m3), libre: Math.max(0, saldos.get(x.id)?.libre ?? 0), traida: esNpTraida(x.marca), fibra_kg: fibraKg.get(x.id) ?? null }
         if (ctxEd.ajustes === null) return base
         return { ...base, editable: !!llaveEdicion(planta) && editableDe(planta, x, p.id, ctxEd).editable, edicion: ultimaEdicion(x.id, p.id) }
       })
@@ -2074,6 +2169,7 @@ export async function estadoPedidos(ids: string[], sb: SB = sbServicio()): Promi
     porPedido[p.id] = {
       activo: !!planta?.zomatik_np_activo,
       editar: !!llaveEdicion(planta),
+      fibra: !!fibraDe(planta),
       modo,
       entra,
       nps: suyas,

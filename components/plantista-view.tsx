@@ -32,6 +32,8 @@ import { cancelarPedido as cancelarPedidoAbierto } from "@/lib/programacion-acci
 // Fase 3: el distintivo "Suspendido" (se suspende desde la pantalla nueva; la base no deja despacharlo)
 import { textoMotivo } from "@/lib/despacho"
 import { errorFibraKgM3, fibraKgM3, kgDeFibra, textoBolsitas, textoFibraCamion, textoKg } from "@/lib/fibra"
+import { estadoNpDePedido, type EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
+import { FibraNpAviso } from "@/components/despacho/fibra-np-aviso"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -95,6 +97,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
 
   // Dispatch dialog state
   const [dispatchDialog, setDispatchDialog] = useState<ScheduledDispatch | null>(null)
+  // La NP del pedido (para avisar si no tiene la fibra, spec 2026-11-25). Solo si el pedido lleva fibra
+  const [npDelDialogo, setNpDelDialogo] = useState<EstadoPedidoNp | null>(null)
   const [dispatchForm, setDispatchForm] = useState({
     quantity_m3: "",
     mixer_id: "",
@@ -430,6 +434,8 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       fiberKgPerM3: pedido.fiber_kg_per_m3 != null ? String(pedido.fiber_kg_per_m3) : "",
     })
     setDispatchDialog(pedido)
+    setNpDelDialogo(null)
+    if (Number(pedido.fiber_kg_per_m3) > 0) estadoNpDePedido(pedido.id).then(setNpDelDialogo).catch(() => {})
     setChoferTocado(false)
     loadLastSampleNumber()
     // Chofer por defecto: el del último viaje de ese camión hoy (se puede cambiar: rotan)
@@ -1075,6 +1081,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
               </div>
 
               {/* Fibra: se carga por m³ y el sistema calcula el total del camión */}
+              {dispatchDialog && npDelDialogo && <FibraNpAviso estado={npDelDialogo} kgM3={Number(dispatchDialog.fiber_kg_per_m3) || 0} />}
               <div className="rounded-lg border p-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">

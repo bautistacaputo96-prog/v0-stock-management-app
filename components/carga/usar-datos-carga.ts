@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { cargarContexto, cargarFormulas, cargarPuesto, type Contexto, type Puesto } from "@/lib/carga/datos"
 import type { FormulaSistema } from "@/lib/carga/tipos"
+import { kgFibraDeMateriales } from "@/lib/fibra"
 
 export const ESTADOS_COLA = ["pendiente", "bloqueada", "lista", "preparada"]
 export const ESTADOS_PLANTA = ["en_curso", "suspendida", "parada"]
@@ -120,7 +121,7 @@ export function usarDatosCarga(plantId: string, cadaMs: number) {
     for (const f of filas) {
       const d = f.dispatch_id ? porD.get(f.dispatch_id) : null
       // Fibra del camión (25/11): la que guardó el despacho (material tipo fibra), para mostrar kg y bolsitas
-      const fibraKg = ((d?.dispatch_materials || []) as any[]).filter((m) => m.materials?.tipo === "fibra").reduce((t, m) => t + (Number(m.quantity) || 0), 0)
+      const fibraKg = kgFibraDeMateriales(d?.dispatch_materials)
       f.despacho = d ? { created_at: d.created_at, dispatch_date: d.dispatch_date, quantity_m3: Number(d.quantity_m3), cliente: d.clients?.name || "", obra: d.construction_sites?.name || "", fibra_kg: fibraKg } : null
       f.salida_gps = f.dispatch_id ? salida.get(f.dispatch_id) || null : null
     }

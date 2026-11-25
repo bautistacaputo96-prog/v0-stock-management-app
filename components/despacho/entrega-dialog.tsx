@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { NpAviso } from "./np-aviso"
+import { FibraNpAviso } from "./fibra-np-aviso"
 import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { currentUserName } from "@/lib/current-user"
@@ -303,6 +304,7 @@ export function EntregaDialog({
 
           {/* Zomatik Z2: NP pendiente (en rojo) y excepción gerencial */}
           <NpAviso pedidoId={p.id} estado={np} onCambio={() => onNp?.()} />
+          <FibraNpAviso estado={np} kgM3={Number(p.fiber_kg_per_m3) || 0} />
 
           {/* Tipo de remito: R (con factura) / X (sin factura) */}
           {cargando && !form.tipo ? (

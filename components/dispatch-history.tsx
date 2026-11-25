@@ -27,7 +27,7 @@ import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
 import { rangoDiasAR } from "@/lib/despacho"
-import { errorFibraKgM3, fibraKgM3, kgDeFibra, textoBolsitas, textoKg } from "@/lib/fibra"
+import { errorFibraKgM3, fibraKgM3, kgDeFibra, kgFibraDeMateriales, textoBolsitas, textoKg } from "@/lib/fibra"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
 type Plant = { id: string; name: string }
@@ -246,7 +246,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       .from("dispatches")
       // "*" (y el pedido con "*") para que las columnas de la fase 1 (chofer_id, finalidad) vengan
       // cuando la migración está aplicada, sin romper la consulta si todavía no lo está.
-      .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
+      .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit, tipo)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
       // Días de Argentina (sin el -03:00 la base los toma en UTC y los despachos de 21 a 24 h caían en el día siguiente)
       .gte("dispatch_date", rangoDiasAR(dateFrom, dateTo).desde)
       .lte("dispatch_date", rangoDiasAR(dateFrom, dateTo).hasta)
@@ -268,10 +268,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           (d.dispatch_materials || [])
             .filter((dm: any) => isSuperplasticizer(dm.materials?.name))
             .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
-        fiber_kg:
-          (d.dispatch_materials || [])
-            .filter((dm: any) => /fibra/i.test(dm.materials?.name || ""))
-            .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
+        // Fibra: por el tipo del material, como registrar_despacho y el remito de Zomatik (lib/fibra.ts)
+        fiber_kg: kgFibraDeMateriales(d.dispatch_materials) || null,
         scheduled_arrival_time: d.dispatch_date,
         scheduled_departure_time: d.dispatch_date,
         actual_departure_time: d.dispatch_date,

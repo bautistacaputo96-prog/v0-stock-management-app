@@ -25,6 +25,7 @@ import { usePermisos } from "@/lib/current-user"
 import { puedeCon, puedeVincularDesdePedido } from "@/lib/permisos"
 import { MSJ_LISTA_SIN_REMITO, MSJ_PRECIO_INVALIDO, MSJ_TRAER, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
 import { fibraValida, kgDeFibra, textoBolsitas, textoKg } from "@/lib/fibra"
+import { FibraNpAviso } from "@/components/despacho/fibra-np-aviso"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -384,6 +385,8 @@ export function NpBloque({
       )}
 
       {puedePrecio && usable && <LineaPrecio info={infoPrecio!} valor={valor} precio={precio!} onPrecio={onPrecio!} editable={editable} lista={precioLista} actualizando={actualizando} onActualizar={actualizarLista} aviso={avisoActualizar} />}
+      {/* La NP ya está hecha sin la fibra del pedido (spec 2026-11-25): a la vista de quien programa */}
+      <FibraNpAviso estado={estado} kgM3={fibraKgM3 ?? 0} />
       {puedePrecio && usable && infoPrecio!.fibra && fibraValida(fibraKgM3 ?? 0) && valor.tipo !== "saldo" && (
         <LineaFibra fibra={infoPrecio!.fibra} kg={kgDeFibra(fibraKgM3 ?? 0, m3)} proyecto={valor.tipo === "proyecto"} actualizando={actualizando} onActualizar={actualizarLista} />
       )}

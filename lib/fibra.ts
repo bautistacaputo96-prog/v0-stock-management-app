@@ -9,9 +9,12 @@
 /** Más de esto por m³ es un error de carga (la dosificación real es de unos pocos kg/m³). */
 export const FIBRA_MAX_KG_M3 = 20
 
+/** Un número escrito entero: "0,8", "0.8", "12" (no "0.8abc", "1e3" ni "-1"). */
+const NUMERO = /^\d+(?:[.,]\d+)?$/
 const n = (v: unknown) => {
-  const x = typeof v === "number" ? v : parseFloat(String(v ?? "").replace(",", "."))
-  return Number.isFinite(x) ? x : NaN
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN
+  const t = String(v ?? "").trim()
+  return NUMERO.test(t) ? Number(t.replace(",", ".")) : NaN
 }
 
 /** "2,5" / 2.5 / "" → número (0 si está vacío o no se entiende). */
@@ -25,9 +28,13 @@ export function errorFibraKgM3(v: unknown): string | null {
   const t = String(v ?? "").trim()
   if (!t) return null
   const x = n(t)
-  if (!Number.isFinite(x) || x < 0) return "La fibra tiene que ser un número de kg por m³ (por ejemplo 3)."
-  if (x > FIBRA_MAX_KG_M3)
-    return `${textoKg(x)} kg de fibra por m³ es demasiado: la macro fibra va de a pocos kg por m³ (como mucho ${FIBRA_MAX_KG_M3}). Revisá el número: es por m³, no por camión ni por pedido.`
+  if (!Number.isFinite(x) || x < 0) return "La fibra tiene que ser un número de kg por m³ (por ejemplo 0,8)."
+  if (x > FIBRA_MAX_KG_M3) {
+    // 800 (gramos) en vez de 0,8 (kg): el error más común (25/11)
+    const kg = x / 1000
+    const sugerencia = kg <= FIBRA_MAX_KG_M3 ? ` ¿Quisiste poner ${textoKg(kg)} kg/m³? (${textoKg(x)} gramos = ${textoKg(kg)} kg)` : ""
+    return `${textoKg(x)} kg de fibra por m³ es demasiado: la macro fibra va de a pocos kg por m³ (como mucho ${FIBRA_MAX_KG_M3}). Revisá el número: es en kg y por m³, no por camión ni por pedido.${sugerencia}`
+  }
   return null
 }
 
@@ -73,8 +80,40 @@ export function textoFibraCamion(kgM3: number, m3: number): string {
   return kg > 0 ? `${textoKg(kg)} kg = ${textoBolsitas(kg)}` : ""
 }
 
-/** La fibra que tiene que quedar en una NP que pasa de `m3Np` a `objetivo` m³: en la misma proporción que tiene hoy. */
-export function fibraObjetivo(kgNp: number, m3Np: number, objetivo: number): number {
-  if (!(kgNp > 0) || !(m3Np > 0) || !(objetivo > 0)) return 0
-  return Math.round(((Number(kgNp) * Number(objetivo)) / Number(m3Np)) * 1000) / 1000
+/** ¿Es el material de la fibra? Por el tipo del material (`materials.tipo = 'fibra'`), como `registrar_despacho`. */
+export function esMaterialFibra(m: { tipo?: string | null } | null | undefined): boolean {
+  return m?.tipo === "fibra"
+}
+
+/** kg de fibra de los materiales de un despacho (dispatch_materials con su material). */
+export function kgFibraDeMateriales(ms: { quantity?: number | string | null; materials?: { tipo?: string | null } | null }[] | null | undefined): number {
+  return Math.round((ms || []).filter((m) => esMaterialFibra(m.materials)).reduce((t, m) => t + (Number(m.quantity) || 0), 0) * 1000) / 1000
+}
+
+/**
+ * La fibra que tiene que quedar en una NP (spec 2026-11-25, 3.5): lo cargado de verdad en los camiones del pedido que le
+ * tocan a esa NP, más la dosificación del pedido de ahora por los m³ que todavía faltan despachar contra ella. Nunca
+ * menos de lo ya remitido. Al generar (nada despachado) da kg/m³ × m³; al finalizar (nada por despachar) da lo real; si
+ * se sacó la fibra del pedido, lo real (0 si no se cargó).
+ *   `fibraPedido` / `m3Pedido`: la fibra y los m³ despachados de TODO el pedido; `m3Despachado`: los que van contra
+ *   esta NP (la fibra real se reparte en esa proporción).
+ */
+export function objetivoFibra(o: { kgM3: number; m3Objetivo: number; m3Despachado: number; fibraPedido: number; m3Pedido: number; fibraRemitida: number }): number {
+  const parte = o.m3Pedido > 0 ? Math.min(1, Math.max(0, o.m3Despachado) / o.m3Pedido) : 0
+  const real = Math.max(0, o.fibraPedido) * parte
+  const resto = Math.max(0, o.m3Objetivo - Math.max(0, o.m3Despachado))
+  const obj = real + Math.max(0, o.kgM3) * resto
+  return Math.round(Math.max(obj, Math.max(0, o.fibraRemitida)) * 1000) / 1000
+}
+
+/** Lo que se le avisa a quien despacha cuando el pedido lleva fibra y su NP no la tiene (Bautista, 25/11). */
+export const MSJ_NP_SIN_FIBRA = "La NP de este pedido no tiene la fibra: está mal, avisale a Juan / Programación. Se puede despachar igual."
+
+/**
+ * ¿Mostrar el aviso de la NP sin fibra? Con la llave de la fibra de la planta, un pedido con fibra y alguna NP suya ya
+ * en Zomatik sin fibra (NP con saldo, NP de antes de prender la llave o que no se pudo editar).
+ */
+export function npSinFibra(estado: { fibra?: boolean; nps?: { estado: string; fibra_kg?: number | null }[] } | null | undefined, kgM3: number): boolean {
+  if (!estado?.fibra || !(Number(kgM3) > 0)) return false
+  return (estado.nps || []).some((x) => x.estado === "ok" && !(Number(x.fibra_kg) > 0))
 }

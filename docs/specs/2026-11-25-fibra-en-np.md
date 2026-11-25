@@ -45,8 +45,10 @@ activa nueva **10253 "LISTA NOVIEMBRE 26"** (reemplazó a la 10252) a $25.000 po
 - "Fibra (kg por m³)" pasa a la sección **Hormigón**, siempre a la vista (sale de "Más datos"). Al lado: bolsitas por m³
   y el total del pedido ("6,4 kg = 8 bolsitas (0,8 kg/m³ × 8 m³)").
 - **Tope: 20 kg/m³** (`FIBRA_MAX_KG_M3`, `lib/fibra.ts`). Arriba del tope **no deja guardar**, con el motivo ("… es
-  demasiado: la macro fibra va de a pocos kg por m³ (como mucho 20). Revisá el número: es por m³, no por camión ni por
-  pedido."). Se eligió rechazar (no confirmar) porque no hay ningún caso real arriba de 20 y los errores eran de unidad.
+  demasiado: la macro fibra va de a pocos kg por m³ (como mucho 20). Revisá el número: es en kg y por m³, no por camión
+  ni por pedido."). Si el número dividido 1000 entra en el tope, sugiere: "¿Quisiste poner 0,8 kg/m³? (800 gramos =
+  0,8 kg)". Se eligió rechazar (no confirmar) porque no hay ningún caso real arriba de 20 y los errores eran de unidad.
+- El número tiene que estar escrito entero ("0,8" o "0.8"): "0.8abc" o "1e1" no valen.
 - Lo mismo al despachar (plantista, Despacho › Entregar, despacho manual) y al corregir desde el historial.
 - Los pedidos que ya tienen 800 kg/m³ no se tocan solos: al abrirlos y guardar, pide corregir la fibra.
 
@@ -78,8 +80,11 @@ activa nueva **10253 "LISTA NOVIEMBRE 26"** (reemplazó a la 10252) a $25.000 po
   de 20 kg/m³: no se manda a Zomatik…").
 - MACRO FIBRA sin código de sistema en la copia de artículos: error ("Tocá «Actualizar desde Zomatik» en Vínculos").
 - Si el detalle no trae exactamente los dos renglones (hormigón + fibra): error con recorte, no se graba.
-- `zomatik_np.fibra_kg` guarda los kg que quedaron en la NP. Actividad de "NP generada" suma "Fibra: 16 kg de MACRO
-  FIBRA (2 kg/m³) · $ 25.000/kg, de la lista".
+- `zomatik_np.fibra_kg` guarda los kg que quedaron en la NP (nunca 0: sin fibra = nulo). Actividad de "NP generada"
+  suma "Fibra: 16 kg de MACRO FIBRA (2 kg/m³) · $ 25.000/kg, de la lista".
+- Reintento después de un corte en Grabar: si la NP aparece por la marca, `fibra_kg` es lo que tiene **de verdad** el
+  renglón de fibra en Zomatik (se abre la NP y se lee), no la fibra del pedido de ahora (el corte pudo ser con otra).
+  Si no se puede leer, queda sin fibra.
 - En Programación (solo con el permiso de precios y la llave): una línea debajo del precio por m³ con los kg, las
   bolsitas y el precio por kg de la lista; si no está, el aviso de qué hacer y el botón «Actualizar».
 
@@ -91,38 +96,50 @@ activa nueva **10253 "LISTA NOVIEMBRE 26"** (reemplazó a la 10252) a $25.000 po
   proyecto en Zomatik (o sacá la fibra del pedido)…"*. No se agrega de la lista: **a confirmar** si Zomatik deja
   agregar un artículo de lista en una NP de proyecto (origen 3).
 - Al proyecto le quedan menos kg que los del pedido: error con los kg (como con los m³).
-- "NP con saldo" (usar una NP que ya existe): no se agrega fibra (esa NP ya está grabada). Queda para más adelante.
+- "NP con saldo" (usar una NP que ya existe): no se agrega fibra (esa NP ya está grabada): ver 3.8.
 
-### 3.5 Edición (cambian los m³) y ajuste al finalizar — con la NP que tiene fibra
+### 3.5 Edición (cambian los m³ o la fibra) y ajuste al finalizar — con la NP que tiene fibra
 
-- Solo si la NP tiene `fibra_kg` (la grabó el sistema con fibra). El robot acepta **dos** renglones (hormigón + fibra) y
-  deja la fibra **en la misma proporción** que tenía: `fibraObjetivo = fibra_kg × m³ nuevos / m³ de la NP`. Un solo
-  Grabar con los dos renglones; al verificar, los dos tienen que estar en el objetivo y el total del listado tiene que
-  quedar en proporción con los **subtotales** (costo × cantidad de cada renglón).
-- La fibra de Zomatik no es la que cree el sistema: "revisar" sin grabar. La NP no tiene el renglón que se esperaba:
-  "revisar". La fibra quedaría en 0 o fuera del tope: "revisar".
-- Sin `fibra_kg` (todas las NP de antes) y la NP con dos renglones: como hoy ("La NP tiene 2 renglones: no se toca").
-- **No** se edita la NP si cambia solo la fibra del pedido (sin cambiar los m³): la NP queda con la de antes y el remito
-  avisa la diferencia (3.6). Queda para más adelante si hace falta.
-- El ajuste al finalizar también la deja en proporción a los m³ despachados (no a la fibra real de cada camión): la
-  diferencia con lo cargado de verdad la ve el remito.
+- **Cuánta fibra tiene que quedar** (`objetivoFibra`, `lib/fibra.ts`; lo calcula `fibraParaAjuste`):
+  lo cargado de verdad en los camiones del pedido que le tocan a esa NP (`dispatch_materials`, material tipo `fibra`,
+  repartido por los m³ despachados contra la NP) **+** la dosificación del pedido de ahora × los m³ que todavía faltan
+  despachar contra la NP, y **nunca menos de lo ya remitido** contra la NP (`zomatik_remitos.fibra_kg`).
+  - Antes de despachar: kg/m³ × m³ (lo mismo que al generar).
+  - **Cambia solo la fibra del pedido** (p. ej. a 1,6 kg/m³), sin cambiar los m³ (Bautista, 25/11): la NP **se edita**
+    igual, con la misma llave y el mismo camino que un cambio de m³ (al guardar el pedido se arma la edición).
+  - Se saca la fibra del pedido: queda lo real (0 si no se cargó: el renglón va a 0).
+  - Al finalizar (nada por despachar): queda lo real.
+  - Si la NP la comparten varios pedidos, los m³ que comprometen los otros se cuentan con la dosificación de este
+    pedido (caso raro; a mirar si aparece).
+- Solo para una NP **con** fibra (`fibra_kg`). A una NP sin fibra no se le agrega (el robot del ajuste no agrega
+  artículos): eso es el aviso de 3.8.
+- El robot acepta el renglón del hormigón y **un** renglón de fibra, y graba los dos en un solo Grabar. El total del
+  listado se controla con los **subtotales** (costo × cantidad de cada renglón); si un costo no se puede leer, "revisar"
+  **antes** de grabar.
+- **La fibra nunca frena el hormigón.** Si no se puede poner (la NP no tiene el renglón, la fibra cambió a mano en
+  Zomatik, quedaría fuera del tope o Zomatik no la tomó), el hormigón se ajusta igual, la fibra queda como está (o como
+  la dejó Zomatik), `fibra_kg` pasa a lo que dice Zomatik y va un aviso (Actividad y mail, una vez por NP).
+- Una NP con un renglón de fibra que el sistema no lleva (sin `fibra_kg`): se ajusta el hormigón y la fibra no se toca.
+- Sin la migración (o sin saber el artículo), la NP con dos renglones sigue como hoy: "no se toca".
 
 ### 3.6 Remito — con la llave
 
 Sí: **el remito de Zomatik lleva la fibra realmente cargada.** Es lo que se factura, y si el renglón de fibra de la NP
 fuera en 0 quedaría pendiente para siempre.
 
-- kg del remito = por cada despacho del remito, su fibra (`dispatch_materials`, material tipo `fibra`, la que puso el
-  plantista o se corrigió en el historial) en proporción a los m³ que van en ese remito (un camión partido entre dos NP).
-- Va en el renglón de MACRO FIBRA de los pendientes de la NP; el hormigón como siempre y lo demás en 0.
-- **La fibra nunca frena el remito del hormigón.** Si no se puede remitir toda, el remito sale igual y queda Actividad
-  "Remito sin toda la fibra" + mail a Bautista con lo que falta:
+- kg del remito = por cada despacho del remito, su fibra (`dispatch_materials`, material tipo `fibra`: el mismo criterio
+  que el historial y la carga, `kgFibraDeMateriales`) en proporción a los m³ que van en ese remito (un camión partido
+  entre dos NP).
+- Va en el renglón de MACRO FIBRA de los pendientes de la NP **solo si la NP tiene fibra**; el hormigón como siempre y
+  lo demás en 0. Lo que llevó se guarda en `zomatik_remitos.fibra_kg`.
+- **La fibra nunca frena el remito del hormigón.** Si no va toda, el remito sale igual y va un aviso (Actividad y mail
+  a Bautista) **una sola vez por NP** (`zomatik_np.fibra_aviso_at`), no por camión:
   - se cargó más que lo pendiente de la NP: va lo pendiente; "faltan X kg por remitir (NP adicional a mano)";
-  - la NP no tiene renglón de fibra (una NP de antes de prender la llave): va sin fibra; "remitila y facturala a mano";
   - Zomatik controla stock de la fibra y no hay: va sin fibra (**a confirmar**: MACRO FIBRA está en la línea Servicios,
     lo más probable es que no controle stock);
-  - más de 20 kg por m³ cargados: va sin fibra.
-- Si se cargó menos que la NP, queda fibra pendiente en la NP de Zomatik (como un pedido que no se despachó entero).
+  - más de 20 kg por m³ cargados: va sin fibra;
+  - la NP no tiene fibra y se cargó fibra: "La NP … no tiene la fibra y se cargaron X kg: está mal…" (3.8).
+- Si se cargó menos que la NP y no hubo ajuste al finalizar, queda fibra pendiente en la NP de Zomatik.
 
 ### 3.7 OF — no cambia
 
@@ -130,6 +147,15 @@ La fibra **no va en la OF**. La OF existe para darle stock al artículo de hormi
 remitir) y para descontar su materia prima ("Composicion", spec 2026-11-19). La MACRO FIBRA es un artículo aparte de la
 línea Servicios que se vende por kg: no se fabrica, y Zomatik no lleva la fibra en los depósitos 113/116 (spec
 2026-11-20). Si un día MACRO FIBRA controlara stock en el depósito, habría que ver cómo se le da stock (**a confirmar**).
+
+### 3.8 Pedido con fibra y NP sin fibra (Bautista, 25/11)
+
+Pasa con una NP con saldo, una NP generada antes de prender la llave, o una que no se pudo editar.
+
+- **Se deja despachar igual**, pero en el despacho aparece un aviso claro: *"La NP de este pedido no tiene la fibra:
+  está mal, avisale a Juan / Programación. Se puede despachar igual."* — en el plantista, en Despacho › Entregar y en
+  el pedido en Programación (bloque de la NP). Solo con la llave de la fibra de la planta.
+- Actividad y mail a Bautista **una sola vez por NP**, cuando se remite el primer camión con fibra contra esa NP.
 
 ## 4. La llave
 
@@ -151,7 +177,9 @@ UPDATE zomatik_np_config SET fibra_activo = true, fibra_desde = now() WHERE plan
 | `zomatik_np_config.fibra_activo` boolean, false | La llave | Canning y Hudson quedan apagadas |
 | `zomatik_np_config.fibra_articulo` integer, 10099016 | El artículo | 10099016 en las dos |
 | `zomatik_np_config.fibra_desde` timestamptz | De registro | nulo |
-| `zomatik_np.fibra_kg` numeric(12,3) (≥ 0) | kg de fibra grabados en la NP | nulo en todas: se siguen tratando como hoy |
+| `zomatik_np.fibra_kg` numeric(12,3) (> 0 o nulo) | kg de fibra grabados en la NP (nunca 0) | nulo en todas: se siguen tratando como hoy |
+| `zomatik_np.fibra_aviso_at` timestamptz | El aviso de la fibra, una vez por NP | nulo |
+| `zomatik_remitos.fibra_kg` numeric(12,3) (≥ 0) | kg de fibra que llevó el remito (piso del ajuste) | nulo en todos |
 
 No se toca ningún dato. Los pedidos con fibra absurda quedan como están (se corrigen al editarlos).
 
@@ -165,6 +193,8 @@ No se toca ningún dato. Los pedidos con fibra absurda quedan como están (se co
 3. NP de proyecto sin MACRO FIBRA: ¿Zomatik deja agregarla de la lista? (hoy: error).
 4. ¿MACRO FIBRA controla stock en el remito (`novalidarstock`)? (lo más probable: no, es de Servicios).
 5. Que la copia (`exportar_lista.php`) traiga MACRO FIBRA en $/kg una vez que la ficha diga "Exportar: Sí".
+6. Que Zomatik acepte el renglón de fibra en 0 al editar la NP (cuando se saca la fibra del pedido). Si lo borra solo,
+   igual está bien (el robot toma "sin renglón" como 0 kg).
 
 ## 7. Qué tiene que hacer Juan en Zomatik
 
@@ -178,10 +208,11 @@ No se toca ningún dato. Los pedidos con fibra absurda quedan como están (se co
 
 | Archivo | Qué |
 |---|---|
-| `lib/fibra.ts` (nuevo) | Tope, kg, bolsitas, proporción |
+| `lib/fibra.ts` (nuevo) | Tope (con la sugerencia de gramos), kg, bolsitas, objetivo de la fibra, material fibra, aviso NP sin fibra |
+| `components/despacho/fibra-np-aviso.tsx` (nuevo) | El aviso "La NP de este pedido no tiene la fibra" |
 | `lib/zomatik/np.ts` | Mensajes de la fibra, `subtotalRenglones` |
 | `lib/zomatik/np-robot.ts` | Renglón de fibra en la NP nueva y de proyecto; ajuste con dos renglones |
-| `lib/zomatik/np-servidor.ts` | Llave (`fibraDe`), `fibraParaNp`, `fibraDeLaNp`, `guardarFibraNp`, Actividad |
+| `lib/zomatik/np-servidor.ts` | Llave (`fibraDe`), `fibraParaNp`, `fibraDeLaNp`, `fibraParaAjuste`, `guardarFibraNp`, `avisarFibraNp`, la edición por la fibra (`edicionesPorFibra`), la fibra en el estado de las NP |
 | `lib/zomatik/precio-servidor.ts`, `app/api/zomatik/np/precio/route.ts` | `preciosFibra`; la línea de la fibra |
 | `lib/zomatik/ajuste-servidor.ts`, `lib/zomatik/edicion-servidor.ts` | La fibra al ajustar / editar |
 | `lib/zomatik/z1-robot.ts`, `lib/zomatik/z1-servidor.ts` | La fibra real en el remito (`fibraDelRemito`, `fibraParaRemito`) |
@@ -193,7 +224,9 @@ No se toca ningún dato. Los pedidos con fibra absurda quedan como están (se co
 ## 9. Cómo probarlo (preview)
 
 1. Programación: la fibra se ve sin abrir "Más datos"; 0,8 con 8 m³ → "6,4 kg = 8 bolsitas"; 800 → no guarda.
-2. Plantista / Entregar / historial: 800 no deja; 0,8 muestra kg y bolsitas del camión. Pantalla de carga: la cola
-   muestra la fibra del camión.
+2. Plantista / Entregar / historial: 800 no deja (y sugiere 0,8); 0,8 muestra kg y bolsitas del camión. Pantalla de
+   carga: la cola muestra la fibra del camión.
 3. Con la migración y la llave prendida en una planta de prueba: un pedido con fibra → NP con dos renglones; sin el
    precio en la copia → la NP en error con el mensaje de "Exportar en Lista de Precios".
+4. Con la llave: cambiar solo la fibra de un pedido con NP → se arma la edición de la NP; un pedido con fibra que usa
+   una NP con saldo → el aviso en el plantista, Entregar y Programación.
