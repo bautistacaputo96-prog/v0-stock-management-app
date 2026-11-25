@@ -52,7 +52,7 @@ export type CargaFila = {
   formulas?: { code: string } | null
   mixers?: { license_plate: string } | null
   // del despacho
-  despacho?: { created_at: string; dispatch_date: string; quantity_m3: number; cliente: string; obra: string } | null
+  despacho?: { created_at: string; dispatch_date: string; quantity_m3: number; cliente: string; obra: string; /** kg de fibra del camión (0 = no lleva) */ fibra_kg?: number } | null
   salida_gps?: string | null
 }
 
@@ -111,7 +111,7 @@ export function usarDatosCarga(plantId: string, cadaMs: number) {
     const filas = ((cg.data || []) as CargaFila[]).map((x) => ({ ...x, m3: Number(x.m3) || 0 }))
     const ids = filas.map((x) => x.dispatch_id).filter(Boolean) as string[]
     const [ds, gps, ex] = await Promise.all([
-      ids.length ? sb.from("dispatches").select("id, created_at, dispatch_date, quantity_m3, clients(name), construction_sites(name)").in("id", ids) : Promise.resolve({ data: [] }),
+      ids.length ? sb.from("dispatches").select("id, created_at, dispatch_date, quantity_m3, clients(name), construction_sites(name), dispatch_materials(quantity, materials(tipo))").in("id", ids) : Promise.resolve({ data: [] }),
       ids.length ? sb.from("viajes_gps").select("dispatch_id, salida_planta").in("dispatch_id", ids) : Promise.resolve({ data: [] }),
       filas.length ? sb.from("cargas_agua_extra").select("*").in("carga_id", filas.map((x) => x.id)).order("at") : Promise.resolve({ data: [] }),
     ])
@@ -119,7 +119,9 @@ export function usarDatosCarga(plantId: string, cadaMs: number) {
     const salida = new Map(((gps.data || []) as any[]).map((g) => [g.dispatch_id, g.salida_planta]))
     for (const f of filas) {
       const d = f.dispatch_id ? porD.get(f.dispatch_id) : null
-      f.despacho = d ? { created_at: d.created_at, dispatch_date: d.dispatch_date, quantity_m3: Number(d.quantity_m3), cliente: d.clients?.name || "", obra: d.construction_sites?.name || "" } : null
+      // Fibra del camión (25/11): la que guardó el despacho (material tipo fibra), para mostrar kg y bolsitas
+      const fibraKg = ((d?.dispatch_materials || []) as any[]).filter((m) => m.materials?.tipo === "fibra").reduce((t, m) => t + (Number(m.quantity) || 0), 0)
+      f.despacho = d ? { created_at: d.created_at, dispatch_date: d.dispatch_date, quantity_m3: Number(d.quantity_m3), cliente: d.clients?.name || "", obra: d.construction_sites?.name || "", fibra_kg: fibraKg } : null
       f.salida_gps = f.dispatch_id ? salida.get(f.dispatch_id) || null : null
     }
     // Fuera de la cola: cargas de despachos ya borrados y órdenes de prueba de otros días

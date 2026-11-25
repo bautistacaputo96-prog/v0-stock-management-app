@@ -15,6 +15,7 @@
 import { generarViajes, conTiemposGps, parametrosConGps, pendientes, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import type { Parametros } from "@/lib/planificador"
 import type { TiemposGps } from "@/lib/gps-viajes"
+import { errorFibraKgM3 } from "@/lib/fibra"
 
 const MIN = 60_000
 const t = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : NaN)
@@ -576,6 +577,11 @@ export function validarEntrega(f: FormEntrega, ctx: {
     if (ctx.ahora - s > 12 * 60 * MIN) return "La hora de salida tiene que ser de hoy (hasta 12 h para atrás)."
   }
   if (f.fibraOn && !(num(f.fibraKgM3) > 0)) return "Poné los kg de fibra por m³ (o apagá Fibra)."
+  // Tope (25/11): había 800 kg/m³ (6.400 kg por camión). Es por m³, en kg
+  if (f.fibraOn) {
+    const e = errorFibraKgM3(f.fibraKgM3)
+    if (e) return e
+  }
   if (f.muestraOn && (!f.muestraNum.trim() || !f.asentamiento.trim())) return "Completá el número de muestra y el asentamiento."
   if (f.muestraOn && !Number.isFinite(num(f.asentamiento))) return "El asentamiento tiene que ser un número (en cm)."
   return null

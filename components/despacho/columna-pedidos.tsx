@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { estadoPedido, faltaDe, hhmm, m3txt, textoMotivo, TIPO_TEXTO, type Puntualidad } from "@/lib/despacho"
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { cn } from "@/lib/utils"
+import { textoBolsitas } from "@/lib/fibra"
 import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 import { NpChip } from "@/components/zomatik/np-chip"
@@ -150,7 +151,7 @@ export function ColumnaPedidos({
         {abierto && (
           <div className="space-y-0.5 border-t px-2 py-1 text-[11px] leading-snug text-muted-foreground">
             <div className="text-foreground">{p.construction_sites?.name}{p.construction_sites?.address ? ` · ${p.construction_sites.address}` : ""}</div>
-            <div><span className="text-foreground">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+            <div><span className="text-foreground">{p.formulas?.code}</span>{p.finalidad ? ` · ${p.finalidad}` : ""} · llegada {hhmm(p.scheduled_arrival_time)} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³ (${textoBolsitas(Number(p.fiber_kg_per_m3))} por m³)` : ""}</div>
             <div>Entregado {m3txt(desp)} de {m3txt(p.quantity_m3)} m³{!cerr && falta > 0 ? ` · falta ${m3txt(falta)}` : ""}</div>
             <div>{tipo ? `Remito ${tipo} · ${TIPO_TEXTO[tipo]}` : "Factura: se pregunta al despachar"} · {p.confirmado_at ? "👍 Confirmado" : "Sin confirmar"}</div>
             {pt && est !== "cancelado" && <div className={cn(pt.clase === "ok" ? "text-emerald-700" : pt.clase === "mal" ? "text-red-700" : "")}>{pt.texto}</div>}

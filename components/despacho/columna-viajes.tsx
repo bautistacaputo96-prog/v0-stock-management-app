@@ -16,6 +16,7 @@ import { atraso, hhmm, m3txt, TIPO_TEXTO, type TipoRemito } from "@/lib/despacho
 import { textoBomba, type EmpresaBombeo } from "@/lib/maestros"
 import { viajeMinDe } from "@/lib/viajes"
 import { cn } from "@/lib/utils"
+import { textoFibraCamion } from "@/lib/fibra"
 import { Buscador, coincide } from "./buscador"
 import type { PedidoT, TipoResuelto, ViajeT } from "./tipos"
 
@@ -104,7 +105,7 @@ export function ColumnaViajes({
             o?.address ? [o.address, o.localidad].filter(Boolean).join(", ") : null,
             p.finalidad ? `Finalidad: ${p.finalidad}` : null,
             bomba ? textoBomba(p, empresas, "Bomba") : "Directo",
-            Number(p.fiber_kg_per_m3) > 0 ? `Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : null,
+            Number(p.fiber_kg_per_m3) > 0 ? `Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³: ${textoFibraCamion(Number(p.fiber_kg_per_m3), Number(v.m3))}` : null,
             tipo ? `Remito ${tipo} (${TIPO_TEXTO[tipo].toLowerCase()})` : "R/X: se pregunta al despachar",
             [o?.site_contact, o?.site_phone].filter(Boolean).join(" · ") || null,
             sug ? `Camión sugerido: ${sug}` : null,
@@ -171,7 +172,7 @@ export function ColumnaViajes({
               {estaAbierto(v.clave) && (
                 <div className="mt-0.5 space-y-0.5 border-t border-slate-200 pt-0.5 text-[11px] text-slate-600" onPointerDown={(e) => e.stopPropagation()}>
                   <div>{bomba ? textoBomba(p, empresas, "Con bomba") : "Sin bomba (descarga directa)"}</div>
-                  {Number(p.fiber_kg_per_m3) > 0 && <div>Fibra: {m3txt(p.fiber_kg_per_m3)} kg/m³</div>}
+                  {Number(p.fiber_kg_per_m3) > 0 && <div className="font-medium text-purple-700">Fibra: {textoFibraCamion(Number(p.fiber_kg_per_m3), Number(v.m3))} ({m3txt(p.fiber_kg_per_m3)} kg/m³)</div>}
                   <div>Hasta la obra: {viajeMinDe(p as any)} min</div>
                   {p.observations && <div className="whitespace-pre-wrap text-slate-700">Obs.: {p.observations}</div>}
                 </div>

@@ -52,6 +52,7 @@ import { VincularCartel } from "@/components/zomatik/vincular-cartel"
 import { PRECIO_NP_VACIO, esFaltaDeVinculo, precioParaEnviar, type PrecioNpForm } from "@/lib/zomatik/np"
 import { puedeVincularDesdePedido } from "@/lib/permisos"
 import { normalizarLocalidad } from "@/lib/geo-direccion"
+import { BOLSITA_FIBRA_KG, errorFibraKgM3, fibraKgM3, kgDeFibra, textoBolsitas, textoKg } from "@/lib/fibra"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null; zomatik_codigo?: number | null }
@@ -690,6 +691,12 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     // Zomatik (04/11): falta vincular el cliente o la fórmula y la NP sale sola → el cartel, antes de grabar nada.
     // Solo con lo que está en memoria (no frena Guardar). La obra sin localidad (10/11/2026) también abre el cartel
     // y esa no se saltea: Zomatik la exige en el remito.
+    // Fibra (25/11): en kg por m³ y con tope (había pedidos con 800 kg/m³): no deja guardar
+    const errFibra = errorFibraKgM3(form.fiber_kg_per_m3)
+    if (errFibra) {
+      toast({ title: "Revisá la fibra", description: errFibra, variant: "destructive" })
+      return
+    }
     // Precio por m³ de la NP: 0 o negativo no deja guardar
     const precioNp = precioParaEnviar(npPrecio)
     if ("error" in precioNp) {
@@ -773,7 +780,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           scheduled_departure_time: departureTime,
           observations: form.observations || null,
           is_urgent: form.is_urgent,
-          fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
+          fiber_kg_per_m3: fibraKgM3(form.fiber_kg_per_m3) || null,
           metodo_descarga: form.metodo_descarga,
           ...datosFase1,
           ...datosFase2,
@@ -832,7 +839,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
           is_urgent: form.is_urgent,
           // Fase 0c-1: lo carga la persona en sesión (sirve para saber de quién es el pedido)
           created_by: currentUserName(),
-          fiber_kg_per_m3: form.fiber_kg_per_m3 ? parseFloat(form.fiber_kg_per_m3) : null,
+          fiber_kg_per_m3: fibraKgM3(form.fiber_kg_per_m3) || null,
           metodo_descarga: form.metodo_descarga,
           ...datosFase1,
           ...datosFase2,
@@ -1142,7 +1149,6 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
         fiber_kg_per_m3: u.fiber_kg_per_m3 != null ? String(u.fiber_kg_per_m3) : "",
         finalidad: u.finalidad || f.finalidad,
       }))
-      if (u.fiber_kg_per_m3) setMasDatos(true)
       toast({
         title: `Copiado el pedido del ${format(parseISO(u.scheduled_arrival_time), "dd/MM")}`,
         description: mismaPlanta ? "Revisá fecha, hora y m³ antes de programar." : "Era de otra planta: la fórmula no se copió.",
@@ -1809,6 +1815,32 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                   })()}
                 </div>
               )}
+              {/* Fibra (25/11): siempre a la vista (antes estaba plegada en "Más datos"). En kg por m³; al lado, el total del
+                  pedido en kg y en bolsitas. Con la llave de la fibra, va a la NP de Zomatik (spec 2026-11-25) */}
+              {(() => {
+                const kgM3 = fibraKgM3(form.fiber_kg_per_m3)
+                const m3 = parseFloat(form.quantity_m3) || 0
+                const err = errorFibraKgM3(form.fiber_kg_per_m3)
+                const kg = kgDeFibra(kgM3, m3)
+                return (
+                  <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
+                    <div className="space-y-0.5">
+                      <Label className="flex items-center gap-1">
+                        Fibra (kg por m³)
+                        <span className="cursor-help rounded-full border px-1.5 text-[11px] font-normal text-muted-foreground" title={`Kilos de macro fibra por cada m³ (por ejemplo 0,8). Vacío si no lleva. Una bolsita = ${textoKg(BOLSITA_FIBRA_KG)} kg.`}>?</span>
+                      </Label>
+                      <Input type="number" step="0.1" min="0" className="w-28" value={form.fiber_kg_per_m3} onChange={(e) => setForm({ ...form, fiber_kg_per_m3: e.target.value })} placeholder="No lleva" />
+                    </div>
+                    {err ? (
+                      <p className="pb-1 text-[12px] font-medium text-destructive">{err}</p>
+                    ) : kgM3 > 0 ? (
+                      <p className="pb-1 text-[12px] text-muted-foreground">
+                        {textoBolsitas(kgM3)} por m³{m3 > 0 && <> · pedido: <span className="font-semibold text-foreground">{textoKg(kg)} kg = {textoBolsitas(kg)}</span> ({textoKg(kgM3)} kg/m³ × {m3.toLocaleString("es-AR")} m³)</>}
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              })()}
             </SeccionPedido>
 
             <SeccionPedido titulo="Nota de pedido (Zomatik)">
@@ -1838,6 +1870,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 pedidoId={editingDispatch?.id || null}
                 plantId={form.plant_id}
                 despachado={editingDispatch?.dispatched_m3 ?? null}
+                fibraKgM3={fibraKgM3(form.fiber_kg_per_m3)}
               />
             </SeccionPedido>
 
@@ -1847,21 +1880,11 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 {masDatos ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 Más datos
                 <span className="font-normal normal-case tracking-normal">
-                  {[form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && `fibra ${form.fiber_kg_per_m3} kg/m³`, form.mixer_id && `camión ${mixers.find((m) => m.id === form.mixer_id)?.license_plate || ""}`, form.observations.trim() && "con observaciones"].filter(Boolean).join(" · ") || (ve ? "(fibra, camión, observaciones, viajes)" : "(fibra, camión, observaciones)")}
+                  {[form.mixer_id && `camión ${mixers.find((m) => m.id === form.mixer_id)?.license_plate || ""}`, form.observations.trim() && "con observaciones"].filter(Boolean).join(" · ") || (ve ? "(camión, observaciones, viajes)" : "(camión, observaciones)")}
                 </span>
               </button>
               {masDatos && (
                 <div className="grid gap-x-3 gap-y-2 md:grid-cols-3">
-                  {/* Fibra: se define en el pedido para que el plantista sepa que ese hormigón la lleva; el valor se propone al cargar cada camión. */}
-                  <div className="space-y-1">
-                    <Label>Fibra (kg por m³)</Label>
-                    <Input type="number" step="0.1" min="0" value={form.fiber_kg_per_m3} onChange={(e) => setForm({ ...form, fiber_kg_per_m3: e.target.value })} placeholder="Dejar vacío si no lleva" />
-                    {form.fiber_kg_per_m3 && parseFloat(form.fiber_kg_per_m3) > 0 && parseFloat(form.quantity_m3) > 0 && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Total estimado: <span className="font-semibold text-foreground">{(parseFloat(form.fiber_kg_per_m3) * parseFloat(form.quantity_m3)).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg</span> ({form.fiber_kg_per_m3} kg/m³ × {form.quantity_m3} m³)
-                      </p>
-                    )}
-                  </div>
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <Label>Camión (opcional)</Label>

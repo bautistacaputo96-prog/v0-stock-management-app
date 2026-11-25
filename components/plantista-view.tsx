@@ -31,6 +31,7 @@ import { cargarViajes, pendientes, proximoViaje, regenerarViajesPedido, totalVia
 import { cancelarPedido as cancelarPedidoAbierto } from "@/lib/programacion-acciones"
 // Fase 3: el distintivo "Suspendido" (se suspende desde la pantalla nueva; la base no deja despacharlo)
 import { textoMotivo } from "@/lib/despacho"
+import { errorFibraKgM3, fibraKgM3, kgDeFibra, textoBolsitas, textoFibraCamion, textoKg } from "@/lib/fibra"
 
 type Plant = { id: string; name: string }
 type ScheduledDispatch = {
@@ -476,6 +477,12 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       toast({ title: "Error", description: "Complete los datos de la muestra de probeta", variant: "destructive" })
       return
     }
+    // Fibra (25/11): en kg por m³ y con tope (había 800 kg/m³ = 6.400 kg por camión)
+    const errFibra = dispatchForm.fiberEnabled ? errorFibraKgM3(dispatchForm.fiberKgPerM3) : null
+    if (errFibra) {
+      toast({ title: "Revisá la fibra", description: errFibra, variant: "destructive" })
+      return
+    }
 
     const remaining = dispatchDialog.quantity_m3 - (dispatchDialog.dispatched_m3 || 0)
     if (quantityThisTruck > remaining + 0.5) {
@@ -503,7 +510,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
       // m³ contra el restante, materiales de la fórmula en el stock de ESTA planta (con la
       // humedad de la Arena Fina), fibra, probetas (trigger), pedido, camión en ruta y actividad.
       // Si algo falla no queda nada grabado.
-      const fiberPerM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
+      const fiberPerM3 = fibraKgM3(dispatchForm.fiberKgPerM3)
       const { data: result, error: rpcError } = await supabase.rpc("registrar_despacho", {
         p: {
           plant_id: selectedPlant,
@@ -801,7 +808,7 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                               )}
                               {!!pedido.fiber_kg_per_m3 && (
                                 <Badge variant="outline" className="shrink-0 border-purple-400 text-purple-700 bg-purple-50">
-                                  FIBRA {pedido.fiber_kg_per_m3} kg/m³
+                                  FIBRA {textoKg(pedido.fiber_kg_per_m3)} kg/m³ ({textoBolsitas(pedido.fiber_kg_per_m3)} por m³)
                                 </Badge>
                               )}
                             </div>
@@ -1081,9 +1088,10 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                 </div>
 
                 {dispatchForm.fiberEnabled && (() => {
-                  const perM3 = parseFloat(dispatchForm.fiberKgPerM3) || 0
+                  const perM3 = fibraKgM3(dispatchForm.fiberKgPerM3)
                   const m3 = parseFloat(dispatchForm.quantity_m3) || 0
-                  const total = perM3 * m3
+                  const total = kgDeFibra(perM3, m3)
+                  const err = errorFibraKgM3(dispatchForm.fiberKgPerM3)
                   return (
                     <div className="flex items-end gap-3">
                       <div className="space-y-1 flex-1">
@@ -1099,11 +1107,13 @@ export function PlantistaView({ plants }: { plants: Plant[] }) {
                         />
                       </div>
                       <div className="flex-1 pb-1">
-                        {total > 0 ? (
+                        {err ? (
+                          <p className="text-xs font-medium text-destructive leading-tight">{err}</p>
+                        ) : total > 0 ? (
                           <p className="text-xs text-muted-foreground leading-tight">
-                            Total en el camion:{" "}
+                            Lleva el camion:{" "}
                             <span className="font-semibold text-foreground">
-                              {total.toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
+                              {textoFibraCamion(perM3, m3)}
                             </span>
                             <br />
                             <span className="text-[11px]">

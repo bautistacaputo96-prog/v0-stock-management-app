@@ -29,6 +29,7 @@ import { recetasIniciales } from "@/lib/carga/recetas-sim"
 import { INFO_SALIDA, SALIDAS, grupoDeSalida, nf, type Salida } from "@/lib/carga/tipos"
 import { cantidadPorM3 } from "@/lib/carga/receta"
 import { Btn, CartelSimulada, Chip, Tag, hhmm, hms, m3t, mmss } from "./comun"
+import { textoBolsitas, textoKg } from "@/lib/fibra"
 import { PlantaVivo, TablaPesajes, nombreCorto } from "./planta-vivo"
 import { ConfirmarCamion, MotivoDialog, PruebaDialog, ReporteDialog, TolvaDialog, type FilaReporte } from "./dialogos-carga"
 import { AlertasCarga, ResolverDialog } from "./alertas-carga"
@@ -528,8 +529,16 @@ function FilaCola({ k, sel, ch, corriendo, onClick }: { k: CargaFila; sel: boole
         <span className="min-w-0 flex-1 truncate">{k.formulas?.code}</span>
         <Tag tono={tono}>{txt}</Tag>
       </div>
+      <FibraCarga k={k} />
     </button>
   )
+}
+
+/** Fibra del camión (25/11): kg y bolsitas de 800 g. La fibra no pasa por Indumix: se agrega a mano. */
+function FibraCarga({ k, grande }: { k: CargaFila; grande?: boolean }) {
+  const kg = Number(k.despacho?.fibra_kg) || 0
+  if (!(kg > 0)) return null
+  return <div className={cn("font-medium text-purple-700", grande ? "text-xs" : "text-[11px]")}>Fibra: {textoKg(kg)} kg = {textoBolsitas(kg)}</div>
 }
 
 function PanelDerecho(p: {
@@ -566,6 +575,7 @@ function PanelDerecho(p: {
         <span className="min-w-0 flex-1 truncate">{k.formulas?.code}</span>
         <span className="shrink-0 tabular-nums text-foreground">{m3t(k.m3)} m³ · {k.ciclos || Math.ceil(k.m3 / ctx.puesto.m3_max_ciclo)} ciclos</span>
       </div>
+      <FibraCarga k={k} grande />
     </div>
   )
   const masDatos = (k: CargaFila, extra?: React.ReactNode) => (
