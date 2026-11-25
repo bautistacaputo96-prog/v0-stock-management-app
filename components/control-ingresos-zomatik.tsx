@@ -59,7 +59,11 @@ type Importacion = {
   error?: string
 }
 
-const fmtT = (l: Lado) => (l.unidad === "t" ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t` : `${l.t.toLocaleString("es-AR")}${l.unidad ? ` ${l.unidad}` : ""}`)
+// Un ingreso cargado en toneladas (30,44 en vez de 30.440) se muestra como lo que sumó al stock: "30,44 kg (¿t?)"
+const fmtT = (l: Lado) =>
+  l.unidad === "t"
+    ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${l.cargadoEnT ? "kg (¿t?)" : "t"}`
+    : `${l.t.toLocaleString("es-AR")}${l.unidad ? ` ${l.unidad}` : ""}`
 const unico = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x && !!x.trim()))].join(" / ") || "-"
 const hora = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }) : "-"

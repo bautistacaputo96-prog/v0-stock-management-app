@@ -352,7 +352,8 @@ export function ProgramacionDia({ plants, fechaInicial }: { plants: Plant[]; /**
     if (!ajustaPedido(p)) return
     const cambio = p.metodo_descarga !== metodo
     // Directo: no queda nada de bomba (solo si la base ya tiene esas columnas)
-    const { cambios } = await guardarMetodoPedido(createClient(), p, metodo)
+    const { error, cambios } = await guardarMetodoPedido(createClient(), p, metodo)
+    if (error) { toast({ title: "No se pudo guardar el método", description: error, variant: "destructive" }); return }
     setPedidos((ps) => ps.map((x) => (x.id === p.id ? { ...x, ...cambios } as PedidoDB : x)))
     // Fase 2: cambia la descarga, cambia el espaciado de los viajes pendientes (si el pedido ya tenía)
     if (!cambio) return

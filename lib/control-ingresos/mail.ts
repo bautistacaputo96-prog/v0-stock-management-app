@@ -17,8 +17,11 @@ export type DiferenciaMail = {
 
 const esc = (t: unknown) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!)
 
+// Un ingreso cargado en toneladas (30,44 en vez de 30.440) se muestra como lo que sumó al stock: "30,44 kg (¿t?)"
 const fmtT = (l: Lado) =>
-  l.unidad === "t" ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t` : `${l.t.toLocaleString("es-AR")}${l.unidad ? ` ${l.unidad}` : ""}`
+  l.unidad === "t"
+    ? `${l.t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${l.cargadoEnT ? "kg (¿t?)" : "t"}`
+    : `${l.t.toLocaleString("es-AR")}${l.unidad ? ` ${l.unidad}` : ""}`
 
 const unico = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x && !!x.trim()))].join(" / ") || "-"
 
@@ -68,7 +71,7 @@ export const ASUNTO_SEMANAL = "Rebucret · Control semanal de MP (remitos y stoc
 export const LINEA_SIN_NUEVAS = "Hoy no hay inconsistencias nuevas entre el sistema y Zomatik"
 export const LINEA_SIN_LECTURA = "No se pudo leer Zomatik hoy: no se controló"
 
-const PIE = `<p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>`
+const PIE = `<p style="font-size:11px;color:#94a3b8;margin-top:12px">Toneladas iguales ±0,02 · la fecha sola no cuenta · un proveedor distinto solo no cuenta · se controlan áridos y cemento · un árido o cemento con menos de 200 kg se avisa como probable carga en toneladas · "falta en Zomatik" después de 7 días y "falta en nuestro sistema" después de 2 · produccionrebucret.com</p>`
 
 // ---------------------------------------------------------------------------
 // Importación de ingresos desde Zomatik (fase 2, docs/ingresos-mp-zomatik.md)

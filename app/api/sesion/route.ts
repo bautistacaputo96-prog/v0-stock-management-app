@@ -29,8 +29,10 @@ export async function GET() {
       debeCambiarClave: debeCambiarClave(s),
       modoPruebaLocal: s.local || undefined,
     })
-    if (!s.local && s.datos && s.credencial && s.datos.e - Date.now() < RENOVAR_SI_QUEDAN_MS) {
-      ponerCookieSesion(res, s.usuario.id, s.credencial.sesion_version)
+    // Se renueva cuando le quedan menos de 15 días, conservando el id de sesión de este equipo. Las cookies de
+    // antes de la 0c-2 (sin id) se renuevan ya, para que "Salir" pueda cortarlas
+    if (!s.local && s.datos && s.credencial && (s.datos.e - Date.now() < RENOVAR_SI_QUEDAN_MS || !s.datos.s)) {
+      ponerCookieSesion(res, s.usuario.id, s.credencial.sesion_version, Date.now(), s.datos.s || undefined)
     }
     res.headers.set("Cache-Control", "no-store")
     return res

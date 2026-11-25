@@ -130,7 +130,11 @@ export function AddFormulaDialog({ materials, plantId, plantName = null, onSucce
         })),
       )
 
-      if (materialsError) throw materialsError
+      if (materialsError) {
+        // Sin composición la fórmula no sirve (y volver a cargarla daba "Ya existe"): se borra la recién creada
+        await supabase.from("formulas").delete().eq("id", formula.id)
+        throw materialsError
+      }
 
       logActivity({
         action: "crear",

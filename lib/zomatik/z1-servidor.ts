@@ -39,7 +39,8 @@ import {
   type DespachoZ1, type MaterialMp, type NpZ1, type RemitoNuestro,
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp } from "@/lib/zomatik/np-robot"
-import { PASO_SIN_AUTORIZAR } from "@/lib/zomatik/np-servidor"
+import { PASO_SIN_AUTORIZAR, avisarFibraNp, fibraDe, plantasNp, type PlantaNpDB } from "@/lib/zomatik/np-servidor"
+import { kgFibraDeMateriales } from "@/lib/fibra"
 import { MAX_ESPERA_AUTORIZAR, MSJ_NI_AUTORIZAR_NI_REMITO, msjNiAutorizarNiRemito } from "@/lib/zomatik/np"
 import { MSJ_YA_REAUTORIZADA, PASO_REAUTORIZAR_NP, msjReautorizarNp, sinPendientesDeNp } from "@/lib/zomatik/z1"
 import { DEPENDENCIAS_AJUSTE, ajustesATrabajar, gateAjuste, llaveAjuste, prepararAjustesSeguro, trabajarAjustes, type DependenciasAjuste, type Gate } from "@/lib/zomatik/ajuste-servidor"
@@ -457,6 +458,44 @@ async function datos(sb: SB, r: RemitoDB) {
   }
 }
 
+/**
+ * La fibra que se cargó de verdad en los camiones de un remito (spec 2026-11-25, 3.6): por cada despacho del remito, sus
+ * kg de fibra (dispatch_materials, material tipo 'fibra', `kgFibraDeMateriales`, lo mismo que el historial) en proporción
+ * a los m³ que van en este remito (un despacho partido entre dos NP va en dos remitos). Solo con la llave de la fibra de
+ * la planta (`plantas`, leídas una vez por pasada); si no, null (el remito como siempre). `npKg`: la fibra de la NP
+ * (`zomatik_np.fibra_kg`, null = sin fibra). Si algo no se puede leer, null y el remito sale como siempre.
+ */
+async function fibraParaRemito(sb: SB, r: { id: string; plant_id: string; np_id: string | null }, plantas: Record<string, PlantaNpDB>): Promise<{ codigo: number; nombre: string; kg: number; npKg: number | null } | null> {
+  try {
+    const cfg = fibraDe(plantas[r.plant_id])
+    if (!cfg) return null
+    const { data: links, error: e1 } = await sb.from("zomatik_remito_despachos").select("dispatch_id, m3").eq("remito_id", r.id)
+    if (e1) throw e1
+    const ls = (links as { dispatch_id: string; m3: number | string }[]) || []
+    if (!ls.length) return null
+    const ids = ls.map((l) => l.dispatch_id)
+    const [{ data: ds, error: e2 }, { data: art }, { data: np, error: e3 }] = await Promise.all([
+      sb.from("dispatches").select("id, quantity_m3, dispatch_materials(quantity, materials(tipo))").in("id", ids),
+      sb.from("zomatik_articulos").select("nombre").eq("codigo", cfg.articulo).maybeSingle(),
+      r.np_id ? sb.from("zomatik_np").select("fibra_kg").eq("id", r.np_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    ])
+    if (e2 || e3) throw e2 || e3
+    type D = { id: string; quantity_m3: number | string | null; dispatch_materials?: { quantity?: number | string | null; materials?: { tipo?: string | null } | null }[] | null }
+    const porId = new Map(((ds as D[]) || []).map((d) => [d.id, d]))
+    let kg = 0
+    for (const l of ls) {
+      const d = porId.get(l.dispatch_id)
+      const total = Number(d?.quantity_m3) || 0
+      if (d && total > 0) kg += (kgFibraDeMateriales(d.dispatch_materials) * Number(l.m3)) / total
+    }
+    const npKg = Number((np as { fibra_kg?: number | string | null } | null)?.fibra_kg)
+    return { codigo: cfg.articulo, nombre: (art as { nombre?: string } | null)?.nombre || "MACRO FIBRA", kg: Math.round(kg * 1000) / 1000, npKg: npKg > 0 ? npKg : null }
+  } catch (e) {
+    console.error("[zomatik-z1] fibra del remito", r.id, (e as Error)?.message)
+    return null
+  }
+}
+
 export type ResultadoProcesoZ1 = { ocupado?: boolean; sinTiempo?: boolean; hechas: { id: string; estado: string; mensaje: string | null }[] }
 
 export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?: string | null; sb?: SB; dep?: DependenciasZ1 }): Promise<ResultadoProcesoZ1> {
@@ -468,6 +507,9 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   if (!Object.values(cfg).some((c) => llaveZ1(c))) return { hechas: [] }
   // Materia prima de la OF (19/11): solo con su migración. Sin ella no se piden ni se escriben sus columnas
   const conMp = await hayMigracionMp(sb)
+  // La fibra del remito (spec 2026-11-25): las llaves de las plantas, una sola vez por pasada
+  let plantasFibra: Record<string, PlantaNpDB> | null = null
+  const plantasDeFibra = async () => (plantasFibra ??= await plantasNp(sb).catch(() => ({})))
   const avisarMp = dep.avisarMp ?? avisarMpOf
   const columnas = conMp ? `${COLUMNAS_REMITO}, ${COLUMNAS_MP}` : COLUMNAS_REMITO
   /**
@@ -482,17 +524,36 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
     if (error) throw error
     return (data as unknown as RemitoDB[]) || []
   }
-  const leerRemitos = async () => {
-    let q = sb.from("zomatik_remitos").select(columnas).in("estado", ["pendiente", "generando", ...(o.pedidoId ? ["error", "revisar"] : [])]).order("created_at").limit(20)
-    if (o.pedidoId) q = q.eq("scheduled_dispatch_id", o.pedidoId)
-    const { data, error } = await q
-    if (error) throw error
-    return data
+  /** Pedidos cuyos ajustes quedaron listos en esta pasada: sus remitos que esperaban salen ya. */
+  const listos = new Set<string>()
+  const plantasZ1 = Object.values(cfg).filter((c) => llaveZ1(c)).map((c) => c.plant_id)
+  const leerRemitos = async (): Promise<RemitoDB[]> => {
+    if (o.pedidoId) {
+      const { data, error } = await sb.from("zomatik_remitos").select(columnas).in("estado", ["pendiente", "generando", "error", "revisar"]).eq("scheduled_dispatch_id", o.pedidoId).order("created_at").limit(20)
+      if (error) throw error
+      return (data as unknown as RemitoDB[]) || []
+    }
+    // La pasada: el tope de 20 va DESPUÉS de quedarse con lo que toca ahora (las vencidas de plantas con la llave, las
+    // "generando" y las que quedaron listas en esta pasada). Cortando primero, 20 filas viejas que esperan (un ajuste sin
+    // resolver, una planta sin la llave) tapaban para siempre a las nuevas, sin aviso.
+    const ahora = new Date().toISOString()
+    const base = () => sb.from("zomatik_remitos").select(columnas).in("plant_id", plantasZ1).order("created_at").limit(20)
+    const partes = await Promise.all([
+      base().eq("estado", "pendiente").lte("proximo_intento", ahora),
+      base().eq("estado", "generando"),
+      listos.size ? base().eq("estado", "pendiente").in("scheduled_dispatch_id", [...listos]) : Promise.resolve({ data: [], error: null }),
+    ])
+    const porId = new Map<string, RemitoDB>()
+    for (const p of partes) {
+      if (p.error) throw p.error
+      for (const r of (p.data as unknown as RemitoDB[]) || []) porId.set(r.id, r)
+    }
+    return [...porId.values()].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
   }
   let data = await leerRemitos()
   // "Remitir en Zomatik" después de corregir: el "revisar" que frenó ANTES de grabar el remito (talonario terminado,
   // obra sin localidad) vuelve a "error" para que se reintente. Ningún otro "revisar" se toca.
-  for (const r of (data as unknown as RemitoDB[]) || []) {
+  for (const r of data) {
     if (r.estado !== "revisar" || !o.pedidoId || !PASOS_ANTES_DE_GRABAR.includes(r.paso || "")) continue
     const { data: ok } = await sb.from("zomatik_remitos").update({ estado: "error", sin_stock: 0, updated_at: new Date().toISOString() } as never).eq("id", r.id).eq("estado", "revisar").in("paso", PASOS_ANTES_DE_GRABAR).select("id")
     if (((ok as unknown[]) || []).length) r.estado = "error"
@@ -501,11 +562,9 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
   const conAjuste = Object.values(cfg).some((c) => llaveAjuste(c))
   const depAjuste: DependenciasAjuste = { ...DEPENDENCIAS_AJUSTE, avisarError, ...(dep.ajuste || {}) }
   const ajustes = conAjuste ? await ajustesATrabajar(sb, cfg, o.pedidoId) : []
-  /** Pedidos cuyos ajustes quedaron listos en esta pasada: sus remitos que esperaban salen ya. */
-  const listos = new Set<string>()
-  const aTrabajar = (filas: unknown) => {
+  const aTrabajar = (filas: RemitoDB[]) => {
     const ahora = Date.now()
-    return ((filas as RemitoDB[]) || []).filter((r) => r.estado !== "revisar").filter((r) =>
+    return filas.filter((r) => r.estado !== "revisar").filter((r) =>
       r.estado === "generando" ? !!r.en_curso_desde && ahora - Date.parse(r.en_curso_desde) > 3 * 60_000 : o.pedidoId ? true : (!!r.proximo_intento && Date.parse(r.proximo_intento) <= ahora) || (r.estado === "pendiente" && listos.has(r.scheduled_dispatch_id || "")),
     )
   }
@@ -910,6 +969,7 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
         }
         // Si falla, la OF queda hecha y el remito se reintenta solo (no se repite la OF)
         const obs = observacionesRemito(r.marca, { patentes: r.patentes || "", remitos_papel: r.remitos_papel || "" }, d.obra)
+        const fibraRm = await fibraParaRemito(sb, r, await plantasDeFibra())
         const rm = await dep.robot.generarRemito(nav, {
           marca: r.marca, npCodigo: d.np.zomatik_codigo, comprobante: r.comprobante, deposito, fecha: String(r.fecha), m3: Number(r.m3),
           // Patente vacía, como hoy (29/10): las patentes van en observaciones
@@ -919,6 +979,8 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           pendienteEsperado: gate.espera ? null : gate.pendienteEsperado,
           // Justo antes de grabar se vuelven a leer los comprobantes de la NP: cualquier remito que no sea uno de estos frena
           nuestros: await remitosNuestros(sb, r.np_id!, r.id),
+          // La fibra va solo si la NP tiene fibra: a una NP sin fibra no se le remite (el aviso va abajo, una vez por NP)
+          fibra: fibraRm && fibraRm.npKg ? fibraRm : null,
         }, { hoy: hoyAR(), alPaso })
         // Red de seguridad (20/11, NP 0001-00001201): "Continuar" no trajo los pendientes y la NP figuraba autorizada (no
         // se miró en este intento). Zomatik la vuelve a "por autorizar" cuando se le cambia la cantidad: la NP pasa a
@@ -951,7 +1013,18 @@ export async function procesarZ1(o: { usuario: string; inicio: number; pedidoId?
           continue
         }
         await guardarSi(sb, r.id, { estado: "ok", remito_estado: "ok", remito_numero: rm.numero, remito_codigo: rm.codigo, en_curso_desde: null, mensaje: null, paso: "ok", ok_at: new Date().toISOString(), proximo_intento: null })
-        await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `Remito en Zomatik: ${rm.numero}`, "m³": r.m3, Camiones: r.patentes } })
+        await actividadNp(sb, { usuario: o.usuario, action: "crear", pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, referencia: ref, detalle: { "Qué pasó": `Remito en Zomatik: ${rm.numero}`, "m³": r.m3, Camiones: r.patentes, ...(rm.fibraKg ? { Fibra: `${String(rm.fibraKg).replace(".", ",")} kg` } : {}) } })
+        // La fibra del remito (spec 2026-11-25, 3.6): lo que llevó (para no bajar la NP de eso) y, si algo no entró o la NP
+        // no tiene fibra, un aviso UNA sola vez por NP (Actividad y mail). El remito ya salió igual
+        if (rm.fibraKg !== undefined && rm.fibraKg !== null) {
+          const { error: ef } = await sb.from("zomatik_remitos").update({ fibra_kg: rm.fibraKg } as never).eq("id", r.id)
+          if (ef) console.error("[zomatik-z1] fibra del remito", r.id, ef.message)
+        }
+        const avisoFibra = fibraRm && fibraRm.kg > 0 && !fibraRm.npKg
+          ? `La ${d.np.numero || "NP"} no tiene la fibra y se cargaron ${String(fibraRm.kg).replace(".", ",")} kg en ${rm.numero || "el remito"}: está mal. Agregá ${fibraRm.nombre} a la NP (y al remito) a mano en Zomatik.`
+          : rm.fibraAviso || null
+        if (avisoFibra)
+          await avisarFibraNp(sb, avisarError, { npId: d.np.id, numero: d.np.numero, marca: r.marca, usuario: o.usuario, pedidoId: r.scheduled_dispatch_id, plantId: r.plant_id, titulo: fibraRm && !fibraRm.npKg ? "La NP no tiene la fibra" : "Remito sin toda la fibra", mensaje: avisoFibra, lineas: [`${ref} · ${r.m3} m³ · ${r.fecha}${r.patentes ? ` · ${r.patentes}` : ""}`] })
         hechas.push({ id: r.id, estado: "ok", mensaje: rm.numero ?? null })
       } catch (e) {
         if (e instanceof Cambio) {

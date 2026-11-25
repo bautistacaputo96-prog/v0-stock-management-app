@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -50,6 +50,10 @@ export function MixersManagement() {
   // Fase 0c-1: flota = cargar / editar (también el estado) / borrar; editar y dar de baja piden motivo
   const { puede } = usePermisos()
   const [motivo, setMotivo] = useState("")
+  // Doble toque en Guardar: el camión nuevo se cargaba dos veces (la patente repetida se controla contra la lista ya
+  // cargada y la base no lo frena: el camión nuevo va sin planta)
+  const [guardando, setGuardando] = useState(false)
+  const enCurso = useRef(false)
 
   const [form, setForm] = useState({
     license_plate: "",
@@ -100,6 +104,18 @@ export function MixersManagement() {
   }
 
   async function handleSave() {
+    if (enCurso.current) return
+    enCurso.current = true
+    setGuardando(true)
+    try {
+      await guardar()
+    } finally {
+      enCurso.current = false
+      setGuardando(false)
+    }
+  }
+
+  async function guardar() {
     if (editingMixer ? !puede("flota", "editar") : !puede("flota", "cargar")) return
     if (editingMixer && !motivoValido(motivo)) {
       toast({ title: "Falta el motivo", description: "Escribí por qué se corrige el camión.", variant: "destructive" })
@@ -425,7 +441,7 @@ export function MixersManagement() {
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSave} disabled={!form.license_plate || (!!editingMixer && !motivoValido(motivo))}>
+            <Button onClick={handleSave} disabled={guardando || !form.license_plate || (!!editingMixer && !motivoValido(motivo))}>
               {editingMixer ? "Guardar" : "Crear"}
             </Button>
           </DialogFooter>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2, FlaskConical } from "lucide-react"
+import { Eye, Droplets, CheckCircle, Clock, MoreHorizontal, Pencil, Trash2, FlaskConical, AlertTriangle } from "lucide-react"
 import { ViewGranulometriaDialog } from "./view-granulometria-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -17,6 +17,7 @@ import { usePermisos } from "@/lib/current-user"
 import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/motivo"
 import { IngresoMuestrasDialog } from "@/components/ingreso-muestras-dialog"
 import { esArenaFina } from "@/lib/ingresos/muestras"
+import { avisoToneladas } from "@/lib/ingresos/validar"
 
 type Material = {
   id: string
@@ -67,6 +68,8 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
   const [editNotes, setEditNotes] = useState("")
   const [editDate, setEditDate] = useState("")
   const [saving, setSaving] = useState(false)
+  /** Cantidad chica (¿toneladas?) que la persona confirmó que son kg al editar: se guarda con el segundo toque. */
+  const [kgEditConfirmados, setKgEditConfirmados] = useState<number | null>(null)
   const { toast } = useToast()
   // Fase 0c-1: editar y borrar ingresos según el permiso, con motivo
   const { puede } = usePermisos()
@@ -138,24 +141,25 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
 
     // El stock lo descuenta la base sola al borrar el ingreso
     // (trigger trigger_decrease_stock_on_entry_delete, también corrige el stock seco).
-    await logDeletion({
-      entity: "ingreso",
-      entityId: deleteEntry.id,
-      reference: deleteEntry.remito || null,
-      details: {
-        Material: deleteEntry.materials?.name || "-",
-        Proveedor: deleteEntry.suppliers?.name || "-",
-        Remito: deleteEntry.remito || "-",
-        Cantidad: `${deleteEntry.quantity} ${deleteEntry.materials?.unit || ""}`.trim(),
-        Fecha: deleteEntry.entry_date ? new Date(deleteEntry.entry_date).toLocaleDateString("es-AR") : "-",
-      },
-      motivo: motivoBorrado,
-    })
-
     const { error } = await supabase.from("stock_entries").delete().eq("id", deleteEntry.id)
     if (error) {
+      // Ej.: tiene un ensayo de granulometría vinculado (la base no deja borrarlo). No se registra ni se avisa el borrado.
       toast({ title: "Error", description: "No se pudo eliminar el ingreso", variant: "destructive" })
     } else {
+      // Actividad y mail recién con el borrado hecho (antes se registraba aunque la base no lo borrara)
+      await logDeletion({
+        entity: "ingreso",
+        entityId: deleteEntry.id,
+        reference: deleteEntry.remito || null,
+        details: {
+          Material: deleteEntry.materials?.name || "-",
+          Proveedor: deleteEntry.suppliers?.name || "-",
+          Remito: deleteEntry.remito || "-",
+          Cantidad: `${deleteEntry.quantity} ${deleteEntry.materials?.unit || ""}`.trim(),
+          Fecha: deleteEntry.entry_date ? new Date(deleteEntry.entry_date).toLocaleDateString("es-AR") : "-",
+        },
+        motivo: motivoBorrado,
+      })
       toast({ title: "Ingreso eliminado", description: "El stock fue ajustado" })
       onRefresh?.()
     }
@@ -194,6 +198,18 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
       return
     }
     const quantityDiff = newQuantity - oldQuantity
+    // Mismo aviso que al cargar: un árido o el cemento con menos de 200 kg seguramente se escribió en toneladas
+    const avisoT = avisoToneladas(editingEntry.materials, newQuantity)
+    if (Math.abs(quantityDiff) > 0.0001 && avisoT && kgEditConfirmados !== newQuantity) {
+      setKgEditConfirmados(newQuantity)
+      toast({
+        title: avisoT.titulo,
+        description: `${avisoT.texto} Si de verdad son kg, tocá Guardar de nuevo.`,
+        variant: "destructive",
+      })
+      setSaving(false)
+      return
+    }
 
     // Con la migración de la importación: la edición va por el servidor y la diferencia de stock queda con asiento
     // (correccion_ingreso). Sin la migración (501), como siempre.
@@ -314,6 +330,7 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
 
   function openEdit(entry: StockEntry) {
     setMotivo("")
+    setKgEditConfirmados(null)
     setEditingEntry(entry)
     setEditQuantity(entry.quantity.toString())
     setEditRemito(entry.remito || "")
@@ -407,6 +424,15 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                       <div className="font-mono text-green-600 font-semibold">
                         +{entry.quantity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                       </div>
+                      {(() => {
+                        const aviso = avisoToneladas(entry.materials, Number(entry.original_quantity ?? entry.quantity))
+                        if (!aviso || entry.anulado_at) return null
+                        return (
+                          <Badge variant="outline" className="mt-0.5 cursor-help border-amber-400 text-[10px] font-normal text-amber-700" title={aviso.texto}>
+                            <AlertTriangle className="mr-1 h-3 w-3" />¿toneladas?
+                          </Badge>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell>{entry.suppliers?.name || entry.supplier || "-"}</TableCell>
                     <TableCell>{entry.remito || "-"}</TableCell>
@@ -556,6 +582,26 @@ export function StockEntriesTable({ entries, onRefresh }: { entries: StockEntry[
                   <div className="space-y-2">
                     <Label>Cantidad ({editingEntry.materials.unit})</Label>
                     <Input type="number" step="0.01" value={editQuantity} onChange={(e) => setEditQuantity(e.target.value)} />
+                    {(() => {
+                      // El mismo aviso que al cargar y que el control de ingresos ("probable carga en toneladas")
+                      const c = parseFloat(editQuantity)
+                      const aviso = avisoToneladas(editingEntry.materials, c)
+                      if (!aviso || kgEditConfirmados === c) return null
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>
+                            {aviso.titulo} {aviso.texto}
+                          </span>
+                          <Button type="button" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditQuantity(String(aviso.kg))}>
+                            Pasar a kg
+                          </Button>
+                          <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setKgEditConfirmados(c)}>
+                            No, son kg
+                          </Button>
+                        </div>
+                      )
+                    })()}
                     <p className="text-xs text-muted-foreground">Si cambias la cantidad, el stock se ajustara automaticamente.</p>
                   </div>
                   <div className="space-y-2">

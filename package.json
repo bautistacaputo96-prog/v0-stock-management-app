@@ -8,7 +8,7 @@
     "lint": "eslint .",
     "start": "next start",
     "test:gps": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/gps-viajes.test.mjs lib/__tests__/kpis-logistica.test.mjs lib/__tests__/tiempos-gps.test.mjs lib/__tests__/gps-vivo.test.mjs",
-    "test:sesion": "node --experimental-strip-types --no-warnings --test lib/__tests__/sesion-permisos.test.mjs",
+    "test:sesion": "node --experimental-strip-types --no-warnings --test lib/__tests__/sesion-permisos.test.mjs lib/__tests__/sesion-auditoria.test.mjs",
     "test:despacho": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/despacho.test.mjs",
     "test:reparto": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/reparto.test.mjs",
     "test:armado": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/armado-dia.test.mjs",
@@ -19,11 +19,17 @@
     "test:control-produccion": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-produccion.test.mjs",
     "test:control-ingresos": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/control-ingresos.test.mjs",
     "test:ingresos-zomatik": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/ingresos-zomatik.test.mjs",
-    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs lib/__tests__/zomatik-np-servidor.test.mjs lib/__tests__/zomatik-precio.test.mjs lib/__tests__/zomatik-np-traer.test.mjs",
+    "test:zomatik-np": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-np.test.mjs lib/__tests__/zomatik-np-servidor.test.mjs lib/__tests__/zomatik-precio.test.mjs lib/__tests__/zomatik-np-traer.test.mjs lib/__tests__/zomatik-fibra.test.mjs",
     "test:zomatik-z1": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-z1.test.mjs",
     "test:zomatik-ajuste": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-ajuste.test.mjs",
     "test:zomatik-edicion": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/zomatik-edicion.test.mjs",
-    "test:geo": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/geo-direccion.test.mjs"
+    "test:programacion": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/programacion-pedidos.test.mjs",
+    "test:calidad": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/calidad.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/calidad.test.mjs",
+    "test:geo": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/geo-direccion.test.mjs",
+    "test:mantenimiento": "TZ=UTC node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/mantenimiento.test.mjs && TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/mantenimiento.test.mjs",
+    "test:crons": "node --experimental-strip-types --no-warnings --import ./lib/__tests__/alias.mjs --test lib/__tests__/crons.test.mjs",
+    "test:pantallas": "TZ=America/Argentina/Buenos_Aires node --experimental-strip-types --no-warnings --test lib/__tests__/pantallas.test.mjs",
+    "test:seguridad": "node --experimental-strip-types --no-warnings --test lib/__tests__/seguridad.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

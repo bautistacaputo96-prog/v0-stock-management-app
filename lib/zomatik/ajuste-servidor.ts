@@ -21,6 +21,7 @@ import {
   PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, actividadNp, avisarAjusteNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, esFallaDeAcceso, tipoDeFalla,
   type AvisarFn,
 } from "@/lib/zomatik/np-servidor"
+import { avisarFibraNp, fibraCambia, fibraParaAjuste, guardarFibraNp, type FibraAjuste } from "@/lib/zomatik/np-servidor"
 import { ajustarCantidadNp, totalesDeAjuste, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
 import { comprobanteDeNumero, esNpTraida, hoyAR, quedaTiempo, trabajoPendiente, type UsoSaldo } from "@/lib/zomatik/np"
 import { errorInterno } from "@/lib/zomatik/z1-robot"
@@ -497,6 +498,8 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       let objetivo = Number(a.m3_objetivo)
       let despachado = Number(a.m3_despachado)
       const m3Np = Number(d.np.m3)
+      // La fibra de la NP (spec 2026-11-25, 3.5): la real del pedido contra esta NP (nunca menos de lo remitido)
+      let fib: FibraAjuste | null = cortado ? await fibraParaAjuste(sb, d.np, { pedidoId: a.scheduled_dispatch_id, m3Objetivo: objetivo, m3Despachado: despachado }) : null
       if (!cortado) {
         // El plan de ahora (un despacho pudo cambiar desde que se armó): solo si todavía no hubo un Grabar
         const p = await planDelPedido(sb, a.scheduled_dispatch_id || "", o.cfg)
@@ -505,7 +508,9 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
           await trabar("revisar", p.aplica ? "El pedido ya no usa esta NP: revisala." : `No se puede ajustar: ${p.motivo}.`)
           continue
         }
-        if (pl.estado === "nada") {
+        fib = await fibraParaAjuste(sb, d.np, { pedidoId: a.scheduled_dispatch_id, m3Objetivo: pl.m3_objetivo, m3Despachado: pl.m3_despachado })
+        // Los m³ ya están: solo si la fibra tampoco cambia no se toca Zomatik
+        if (pl.estado === "nada" && !fibraCambia(fib)) {
           await guardarSi(sb, a.id, { estado: "nada", tipo: "nada", en_curso_desde: null, proximo_intento: null, mensaje: null, m3_np: pl.m3_np, m3_objetivo: pl.m3_objetivo, m3_despachado: pl.m3_despachado, ok_at: new Date().toISOString() })
           out.listos.add(a.scheduled_dispatch_id || "")
           hecho("nada", null)
@@ -527,6 +532,7 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       const res = await o.dep.robot.ajustarCantidadNp(nav, {
         codigo: d.np.zomatik_codigo, numero: d.np.numero, marca: d.np.marca, articuloCodigo: d.articuloCodigo, articuloNombre: d.articuloNombre,
         m3Np, objetivo, cortado, ...(d.traida ? { traida: d.traida } : {}),
+        ...(fib ? { fibra: fib } : {}),
       }, {
         hoy: hoyAR(),
         alPaso: async (paso) => {
@@ -538,6 +544,8 @@ export async function trabajarAjustes(sb: SB, ajustes: AjusteDB[], o: { usuario:
       if (res.estado === "ok") {
         // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
         if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("El ajuste cambió mientras se trabajaba")
+        if (fib && res.fibraKg !== undefined && res.fibraKg !== null) await guardarFibraNp(sb, a.np_id, res.fibraKg)
+        if (res.fibraAviso) await avisarFibraNp(sb, o.dep.avisarError, { npId: a.np_id, numero, marca: a.marca, usuario: o.usuario, pedidoId: a.scheduled_dispatch_id, plantId: a.plant_id, titulo: "La fibra de la NP no se pudo ajustar", mensaje: res.fibraAviso, lineas: ["El hormigón de la NP sí quedó ajustado."] })
         await aplicar(objetivo, m3Np, res.porAutorizar ?? null)
         continue
       }

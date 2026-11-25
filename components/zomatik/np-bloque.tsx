@@ -24,6 +24,8 @@ import { NpChip } from "@/components/zomatik/np-chip"
 import { usePermisos } from "@/lib/current-user"
 import { puedeCon, puedeVincularDesdePedido } from "@/lib/permisos"
 import { MSJ_LISTA_SIN_REMITO, MSJ_PRECIO_INVALIDO, MSJ_TRAER, diferenciaConLista, esFaltaDeVinculo, precioDeTexto, precioValido, textoPrecio, type PrecioNpForm } from "@/lib/zomatik/np"
+import { fibraValida, kgDeFibra, textoBolsitas, textoKg } from "@/lib/fibra"
+import { FibraNpAviso } from "@/components/despacho/fibra-np-aviso"
 
 type Proyecto = {
   codigo: number; numero: string; obra: string | null; saldo_m3: number | null; saldo_pct: number | null; estimado: boolean
@@ -51,7 +53,7 @@ type EstadoBusqueda = { color: "gris" | "ambar" | "verde"; texto: string; avisos
 
 export function NpBloque({
   planta, clientId, siteId, formulaId, m3, valor, onCambio, onM3, soloLectura, estado, proponer, lista, fallo, fechaCambiada, moverFecha, onMoverFecha, faltan, onVincular,
-  precio, onPrecio, remito, onRemito, pedidoId, plantId, despachado,
+  precio, onPrecio, remito, onRemito, pedidoId, plantId, despachado, fibraKgM3,
 }: {
   planta: PlantaNpResumen | undefined
   clientId: string
@@ -90,6 +92,8 @@ export function NpBloque({
   plantId?: string
   /** Al editar, lo despachado del pedido (la NP nunca baja de eso al editarla). */
   despachado?: number | null
+  /** Fibra del pedido en kg por m³ (0 = no lleva): con la llave de la fibra, la línea de la fibra de la NP. */
+  fibraKgM3?: number
 }) {
   const { usuario } = usePermisos()
   const puedeVincular = puedeVincularDesdePedido(usuario) && !!onVincular
@@ -381,6 +385,11 @@ export function NpBloque({
       )}
 
       {puedePrecio && usable && <LineaPrecio info={infoPrecio!} valor={valor} precio={precio!} onPrecio={onPrecio!} editable={editable} lista={precioLista} actualizando={actualizando} onActualizar={actualizarLista} aviso={avisoActualizar} />}
+      {/* La NP ya está hecha sin la fibra del pedido (spec 2026-11-25): a la vista de quien programa */}
+      <FibraNpAviso estado={estado} kgM3={fibraKgM3 ?? 0} />
+      {puedePrecio && usable && infoPrecio!.fibra && fibraValida(fibraKgM3 ?? 0) && valor.tipo !== "saldo" && (
+        <LineaFibra fibra={infoPrecio!.fibra} kg={kgDeFibra(fibraKgM3 ?? 0, m3)} proyecto={valor.tipo === "proyecto"} actualizando={actualizando} onActualizar={actualizarLista} />
+      )}
 
       <p className="text-[11px] text-muted-foreground">Crear proyecto: por ahora los proyectos se cargan en Zomatik.</p>
       {yaTiene.length > 0 && (
@@ -403,6 +412,30 @@ export function NpBloque({
 
 const leidaEl = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }).replace(",", "") : ""
+
+/**
+ * La fibra que va a la NP (spec 2026-11-25), solo con la llave de la fibra: kg, bolsitas y el precio por kg de la lista
+ * (neto). Si no está en la copia de la lista, el aviso de qué hacer: sin eso la NP de un pedido con fibra no sale.
+ */
+function LineaFibra({ fibra, kg, proyecto, actualizando, onActualizar }: {
+  fibra: { nombre: string; precio_kg: number | null }
+  kg: number
+  proyecto: boolean
+  actualizando: boolean
+  onActualizar: () => void
+}) {
+  const cuanto = `${textoKg(kg)} kg de ${fibra.nombre} (${textoBolsitas(kg)})`
+  if (proyecto) return <p className="text-xs text-muted-foreground">Fibra en la NP: {cuanto}, con el precio del proyecto (el proyecto tiene que tenerla).</p>
+  if (precioValido(fibra.precio_kg)) return <p className="text-xs text-muted-foreground">Fibra en la NP: {cuanto} · Lista: $ {textoPrecio(fibra.precio_kg!)} por kg (sin IVA)</p>
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-amber-700">Fibra: {fibra.nombre} no tiene precio en la lista. En Zomatik, en su ficha, poné «Exportar en Lista de Precios: Sí» y tocá «Actualizar». Sin eso la NP no sale.</span>
+      <button type="button" disabled={actualizando} className="rounded border px-2 py-0.5 text-xs text-foreground hover:bg-muted/50" onClick={onActualizar}>
+        {actualizando ? "Actualizando…" : "Actualizar"}
+      </button>
+    </div>
+  )
+}
 
 /** Una sola línea, input de ancho fijo: el precio por m³ (neto, sin IVA) que va a la NP de Zomatik. */
 function LineaPrecio({ info, valor, precio, onPrecio, editable, lista, actualizando, onActualizar, aviso }: {

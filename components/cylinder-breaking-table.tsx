@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { usePermisos } from "@/lib/current-user"
 import { logActivity } from "@/lib/activity-log"
 import { CampoMotivo, motivoValido } from "@/components/motivo"
+import { diaArgentina, diasEntre, diasHasta, fechaDeDia, fmtDia } from "@/lib/calidad"
 
 // La ecuación de calibración calcula la fuerza Y; según su unidad se convierte a Newton y luego a MPa
 const FUERZA_A_NEWTON: Record<string, number> = { tf: 9806.65, kN: 1000, kgf: 9.80665, N: 1 }
@@ -85,7 +86,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     constant_b: "-1.85E-05",
     constant_c: "0.35732",
     constant_d: "1.0243",
-    calibration_date: new Date().toISOString().split("T")[0],
+    calibration_date: diaArgentina(new Date()),
     cylinder_diameter_cm: "10",
     force_unit: "tf",
   })
@@ -127,10 +128,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     const supabase = createClient()
 
     try {
-      // Deactivate current active calibration
-      await supabase.from("press_calibrations").update({ is_active: false }).eq("is_active", true)
-
-      // Insert new calibration
+      // Primero la nueva y después se desactivan las otras. Antes era al revés y sin mirar errores: si el alta fallaba
+      // quedaba sin calibración activa y las roturas siguientes se guardaban sin MPa.
       const { data, error } = await supabase
         .from("press_calibrations")
         .insert({
@@ -148,9 +147,14 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
 
       console.log("[v0] saveCalibration result:", { data, error })
 
+      const { error: eDesactivar } = error || !data
+        ? { error: null }
+        : await supabase.from("press_calibrations").update({ is_active: false }).eq("is_active", true).neq("id", (data as any).id)
+
       if (error) {
         toast({ title: "Error", description: error.message, variant: "destructive" })
       } else {
+        if (eDesactivar) toast({ title: "Atención", description: `La calibración nueva quedó activa, pero no se pudo desactivar la anterior (${eDesactivar.message}). Se usa la de fecha más reciente.`, variant: "destructive" })
         const antes = calibration
         setCalibration(data)
         setCalibrationDialog(false)
@@ -173,7 +177,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
   // Check if calibration is expiring (within 1 month of 1 year anniversary)
   const isCalibrationExpiring = () => {
     if (!calibration) return false
-    const calibrationDate = new Date(calibration.calibration_date)
+    const calibrationDate = fechaDeDia(calibration.calibration_date)
+    if (!calibrationDate) return false
     const expiryDate = new Date(calibrationDate)
     expiryDate.setFullYear(expiryDate.getFullYear() + 1)
     const warningDate = new Date(expiryDate)
@@ -183,7 +188,8 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
 
   const getCalibrationExpiryDate = () => {
     if (!calibration) return null
-    const expiryDate = new Date(calibration.calibration_date)
+    const expiryDate = fechaDeDia(calibration.calibration_date)
+    if (!expiryDate) return null
     expiryDate.setFullYear(expiryDate.getFullYear() + 1)
     return expiryDate
   }
@@ -306,16 +312,9 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     setDiscarding(false)
   }
 
-  const calculateDaysUntilTest = (scheduledDate: string) => {
-    const scheduled = new Date(scheduledDate)
-    const today = new Date()
-    // Reset hours to compare only dates
-    scheduled.setHours(0, 0, 0, 0)
-    today.setHours(0, 0, 0, 0)
-    const diffTime = scheduled.getTime() - today.getTime()
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
-    return diffDays
-  }
+  // Antes: new Date("yyyy-mm-dd") es medianoche UTC = 21 h del día anterior en Argentina, así que la probeta
+  // de hoy salía "vencida" (−1) y la de mañana "hoy".
+  const calculateDaysUntilTest = (scheduledDate: string) => diasHasta(scheduledDate) ?? 0
 
   const getRowColor = (daysUntil: number) => {
     if (daysUntil < 0) return "bg-red-50" // Overdue
@@ -359,18 +358,11 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
     }
 
     // Within same priority, sort by scheduled date
-    return new Date(a.scheduled_test_date).getTime() - new Date(b.scheduled_test_date).getTime()
+    return a.scheduled_test_date.localeCompare(b.scheduled_test_date)
   })
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return ""
-    const date = new Date(dateStr)
-    return date.toLocaleDateString("es-AR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    })
-  }
+  // Fechas "yyyy-mm-dd" (columnas date): sin pasar por Date, que las corría un día para atrás en Argentina
+  const formatDate = (dateStr: string) => fmtDia(dateStr)
 
   const handleInputChange = (cylinderId: string, field: "weight" | "dial" | "comments" | "testDate", value: string) => {
     setEditingValues((prev) => ({
@@ -396,11 +388,15 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
 
     const testDate = values.testDate || getTodayDate()
     const dialReading = Number.parseFloat(values.dial)
+    // Sin calibración la probeta se guarda sin MPa: sale de pendientes y no aparece en Resultados ni en el reporte
+    // (piden MPa) hasta corregirla a mano. Antes se guardaba sin avisar.
+    if (!calibration && !confirm("No hay calibración de la prensa cargada: la rotura se va a guardar SIN MPa y no va a aparecer en Resultados ni en el reporte hasta que se corrija.\n\n¿Guardar igual?")) return
 
     // La fecha de rotura tiene que ser real: ni futura ni anterior al moldeo.
     // Si la edad real se aleja de la nominal, se avisa antes de guardar.
     const cyl = cylinders.find((c) => c.id === cylinderId)
-    const moldeo = cyl?.dispatch?.dispatch_date?.slice(0, 10)
+    // Día del moldeo en Argentina (dispatch_date llega en UTC: un despacho de las 22 h ya es "mañana")
+    const moldeo = diaArgentina(cyl?.dispatch?.dispatch_date) || undefined
     if (testDate > getTodayDate()) {
       toast({ title: "Fecha de rotura futura", description: `Pusiste ${formatDate(testDate)}. La rotura no puede ser posterior a hoy.`, variant: "destructive" })
       return
@@ -410,7 +406,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
       return
     }
     if (moldeo && cyl) {
-      const edadReal = Math.round((new Date(testDate + "T12:00:00").getTime() - new Date(moldeo + "T12:00:00").getTime()) / 86400000)
+      const edadReal = diasEntre(moldeo, testDate) ?? cyl.test_age_days
       if (Math.abs(edadReal - cyl.test_age_days) > 3) {
         const ok = confirm(`Esta probeta es de ${cyl.test_age_days} días, pero entre el moldeo (${formatDate(moldeo)}) y la rotura (${formatDate(testDate)}) pasaron ${edadReal} días.\n\n¿Es correcta la fecha de rotura?`)
         if (!ok) return
@@ -500,7 +496,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
           {calibration ? (
             <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
               <span className="text-muted-foreground">
-                Calibracion: <strong className="text-foreground">{new Date(calibration.calibration_date).toLocaleDateString("es-AR")}</strong>
+                Calibracion: <strong className="text-foreground">{fmtDia(calibration.calibration_date)}</strong>
               </span>
               <span className="text-muted-foreground">
                 Vence: <strong className={isCalibrationExpiring() ? "text-red-600" : "text-foreground"}>
@@ -588,7 +584,7 @@ export function CylinderBreakingTable({ plants, selectedPlantId }: CylinderBreak
                       value={editingValues[cylinder.id]?.testDate ?? getTodayDate()}
                       onChange={(e) => handleInputChange(cylinder.id, "testDate", e.target.value)}
                       disabled={!puedeCargar}
-                      min={cylinder.dispatch?.dispatch_date?.slice(0, 10)}
+                      min={diaArgentina(cylinder.dispatch?.dispatch_date) || undefined}
                       max={getTodayDate()}
                       className="h-8 text-xs"
                     />

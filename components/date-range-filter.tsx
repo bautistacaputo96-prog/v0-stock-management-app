@@ -62,6 +62,11 @@ export function DateRangeFilter({
   }
 
   const hasFilter = startDate || endDate
+  // "yyyy-mm-dd" → "dd/mm/aa" sin pasar por Date (new Date("yyyy-mm-dd") es UTC: en Argentina mostraba el día anterior)
+  const corta = (d: string) => {
+    const [a, m, dd] = d.slice(0, 10).split("-")
+    return a && m && dd ? `${dd}/${m}/${a.slice(2)}` : d
+  }
 
   return (
     <Popover>
@@ -70,9 +75,9 @@ export function DateRangeFilter({
           <Calendar className="h-4 w-4" />
           {hasFilter ? (
             <span className="text-xs">
-              {startDate && new Date(startDate).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+              {startDate && corta(startDate)}
               {startDate && endDate && " - "}
-              {endDate && new Date(endDate).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+              {endDate && corta(endDate)}
             </span>
           ) : (
             "Fechas"

@@ -29,6 +29,8 @@ import {
 } from "@/lib/zomatik/z1"
 import type { NavegadorNp, RespuestaNav } from "@/lib/zomatik/np-robot"
 import { MSJ_NP_NO_AJUSTADA, comprobantesDeNp } from "@/lib/zomatik/ajuste"
+import { msjFibraFueraDeTope } from "@/lib/zomatik/np"
+import { FIBRA_MAX_KG_M3, fibraValida } from "@/lib/fibra"
 
 /** Solo la arma z1-servidor.ts después de leer `zomatik_np_config.remitir_activo = true` (y la NP prendida). */
 export type LlaveZ1 = { readonly remitir: true; readonly plantId: string }
@@ -56,6 +58,10 @@ export type ResultadoZ1 = {
   mp?: MaterialMp[]
   /** Materia prima de la OF: no se mandó nada porque la OF ya tenía su remito interno de materia prima */
   yaEstaba?: boolean
+  /** Remito con fibra (spec 2026-11-25): los kg de fibra que se mandaron en el remito */
+  fibraKg?: number | null
+  /** Remito con fibra: lo que no se pudo remitir de la fibra y por qué (para Actividad y el aviso). El remito salió igual. */
+  fibraAviso?: string | null
 }
 
 export type OpcionesZ1 = {
@@ -470,6 +476,32 @@ export type DatosRemito = {
   pendienteEsperado?: number | null
   /** Los remitos que grabó el sistema contra esta NP: justo antes de grabar, cualquier otro remito de la NP frena (10/11). */
   nuestros: RemitoNuestro[]
+  /**
+   * Fibra (spec 2026-11-25; solo con la llave de la fibra): la que se cargó de verdad en los camiones de este remito
+   * (`kg`, de dispatch_materials) y los m³. Va en el renglón de la fibra de la NP. Lo que no se puede remitir (más que lo
+   * pendiente, sin stock, fuera del tope o la NP sin fibra) no frena el remito del hormigón: va en `fibraAviso`.
+   */
+  fibra?: { codigo: number; nombre: string; kg: number } | null
+}
+
+/**
+ * Cuánta fibra va en el remito y, si no va toda, por qué (sin montos). Nunca frena: el hormigón se remite igual.
+ * Tope: más de FIBRA_MAX_KG_M3 por m³ es un error de carga y no se manda.
+ */
+export function fibraDelRemito(items: { pendiente: number | null; stock: number | null; sinControlStock: boolean }[], f: { nombre: string; kg: number }, m3: number, deposito: number): { kg: number; item: number | null; aviso: string | null } {
+  const kg = Math.round(Number(f.kg) * 1000) / 1000
+  if (!(kg > 0)) return { kg: 0, item: null, aviso: null }
+  if (items.length !== 1) return { kg: 0, item: null, aviso: `La NP no tiene el renglón de ${f.nombre}: el remito salió sin los ${cantidadTexto(kg).replace(".", ",")} kg de fibra. Remitila (y facturala) a mano en Zomatik.` }
+  if (m3 > 0 && !fibraValida(kg / m3)) return { kg: 0, item: null, aviso: `${msjFibraFueraDeTope(kg / m3, FIBRA_MAX_KG_M3)} El remito salió sin la fibra: corregila en el historial y remitila a mano.` }
+  const it = items[0]
+  const pend = it.pendiente ?? 0
+  let va = Math.min(kg, Math.round(pend * 1000) / 1000)
+  let aviso: string | null = va < kg - 0.001 ? `Se cargaron ${cantidadTexto(kg).replace(".", ",")} kg de ${f.nombre} y a la NP le quedaban ${cantidadTexto(pend).replace(".", ",")} kg: faltan ${cantidadTexto(kg - va).replace(".", ",")} kg por remitir (NP adicional a mano en Zomatik).` : null
+  if (va > 0 && !it.sinControlStock && deposito !== 99 && (it.stock === null || va > it.stock + 0.001)) {
+    aviso = `No hay stock de ${f.nombre} en el depósito de Zomatik (${it.stock ?? "?"} kg): el remito salió sin los ${cantidadTexto(kg).replace(".", ",")} kg de fibra. Remitila a mano.`
+    va = 0
+  }
+  return { kg: Math.max(0, va), item: 0, aviso }
 }
 
 /** Tope de páginas del paginado de remitos (si hay más, se frena sin grabar). */
@@ -681,8 +713,12 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
       ...delCliente, comprobante: d.comprobante, numero, fecha: d.fecha, fentrega: d.fecha, deposito: String(d.deposito), transporte: "1",
       entrega_direccion: entregaDireccion, entrega_localidad: entregaLocalidad, lote, patente: d.patente || "", observaciones: d.observaciones, observacionesimp: d.observacionesimp,
     }
-    // "Continuar" precarga TODO lo pendiente: el renglón del artículo va con los m³ del día y todos los demás en 0
-    const renglones = items.flatMap((x) => x.campos.map((c) => (c.nombre.toLowerCase() === `cantidad${x.id}` ? { nombre: c.nombre, valor: x === it ? cantidadTexto(d.m3) : "0" } : c)))
+    // Fibra (spec 2026-11-25): la cargada en los camiones de este remito, en el renglón de la fibra de la NP
+    const itemsFibra = d.fibra ? items.filter((x) => x !== it && esItemDe(x, { codigo: d.fibra!.codigo, nombre: d.fibra!.nombre })) : []
+    const fibra = d.fibra ? fibraDelRemito(itemsFibra, d.fibra, d.m3, d.deposito) : null
+    const itFibra = fibra && fibra.item !== null && fibra.kg > 0 ? itemsFibra[fibra.item] : null
+    // "Continuar" precarga TODO lo pendiente: el renglón del artículo va con los m³ del día, la fibra con sus kg y todos los demás en 0
+    const renglones = items.flatMap((x) => x.campos.map((c) => (c.nombre.toLowerCase() === `cantidad${x.id}` ? { nombre: c.nombre, valor: x === it ? cantidadTexto(d.m3) : x === itFibra ? cantidadTexto(fibra!.kg) : "0" } : c)))
     const nombresItems = new Set([...renglones, ...camposSueltosRemito(man.html)].map((c) => c.nombre))
     const base = conValores(f.orden.filter((c: CampoForm) => !nombresItems.has(c.nombre)), valores)
     const todos = [...base, ...camposSueltosRemito(man.html), ...renglones]
@@ -693,7 +729,8 @@ export async function generarRemito(nav: NavegadorNp, d: DatosRemito, o: Opcione
 
     await marcar("verificar_remito")
     const x = await remitoPorNumero(nav, numero, d.marca, d.fecha, o.hoy, azar)
-    if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true }
+    const conFibra = fibra ? { fibraKg: itFibra ? fibra.kg : 0, fibraAviso: fibra.aviso } : {}
+    if (x?.de === "nuestro") return { estado: "ok", mensaje: null, numero: `${pref} ${numero}`, codigo: x.codigo, paso: "verificar_remito", grabado: true, ...conFibra }
     if (!x && no) return { estado: "error", mensaje: `Zomatik no aceptó el remito: ${no}`, paso: "grabar_remito", recorte: recorte(g.html) }
     return { estado: "revisar", mensaje: x ? `El remito ${pref} ${numero} existe pero ${x.de === "ilegible" ? "no se pudo leer" : "sin la marca"}: revisalo en Zomatik.` : `Zomatik grabó pero el remito ${pref} ${numero} no aparece. Revisalo en Zomatik.`, paso: "verificar_remito", grabado: true, recorte: recorte(g.html) }
   })

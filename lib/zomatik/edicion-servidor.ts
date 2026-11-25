@@ -20,7 +20,7 @@ import { mensajeZomatik, navegadorAjuste } from "@/lib/zomatik/cliente"
 import {
   COLUMNAS_EDICION, COLUMNAS_NP, PASO_AUTORIZADA, PASO_SIN_AUTORIZAR, PENDIENTE_LARGO_INTENTOS, actividadNp, avisarCaidaFila, avisarErrorZomatik, avisarFallaAcceso, avisarPendienteLargo, avisarZomatikVolvio, contextoEdicion, datosObjetivo,
   editableDe, esFallaDeAcceso, faltaMigracionEdicion, llaveEdicion, plantasNp, sincronizarPedido, tipoDeFalla,
-  type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB,
+  type AvisarFn, type FilaEdicionDB, type FilaNpDB, type PlantaNpDB, type FibraAjuste, avisarFibraNp, fibraCambia, fibraParaAjuste, guardarFibraNp,
 } from "@/lib/zomatik/np-servidor"
 import { ajustarCantidadNp, totalesDeAjuste as totalesDe, type LlaveAjuste, type NavegadorNp } from "@/lib/zomatik/np-robot"
 import { hoyAR, quedaTiempo, trabajoPendiente } from "@/lib/zomatik/np"
@@ -280,6 +280,8 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
     let objetivo = Number(a.m3_objetivo)
     const m3Uso = Number(a.m3_uso_objetivo)
     const m3Np = Number(np.m3)
+    // La fibra de la NP (spec 2026-11-25, 3.5): la real cargada contra la NP más la dosificación de ahora por lo que falta
+    let fibra: FibraAjuste | null = null
 
     if (!cortado) {
       // 1. controlar (sin Zomatik)
@@ -297,13 +299,17 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
       const o = objetivoEdicion({ ...(await datosObjetivo(sb, np.id, pedidoId)), m3Uso })
       if (!o.ok) return await trabar("revisar", o.mensaje, { m3_objetivo: o.m3_objetivo, m3_np: m3Np })
       objetivo = o.m3_objetivo
-      const nada = Math.abs(objetivo - m3Np) <= TOL_AJUSTE
+      fibra = await fibraParaAjuste(sb, np, { pedidoId, m3Objetivo: objetivo, m3Despachado: o.m3_despachado })
+      // Cambió solo la fibra del pedido (Bautista 25/11): la NP también se edita
+      const nada = Math.abs(objetivo - m3Np) <= TOL_AJUSTE && !fibraCambia(fibra)
       // La cantidad y la reserva van juntas: son las que después pasan a la base
       if (!(await guardarSi(sb, a.id, { tipo: nada ? "nada" : "editar", m3_np: m3Np, m3_objetivo: objetivo, m3_uso_objetivo: m3Uso, m3_despachado: o.m3_despachado, ...(nada ? { paso: "aplicar" } : {}) }))) throw new Cambio("La edición cambió mientras se trabajaba")
       // Ya está en la cantidad: solo la base (la reserva), sin abrir Zomatik
       if (nada) return await aplicar(objetivo, m3Uso, m3Np, null, true)
     } else if (!np.zomatik_codigo || np.estado !== "ok") {
       return await trabar("revisar", "La NP no está en Zomatik: no se puede cambiar.")
+    } else {
+      fibra = await fibraParaAjuste(sb, np, { pedidoId, m3Objetivo: objetivo, m3Despachado: Number(a.m3_despachado) || 0 })
     }
 
     // 3. Zomatik: el mismo camino del ajuste (marca, un renglón, cantidad = la de la base, factura, Grabar, verificar)
@@ -314,6 +320,7 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
     await c.alAbrir()
     const res = await c.dep.robot.ajustarCantidadNp(nav, {
       codigo: np.zomatik_codigo!, numero: np.numero, marca: np.marca, articuloCodigo: art.codigo, articuloNombre: art.nombre, m3Np, objetivo, cortado,
+      ...(fibra ? { fibra } : {}),
     }, {
       hoy: hoyAR(),
       alPaso: async (paso) => {
@@ -327,6 +334,8 @@ async function trabajarEdicion(sb: SB, lista: FilaEdicionDB, c: Ctx): Promise<{ 
     if (res.estado === "ok") {
       // La cantidad de ANTES es la de la base (todavía sin aplicar): después de un corte el robot ya lee el objetivo
       if (!(await guardarSi(sb, a.id, { paso: "aplicar", m3_np: m3Np, con_factura: false, factura_texto: null }))) throw new Cambio("La edición cambió mientras se trabajaba")
+      if (fibra && res.fibraKg !== undefined && res.fibraKg !== null) await guardarFibraNp(sb, np.id, res.fibraKg)
+      if (res.fibraAviso) await avisarFibraNp(sb, c.dep.avisarError, { npId: np.id, numero: np.numero, marca: a.marca, usuario: c.usuario, pedidoId, plantId: a.plant_id, titulo: "La fibra de la NP no se pudo cambiar", mensaje: res.fibraAviso, lineas: ["El hormigón de la NP sí quedó cambiado."] })
       return await aplicar(objetivo, m3Uso, m3Np, res.porAutorizar ?? null)
     }
     const cant = res.leido ?? m3Np

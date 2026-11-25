@@ -34,6 +34,8 @@ import { SearchableSelect } from "@/components/dispatch-scheduling"
 import { BuscadorCliente } from "@/components/clientes/buscador-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, choferPorCamionDelDia, type Chofer } from "@/lib/maestros"
+import { hoyLocal } from "@/lib/despacho"
+import { errorFibraKgM3, fibraKgM3, textoFibraCamion } from "@/lib/fibra"
 
 type Formula = {
   id: string
@@ -174,7 +176,7 @@ export function AddDispatchDialog({
     sample_taken: false,
     sample_number: "",
     actual_slump_cm: "",
-    dispatch_date: new Date().toISOString().split("T")[0],
+    dispatch_date: hoyLocal(), // no toISOString: después de las 21 h daba el día siguiente
     notes: "",
     created_by: "",
     // Fibra agregada al camión, en kg por m³
@@ -389,7 +391,14 @@ export function AddDispatchDialog({
       // materiales de la fórmula en el stock de la planta elegida (con la humedad de la
       // Arena Fina), fibra, probetas (las crea el trigger de la base) y actividad.
       // Si algo falla no queda nada grabado.
-      const fiberPerM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
+      // Fibra (25/11): en kg por m³ y con tope (había 800 kg/m³ = 6.400 kg por camión)
+      const errFibra = errorFibraKgM3(formData.fiber_kg_per_m3)
+      if (errFibra) {
+        toast.error(errFibra)
+        setLoading(false)
+        return
+      }
+      const fiberPerM3 = fibraKgM3(formData.fiber_kg_per_m3)
       const { data: result, error: dispatchError } = await supabase.rpc("registrar_despacho", {
         p: {
           plant_id: dispatchPlantId,
@@ -469,7 +478,7 @@ export function AddDispatchDialog({
       sample_number: "",
       actual_slump_cm: "",
       fiber_kg_per_m3: "",
-      dispatch_date: new Date().toISOString().split("T")[0],
+      dispatch_date: hoyLocal(), // no toISOString: después de las 21 h daba el día siguiente
       notes: "",
       created_by: "",
     })
@@ -877,14 +886,16 @@ export function AddDispatchDialog({
                       className="flex-1"
                     />
                     {(() => {
-                      const perM3 = Number.parseFloat(formData.fiber_kg_per_m3) || 0
+                      const perM3 = fibraKgM3(formData.fiber_kg_per_m3)
                       const m3 = Number.parseFloat(formData.quantity_m3) || 0
+                      const err = errorFibraKgM3(formData.fiber_kg_per_m3)
+                      if (err) return <p className="text-xs font-medium text-destructive flex-1 leading-tight">{err}</p>
                       if (perM3 <= 0 || m3 <= 0) return null
                       return (
                         <p className="text-xs text-muted-foreground flex-1 leading-tight">
-                          Total en el camión:{" "}
+                          Lleva el camión:{" "}
                           <span className="font-semibold text-foreground">
-                            {(perM3 * m3).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg
+                            {textoFibraCamion(perM3, m3)}
                           </span>
                           <br />
                           <span className="text-[11px]">{perM3} kg/m³ × {m3} m³</span>

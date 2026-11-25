@@ -7,7 +7,8 @@
  *   1. falta_nuestro   está en Zomatik y no en nuestro sistema
  *   2. falta_zomatik   está en nuestro sistema y no en Zomatik (con la nota, si tiene)
  *   3. no_coincide     está en los dos pero no coincide: toneladas (o dígitos invertidos), cargado dos veces,
- *                      otro producto, otra planta u otra fecha
+ *                      otro producto, otra planta u otra fecha. También "probable carga en toneladas": un árido o
+ *                      cemento con menos de 200 kg (al stock le faltan kg), esté o no en Zomatik
  *   4. numero_mal      el mismo camión y las mismas toneladas con el número mal escrito en uno de los dos
  *                      (un proveedor distinto solo, con el mismo número, material y toneladas, no es diferencia)
  */
@@ -193,13 +194,26 @@ export const nombreMaterial = (clave: string | null) => (clave ? NOMBRE_MATERIAL
 /** Los que se comparan en toneladas (áridos y cemento). Los aditivos y la fibra, en su unidad. */
 export const enToneladas = (clave: string | null) => !!clave && /^(arena|piedra|cemento)/.test(clave)
 
+/** Un árido o el cemento con menos de esto en kg seguramente se cargó en toneladas (32,76 en vez de 32760). */
+export const KG_SOSPECHOSO = 200
+
 /**
  * Toneladas de un renglón. Los ingresos dicen kg, pero hay quien carga toneladas (32,76 en vez de 32760): menos de 200
- * se toma como toneladas. Lo mismo para Zomatik.
+ * se toma como toneladas para emparejar con Zomatik. Lo mismo para Zomatik. En nuestros ingresos eso NO es un dato
+ * bueno: el stock sumó 32,76 kg. El cruce lo informa aparte (tipo "en_toneladas", ver `faltaPorToneladas`).
  */
 export function toneladas(cantidad: number): { t: number; cargadoEnT: boolean } {
   if (!Number.isFinite(cantidad)) return { t: 0, cargadoEnT: false }
-  return cantidad < 200 ? { t: cantidad, cargadoEnT: true } : { t: cantidad / 1000, cargadoEnT: false }
+  return cantidad < KG_SOSPECHOSO ? { t: cantidad, cargadoEnT: true } : { t: cantidad / 1000, cargadoEnT: false }
+}
+
+/**
+ * Lo que le falta al stock por un ingreso de árido o cemento cargado en toneladas: entró `cantidad` kg y eran
+ * `cantidad` t (30,44 → faltan 30.409,56 kg). 0 si la cantidad no parece en toneladas.
+ */
+export function faltaPorToneladas(cantidad: number): number {
+  if (!Number.isFinite(cantidad) || cantidad <= 0 || cantidad >= KG_SOSPECHOSO) return 0
+  return Math.round(cantidad * 999 * 100) / 100
 }
 
 /** "39,24" y "39,42": los mismos dígitos en otro orden. */
@@ -452,7 +466,7 @@ export function conClaves<T extends NonNullable<ReturnType<typeof renglonCompra>
 // ---------------------------------------------------------------------------
 
 export type Categoria = "falta_nuestro" | "falta_zomatik" | "no_coincide" | "numero_mal"
-export type TipoDiferencia = "falta" | "toneladas" | "digitos" | "duplicado_nuestro" | "duplicado_zomatik" | "producto" | "planta" | "fecha" | "numero" | "proveedor"
+export type TipoDiferencia = "falta" | "toneladas" | "en_toneladas" | "digitos" | "duplicado_nuestro" | "duplicado_zomatik" | "producto" | "planta" | "fecha" | "numero" | "proveedor"
 
 export const CATEGORIAS: { clave: Categoria; titulo: string }[] = [
   { clave: "falta_nuestro", titulo: "Falta en nuestro sistema (está en Zomatik)" },
@@ -492,6 +506,7 @@ export type Diferencia = {
 type Item = Lado & { lado: "n" | "z"; plantaId: string | null; mat: string | null; nro: string | null; comparaT: boolean; usado: boolean }
 
 const fmtT = (t: number) => t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const fmtKg = (kg: number) => Math.round(kg).toLocaleString("es-AR")
 const cant = (i: Lado) => (i.unidad === "t" ? `${fmtT(i.t)} t` : `${i.t.toLocaleString("es-AR")}${i.unidad ? ` ${i.unidad}` : ""}`)
 
 function itemNuestro(n: IngresoNuestro): Item {
@@ -767,6 +782,24 @@ export function cruzar(nuestros: IngresoNuestro[], zomatik: RemitoZomatik[], opt
     if (d.tipo.startsWith("duplicado")) continue
     const refs = [...d.nuestro, ...d.zomatik].map((l) => l.ref)
     if (refs.length > 1 && refs.every((r) => enDuplicados.has(r))) out.splice(i, 1)
+  }
+
+  // 5. Cargado en toneladas (30,44 en vez de 30.440): para emparejar se tomó como toneladas, pero el stock sumó 30,44 kg.
+  //    No se corrige en silencio: se informa cada ingreso para que alguien lo pase a kg (al corregirlo, se resuelve
+  //    sola). Va con su par de Zomatik si lo tiene (para ver las toneladas de allá); la clave es solo el ingreso.
+  for (const a of N) {
+    if (!a.cargadoEnT) continue
+    const falta = faltaPorToneladas(a.t)
+    if (!falta) continue
+    const z = parDe.get(a)
+    const antes = out.length
+    agregar(
+      "no_coincide",
+      "en_toneladas",
+      z ? [a, z] : [a],
+      `Probable carga en toneladas: se cargaron ${fmtT(a.t)} kg y el remito seguramente dice ${fmtT(a.t)} t. Al stock le faltan ${fmtKg(falta)} kg: corregir el ingreso (pasar a kg)`,
+    )
+    if (out.length > antes) out[out.length - 1].clave = claveDe("no_coincide", "en_toneladas", [a])
   }
   const orden = new Map(CATEGORIAS.map((c, i) => [c.clave, i]))
   return out.sort((x, y) => orden.get(x.categoria)! - orden.get(y.categoria)! || (x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : 0) || (x.clave < y.clave ? -1 : 1))

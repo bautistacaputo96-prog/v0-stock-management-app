@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { createClient } from "@/lib/supabase/server"
 import { buscarTexto, type Centro } from "@/lib/geo-lugares"
 import { buscarOsm } from "@/lib/geo-osm"
@@ -11,6 +12,13 @@ import { buscarOsm } from "@/lib/geo-osm"
  * La clave nunca sale del servidor.
  */
 export async function GET(req: Request) {
+  // Solo con sesión iniciada: estas búsquedas usan la clave paga de Google (o servicios gratuitos con límite)
+  try {
+    const s = await exigirSesion()
+    if (s.respuesta) return s.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const sp = new URL(req.url).searchParams
   const q = (sp.get("q") || "").slice(0, 200)
   const planta = sp.get("planta")

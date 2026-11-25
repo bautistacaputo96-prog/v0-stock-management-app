@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { DashboardClient } from "@/components/dashboard-client"
+import { todasLasFilas } from "@/lib/gps-viajes"
 
 // Render at request time so Supabase env vars are available (avoids build-time prerender error)
 export const dynamic = "force-dynamic"
@@ -22,31 +23,38 @@ export default async function DashboardPage() {
     `)
     .order("name", { ascending: true })
 
-  // Get dispatches for the current month and last month
+  // Despachos de los 12 meses que ofrece el selector del Dashboard (antes se traían solo 2: elegir un mes anterior
+  // mostraba 0 m³). De a 1000 filas (PostgREST corta ahí) y sin los materiales, que pesan: esos van aparte, solo de los
+  // últimos 8 días (el consumo promedio de las alertas de stock usa 7).
   const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-  const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
-  const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const inicio12Meses = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString()
+  const hace8Dias = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString()
 
-  // Get all dispatches for the last 2 months for calculations
-  const { data: dispatches } = await supabase
+  const dispatchesSinMateriales = await todasLasFilas((desde, hasta) =>
+    supabase
+      .from("dispatches")
+      .select(`
+        id, dispatch_date, quantity_m3, client, obra, remito, formula_id, client_id, plant_id, is_test_dispatch,
+        formulas (id, code, name, plant_id, plants (name)),
+        clients:client_id (id, name),
+        construction_sites:construction_site_id (id, name)
+      `)
+      .gte("dispatch_date", inicio12Meses)
+      .order("dispatch_date", { ascending: false })
+      .order("id")
+      .range(desde, hasta),
+  ).catch((e) => {
+    console.error("[dashboard] despachos:", e)
+    return [] as any[]
+  })
+
+  const { data: materialesRecientes } = await supabase
     .from("dispatches")
-    .select(`
-      *,
-      formulas (id, code, name, plant_id, plants (name)),
-      clients:client_id (id, name),
-      construction_sites:construction_site_id (id, name),
-      dispatch_materials (
-        id,
-        material_id,
-        quantity,
-        materials:material_id (id, name, unit)
-      )
-    `)
-    .gte("dispatch_date", startOfLastMonth)
-    .order("dispatch_date", { ascending: false })
+    .select("id, dispatch_materials (id, material_id, quantity, materials:material_id (id, name, unit))")
+    .gte("dispatch_date", hace8Dias)
+    .limit(1000)
+  const materialesDe = new Map((materialesRecientes || []).map((d: any) => [d.id, d.dispatch_materials || []]))
+  const dispatches = dispatchesSinMateriales.map((d: any) => ({ ...d, dispatch_materials: materialesDe.get(d.id) || [] }))
 
   // Get recent stock entries
   const { data: recentEntries } = await supabase
@@ -59,17 +67,18 @@ export default async function DashboardPage() {
     .order("entry_date", { ascending: false })
     .limit(20)
 
-  // Get test cylinders
+  // Get test cylinders. Las más nuevas primero: PostgREST corta en 1000 filas y en orden ascendente se quedaba con
+  // las 1000 más viejas (el panel de calidad y los próximos ensayos salían vacíos al pasar de 1000 probetas).
   const { data: testCylinders } = await supabase
     .from("test_cylinders")
     .select(`
       *,
       dispatches (
         id,
-        formulas (id, name, code)
+        formulas (id, name, code, description)
       )
     `)
-    .order("scheduled_test_date", { ascending: true })
+    .order("scheduled_test_date", { ascending: false })
 
   // Get formulas with materials for consumption calculation
   const { data: formulas } = await supabase
@@ -106,7 +115,7 @@ export default async function DashboardPage() {
     <DashboardClient
       plants={plants || []}
       materials={materials || []}
-      dispatches={dispatches || []}
+      dispatches={dispatches}
       recentEntries={recentEntries || []}
       testCylinders={testCylinders || []}
       formulas={formulas || []}

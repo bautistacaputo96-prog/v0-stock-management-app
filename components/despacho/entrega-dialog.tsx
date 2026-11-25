@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { NpAviso } from "./np-aviso"
+import { FibraNpAviso } from "./fibra-np-aviso"
 import type { EstadoPedidoNp } from "@/lib/zomatik/np-cliente"
 import { ChoferSelect } from "@/components/chofer-select"
 import { currentUserName } from "@/lib/current-user"
@@ -28,6 +29,7 @@ import {
   TIPO_TEXTO, validarEntrega, type AvisoRemito, type FormEntrega, type OrigenTipo, type RemitoHist, type TipoRemito,
 } from "@/lib/despacho"
 import { cn } from "@/lib/utils"
+import { errorFibraKgM3, textoBolsitas, textoFibraCamion } from "@/lib/fibra"
 import { cargarContexto, cargarFormulas, cargarPuesto, controlDeFormula, mandaOrdenes } from "@/lib/carga/datos"
 import type { ControlReceta } from "@/lib/carga/receta"
 import type { CamionT, PedidoT, Planta, TipoResuelto, ViajeT } from "./tipos"
@@ -296,12 +298,13 @@ export function EntregaDialog({
           <div className="rounded-lg border bg-muted/40 px-3 py-1.5 text-[13px]">
             <div className="text-[14px] font-bold">{p.clients?.name} · {p.construction_sites?.name}</div>
             {p.construction_sites?.address && <div className="text-muted-foreground">{p.construction_sites.address}</div>}
-            <div className="mt-0.5"><b>{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³` : ""}</div>
+            <div className="mt-0.5"><b>{p.formulas?.code}</b>{p.finalidad ? ` · ${p.finalidad}` : ""} · {bomba || "Directo"}{Number(p.fiber_kg_per_m3) > 0 ? ` · Fibra ${m3txt(p.fiber_kg_per_m3)} kg/m³ (${textoBolsitas(Number(p.fiber_kg_per_m3))} por m³)` : ""}</div>
             <div className="mt-0.5">Total <b>{m3txt(p.quantity_m3)} m³</b> · enviado <b>{m3txt(enviado)}</b> · falta <b className="text-amber-600">{m3txt(falta)}</b></div>
           </div>
 
           {/* Zomatik Z2: NP pendiente (en rojo) y excepción gerencial */}
           <NpAviso pedidoId={p.id} estado={np} onCambio={() => onNp?.()} />
+          <FibraNpAviso estado={np} kgM3={Number(p.fiber_kg_per_m3) || 0} />
 
           {/* Tipo de remito: R (con factura) / X (sin factura) */}
           {cargando && !form.tipo ? (
@@ -442,8 +445,10 @@ export function EntregaDialog({
                   <Input className="h-[30px] text-[13px]" inputMode="decimal" value={form.fibraKgM3} onChange={(e) => set({ fibraKgM3: e.target.value })} placeholder="Ej: 0,5" />
                 </div>
                 <div className="pb-1 text-[12.5px]">
-                  {fibra > 0 && m3n > 0
-                    ? <>Total en el camión: <b>{(fibra * m3n).toLocaleString("es-AR", { maximumFractionDigits: 2 })} kg</b><br /><span className="text-xs text-muted-foreground">{m3txt(fibra)} kg/m³ × {m3txt(m3n)} m³</span></>
+                  {errorFibraKgM3(form.fibraKgM3)
+                    ? <span className="text-[12px] font-medium text-destructive">{errorFibraKgM3(form.fibraKgM3)}</span>
+                    : fibra > 0 && m3n > 0
+                    ? <>Lleva el camión: <b>{textoFibraCamion(fibra, m3n)}</b><br /><span className="text-xs text-muted-foreground">{m3txt(fibra)} kg/m³ × {m3txt(m3n)} m³</span></>
                     : <span className="text-[13px] text-muted-foreground">Poné los kg por m³ para ver el total.</span>}
                 </div>
               </div>

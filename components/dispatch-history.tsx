@@ -26,6 +26,8 @@ import { CampoMotivo, ConfirmarConMotivo, motivoValido } from "@/components/moti
 import { es } from "date-fns/locale"
 import { ChoferSelect } from "@/components/chofer-select"
 import { cargarChoferes, type Chofer } from "@/lib/maestros"
+import { rangoDiasAR } from "@/lib/despacho"
+import { errorFibraKgM3, fibraKgM3, kgDeFibra, kgFibraDeMateriales, textoBolsitas, textoKg } from "@/lib/fibra"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 
 type Plant = { id: string; name: string }
@@ -244,9 +246,10 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       .from("dispatches")
       // "*" (y el pedido con "*") para que las columnas de la fase 1 (chofer_id, finalidad) vengan
       // cuando la migración está aplicada, sin romper la consulta si todavía no lo está.
-      .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
-      .gte("dispatch_date", `${dateFrom}T00:00:00`)
-      .lte("dispatch_date", `${dateTo}T23:59:59`)
+      .select("*, clients(name), construction_sites(name), formulas(name, code), mixers(license_plate), dispatch_materials(quantity, material_id, materials(name, unit, tipo)), pedido:scheduled_dispatches!dispatches_scheduled_dispatch_id_fkey(*)")
+      // Días de Argentina (sin el -03:00 la base los toma en UTC y los despachos de 21 a 24 h caían en el día siguiente)
+      .gte("dispatch_date", rangoDiasAR(dateFrom, dateTo).desde)
+      .lte("dispatch_date", rangoDiasAR(dateFrom, dateTo).hasta)
       .order("dispatch_date", { ascending: false })
       .limit(10000)
     if (selectedPlant !== ALL_PLANTS) manualQuery = manualQuery.eq("plant_id", selectedPlant)
@@ -265,10 +268,8 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           (d.dispatch_materials || [])
             .filter((dm: any) => isSuperplasticizer(dm.materials?.name))
             .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
-        fiber_kg:
-          (d.dispatch_materials || [])
-            .filter((dm: any) => /fibra/i.test(dm.materials?.name || ""))
-            .reduce((s: number, dm: any) => s + Number(dm.quantity || 0), 0) || null,
+        // Fibra: por el tipo del material, como registrar_despacho y el remito de Zomatik (lib/fibra.ts)
+        fiber_kg: kgFibraDeMateriales(d.dispatch_materials) || null,
         scheduled_arrival_time: d.dispatch_date,
         scheduled_departure_time: d.dispatch_date,
         actual_departure_time: d.dispatch_date,
@@ -396,9 +397,11 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
       toast({ title: "Falta el motivo", description: "Escribí por qué se corrige la fibra.", variant: "destructive" })
       return
     }
-    const perM3 = Number.parseFloat(fiberPerM3)
-    if (Number.isNaN(perM3) || perM3 < 0) {
-      toast({ title: "Dosificación inválida", description: "Ingresá los kg de fibra por m³", variant: "destructive" })
+    const perM3 = fibraKgM3(fiberPerM3)
+    // Tope (25/11): había 800 kg/m³ (6.400 kg por camión). Vacío o 0 = sacar la fibra
+    const errFibra = errorFibraKgM3(fiberPerM3)
+    if (errFibra) {
+      toast({ title: "Dosificación inválida", description: errFibra, variant: "destructive" })
       return
     }
     const m3 = Number(fiberDispatch.quantity_m3) || 0
@@ -1071,7 +1074,7 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
                             {!!dispatch.fiber_kg && (
                               <Sparkles
                                 className="h-3.5 w-3.5 text-violet-600 shrink-0"
-                                aria-label={`Fibra: ${dispatch.fiber_kg} kg`}
+                                aria-label={`Fibra: ${textoKg(dispatch.fiber_kg)} kg = ${textoBolsitas(dispatch.fiber_kg)}`}
                               />
                             )}
                           </span>
@@ -1390,21 +1393,23 @@ export function DispatchHistory({ plants }: { plants: Plant[] }) {
           </DialogHeader>
           {fiberDispatch && (() => {
             const m3 = Number(fiberDispatch.quantity_m3) || 0
-            const perM3 = Number.parseFloat(fiberPerM3) || 0
-            const total = Math.round(perM3 * m3 * 100) / 100
+            const perM3 = fibraKgM3(fiberPerM3)
+            const total = kgDeFibra(perM3, m3)
+            const err = errorFibraKgM3(fiberPerM3)
             return (
               <div className="space-y-4 py-4">
                 <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
                   <p><span className="text-muted-foreground">Remito:</span> <span className="font-medium">{fiberDispatch.remito || "-"}</span></p>
                   <p><span className="text-muted-foreground">Cliente:</span> <span className="font-medium">{fiberDispatch.clients?.name || "-"}</span></p>
                   <p><span className="text-muted-foreground">Cantidad:</span> <span className="font-medium">{m3} m³</span></p>
-                  {!!fiberDispatch.fiber_kg && <p><span className="text-muted-foreground">Fibra cargada hoy:</span> <span className="font-medium">{fiberDispatch.fiber_kg} kg</span></p>}
+                  {!!fiberDispatch.fiber_kg && <p><span className="text-muted-foreground">Fibra cargada hoy:</span> <span className="font-medium">{textoKg(fiberDispatch.fiber_kg)} kg = {textoBolsitas(fiberDispatch.fiber_kg)}</span></p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Dosificación (kg de fibra por m³)</Label>
                   <Input type="number" step="0.1" min="0" inputMode="decimal" autoFocus placeholder="Ej: 1" value={fiberPerM3} onChange={(e) => setFiberPerM3(e.target.value)} />
+                  {err && <p className="text-sm font-medium text-destructive">{err}</p>}
                   <p className="text-sm">
-                    Total en el camión: <span className="font-semibold">{total > 0 ? `${total} kg` : "—"}</span>
+                    Total en el camión: <span className="font-semibold">{total > 0 ? `${textoKg(total)} kg = ${textoBolsitas(total)}` : "—"}</span>
                     <span className="text-muted-foreground text-xs"> ({perM3 || 0} kg/m³ × {m3} m³)</span>
                   </p>
                   <p className="text-xs text-muted-foreground">Se descuenta del stock de &quot;Fibra&quot; de la planta. Dejalo en 0 para quitarla.</p>

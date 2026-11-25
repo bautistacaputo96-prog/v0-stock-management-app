@@ -74,6 +74,25 @@ async function precioDeLista(sb: SB, lista: number, articulo: number): Promise<n
   return precioValido(p) ? p : null
 }
 
+/**
+ * Precio por kg de la fibra en cada lista de la copia ({ "10253": 25000 }). Solo los que tienen precio (> 0). Sin la
+ * migración de los precios: vacío (el robot dice que falta el precio). Zomatik solo exporta los artículos con
+ * "Exportar en Lista de Precios: Sí" (25/11: la MACRO FIBRA estaba en No).
+ */
+export async function preciosFibra(sb: SB, articulo: number): Promise<Record<string, number>> {
+  const { data, error } = await sb.from("zomatik_lista_precios").select("lista_codigo, precio").eq("articulo_codigo", articulo)
+  if (error) {
+    if (faltaMigracionPrecio(error)) return {}
+    throw error
+  }
+  const out: Record<string, number> = {}
+  for (const f of (data as { lista_codigo: unknown; precio: unknown }[]) || []) {
+    const p = num(f.precio)
+    if (precioValido(p)) out[String(Number(f.lista_codigo))] = p
+  }
+  return out
+}
+
 async function articuloDeFormula(sb: SB, formulaId: string): Promise<number | null> {
   const { data, error } = await sb.from("formulas").select("zomatik_articulo_codigo").eq("id", formulaId).maybeSingle()
   if (error) throw error
@@ -103,10 +122,13 @@ export type PrecioPedido = {
   proyecto_precio_m3: number | null
   /** Por qué no se sabe la lista (sin montos): p. ej. "Elegí R o X para saber la lista." */
   aviso?: string | null
+  /** Fibra (spec 2026-11-25), solo con la llave de la fibra prendida: el artículo y su precio por kg en la lista (null =
+   *  no está en la copia de la lista: la NP de un pedido con fibra no sale). */
+  fibra?: { articulo: number; nombre: string; precio_kg: number | null } | null
 }
 
 /** Lo que muestra la línea "Precio por m³" del formulario del pedido. */
-export async function precioParaPedido(o: { formulaId: string; remito: string | null; pedidoId?: string | null }, sb: SB = sbServicio()): Promise<PrecioPedido> {
+export async function precioParaPedido(o: { formulaId: string; remito: string | null; pedidoId?: string | null; fibraArticulo?: number | null }, sb: SB = sbServicio()): Promise<PrecioPedido> {
   const out: PrecioPedido = { estado: "ok", lista: null, precio_lista: null, precio_m3: null, origen: null, bloqueado: false, numero_np: null, proyecto_precio_m3: null }
   if (o.pedidoId) {
     const [fila, nps] = await Promise.all([filaPrecio(sb, o.pedidoId), npsDelPedido(sb, o.pedidoId)])
@@ -122,6 +144,11 @@ export async function precioParaPedido(o: { formulaId: string; remito: string | 
   const l = await listaDeLaCopia(sb, o.remito)
   if ("lista" in l) out.lista = l.lista
   else out.aviso = l.error
+  if (o.fibraArticulo) {
+    const { data: fa } = await sb.from("zomatik_articulos").select("nombre").eq("codigo", o.fibraArticulo).maybeSingle()
+    const nombre = (fa as { nombre?: string } | null)?.nombre || "MACRO FIBRA"
+    out.fibra = { articulo: o.fibraArticulo, nombre, precio_kg: out.lista ? await precioDeLista(sb, out.lista.codigo, o.fibraArticulo) : null }
+  }
   if (!art) return { ...out, estado: "sin_vinculo" }
   if (!out.lista) return { ...out, estado: "sin_lista" }
   out.precio_lista = await precioDeLista(sb, out.lista.codigo, art)

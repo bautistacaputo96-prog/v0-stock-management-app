@@ -49,7 +49,9 @@ export async function agregarMuestraDespacho(
   if (!yaTenia) {
     const { data: d } = await sb.from("dispatches").select("dispatch_date").eq("id", o.dispatchId).single()
     const { error: e2 } = await sb.from("test_cylinders").insert(probetasParaMuestra(o.dispatchId, d?.dispatch_date))
-    if (e2) console.error("Error creating test cylinders:", e2)
+    // Antes solo iba a la consola y la pantalla decía "3 probetas creadas" igual. La muestra ya quedó en el despacho:
+    // al volver a intentar, como no tiene probetas, se crean.
+    if (e2) return { ok: false, error: `La muestra quedó en el despacho pero no se crearon las probetas (${e2.message || "error de la base"}). Probá de nuevo.` }
   }
   log({
     action: "editar", entity: "despacho", entityId: o.dispatchId, reference: o.remito, plantId: o.plantId,

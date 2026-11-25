@@ -24,7 +24,7 @@ import { Camera, Package, ListChecks, Image as ImageIcon, Play, CheckCircle2, Hi
 import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import { cn } from "@/lib/utils"
-import { subirFotoOrden, type OrdenTrabajo, type Tarea } from "@/lib/mantenimiento"
+import { subirFotoOrden, completarOrden, type OrdenTrabajo, type Tarea } from "@/lib/mantenimiento"
 
 type Props = {
   orden: OrdenTrabajo | null
@@ -75,15 +75,24 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
     setPasos(nuevo)
     const supabase = createClient()
     // Se guarda al instante para no perder el avance si se corta la conexión
-    await supabase.from("maint_work_orders").update({ pasos: nuevo }).eq("id", orden!.id)
+    const { error } = await supabase.from("maint_work_orders").update({ pasos: nuevo }).eq("id", orden!.id)
+    if (error) toast({ title: "No se pudo guardar el paso", description: error.message, variant: "destructive" })
   }
 
   async function empezar() {
     if (bloqueada) return
     setGuardando(true)
     const supabase = createClient()
-    await supabase.from("maint_work_orders").update({ estado: "en_curso", fecha_inicio: new Date().toISOString(), asignado_a: orden!.asignado_a || usuario }).eq("id", orden!.id)
+    // Solo si sigue pendiente: si otro la canceló o completó mientras tanto, no se reabre
+    const { data, error } = await supabase
+      .from("maint_work_orders")
+      .update({ estado: "en_curso", fecha_inicio: new Date().toISOString(), asignado_a: orden!.asignado_a || usuario })
+      .eq("id", orden!.id)
+      .eq("estado", "pendiente")
+      .select("id")
     setGuardando(false)
+    if (error) toast({ title: "No se pudo empezar", description: error.message, variant: "destructive" })
+    else if (!data?.length) toast({ title: "La orden ya no está pendiente", description: "Otra persona la empezó, completó o canceló.", variant: "destructive" })
     onCambio()
   }
 
@@ -109,30 +118,13 @@ export function OrdenTrabajoDialog({ orden, tarea, m3Actual, onClose, onCambio }
       if (!ok) return
     }
     setGuardando(true)
-    const supabase = createClient()
-    const ahora = new Date().toISOString()
-    const fechaEjec = fechaManual || format(new Date(), "yyyy-MM-dd")
-
-    await supabase.from("maint_work_orders").update({
-      estado: "completada",
-      fecha_fin: fechaManual ? `${fechaManual}T12:00:00-03:00` : ahora,
-      fecha_inicio: orden!.fecha_inicio || ahora,
-      completado_por: usuario,
-      observaciones: obs || null,
-      pasos,
-      m3_acumulado: m3Actual,
-    }).eq("id", orden!.id)
-
-    // La ejecución es lo que reinicia el contador de la tarea del plan
-    if (orden!.task_id) {
-      await supabase.from("maint_executions").insert({
-        task_id: orden!.task_id,
-        fecha: fechaEjec,
-        realizado_por: usuario,
-        observaciones: obs || (fechaManual ? "Registrada como ya realizada" : null),
-        m3_acumulado: m3Actual,
-        pasos: Object.keys(pasos).length ? pasos : null,
-      })
+    // La ejecución (dentro de completarOrden) es lo que reinicia el contador de la tarea del plan
+    const r = await completarOrden(createClient(), orden!, { usuario, obs, pasos, m3Actual, fechaManual, ahora: new Date() })
+    if (!r.ok) {
+      setGuardando(false)
+      toast({ title: "No se pudo completar", description: r.mensaje, variant: "destructive" })
+      if (r.yaCerrada) { onCambio(); onClose() }
+      return
     }
     setGuardando(false)
     toast({ title: "Orden completada", description: orden!.titulo })

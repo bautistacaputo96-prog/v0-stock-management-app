@@ -15,6 +15,7 @@
 import { generarViajes, conTiemposGps, parametrosConGps, pendientes, type ViajeRow, type PedidoParaViajes } from "@/lib/viajes"
 import type { Parametros } from "@/lib/planificador"
 import type { TiemposGps } from "@/lib/gps-viajes"
+import { errorFibraKgM3 } from "@/lib/fibra"
 
 const MIN = 60_000
 const t = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : NaN)
@@ -35,6 +36,25 @@ export function duracion(min: number): string {
 }
 /** 8 → "8", 7,5 → "7,5" */
 export const m3txt = (x: number | null | undefined) => Number(x || 0).toLocaleString("es-AR", { maximumFractionDigits: 1 })
+
+// ---------------------------------------------------------------------------
+// Fechas en hora de Argentina (auditoría 23/11/2026)
+// ---------------------------------------------------------------------------
+export const ZONA_AR = "America/Argentina/Buenos_Aires"
+/** "22/11/2026" en hora de Argentina, corra donde corra (el servidor de Vercel está en UTC: un despacho de las 21:30
+ *  salía con la fecha del día siguiente en el remito impreso). */
+export function fechaAR(x: string | number | Date): string {
+  return new Date(x).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: ZONA_AR })
+}
+/** Filtro de días (yyyy-mm-dd) para una columna timestamptz: de 00:00 a 23:59:59 de Argentina. Sin el -03:00 la
+ *  base toma la hora en UTC y los despachos de 21 a 24 h quedan en el día siguiente. */
+export function rangoDiasAR(desde: string, hasta: string): { desde: string; hasta: string } {
+  return { desde: `${desde}T00:00:00-03:00`, hasta: `${hasta}T23:59:59.999-03:00` }
+}
+/** Hoy (yyyy-mm-dd) en la hora de la compu, no en UTC (toISOString después de las 21 h da mañana). */
+export function hoyLocal(ahora: Date = new Date()): string {
+  return `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}-${String(ahora.getDate()).padStart(2, "0")}`
+}
 
 // ---------------------------------------------------------------------------
 // Motivos (los mismos códigos que el CHECK de la base)
@@ -557,6 +577,11 @@ export function validarEntrega(f: FormEntrega, ctx: {
     if (ctx.ahora - s > 12 * 60 * MIN) return "La hora de salida tiene que ser de hoy (hasta 12 h para atrás)."
   }
   if (f.fibraOn && !(num(f.fibraKgM3) > 0)) return "Poné los kg de fibra por m³ (o apagá Fibra)."
+  // Tope (25/11): había 800 kg/m³ (6.400 kg por camión). Es por m³, en kg
+  if (f.fibraOn) {
+    const e = errorFibraKgM3(f.fibraKgM3)
+    if (e) return e
+  }
   if (f.muestraOn && (!f.muestraNum.trim() || !f.asentamiento.trim())) return "Completá el número de muestra y el asentamiento."
   if (f.muestraOn && !Number.isFinite(num(f.asentamiento))) return "El asentamiento tiene que ser un número (en cm)."
   return null

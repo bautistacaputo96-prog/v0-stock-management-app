@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { desvioMuestral } from "@/lib/calidad"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -46,8 +47,9 @@ export default function CompressionReport({ formulas }: CompressionReportProps) 
   const calculateStatistics = (values: number[]): Statistics => {
     const count = values.length
     const mean = values.reduce((sum, val) => sum + val, 0) / count
-    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / count
-    const stdDev = Math.sqrt(variance)
+    // Desvío muestral (n − 1), como el CIRSOC 201 y el Análisis de Calidad. Antes dividía por n: con pocas muestras
+    // el desvío salía menor y la resistencia característica, mayor.
+    const stdDev = desvioMuestral(values)
     const min = Math.min(...values)
     const max = Math.max(...values)
 

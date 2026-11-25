@@ -280,7 +280,8 @@ export function rechazoPorFactura(texto: string | null | undefined): boolean {
   return /factur|comprobante/i.test(String(texto ?? ""))
 }
 
-/** ¿El total del listado quedó en proporción? (el renglón es uno solo: total = precio × cantidad, redondeado). */
+/** ¿El total del listado quedó en proporción? Con un renglón se pasan las cantidades (total = precio × cantidad,
+ *  redondeado); con más de uno (hormigón + fibra), los subtotales netos (costo × cantidad) de antes y de después. */
 export function totalProporcional(antes: number, cantAntes: number, despues: number, cantDespues: number): boolean {
   if (!(antes > 0) || !(cantAntes > 0)) return false
   const esperado = (antes * cantDespues) / cantAntes

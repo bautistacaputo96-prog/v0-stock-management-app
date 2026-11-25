@@ -16,6 +16,8 @@ export type NpFila = {
   saldo_decision?: string | null
   /** Traída de Zomatik (no la generó el sistema): al cancelar el pedido no se ofrece vaciarla. */
   traida?: boolean
+  /** kg de fibra de la NP en Zomatik (null = sin fibra). */
+  fibra_kg?: number | null
   /** Con la llave de la edición (spec 2026-11-18): si se edita en Zomatik cuando el pedido cambia, y su último cambio. */
   editable?: boolean
   edicion?: EdicionNp | null
@@ -29,6 +31,8 @@ export type EstadoPedidoNp = {
   activo: boolean; modo: ModoNp; entra: boolean; nps: NpFila[]
   /** La llave de la edición de la NP de la planta (spec 2026-11-18). Apagada: un cambio a medias no lo termina nadie. */
   editar?: boolean
+  /** La llave de la fibra de la planta (spec 2026-11-25): con ella se avisa si la NP no tiene la fibra del pedido. */
+  fibra?: boolean
   /** Pedido cancelado o completo: sus NP con saldo quedan pendientes en Programación. */
   cerrado: boolean
   excepcion: { autorizado_por: string; motivo_tipo: string; motivo: string | null } | null
@@ -136,6 +140,8 @@ export type PrecioNp = {
   numero_np?: string | null
   proyecto_precio_m3?: number | null
   aviso?: string | null
+  /** Con la llave de la fibra (spec 2026-11-25): el artículo y su precio por kg en la lista (null = no está). */
+  fibra?: { articulo: number; nombre: string; precio_kg: number | null } | null
 }
 
 /** El precio por m³ de la NP para la línea del formulario. null si no respondió (o no hay permiso): la línea no aparece. */

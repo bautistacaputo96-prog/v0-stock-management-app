@@ -8,6 +8,7 @@
 import { aHora, aMin } from "@/lib/planificador"
 import { textoNoche, lineaTraslados, contarTraslados, bloquesDiagrama, textoResumenDia, horaArgentina, type FilaPedido, type FilaDiagrama, type Aviso } from "@/lib/reparto"
 import type { VistaDia } from "@/lib/reparto-dia"
+import { igualSeguro } from "@/lib/cron"
 
 const MIN = 60_000
 const OFFSET_AR = 3 * 3600_000
@@ -502,7 +503,7 @@ export function resumenReparto(v: VistaDia): ResumenReparto {
  * Sin el secreto cargado, nadie entra.
  */
 export function autorizadoResumen(authorization: string | null | undefined, secreto: string | null | undefined): boolean {
-  return !!secreto && authorization === `Bearer ${secreto}`
+  return !!secreto && igualSeguro(authorization, `Bearer ${secreto}`)
 }
 
 /** `fecha` obligatoria, AAAA-MM-DD y fecha real */

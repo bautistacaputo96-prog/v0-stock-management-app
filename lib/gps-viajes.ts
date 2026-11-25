@@ -263,6 +263,44 @@ export function sumarDias(fecha: string, dias: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// 0. Unidad del GPS ↔ camión
+// ---------------------------------------------------------------------------
+export const normPatente = (p: string | null | undefined) => (p || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+
+/**
+ * Empareja las unidades de Wialon con los camiones (mixers): cada unidad va a UN solo camión y cada camión a una
+ * sola unidad. Coincide por el vínculo guardado (gps_unit_id) o por la patente (el nombre de la unidad). Si una
+ * unidad coincide con varios camiones (uno dado de baja y otro cargado de nuevo con la misma patente, o el equipo
+ * que pasó a otro camión), gana el activo y, entre iguales, el vínculo guardado sobre la patente; a igualdad, el
+ * primero de la lista. Antes cada camión buscaba su unidad por su cuenta: dos camiones con la misma unidad
+ * recibían los mismos viajes (viajes_gps duplicados) y En vivo mostraba el que viniera primero.
+ * Devuelve camión (id) → unidad.
+ */
+export function emparejarUnidades<U extends { id: number | string; nombre: string }>(
+  unidades: U[],
+  mixers: { id: string; license_plate: string | null; gps_unit_id?: number | string | null; active?: boolean | null }[],
+): Map<string, U> {
+  const pares: { u: U; m: string; rango: number; orden: number }[] = []
+  mixers.forEach((m, im) => {
+    unidades.forEach((u, iu) => {
+      const porId = m.gps_unit_id != null && String(m.gps_unit_id) === String(u.id)
+      const porPatente = !!normPatente(m.license_plate) && normPatente(m.license_plate) === normPatente(u.nombre)
+      if (!porId && !porPatente) return
+      pares.push({ u, m: m.id, rango: (m.active === false ? 2 : 0) + (porId ? 0 : 1), orden: im * unidades.length + iu })
+    })
+  })
+  pares.sort((a, b) => a.rango - b.rango || a.orden - b.orden)
+  const out = new Map<string, U>()
+  const usadas = new Set<string>()
+  for (const p of pares) {
+    if (out.has(p.m) || usadas.has(String(p.u.id))) continue
+    out.set(p.m, p.u)
+    usadas.add(String(p.u.id))
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
 // 1. Mensajes
 // ---------------------------------------------------------------------------
 /** Pasa los mensajes crudos de Wialon (messages/load_interval) a la forma que usa el algoritmo. */

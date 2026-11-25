@@ -195,12 +195,13 @@ export function StockEvolutionChart({ plantId }: StockEvolutionChartProps) {
       .order("movement_date")
 
     // Los ajustes por recuento cambian el stock de forma absoluta. Si no se incluyen en la
-    // reconstrucción, la línea histórica queda distorsionada antes de cada ajuste.
+    // reconstrucción, la línea histórica queda distorsionada antes de cada ajuste. Las transferencias entre plantas
+    // (con signo: − en la que manda, + en la que recibe) también mueven el stock: van con los ajustes.
     const { data: adjustments } = await supabase
       .from("stock_movements")
       .select("quantity_kg, movement_date")
       .eq("material_id", selectedMaterial)
-      .eq("movement_type", "ajuste")
+      .in("movement_type", ["ajuste", "transferencia"])
       .gte("movement_date", format(startDate, "yyyy-MM-dd"))
       .lte("movement_date", format(endDate, "yyyy-MM-dd"))
       .order("movement_date")

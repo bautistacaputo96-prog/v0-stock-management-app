@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { exigirSesion, respuestaError } from "@/lib/auth/servidor"
 import { distanciaKm, minutosEstimados, FACTOR_MIXER } from "@/lib/geo"
 
 /**
@@ -8,6 +9,13 @@ import { distanciaKm, minutosEstimados, FACTOR_MIXER } from "@/lib/geo"
  * ?desde=lat,lng&hasta=lat,lng
  */
 export async function GET(req: Request) {
+  // Solo con sesión iniciada: estas búsquedas usan la clave paga de Google (o servicios gratuitos con límite)
+  try {
+    const s = await exigirSesion()
+    if (s.respuesta) return s.respuesta
+  } catch (e) {
+    return respuestaError(e)
+  }
   const { searchParams } = new URL(req.url)
   const [aLat, aLng] = (searchParams.get("desde") || "").split(",").map(Number)
   const [bLat, bLng] = (searchParams.get("hasta") || "").split(",").map(Number)

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { MantenimientoWidget } from "@/components/mantenimiento-widget"
+import { diasTranscurridos, enMeses, fechaLocal } from "@/lib/pantallas"
+import { diasHasta, fechaDeDia, fmtDia, resistenciaDeFormula, resumenCalidad } from "@/lib/calidad"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -77,6 +79,8 @@ interface Dispatch {
   client_id: string
   /** Planta que despachó. Puede faltar en despachos muy viejos. */
   plant_id?: string | null
+  /** Despacho por árido / salida manual de materiales: descuenta stock pero no es hormigón */
+  is_test_dispatch?: boolean | null
   formulas: {
     id: string
     code: string
@@ -118,7 +122,7 @@ interface TestCylinder {
   strength_mpa?: number
   dispatches: {
     id: string
-    formulas: { id: string; name: string; code: string }
+    formulas: { id: string; name: string; code: string; description?: string | null }
   }
 }
 
@@ -277,27 +281,32 @@ export function DashboardClient({
       : recentEntries.filter((e) => e.materials?.plant_id === selectedPlant)
   }, [recentEntries, selectedPlant])
 
+  // Para los m³: sin los despachos por árido (is_test_dispatch), que sí cuentan para el consumo de materiales
+  const hormigon = useMemo(() => filteredDispatches.filter((d) => !d.is_test_dispatch), [filteredDispatches])
+  // Sin meses tildados vale el mes en curso (lo mismo que dateRangeStart/End)
+  const mesesElegidos = useMemo(
+    () => (selectedMonths.length ? selectedMonths : [`${currentYear}-${currentMonth}`]),
+    [selectedMonths, currentYear, currentMonth],
+  )
+
   // Calculate KPIs
   const kpis = useMemo(() => {
     const now = new Date()
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-    // Today's dispatches
-    const todayDispatches = filteredDispatches.filter(
+    // Today's dispatches (los m³ son de hormigón: sin los despachos por árido, como el Informe de producción)
+    const todayDispatches = hormigon.filter(
       (d) => new Date(d.dispatch_date) >= startOfToday
     )
     const m3Today = todayDispatches.reduce((sum, d) => sum + (d.quantity_m3 || 0), 0)
     const dispatchCountToday = todayDispatches.length
 
-    // Selected period dispatches
-    const periodDispatches = filteredDispatches.filter((d) => {
-      const date = new Date(d.dispatch_date)
-      return date >= dateRangeStart && date <= dateRangeEnd
-    })
+    // Selected period dispatches: solo los meses tildados (antes, de agosto y noviembre sumaba también septiembre y octubre)
+    const periodDispatches = hormigon.filter((d) => enMeses(d.dispatch_date, mesesElegidos))
     const m3Period = periodDispatches.reduce((sum, d) => sum + (d.quantity_m3 || 0), 0)
 
-    // Calculate days in selected period
-    const daysInPeriod = Math.ceil((dateRangeEnd.getTime() - dateRangeStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // Días ya transcurridos de esos meses (antes, el mes entero: el día 5 el promedio salía 6 veces más bajo)
+    const daysInPeriod = diasTranscurridos(mesesElegidos, now)
     const dailyAverage = daysInPeriod > 0 ? m3Period / daysInPeriod : 0
 
     // Critical stock count
@@ -311,7 +320,7 @@ export function DashboardClient({
       criticalStockCount,
       daysInPeriod,
     }
-  }, [filteredDispatches, filteredMaterials, dateRangeStart, dateRangeEnd])
+  }, [hormigon, filteredMaterials, mesesElegidos])
 
   // Stock alerts with days remaining
   const stockAlerts = useMemo(() => {
@@ -355,12 +364,12 @@ export function DashboardClient({
     // Group by date
     const byDate: Record<string, { date: string; m3: number; count: number }> = {}
 
-    filteredDispatches
+    hormigon
       .filter((d) => new Date(d.dispatch_date) >= last30Days)
       .forEach((d) => {
-        // Extract date directly from string to avoid timezone issues
-        // Format from DB: "2026-04-13 12:00:00+00" or "2026-04-13T12:00:00"
-        const dateStr = String(d.dispatch_date).substring(0, 10) // Gets "2026-04-13"
+        // Día de la hora local, como los días del eje (cortar el texto de la base daba el día UTC: un despacho de
+        // las 21:30 caía en el día siguiente)
+        const dateStr = fechaLocal(d.dispatch_date)
         if (!byDate[dateStr]) {
           byDate[dateStr] = { date: dateStr, m3: 0, count: 0 }
         }
@@ -387,17 +396,14 @@ export function DashboardClient({
     }
 
     return result
-  }, [filteredDispatches])
+  }, [hormigon])
 
   // Formula distribution
   const formulaDistribution = useMemo(() => {
   const byFormula: Record<string, { name: string; m3: number; count: number }> = {}
   
-  filteredDispatches
-  .filter((d) => {
-    const date = new Date(d.dispatch_date)
-    return date >= dateRangeStart && date <= dateRangeEnd
-  })
+  hormigon
+  .filter((d) => enMeses(d.dispatch_date, mesesElegidos))
       .forEach((d) => {
         const formulaName = d.formulas?.code || "Sin fórmula"
         if (!byFormula[formulaName]) {
@@ -415,17 +421,14 @@ export function DashboardClient({
         percentage: total > 0 ? (f.m3 / total) * 100 : 0,
       }))
       .sort((a, b) => b.m3 - a.m3)
-  }, [filteredDispatches])
+  }, [hormigon, mesesElegidos]) // antes sin el período: la torta quedaba con el mes de la primera carga
 
   // Top clients
   const topClients = useMemo(() => {
   const byClient: Record<string, { name: string; m3: number; count: number; obra: string }> = {}
   
-  filteredDispatches
-  .filter((d) => {
-    const date = new Date(d.dispatch_date)
-    return date >= dateRangeStart && date <= dateRangeEnd
-  })
+  hormigon
+  .filter((d) => enMeses(d.dispatch_date, mesesElegidos))
       .forEach((d) => {
         const clientName = d.clients?.name || d.client || "Sin cliente"
         if (!byClient[clientName]) {
@@ -443,37 +446,32 @@ export function DashboardClient({
     return Object.values(byClient)
 .sort((a, b) => b.m3 - a.m3)
   .slice(0, 8)
-  }, [filteredDispatches, dateRangeStart, dateRangeEnd])
+  }, [hormigon, mesesElegidos])
 
   // Quality panel data
   const qualityData = useMemo(() => {
-    const now = new Date()
-    const in3Days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000)
-
-    // Filter cylinders for selected period
+    // Probetas rotas en el período (actual_test_date es "yyyy-mm-dd": medianoche local, no UTC)
     const periodCylinders = testCylinders.filter((c) => {
-      if (!c.actual_test_date) return false
-      const date = new Date(c.actual_test_date)
-      return date >= dateRangeStart && date <= dateRangeEnd
+      const date = fechaDeDia(c.actual_test_date)
+      return date !== null && date >= dateRangeStart && date <= dateRangeEnd
     })
-
-    const tested = periodCylinders.filter((c) => c.strength_mpa !== null).length
-    const passed = periodCylinders.filter((c) => c.strength_mpa && c.strength_mpa >= 21).length // Assuming 21 MPa as minimum
-    const failed = tested - passed
+    const resumen = resumenCalidad(
+      periodCylinders.map((c) => ({
+        test_age_days: c.test_age_days,
+        strength_mpa: c.strength_mpa,
+        clase: resistenciaDeFormula(c.dispatches?.formulas?.code, c.dispatches?.formulas?.name, c.dispatches?.formulas?.description),
+      })),
+    )
 
     // Upcoming tests
     const upcoming = testCylinders.filter((c) => {
       if (c.actual_test_date) return false
-      const scheduled = new Date(c.scheduled_test_date)
-      return scheduled >= now && scheduled <= in3Days
-    })
+      const faltan = diasHasta(c.scheduled_test_date)
+      return faltan !== null && faltan >= 0 && faltan <= 3
+    }).sort((a, b) => a.scheduled_test_date.localeCompare(b.scheduled_test_date)) // llegan de la más nueva a la más vieja
 
     return {
-      tested,
-      passed,
-      failed,
-      passRate: tested > 0 ? (passed / tested) * 100 : 0,
-      failRate: tested > 0 ? (failed / tested) * 100 : 0,
+      ...resumen,
       upcoming,
     }
   }, [testCylinders, dateRangeStart, dateRangeEnd])
@@ -907,20 +905,26 @@ export function DashboardClient({
               <CardDescription className="text-xs">Resumen de probetas del mes</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="grid grid-cols-3 gap-4 mb-2">
                 <div className="text-center p-3 rounded-lg bg-muted/50">
-                  <p className="text-2xl font-bold">{qualityData.tested}</p>
-                  <p className="text-xs text-muted-foreground">Ensayadas</p>
+                  <p className="text-2xl font-bold">{qualityData.ensayadas28}</p>
+                  <p className="text-xs text-muted-foreground">Ensayadas a 28 d</p>
                 </div>
                 <div className="text-center p-3 rounded-lg bg-green-50 dark:bg-green-950/20">
-                  <p className="text-2xl font-bold text-green-600">{qualityData.passRate.toFixed(0)}%</p>
-                  <p className="text-xs text-muted-foreground">Aprobadas</p>
+                  <p className="text-2xl font-bold text-green-600">{qualityData.pctAprobadas.toFixed(0)}%</p>
+                  <p className="text-xs text-muted-foreground">Llegan a la clase</p>
                 </div>
                 <div className="text-center p-3 rounded-lg bg-red-50 dark:bg-red-950/20">
-                  <p className="text-2xl font-bold text-red-600">{qualityData.failRate.toFixed(0)}%</p>
-                  <p className="text-xs text-muted-foreground">Rechazadas</p>
+                  <p className="text-2xl font-bold text-red-600">{qualityData.pctRechazadas.toFixed(0)}%</p>
+                  <p className="text-xs text-muted-foreground">No llegan</p>
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                {qualityData.ensayadas7 > 0
+                  ? `7 días: ${qualityData.ensayadas7} probetas${qualityData.promedio7 !== null ? `, promedio ${qualityData.promedio7.toFixed(0)} % de la clase` : ""}`
+                  : "7 días: sin probetas en el período"}
+                {qualityData.sinClase > 0 ? ` · ${qualityData.sinClase} sin clase (fórmula sin H)` : ""}
+              </p>
 
               {qualityData.upcoming.length > 0 && (
                 <div>
@@ -932,7 +936,7 @@ export function DashboardClient({
                     {qualityData.upcoming.map((c) => (
                       <div key={c.id} className="flex items-center justify-between text-sm p-2 rounded bg-amber-50 dark:bg-amber-950/20">
                         <span>{c.dispatches?.formulas?.code} - Prob. #{c.cylinder_number}</span>
-                        <Badge variant="outline">{new Date(c.scheduled_test_date).toLocaleDateString("es-AR")}</Badge>
+                        <Badge variant="outline">{fmtDia(c.scheduled_test_date)}</Badge>
                       </div>
                     ))}
                   </div>

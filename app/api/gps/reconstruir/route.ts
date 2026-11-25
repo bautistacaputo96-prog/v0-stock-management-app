@@ -9,17 +9,20 @@
  * Idempotente: por camión hace upsert de los viajes y borra los del rango que quedaron sin tocar. Solo escribe
  * viajes_gps, el registro gps_reconstrucciones y las ubicaciones aprendidas de obras sin ubicación a mano.
  *
- * TODO(fase 0c): autenticación real. Mientras tanto, freno barato para no castigar a Wialon: una llamada manual
- * que repite (o se superpone con) un rango pedido hace menos de 5 min, o la 7.ª llamada manual en 5 min, recibe 429.
- * El control y el registro son atómicos (función gps_reconstruir_registrar, con candado en la base).
- * Las del cron de Vercel no se frenan: con CRON_SECRET, las que traen el Bearer; sin él, header x-vercel-cron o
- * user-agent vercel-cron (se pueden falsificar). Ver lib/cron.ts.
+ * Quién la puede llamar: el cron de Vercel (con CRON_SECRET, solo con el Bearer; sin él, header x-vercel-cron o
+ * user-agent vercel-cron, que se pueden falsificar: ver lib/cron.ts) o un gerencial con sesión (carga histórica a
+ * mano desde el navegador). Antes no pedía nada: cualquiera con el link veía con ?simular=1 todos los viajes de los
+ * camiones (horarios y paradas) o hacía reescribir viajes_gps.
+ * Además, freno para no castigar a Wialon: una llamada manual que repite (o se superpone con) un rango pedido hace
+ * menos de 5 min, o la 7.ª llamada manual en 5 min, recibe 429. El control y el registro son atómicos (función
+ * gps_reconstruir_registrar, con candado en la base). Las del cron no se frenan.
  */
 import { NextResponse } from "next/server"
 import { reconstruirRango } from "@/lib/gps-reconstruir"
 import { sbAdmin } from "@/lib/wialon"
 import { fechaAR, sumarDias } from "@/lib/gps-viajes"
 import { esLlamadaDeCron } from "@/lib/cron"
+import { exigirGerencial, respuestaError, respuestaModoLocal } from "@/lib/auth/servidor"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
@@ -34,6 +37,16 @@ export async function GET(req: Request) {
   let hasta = q.get("fecha") || q.get("hasta")
   const simular = q.get("simular") === "1"
   const cron = esLlamadaDeCron(req) // con CRON_SECRET en Vercel, solo con el Bearer (lib/cron.ts)
+  if (!cron) {
+    try {
+      const r = await exigirGerencial()
+      if (r.respuesta) return r.respuesta
+      // Modo prueba local: solo la simulación (no escribe viajes ni ubicaciones)
+      if (r.sesion.local && !simular) return respuestaModoLocal()
+    } catch (e) {
+      return respuestaError(e)
+    }
+  }
   if (!desde && !hasta) {
     // Cron (06:00 en Argentina): el día anterior y repaso de los 2 previos, por si llegaron mensajes atrasados
     desde = sumarDias(hoy, -3)

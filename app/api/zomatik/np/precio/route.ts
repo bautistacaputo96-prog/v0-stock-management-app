@@ -6,11 +6,12 @@
  *     Lista activa de la copia (la misma `listaActiva` del robot, con el comprobante del remito), precio de lista del
  *     artículo de la fórmula, el precio puesto en el pedido y si la NP ya salió. Precios NETOS (sin IVA).
  *     Sin la migración: { sinMigracion: true } (la línea no aparece). Llave de la planta apagada: { activo: false }.
+ *     Con la llave de la fibra: `fibra` = { articulo, nombre, precio_kg } (precio por kg en la misma lista; null = no está).
  */
 import { NextResponse } from "next/server"
 import { exigirSesion, respuestaError, sbServicio } from "@/lib/auth/servidor"
 import { puedeVerPrecioNp } from "@/lib/permisos"
-import { plantasNp } from "@/lib/zomatik/np-servidor"
+import { fibraDe, plantasNp } from "@/lib/zomatik/np-servidor"
 import { faltaMigracionPrecio, precioParaPedido } from "@/lib/zomatik/precio-servidor"
 
 export const dynamic = "force-dynamic"
@@ -42,8 +43,10 @@ export async function GET(req: Request) {
       if (!puedeVerPrecioNp(u, ped as { created_by: string | null })) return json({ error: "No podés cambiar este pedido." }, 403)
     }
     try {
-      if (!(await plantasNp(sb))[plantId]?.zomatik_np_activo) return json({ activo: false })
-      return json({ activo: true, ...(await precioParaPedido({ formulaId, remito, pedidoId }, sb)) })
+      const planta = (await plantasNp(sb))[plantId]
+      if (!planta?.zomatik_np_activo) return json({ activo: false })
+      // Con la llave de la fibra (spec 2026-11-25): también el precio por kg de la fibra en la lista
+      return json({ activo: true, ...(await precioParaPedido({ formulaId, remito, pedidoId, fibraArticulo: fibraDe(planta)?.articulo ?? null }, sb)) })
     } catch (e) {
       if (faltaMigracionPrecio(e)) return json({ sinMigracion: true })
       throw e

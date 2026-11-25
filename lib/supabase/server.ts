@@ -1,44 +1,37 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+import { createClient as crearCliente } from "@supabase/supabase-js"
+import { unstable_rethrow } from "next/navigation"
+import { sesionActual } from "@/lib/auth/servidor"
+import { tokenBaseParaSesion } from "@/lib/auth/token-base"
 
 /**
- * Especially important if using Fluid compute: Don't put this client in a
- * global variable. Always create a new client within each function when using
- * it.
+ * Cliente de la base para las páginas y rutas del servidor que leen "como la persona".
+ *
+ * Fase 0c-2: con la sesión de la cookie (0c-1) va con el token de esa persona, así la base aplica sus permisos (RLS).
+ * Sin sesión, o sin SUPABASE_JWT_SECRET, va con la clave pública como antes (después de la migración de RLS, eso
+ * no ve nada: el login vuelve a pedir la página al entrar).
+ *
+ * No guardarlo en una variable global: cada pedido es de una persona distinta.
  */
 export async function createClient() {
-  const cookieStore = await cookies()
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
 
-  console.log("[v0] Supabase env check:", {
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? "SET" : "MISSING",
-    SUPABASE_URL: process.env.SUPABASE_URL ? "SET" : "MISSING",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "SET" : "MISSING",
-    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ? "SET" : "MISSING",
-    resolvedUrl: supabaseUrl ? "SET" : "MISSING",
-    resolvedKey: supabaseKey ? "SET" : "MISSING",
-  })
+  let token: string | null = null
+  try {
+    const s = await sesionActual()
+    if (s) {
+      const t = await tokenBaseParaSesion(s)
+      token = t.token
+    }
+  } catch (e) {
+    // Lo que usa Next para saber que la página es dinámica (cookies) tiene que seguir de largo
+    unstable_rethrow(e)
+    // Sin SESION_SECRETO o sin clave de servicio: sigue con la clave pública (el login avisa lo que falta)
+    console.warn("[supabase/server] sin token de sesión:", (e as Error)?.message || e)
+  }
 
-  return createServerClient(
-    supabaseUrl!,
-    supabaseKey!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
-          } catch {
-            // The "setAll" method was called from a Server Component.
-            // This can be ignored if you have proxy refreshing
-            // user sessions.
-          }
-        },
-      },
-    },
-  )
+  return crearCliente(supabaseUrl!, supabaseKey!, {
+    accessToken: async () => token,
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  })
 }

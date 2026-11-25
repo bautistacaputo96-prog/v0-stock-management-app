@@ -11,8 +11,8 @@ import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, Clock, Wrench, Package, ChevronRight, CheckCircle2 } from "lucide-react"
-import { differenceInCalendarDays, parseISO } from "date-fns"
 import { cn } from "@/lib/utils"
+import { traerTodas, calcularM3, ultimaEjecucionPorTarea, salteosPorTarea, pendienteInicio, type Ejecucion, type DespachoM3, type OrdenTrabajo } from "@/lib/mantenimiento"
 
 type Pendiente = {
   id: string
@@ -48,53 +48,55 @@ export function MantenimientoWidget({ plantId }: { plantId?: string }) {
       return
     }
 
-    const [{ data: tareas }, { data: ejec }, { data: desp }] = await Promise.all([
-      supabase
-        .from("maint_tasks")
-        .select("id, titulo, componente, frecuencia_dias, frecuencia_m3, maint_task_items(item, cantidad, unidad)")
-        .in("equipment_id", equipos.map((e) => e.id))
-        .eq("activo", true),
-      supabase.from("maint_executions").select("task_id, fecha, m3_acumulado").order("fecha", { ascending: false }),
-      supabase.from("dispatches").select("quantity_m3").eq("plant_id", equipos[0].plant_id).limit(20000),
-    ])
+    const { data: tareas, error: errTareas } = await supabase
+      .from("maint_tasks")
+      .select("id, titulo, componente, frecuencia_dias, frecuencia_m3, maint_task_items(item, cantidad, unidad)")
+      .in("equipment_id", equipos.map((e) => e.id))
+      .eq("activo", true)
+    if (errTareas) {
+      console.error("MantenimientoWidget:", errTareas)
+      setPendientes([])
+      setLoading(false)
+      return
+    }
+    const ids = (tareas || []).map((t) => t.id as string)
+    let ejec: Ejecucion[] = []
+    let desp: DespachoM3[] = []
+    let canceladas: OrdenTrabajo[] = []
+    try {
+      // Paginado: Supabase corta en 1000 filas (las ejecuciones viejas de las tareas
+      // anuales quedaban afuera y salían "Sin registro"; los m³ quedaban fijos)
+      ;[ejec, desp, canceladas] = await Promise.all([
+        ids.length
+          ? traerTodas<Ejecucion>((a, b) =>
+              supabase.from("maint_executions").select("task_id, fecha, realizado_por, m3_acumulado").in("task_id", ids)
+                .order("fecha", { ascending: false }).order("created_at", { ascending: false }).order("id").range(a, b))
+          : Promise.resolve([] as Ejecucion[]),
+        traerTodas<DespachoM3>((a, b) =>
+          supabase.from("dispatches").select("quantity_m3, dispatch_date").eq("plant_id", equipos[0].plant_id).order("id").range(a, b)),
+        // Preventivas canceladas: saltean ese vencimiento (misma regla que /mantenimiento)
+        ids.length
+          ? traerTodas<OrdenTrabajo>((a, b) =>
+              supabase.from("maint_work_orders").select("id, task_id, tipo, estado, fecha_programada, fecha_fin, completado_por")
+                .in("task_id", ids).eq("estado", "cancelada").eq("tipo", "preventiva").order("id").range(a, b))
+          : Promise.resolve([] as OrdenTrabajo[]),
+      ])
+    } catch (e) {
+      console.error("MantenimientoWidget:", e)
+      setPendientes([])
+      setLoading(false)
+      return
+    }
 
-    const m3Actual = (desp || []).reduce((s: number, d: any) => s + Number(d.quantity_m3 || 0), 0)
-    const ultima: Record<string, any> = {}
-    ;(ejec || []).forEach((e: any) => {
-      if (!ultima[e.task_id]) ultima[e.task_id] = e
-    })
+    const ultimas = ultimaEjecucionPorTarea(ejec)
+    const { m3Actual, ultimaPorTarea: ultima } = calcularM3(desp, ultimas)
+    const salteos = calcularM3(desp, salteosPorTarea(canceladas, ultimas)).ultimaPorTarea
 
     const lista: Pendiente[] = []
     for (const t of tareas || []) {
-      const u = ultima[t.id]
       const items = (t as any).maint_task_items || []
-
-      if (!u) {
-        lista.push({ id: t.id, titulo: t.titulo, componente: t.componente, nivel: "pendiente", texto: "Sin registro", items })
-        continue
-      }
-
-      const restanDias = t.frecuencia_dias ? t.frecuencia_dias - differenceInCalendarDays(new Date(), parseISO(u.fecha)) : null
-      const restanM3 = t.frecuencia_m3 && u.m3_acumulado != null
-        ? t.frecuencia_m3 - (m3Actual - Number(u.m3_acumulado))
-        : null
-
-      if ((restanDias !== null && restanDias < 0) || (restanM3 !== null && restanM3 < 0)) {
-        lista.push({
-          id: t.id, titulo: t.titulo, componente: t.componente, nivel: "vencida",
-          texto: restanM3 !== null && restanM3 < 0 ? `Vencida por ${Math.abs(Math.round(restanM3))} m³` : `Vencida hace ${Math.abs(restanDias || 0)} d`,
-          items,
-        })
-      } else if (
-        (restanDias !== null && restanDias <= DIAS_AVISO) ||
-        (restanM3 !== null && restanM3 <= (t.frecuencia_m3 || 0) * 0.15)
-      ) {
-        lista.push({
-          id: t.id, titulo: t.titulo, componente: t.componente, nivel: "proxima",
-          texto: restanM3 !== null && restanM3 <= (t.frecuencia_m3 || 0) * 0.15 ? `En ${Math.round(restanM3)} m³` : `En ${restanDias} días`,
-          items,
-        })
-      }
+      const r = pendienteInicio(t, ultima[t.id], salteos[t.id], m3Actual, DIAS_AVISO)
+      if (r) lista.push({ id: t.id, titulo: t.titulo, componente: t.componente, ...r, items })
     }
 
     const peso = { vencida: 0, pendiente: 1, proxima: 2 }

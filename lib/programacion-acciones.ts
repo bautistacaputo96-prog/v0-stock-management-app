@@ -47,6 +47,34 @@ export async function guardarHoraPedido(sb: any, p: PedidoAccion, fecha: string,
 }
 
 /**
+ * Cancela el pedido solo si sigue abierto (ni completo ni cancelado): una pantalla vieja no puede cancelar un pedido
+ * que mientras tanto se completó (se contaría como cancelado y la NP se podría vaciar en Zomatik). `extra`: el motivo
+ * estructurado de Despacho. No deja Actividad (la deja quien llama, como antes).
+ */
+export async function cancelarPedido(sb: any, pedidoId: string, extra: Record<string, unknown> = {}): Promise<{ error: string | null }> {
+  const { data, error } = await sb.from("scheduled_dispatches")
+    .update({ status: "cancelled", ...extra })
+    .eq("id", pedidoId)
+    .or("status.is.null,status.not.in.(cancelled,completed)")
+    .select("id")
+  if (error) return { error: error.message || "No se pudo cancelar el pedido" }
+  if (!data || !data.length) return { error: "El pedido ya está completo o cancelado (o se borró). Actualizá la pantalla." }
+  return { error: null }
+}
+
+/**
+ * Los m³ del pedido: mayores a 0 y, si se cambian al editar, no menos de lo que ya salió (para cerrarlo con menos está
+ * Finalizar). Igual a lo despachado sí: el pedido queda completo. null = está bien.
+ */
+export function errorCantidadPedido(m3: number, antes?: { quantity_m3: number | string; dispatched_m3?: number | string | null } | null): string | null {
+  if (!(m3 > 0)) return "Los m³ del pedido tienen que ser mayores a 0."
+  if (!antes || Math.abs(m3 - Number(antes.quantity_m3)) < 0.001) return null
+  const enviado = Number(antes.dispatched_m3 || 0)
+  if (m3 < enviado - 0.01) return `Ya salieron ${enviado.toLocaleString("es-AR")} m³: el pedido no puede quedar en menos. Si la obra no quiere más, finalizalo en Despacho.`
+  return null
+}
+
+/**
  * El método de descarga. Al pasar a directo no queda nada de bomba (si la base ya tiene esas columnas).
  * `actividad`: deja la línea en Actividad (Guardar y confirmar); la vista de siempre no la dejaba (la deja el rearmado).
  */
