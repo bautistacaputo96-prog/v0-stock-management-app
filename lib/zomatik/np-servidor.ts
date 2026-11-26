@@ -239,8 +239,8 @@ export function textoFaltaProyecto(d: DatosFaltaProyecto): string {
   } else {
     cuerpo = `${proyecto} le quedan ${numAR(d.queda)} m³${articulo ? ` de ${articulo}` : ""} y ${pedido} necesita ${numAR(d.necesita)} m³`
   }
-  // Una NP en "error" no la retoma la pasada (solo el botón): el mensaje dice la verdad
-  return `⚠️ Rebucret · La NP no salió: ${cuerpo}. Agrandalo en Zomatik y tocá «Generar NP ahora» en el pedido.`
+  // La NP adicional la reintenta la pasada (cada 10 min); la principal en "error", solo el botón
+  return `⚠️ Rebucret · La NP no salió: ${cuerpo}. Agrandalo en Zomatik; si la NP no sale sola en 10 min, tocá «Generar NP ahora» en el pedido.`
 }
 
 /**
