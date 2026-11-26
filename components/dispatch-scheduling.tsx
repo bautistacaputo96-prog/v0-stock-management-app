@@ -53,6 +53,7 @@ import { PRECIO_NP_VACIO, esFaltaDeVinculo, precioParaEnviar, type PrecioNpForm 
 import { puedeVincularDesdePedido } from "@/lib/permisos"
 import { normalizarLocalidad } from "@/lib/geo-direccion"
 import { BOLSITA_FIBRA_KG, errorFibraKgM3, fibraKgM3, kgDeFibra, textoBolsitas, textoKg } from "@/lib/fibra"
+import { FIBRA_AVISO_ULTIMOS, avisoPedidoSinFibra, type AvisoSinFibra } from "@/lib/fibra-aviso"
 
 type Plant = { id: string; name: string }
 type Client = { id: string; name: string; cuit?: string | null; construction_sites?: ConstructionSite[]; remito_tipo?: "R" | "X" | null; zomatik_codigo?: number | null }
@@ -296,6 +297,10 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
   const [npVinculoHecho, setNpVinculoHecho] = useState(false)
   // Para volver a leer la lista "NP con saldo" después de guardar o cancelar
   const [npSaldosVersion, setNpSaldosVersion] = useState(0)
+  // Pedido sin fibra en una obra que siempre lleva (26/11/2026): la pregunta antes de guardar y para qué obra / cliente
+  // + fórmula ya se contestó "Sí, va sin fibra" en este diálogo (ref: Guardar se vuelve a llamar en el mismo clic)
+  const [avisoFibra, setAvisoFibra] = useState<AvisoSinFibra | null>(null)
+  const sinFibraConfirmada = useRef<string | null>(null)
   // Formulario abierto en modo lectura (pedido ajeno sin permiso de editar)
   const soloLectura = !!editingDispatch && !ajustaPedido(editingDispatch)
   // Fase 2: viajes, solo para los usuarios con el interruptor de funciones nuevas
@@ -590,6 +595,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setNpPreguntada(false)
     setNpSinVincular(false)
     setNpVinculoHecho(false)
+    sinFibraConfirmada.current = null
     pedidoAbierto.current = null
     setIsDialogOpen(true)
   }
@@ -634,6 +640,7 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     setNpPrecio(PRECIO_NP_VACIO)
     setNpSinVincular(false)
     setNpVinculoHecho(false)
+    sinFibraConfirmada.current = null
     const deLaSemana = np.porPedido[dispatch.id] || null
     const aplicar = (est: EstadoPedidoNp) => {
       const el = est.eleccion
@@ -702,6 +709,20 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
     if ("error" in precioNp) {
       toast({ title: "Revisá el precio por m³", description: precioNp.error, variant: "destructive" })
       return
+    }
+    // Pedido sin fibra (26/11/2026): si los últimos pedidos de la obra fueron todos con fibra, se pregunta antes de
+    // guardar. Si la consulta falla o tarda, se guarda igual (sin aviso)
+    if (!(fibraKgM3(form.fiber_kg_per_m3) > 0)) {
+      const clave = claveAvisoFibra()
+      if (sinFibraConfirmada.current !== clave) {
+        setSaving(true)
+        const aviso = await buscarAvisoSinFibra()
+        setSaving(false)
+        if (aviso) {
+          setAvisoFibra(aviso)
+          return
+        }
+      }
     }
     const faltaVincular = debeVincularAntes() && !opciones.sinVincular
     if (faltaVincular || obraSinLocalidad) {
@@ -1115,6 +1136,37 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
       const arrival = parseISO(d.scheduled_arrival_time)
       return isSameDay(arrival, date) && arrival.getHours() === hour
     })
+  }
+
+  /** Para qué se contestó "Sí, va sin fibra": la obra (o, sin obra, el cliente con la fórmula). */
+  function claveAvisoFibra(): string {
+    return form.construction_site_id ? `obra:${form.construction_site_id}` : `cliente:${form.client_id}|${form.formula_id}`
+  }
+
+  /** ¿Preguntar por la fibra? Los últimos pedidos de la obra (las dos plantas: es la misma obra) o, sin obra, del mismo
+   * cliente con la misma fórmula. Si la consulta falla o tarda más de 5 s, null (no frena el guardado). */
+  async function buscarAvisoSinFibra(): Promise<AvisoSinFibra | null> {
+    const porObra = !!form.construction_site_id
+    if (!porObra && !(form.client_id && form.formula_id)) return null
+    let reloj: ReturnType<typeof setTimeout> | undefined
+    try {
+      let q = createClient()
+        .from("scheduled_dispatches")
+        .select("id, status, fiber_kg_per_m3, scheduled_arrival_time, created_at")
+        .neq("status", "cancelled")
+      q = porObra ? q.eq("construction_site_id", form.construction_site_id) : q.eq("client_id", form.client_id).eq("formula_id", form.formula_id)
+      // Uno más por si entre ellos está el pedido que se edita
+      const consulta = q.order("scheduled_arrival_time", { ascending: false }).order("created_at", { ascending: false }).limit(FIBRA_AVISO_ULTIMOS + 1)
+      const tope = new Promise<never>((_, rechazar) => { reloj = setTimeout(() => rechazar(new Error("la consulta tardó más de 5 s")), 5000) })
+      const { data, error } = await Promise.race([consulta, tope])
+      if (error) throw error
+      return avisoPedidoSinFibra({ kgM3Actual: form.fiber_kg_per_m3, previos: (data as any[]) || [], excluirId: editingDispatch?.id || null, porObra })
+    } catch (err) {
+      console.error("[programacion] No se pudo revisar la fibra de los últimos pedidos:", err)
+      return null
+    } finally {
+      clearTimeout(reloj)
+    }
   }
 
   /** "Repetir el último pedido de esta obra": copia fórmula, m³, descarga, bomba, m³ por camión y fibra (spec 19.3.3). */
@@ -1963,6 +2015,42 @@ export function DispatchScheduling({ plants }: { plants: Plant[] }) {
                 {saving ? "Guardando..." : editingDispatch ? "Guardar" : np.plantas[form.plant_id]?.activo ? "Programar y generar NP" : "Programar"}
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pedido sin fibra en una obra que viene llevando (26/11/2026): "Agregar fibra" la carga y NO guarda */}
+      <Dialog open={!!avisoFibra} onOpenChange={(v) => !v && setAvisoFibra(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Pedido sin fibra
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">{avisoFibra?.texto}</p>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                sinFibraConfirmada.current = claveAvisoFibra()
+                setAvisoFibra(null)
+                handleSave()
+              }}
+            >
+              Sí, va sin fibra
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (avisoFibra) setForm((f) => ({ ...f, fiber_kg_per_m3: String(avisoFibra.kgM3) }))
+                setAvisoFibra(null)
+                toast({ title: "Fibra cargada", description: "Revisá el pedido y tocá Guardar." })
+              }}
+            >
+              {avisoFibra?.botonAgregar}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
