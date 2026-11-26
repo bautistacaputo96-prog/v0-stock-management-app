@@ -34,6 +34,7 @@ import { MAX_ESPERA_AUTORIZAR, MSJ_NI_AUTORIZAR_NI_REMITO, intentosAutorizar, ms
 import { puedeVerPrecioNp, type UsuarioPermisos } from "@/lib/permisos"
 import { congelarPrecio, faltaMigracionPrecio, filaPrecio, guardarPrecio, guardarPrecioProyecto, limpiarPrecioOtraFormula, nombreLista, precioDeNp, preciosFibra } from "@/lib/zomatik/precio-servidor"
 import { kgDeFibra, kgFibraDeMateriales, objetivoFibra, textoKg } from "@/lib/fibra"
+import { mandarWhatsApp, type ResultadoWhatsApp } from "@/lib/whatsapp"
 
 type SB = ReturnType<typeof sbServicio>
 
@@ -179,6 +180,123 @@ export const AVISO_MP_OF = ["Bautista Caputo", "Juan Oreguy"]
 /** Aviso de la materia prima de una OF sin descontar (el remito del cliente no se frena). Nunca corta la operación. */
 export async function avisarMpOf(sb: SB, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
   return mandarAviso(sb, AVISO_MP_OF, "sin mail", titulo, lineas)
+}
+
+// ── WhatsApp a Juan: al proyecto no le alcanza el hormigón o la fibra (26/11) ──
+
+/** Env con el WhatsApp de Juan (549…, sin +). Sin ella no se manda. El número nunca va en el código (repo público). */
+export const ENV_WHATSAPP_JUAN = "WHATSAPP_JUAN"
+/** "Qué pasó" de la Actividad cuando salió el WhatsApp: es también la marca para no repetirlo. */
+export const QUE_WHATSAPP_JUAN = { m3: "WhatsApp a Juan: falta hormigón en el proyecto", fibra: "WhatsApp a Juan: falta fibra en el proyecto" } as const
+/** Un solo WhatsApp por pedido y motivo en esta ventana (el robot crea varias NP adicionales para el mismo pedido). */
+export const VENTANA_WHATSAPP_JUAN_MS = 24 * 60 * 60_000
+
+export type DatosFaltaProyecto = {
+  que: "m3" | "fibra"
+  queda: number
+  necesita: number
+  /** Nombre de la fibra (solo "fibra"). */
+  fibra?: string | null
+  /** Número del proyecto en Zomatik ("PRO 0001-00000031") o, si no está, su código. */
+  proyecto?: string | number | null
+  cliente?: string | null
+  obra?: string | null
+  /** Fecha del pedido (yyyy-mm-dd). */
+  fecha?: string | null
+  /** Artículo (fórmula) del pedido. */
+  articulo?: string | null
+  /** m³ de la NP. */
+  m3?: number | null
+}
+
+const numAR = (x: number) => (Math.round(Number(x) * 1000) / 1000).toLocaleString("es-AR", { maximumFractionDigits: 3 })
+/** "PRO 0001-00000031" → "PRO 31"; un código suelto → "PRO 31"; otra cosa queda como vino. */
+const proyectoCorto = (p: string | number | null | undefined) => {
+  const t = String(p ?? "").trim()
+  if (!t) return ""
+  if (/^\d+$/.test(t)) return `PRO ${Number(t)}`
+  const m = t.match(/^(PRO2?)\s+\d+-0*(\d+)$/i)
+  return m ? `${m[1].toUpperCase()} ${m[2]}` : t
+}
+const diaMes = (f: string | null | undefined) => {
+  const m = String(f ?? "").match(/^\d{4}-(\d{2})-(\d{2})/)
+  return m ? `${m[2]}/${m[1]}` : ""
+}
+
+/** El texto del WhatsApp a Juan (corto; lo que no se sabe se omite). */
+export function textoFaltaProyecto(d: DatosFaltaProyecto): string {
+  const nombre = [d.cliente, d.obra].map((x) => String(x ?? "").trim()).filter(Boolean)
+  const nombreSinRepetir = nombre.filter((x, i) => nombre.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i)
+  const pro = proyectoCorto(d.proyecto)
+  const proyecto = ["al proyecto", pro, nombreSinRepetir.length ? `(${nombreSinRepetir.join(" – ")})` : ""].filter(Boolean).join(" ")
+  const fecha = diaMes(d.fecha)
+  const pedido = `el pedido${fecha ? ` del ${fecha}` : ""}`
+  const articulo = String(d.articulo ?? "").trim()
+  let cuerpo: string
+  if (d.que === "fibra") {
+    const det = [articulo, Number(d.m3) > 0 ? `${numAR(Number(d.m3))} m³` : ""].filter(Boolean).join(", ")
+    cuerpo = `${proyecto} le quedan ${numAR(d.queda)} kg de ${String(d.fibra ?? "").trim() || "fibra"} y ${pedido}${det ? ` (${det})` : ""} necesita ${numAR(d.necesita)} kg`
+  } else {
+    cuerpo = `${proyecto} le quedan ${numAR(d.queda)} m³${articulo ? ` de ${articulo}` : ""} y ${pedido} necesita ${numAR(d.necesita)} m³`
+  }
+  // Una NP en "error" no la retoma la pasada (solo el botón): el mensaje dice la verdad
+  return `⚠️ Rebucret · La NP no salió: ${cuerpo}. Agrandalo en Zomatik y tocá «Generar NP ahora» en el pedido.`
+}
+
+/**
+ * WhatsApp a Juan cuando una NP de proyecto no sale porque al proyecto no le alcanza el hormigón o la fibra (además del
+ * mail a Bautista y el estado en pantalla). UNA vez por pedido y motivo cada 24 h: la marca es la fila de Actividad
+ * "WhatsApp a Juan: …" que se graba cuando sale (si no sale, se vuelve a probar en el próximo error). Sin cambios de base.
+ * Nunca tira ni cambia lo que hace el robot.
+ */
+export async function avisarJuanFaltaProyecto(
+  sb: SB,
+  o: { usuario: string; pedidoId: string | null; plantId?: string | null; ref: string; marca: string; proyectoCodigo?: number | null; datos: DatosFaltaProyecto },
+  mandar: (telefono: string, texto: string) => Promise<ResultadoWhatsApp> = mandarWhatsApp,
+): Promise<{ enviado: boolean; motivo?: string }> {
+  try {
+    const tel = process.env[ENV_WHATSAPP_JUAN]
+    if (!tel) {
+      console.error(`[zomatik-np] WhatsApp a Juan: falta ${ENV_WHATSAPP_JUAN}`)
+      return { enviado: false, motivo: `falta ${ENV_WHATSAPP_JUAN}` }
+    }
+    if (!process.env.TEXTMEBOT_API_KEY) {
+      console.error("[zomatik-np] WhatsApp a Juan: falta TEXTMEBOT_API_KEY")
+      return { enviado: false, motivo: "falta TEXTMEBOT_API_KEY" }
+    }
+    const que = QUE_WHATSAPP_JUAN[o.datos.que]
+    const desde = new Date(Date.now() - VENTANA_WHATSAPP_JUAN_MS).toISOString()
+    let q = sb.from("activity_log").select("details, created_at").eq("entity", "zomatik_np")
+    q = o.pedidoId ? q.eq("entity_id", o.pedidoId) : q.eq("reference", o.ref)
+    const { data: previas, error } = await q.gte("created_at", desde).order("created_at", { ascending: false }).limit(100)
+    // Si no se puede saber si ya se mandó, no se manda (mejor uno menos que cuatro iguales)
+    if (error) {
+      console.error("[zomatik-np] WhatsApp a Juan: no se pudo leer la actividad:", error.message)
+      return { enviado: false, motivo: "no se pudo leer la actividad" }
+    }
+    if (((previas as { details: Record<string, unknown> | null }[] | null) || []).some((x) => x.details?.["Qué pasó"] === que)) return { enviado: false, motivo: "ya se le avisó" }
+    // Número, cliente y obra del proyecto (de la copia de Zomatik); si no está, lo que vino del pedido
+    type Proyecto = { numero?: string | null; cliente_nombre?: string | null; obra?: string | null }
+    const p: Proyecto | null = o.proyectoCodigo
+      ? ((await sb.from("zomatik_proyectos").select("numero, cliente_nombre, obra").eq("codigo", o.proyectoCodigo).maybeSingle()).data as Proyecto | null)
+      : null
+    const texto = textoFaltaProyecto({
+      ...o.datos,
+      proyecto: p?.numero || o.datos.proyecto || o.proyectoCodigo || null,
+      cliente: p?.cliente_nombre || o.datos.cliente || null,
+      obra: p?.obra || o.datos.obra || null,
+    })
+    const r = await mandar(tel, texto)
+    if (!r.enviado) {
+      console.error("[zomatik-np] WhatsApp a Juan:", r.motivo)
+      return r
+    }
+    await actividadNp(sb, { usuario: o.usuario, pedidoId: o.pedidoId, plantId: o.plantId, referencia: o.ref, detalle: { "Qué pasó": que, Mensaje: texto, Marca: o.marca } })
+    return r
+  } catch (e) {
+    console.error("[zomatik-np] WhatsApp a Juan:", (e as Error)?.message)
+    return { enviado: false, motivo: "no se pudo mandar" }
+  }
 }
 
 async function mandarAviso(sb: SB, nombres: string[], sinMail: string, titulo: string, lineas: string[]): Promise<{ enviado: boolean; motivo?: string }> {
@@ -1204,6 +1322,8 @@ export type Dependencias = {
   autorizar?: typeof autorizarNp
   /** Aviso a Bautista cuando una NP queda en "error" (sin esto, `avisarErrorZomatik`) */
   avisarError?: (sb: SB, titulo: string, lineas: string[]) => Promise<{ enviado: boolean; motivo?: string }>
+  /** WhatsApp (sin esto, `mandarWhatsApp` de lib/whatsapp.ts) */
+  whatsapp?: (telefono: string, texto: string) => Promise<ResultadoWhatsApp>
 }
 
 type Contexto = {
@@ -1584,6 +1704,14 @@ async function trabajarGenerar(sb: SB, np: FilaNpDB, ctx: Contexto, previo: { es
     guardo = await guardarSi(sb, np.id, G, { ...comunes, estado: "error", paso: r.paso, proximo_intento: r.reintentar ? despuesDe(MIN_REINTENTO) : null })
     // Con un recorte de lo que respondió Zomatik (~2 KB), para diagnosticar sin capturarlo a mano
     if (guardo) await actividadNp(sb, { usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, referencia: ref, detalle: { "Qué pasó": "Zomatik no generó la NP", Mensaje: r.mensaje, Paso: r.paso, Marca: np.marca, ...(r.recorte ? { "Respuesta de Zomatik (recorte)": r.recorte } : {}) } })
+    // Al proyecto no le alcanza el hormigón o la fibra: WhatsApp a Juan, uno por pedido y motivo (nunca tira)
+    const falta = r.faltaEnProyecto
+    if (guardo && falta) {
+      await avisarJuanFaltaProyecto(sb, {
+        usuario: ctx.usuario, pedidoId: np.scheduled_dispatch_id, plantId: np.plant_id, ref, marca: np.marca, proyectoCodigo: np.proyecto_codigo,
+        datos: { que: falta.que, queda: falta.queda, necesita: falta.necesita, fibra: falta.que === "fibra" ? falta.articulo : null, proyecto: np.proyecto_codigo, cliente: datos.clienteNombre, fecha: String(np.fecha), articulo: datos.articuloNombre, m3: Number(np.m3) },
+      }, ctx.dep.whatsapp ?? mandarWhatsApp)
+    }
     // Aviso a Bautista, un solo mail por episodio: si ya estaba en "error" (reintento con el botón), no se repite
     if (guardo && previo.estado !== "error") {
       const aviso = await (ctx.dep.avisarError ?? avisarErrorZomatik)(sb, `Zomatik no generó la NP · ${ref}`, [

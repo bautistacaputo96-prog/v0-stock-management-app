@@ -126,6 +126,8 @@ export type ResultadoNp = {
   fibraKg?: number | null
   /** Precio por kg de la fibra con que salió (de la lista o del proyecto), para Actividad. */
   fibraPrecio?: number | null
+  /** "error" porque al proyecto no le alcanza el hormigón (m3) o la fibra: lo que le queda y lo que pide la NP (aviso a Juan). */
+  faltaEnProyecto?: { que: "m3" | "fibra"; queda: number; necesita: number; articulo?: string | null }
 }
 
 export type DatosVaciar = { codigo: number; numero: string | null; marca: string }
@@ -549,7 +551,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
   }
   const disponible = numeroZomatik(mio[0].cantidad)
   if (disponible !== null && d.m3 > disponible + 0.001)
-    return { estado: "error", mensaje: `Al proyecto le quedan ${cantidadTexto(disponible).replace(".", ",")} m³ y el pedido es de ${cantidadTexto(d.m3).replace(".", ",")} m³. Bajá los m³ o mandá el resto a una NP nueva.`, paso: "continuar", disponible, reintentar: false }
+    return { estado: "error", mensaje: `Al proyecto le quedan ${cantidadTexto(disponible).replace(".", ",")} m³ y el pedido es de ${cantidadTexto(d.m3).replace(".", ",")} m³. Bajá los m³ o mandá el resto a una NP nueva.`, paso: "continuar", disponible, reintentar: false, faltaEnProyecto: { que: "m3", queda: disponible, necesita: d.m3, articulo: d.articuloNombre || null } }
   // Fibra (spec 2026-11-25): va el renglón de la fibra DEL PROYECTO, con su precio. Si el proyecto no la tiene, no se
   // agrega de la lista (a confirmar si Zomatik lo deja en una NP de proyecto): la NP queda en error con el motivo
   const artFibra = d.fibra ? { codigo: d.fibra.codigo, nombre: d.fibra.nombre } : null
@@ -557,7 +559,7 @@ async function deProyecto(nav: NavegadorNp, d: DatosNp, o: OpcionesRobot, azar: 
     const deFibra = rs.filter((r) => esRenglonDe(r, artFibra))
     if (deFibra.length !== 1) throw dato(msjProyectoSinFibra(d.fibra.nombre))
     const quedaF = numeroZomatik(deFibra[0].cantidad)
-    if (quedaF !== null && d.fibra.kg > quedaF + 0.001) return { estado: "error", mensaje: msjProyectoPocaFibra(d.fibra.nombre, quedaF, d.fibra.kg), paso: "continuar", disponible, reintentar: false }
+    if (quedaF !== null && d.fibra.kg > quedaF + 0.001) return { estado: "error", mensaje: msjProyectoPocaFibra(d.fibra.nombre, quedaF, d.fibra.kg), paso: "continuar", disponible, reintentar: false, faltaEnProyecto: { que: "fibra", queda: quedaF, necesita: d.fibra.kg, articulo: d.fibra.nombre || null } }
   }
   const seQueda = (r: Renglon) => esRenglonDe(r, delPedido) || (!!artFibra && esRenglonDe(r, artFibra))
 
